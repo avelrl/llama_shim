@@ -1,0 +1,15 @@
+shim:
+  addr: ":8080"
+  read_timeout: 15s
+  write_timeout: 90s
+  idle_timeout: 60s
+
+sqlite:
+  path: ./.data/shim.db
+
+llama:
+  base_url: http://127.0.0.1:8081
+  timeout: 60s
+
+log:
+  level: info
