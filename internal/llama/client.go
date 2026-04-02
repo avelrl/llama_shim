@@ -108,7 +108,7 @@ func (c *Client) CreateResponse(ctx context.Context, requestBody []byte) ([]byte
 	return body, nil
 }
 
-func (c *Client) Generate(ctx context.Context, model string, items []domain.MessageItem, options map[string]json.RawMessage) (string, error) {
+func (c *Client) Generate(ctx context.Context, model string, items []domain.Item, options map[string]json.RawMessage) (string, error) {
 	requestBody, err := c.buildChatCompletionRequest(model, items, false, options)
 	if err != nil {
 		return "", fmt.Errorf("marshal llama request: %w", err)
@@ -150,7 +150,7 @@ func (c *Client) Generate(ctx context.Context, model string, items []domain.Mess
 	return extractAssistantText(body)
 }
 
-func (c *Client) GenerateStream(ctx context.Context, model string, items []domain.MessageItem, options map[string]json.RawMessage, onDelta func(string) error) error {
+func (c *Client) GenerateStream(ctx context.Context, model string, items []domain.Item, options map[string]json.RawMessage, onDelta func(string) error) error {
 	requestBody, err := c.buildChatCompletionRequest(model, items, true, options)
 	if err != nil {
 		return fmt.Errorf("marshal llama request: %w", err)
@@ -278,10 +278,14 @@ func applyForwardedHeaders(outgoing *http.Request, incoming *http.Request) {
 	}
 }
 
-func (c *Client) buildChatCompletionRequest(model string, items []domain.MessageItem, stream bool, options map[string]json.RawMessage) ([]byte, error) {
+func (c *Client) buildChatCompletionRequest(model string, items []domain.Item, stream bool, options map[string]json.RawMessage) ([]byte, error) {
+	messages, err := collapseChatMessages(items)
+	if err != nil {
+		return nil, err
+	}
 	payload := map[string]any{
 		"model":    model,
-		"messages": collapseChatMessages(items),
+		"messages": messages,
 	}
 	if stream {
 		payload["stream"] = true
@@ -297,13 +301,27 @@ func (c *Client) buildChatCompletionRequest(model string, items []domain.Message
 	return json.Marshal(payload)
 }
 
-func collapseChatMessages(items []domain.MessageItem) []ChatMessageDTO {
+func collapseChatMessages(items []domain.Item) ([]ChatMessageDTO, error) {
 	messages := make([]ChatMessageDTO, 0, len(items))
 	for _, item := range items {
+		if item.Type != "message" || item.HasNonTextMessageContent() {
+			return nil, domain.ErrUnsupportedShape
+		}
+
+		role := item.Role
+		if role == "developer" {
+			role = "system"
+		}
+		switch role {
+		case "system", "user", "assistant":
+		default:
+			return nil, domain.ErrUnsupportedShape
+		}
+
 		content := domain.MessageText(item)
-		if len(messages) == 0 || messages[len(messages)-1].Role != item.Role {
+		if len(messages) == 0 || messages[len(messages)-1].Role != role {
 			messages = append(messages, ChatMessageDTO{
-				Role:    item.Role,
+				Role:    role,
 				Content: content,
 			})
 			continue
@@ -319,7 +337,7 @@ func collapseChatMessages(items []domain.MessageItem) []ChatMessageDTO {
 
 		messages[len(messages)-1].Content += "\n\n" + content
 	}
-	return messages
+	return messages, nil
 }
 
 func (c *Client) consumeChatCompletionStream(body io.Reader, onDelta func(string) error) error {

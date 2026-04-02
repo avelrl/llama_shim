@@ -3,7 +3,6 @@ package sqlite
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -12,11 +11,11 @@ import (
 )
 
 func (s *Store) SaveResponse(ctx context.Context, response domain.StoredResponse) error {
-	inputJSON, err := json.Marshal(response.NormalizedInputItems)
+	inputJSON, err := domain.MarshalStoredItems(response.NormalizedInputItems)
 	if err != nil {
 		return fmt.Errorf("marshal normalized input items: %w", err)
 	}
-	outputJSON, err := json.Marshal(response.Output)
+	outputJSON, err := domain.MarshalStoredItems(response.Output)
 	if err != nil {
 		return fmt.Errorf("marshal output: %w", err)
 	}
@@ -110,12 +109,17 @@ func scanStoredResponse(row interface{ Scan(...any) error }) (domain.StoredRespo
 	); err != nil {
 		return domain.StoredResponse{}, err
 	}
-	if err := json.Unmarshal([]byte(inputJSON), &response.NormalizedInputItems); err != nil {
+	items, err := domain.UnmarshalStoredItems([]byte(inputJSON))
+	if err != nil {
 		return domain.StoredResponse{}, fmt.Errorf("unmarshal normalized input items: %w", err)
 	}
-	if err := json.Unmarshal([]byte(outputJSON), &response.Output); err != nil {
+	response.NormalizedInputItems = items
+
+	outputItems, err := domain.UnmarshalStoredItems([]byte(outputJSON))
+	if err != nil {
 		return domain.StoredResponse{}, fmt.Errorf("unmarshal output: %w", err)
 	}
+	response.Output = outputItems
 	response.Store = storeInt != 0
 	return response, nil
 }

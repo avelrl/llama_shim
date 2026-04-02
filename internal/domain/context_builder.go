@@ -2,22 +2,21 @@ package domain
 
 import "fmt"
 
-func BuildLineageContext(lineage []StoredResponse, instructions string, currentInput []MessageItem) ([]MessageItem, error) {
-	contextItems := make([]MessageItem, 0, len(currentInput)+(len(lineage)*2)+1)
+func BuildLineageContext(lineage []StoredResponse, instructions string, currentInput []Item) ([]Item, error) {
+	contextItems := make([]Item, 0, len(currentInput)+(len(lineage)*2)+1)
 	for _, response := range lineage {
 		contextItems = append(contextItems, response.NormalizedInputItems...)
-		assistantItem, err := AssistantOutputItem(response)
-		if err != nil {
-			return nil, err
+		if len(response.Output) == 0 {
+			return nil, fmt.Errorf("response %s has empty output", response.ID)
 		}
-		contextItems = append(contextItems, assistantItem)
+		contextItems = append(contextItems, response.Output...)
 	}
 
 	return AppendCurrentRequestContext(contextItems, instructions, currentInput), nil
 }
 
-func BuildConversationContext(items []ConversationItem, instructions string, currentInput []MessageItem) []MessageItem {
-	contextItems := make([]MessageItem, 0, len(items)+len(currentInput)+1)
+func BuildConversationContext(items []ConversationItem, instructions string, currentInput []Item) []Item {
+	contextItems := make([]Item, 0, len(items)+len(currentInput)+1)
 	for _, item := range items {
 		contextItems = append(contextItems, item.Item)
 	}
@@ -25,8 +24,8 @@ func BuildConversationContext(items []ConversationItem, instructions string, cur
 	return AppendCurrentRequestContext(contextItems, instructions, currentInput)
 }
 
-func AppendCurrentRequestContext(base []MessageItem, instructions string, currentInput []MessageItem) []MessageItem {
-	out := make([]MessageItem, 0, len(base)+len(currentInput)+1)
+func AppendCurrentRequestContext(base []Item, instructions string, currentInput []Item) []Item {
+	out := make([]Item, 0, len(base)+len(currentInput)+1)
 	out = append(out, base...)
 	if instructions != "" {
 		// Instructions apply only to the current request, so they are appended
@@ -37,15 +36,15 @@ func AppendCurrentRequestContext(base []MessageItem, instructions string, curren
 	return out
 }
 
-func AssistantOutputItem(response StoredResponse) (MessageItem, error) {
+func AssistantOutputItem(response StoredResponse) (Item, error) {
 	if len(response.Output) == 0 {
-		return MessageItem{}, fmt.Errorf("response %s has empty output", response.ID)
+		return Item{}, fmt.Errorf("response %s has empty output", response.ID)
 	}
 	return response.Output[0], nil
 }
 
-func BuildConversationAppendItems(startSeq int, input []MessageItem, assistant MessageItem) []ConversationItem {
-	items := make([]ConversationItem, 0, len(input)+1)
+func BuildConversationAppendItems(startSeq int, input []Item, output []Item) []ConversationItem {
+	items := make([]ConversationItem, 0, len(input)+len(output))
 	seq := startSeq
 	for _, item := range input {
 		items = append(items, ConversationItem{
@@ -57,12 +56,15 @@ func BuildConversationAppendItems(startSeq int, input []MessageItem, assistant M
 		})
 		seq++
 	}
-	items = append(items, ConversationItem{
-		Seq:      seq,
-		Source:   "response_output",
-		Role:     assistant.Role,
-		ItemType: assistant.Type,
-		Item:     assistant,
-	})
+	for _, item := range output {
+		items = append(items, ConversationItem{
+			Seq:      seq,
+			Source:   "response_output",
+			Role:     item.Role,
+			ItemType: item.Type,
+			Item:     item,
+		})
+		seq++
+	}
 	return items
 }

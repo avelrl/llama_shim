@@ -11,6 +11,7 @@ import (
 type ConversationCreator interface {
 	CreateConversation(ctx context.Context, conversation domain.Conversation) error
 	GetConversation(ctx context.Context, id string) (domain.Conversation, []domain.ConversationItem, error)
+	ListConversationItems(ctx context.Context, query domain.ListConversationItemsQuery) (domain.ConversationItemPage, error)
 }
 
 type ConversationService struct {
@@ -27,6 +28,10 @@ func NewConversationService(store ConversationCreator) *ConversationService {
 
 func (s *ConversationService) Create(ctx context.Context, input CreateConversationInput) (domain.Conversation, error) {
 	items, err := domain.NormalizeConversationItems(input.Items)
+	if err != nil {
+		return domain.Conversation{}, err
+	}
+	items, err = domain.EnsureItemIDs(items)
 	if err != nil {
 		return domain.Conversation{}, err
 	}

@@ -1,6 +1,8 @@
 package httpapi
 
-import "encoding/json"
+import (
+	"encoding/json"
+)
 
 type CreateResponseRequest struct {
 	Model              string          `json:"model"`
@@ -14,4 +16,12 @@ type CreateResponseRequest struct {
 
 type CreateConversationRequest struct {
 	Items []json.RawMessage `json:"items"`
+}
+
+type listConversationItemsResponse struct {
+	Object  string           `json:"object"`
+	Data    []map[string]any `json:"data"`
+	FirstID *string          `json:"first_id"`
+	LastID  *string          `json:"last_id"`
+	HasMore bool             `json:"has_more"`
 }

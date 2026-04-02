@@ -13,3 +13,9 @@ llama:
 
 log:
   level: info
+
+responses:
+  custom_tools:
+    mode: bridge
+  codex:
+    force_tool_choice_required: false

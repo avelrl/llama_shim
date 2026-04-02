@@ -13,15 +13,17 @@ import (
 )
 
 type Config struct {
-	Addr         string
-	SQLitePath   string
-	LlamaBaseURL string
-	LlamaTimeout time.Duration
-	ReadTimeout  time.Duration
-	WriteTimeout time.Duration
-	IdleTimeout  time.Duration
-	LogLevel     slog.Level
-	ConfigFile   string
+	Addr                                  string
+	SQLitePath                            string
+	LlamaBaseURL                          string
+	LlamaTimeout                          time.Duration
+	ReadTimeout                           time.Duration
+	WriteTimeout                          time.Duration
+	IdleTimeout                           time.Duration
+	LogLevel                              slog.Level
+	ResponsesCustomToolsMode              string
+	ResponsesCodexForceToolChoiceRequired bool
+	ConfigFile                            string
 }
 
 func Load(configPath string) (Config, error) {
@@ -36,11 +38,13 @@ func Load(configPath string) (Config, error) {
 	}
 
 	cfg := Config{
-		Addr:         strings.TrimSpace(v.GetString("shim.addr")),
-		SQLitePath:   strings.TrimSpace(v.GetString("sqlite.path")),
-		LlamaBaseURL: strings.TrimRight(strings.TrimSpace(v.GetString("llama.base_url")), "/"),
-		ConfigFile:   v.ConfigFileUsed(),
-		LogLevel:     slog.LevelInfo,
+		Addr:                                  strings.TrimSpace(v.GetString("shim.addr")),
+		SQLitePath:                            strings.TrimSpace(v.GetString("sqlite.path")),
+		LlamaBaseURL:                          strings.TrimRight(strings.TrimSpace(v.GetString("llama.base_url")), "/"),
+		ConfigFile:                            v.ConfigFileUsed(),
+		LogLevel:                              slog.LevelInfo,
+		ResponsesCustomToolsMode:              strings.ToLower(strings.TrimSpace(v.GetString("responses.custom_tools.mode"))),
+		ResponsesCodexForceToolChoiceRequired: v.GetBool("responses.codex.force_tool_choice_required"),
 	}
 
 	if err := parseDuration(v.GetString("llama.timeout"), &cfg.LlamaTimeout); err != nil {
@@ -58,6 +62,9 @@ func Load(configPath string) (Config, error) {
 	if err := parseLogLevel(v.GetString("log.level"), &cfg.LogLevel); err != nil {
 		return Config{}, fmt.Errorf("parse log.level: %w", err)
 	}
+	if err := parseCustomToolsMode(cfg.ResponsesCustomToolsMode); err != nil {
+		return Config{}, fmt.Errorf("parse responses.custom_tools.mode: %w", err)
+	}
 
 	return cfg, nil
 }
@@ -71,6 +78,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("llama.base_url", "http://127.0.0.1:8081")
 	v.SetDefault("llama.timeout", "60s")
 	v.SetDefault("log.level", "info")
+	v.SetDefault("responses.custom_tools.mode", "bridge")
+	v.SetDefault("responses.codex.force_tool_choice_required", false)
 }
 
 func resolveConfigPath(configPath string) string {
@@ -129,4 +138,13 @@ func parseLogLevel(value string, dst *slog.Level) error {
 	}
 
 	return nil
+}
+
+func parseCustomToolsMode(value string) error {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "bridge", "passthrough", "auto":
+		return nil
+	default:
+		return strconv.ErrSyntax
+	}
 }

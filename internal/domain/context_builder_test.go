@@ -38,7 +38,7 @@ func TestBuildLineageContext(t *testing.T) {
 func TestBuildConversationAppendItems(t *testing.T) {
 	items := domain.BuildConversationAppendItems(2, []domain.MessageItem{
 		domain.NewInputTextMessage("user", "next question"),
-	}, domain.NewOutputTextMessage("answer"))
+	}, []domain.Item{domain.NewOutputTextMessage("answer")})
 
 	require.Len(t, items, 2)
 	require.Equal(t, 2, items[0].Seq)

@@ -29,11 +29,11 @@ func TestCreateResponseRejectsMutuallyExclusiveStateFields(t *testing.T) {
 
 type noopGenerator struct{}
 
-func (noopGenerator) Generate(context.Context, string, []domain.MessageItem, map[string]json.RawMessage) (string, error) {
+func (noopGenerator) Generate(context.Context, string, []domain.Item, map[string]json.RawMessage) (string, error) {
 	return "OK", nil
 }
 
-func (noopGenerator) GenerateStream(context.Context, string, []domain.MessageItem, map[string]json.RawMessage, func(string) error) error {
+func (noopGenerator) GenerateStream(context.Context, string, []domain.Item, map[string]json.RawMessage, func(string) error) error {
 	return nil
 }
 
@@ -57,6 +57,6 @@ func (noopConversationStore) GetConversation(context.Context, string) (domain.Co
 	return domain.Conversation{}, nil, nil
 }
 
-func (noopConversationStore) SaveResponseAndAppendConversation(context.Context, domain.Conversation, domain.StoredResponse, []domain.MessageItem, domain.MessageItem) error {
+func (noopConversationStore) SaveResponseAndAppendConversation(context.Context, domain.Conversation, domain.StoredResponse, []domain.Item, []domain.Item) error {
 	return nil
 }

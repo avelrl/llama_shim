@@ -84,6 +84,12 @@ llama:
 
 log:
   level: info
+
+responses:
+  custom_tools:
+    mode: bridge
+  codex:
+    force_tool_choice_required: false
 ```
 
 Run with an explicit config file:
@@ -106,10 +112,12 @@ Supported environment overrides:
 - `SHIM_READ_TIMEOUT` default `15s`
 - `SHIM_WRITE_TIMEOUT` default `90s`
 - `SHIM_IDLE_TIMEOUT` default `60s`
-- `LOG_LEVEL` default `info`
+- `LOG_LEVEL` default `info`; set `debug` to emit an additional debug log line with request and response bodies
 - `LLAMA_BASE_URL` overrides `llama.base_url`
 - `SQLITE_PATH` overrides `sqlite.path`
 - `SHIM_ADDR` overrides `shim.addr`
+- `RESPONSES_CUSTOM_TOOLS_MODE` overrides `responses.custom_tools.mode`; supported values: `bridge`, `auto`, `passthrough`
+- `RESPONSES_CODEX_FORCE_TOOL_CHOICE_REQUIRED` overrides `responses.codex.force_tool_choice_required`; when enabled, Codex-like requests with `tool_choice: "auto"` are rewritten to `required`
 
 ## curl examples
 

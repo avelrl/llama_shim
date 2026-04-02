@@ -40,40 +40,20 @@ func ParseUpstreamResponse(raw []byte) (Response, error) {
 
 	var outputTextBuilder strings.Builder
 	for _, rawItem := range payload.Output {
-		var item struct {
-			Type    string `json:"type"`
-			Role    string `json:"role"`
-			Content []struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
-			} `json:"content"`
-		}
-		if err := json.Unmarshal(rawItem, &item); err != nil {
+		item, err := NewItem(rawItem)
+		if err != nil {
 			continue
 		}
-		if item.Type != "message" || item.Role != "assistant" || len(item.Content) == 0 {
+		response.Output = append(response.Output, item)
+		if item.Type != "message" || item.Role != "assistant" {
 			continue
 		}
-
-		parts := make([]TextPart, 0, len(item.Content))
 		for _, part := range item.Content {
 			if part.Text == "" {
 				continue
 			}
-			parts = append(parts, TextPart{
-				Type: "output_text",
-				Text: part.Text,
-			})
 			outputTextBuilder.WriteString(part.Text)
 		}
-		if len(parts) == 0 {
-			continue
-		}
-		response.Output = append(response.Output, MessageItem{
-			Type:    "message",
-			Role:    "assistant",
-			Content: parts,
-		})
 	}
 
 	if response.OutputText == "" {

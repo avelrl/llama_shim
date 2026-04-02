@@ -23,7 +23,7 @@ func NewValidationError(param, message string) error {
 	return &ValidationError{Param: param, Message: message}
 }
 
-func NormalizeInput(raw json.RawMessage) ([]MessageItem, error) {
+func NormalizeInput(raw json.RawMessage) ([]Item, error) {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
 		return nil, NewValidationError("input", "input is required")
@@ -35,13 +35,13 @@ func NormalizeInput(raw json.RawMessage) ([]MessageItem, error) {
 		if err := json.Unmarshal(trimmed, &text); err != nil {
 			return nil, fmt.Errorf("decode string input: %w", err)
 		}
-		return []MessageItem{NewInputTextMessage("user", text)}, nil
+		return []Item{NewInputTextMessage("user", text)}, nil
 	case '{':
-		item, err := normalizeMessageObject(trimmed, "input")
+		item, err := normalizeItemObject(trimmed, "input", "input")
 		if err != nil {
 			return nil, err
 		}
-		return []MessageItem{item}, nil
+		return []Item{item}, nil
 	case '[':
 		var rawItems []json.RawMessage
 		if err := json.Unmarshal(trimmed, &rawItems); err != nil {
@@ -51,9 +51,9 @@ func NormalizeInput(raw json.RawMessage) ([]MessageItem, error) {
 			return nil, NewValidationError("input", "input array must not be empty")
 		}
 
-		items := make([]MessageItem, 0, len(rawItems))
+		items := make([]Item, 0, len(rawItems))
 		for _, rawItem := range rawItems {
-			item, err := normalizeMessageObject(rawItem, "input")
+			item, err := normalizeItemObject(rawItem, "input", "input")
 			if err != nil {
 				return nil, err
 			}
@@ -65,14 +65,14 @@ func NormalizeInput(raw json.RawMessage) ([]MessageItem, error) {
 	}
 }
 
-func NormalizeConversationItems(rawItems []json.RawMessage) ([]MessageItem, error) {
+func NormalizeConversationItems(rawItems []json.RawMessage) ([]Item, error) {
 	if len(rawItems) == 0 {
 		return nil, NewValidationError("items", "items must not be empty")
 	}
 
-	items := make([]MessageItem, 0, len(rawItems))
+	items := make([]Item, 0, len(rawItems))
 	for _, rawItem := range rawItems {
-		item, err := normalizeMessageObject(rawItem, "conversation")
+		item, err := normalizeItemObject(rawItem, "conversation", "items")
 		if err != nil {
 			return nil, err
 		}
@@ -82,30 +82,14 @@ func NormalizeConversationItems(rawItems []json.RawMessage) ([]MessageItem, erro
 	return items, nil
 }
 
-func NewInputTextMessage(role, text string) MessageItem {
-	return MessageItem{
-		Type: "message",
-		Role: role,
-		Content: []TextPart{
-			{
-				Type: "input_text",
-				Text: text,
-			},
-		},
-	}
+func NewInputTextMessage(role, text string) Item {
+	item, _ := NewItem([]byte(fmt.Sprintf(`{"type":"message","role":%q,"content":[{"type":"input_text","text":%q}]}`, role, text)))
+	return item
 }
 
-func NewOutputTextMessage(text string) MessageItem {
-	return MessageItem{
-		Type: "message",
-		Role: "assistant",
-		Content: []TextPart{
-			{
-				Type: "output_text",
-				Text: text,
-			},
-		},
-	}
+func NewOutputTextMessage(text string) Item {
+	item, _ := NewItem([]byte(fmt.Sprintf(`{"type":"message","role":"assistant","content":[{"type":"output_text","text":%q}]}`, text)))
+	return item
 }
 
 func CompactJSON(raw []byte) (string, error) {
@@ -116,56 +100,102 @@ func CompactJSON(raw []byte) (string, error) {
 	return buf.String(), nil
 }
 
-func normalizeMessageObject(raw json.RawMessage, source string) (MessageItem, error) {
-	var payload struct {
-		Type    string          `json:"type"`
-		Role    string          `json:"role"`
-		Content json.RawMessage `json:"content"`
-	}
+func normalizeItemObject(raw json.RawMessage, source, param string) (Item, error) {
+	var payload map[string]any
 	if err := json.Unmarshal(raw, &payload); err != nil {
-		return MessageItem{}, fmt.Errorf("decode message item: %w", err)
+		return Item{}, fmt.Errorf("decode item: %w", err)
 	}
 
-	itemType := strings.TrimSpace(payload.Type)
+	itemType := strings.TrimSpace(asString(payload["type"]))
 	if itemType == "" {
 		itemType = "message"
-	}
-	if itemType != "message" {
-		return MessageItem{}, NewValidationError("input", "only message items are supported in v1")
+		payload["type"] = itemType
 	}
 
-	role := strings.TrimSpace(payload.Role)
-	if role == "" {
-		if source == "input" {
-			role = "user"
-		} else {
-			return MessageItem{}, NewValidationError("role", "role is required")
+	switch itemType {
+	case "message":
+		role := strings.TrimSpace(asString(payload["role"]))
+		if role == "" {
+			if source == "input" {
+				role = "user"
+				payload["role"] = role
+			} else {
+				return Item{}, NewValidationError("role", "role is required")
+			}
+		}
+		switch role {
+		case "system", "developer", "user", "assistant":
+		default:
+			return Item{}, NewValidationError("role", "unsupported role")
+		}
+		content, ok := payload["content"]
+		if !ok || content == nil {
+			return Item{}, NewValidationError("content", "content is required")
+		}
+		if _, err := normalizeMessageContent(content); err != nil {
+			return Item{}, err
+		}
+	case "function_call":
+		if strings.TrimSpace(asString(payload["name"])) == "" {
+			return Item{}, NewValidationError(param, "function_call name is required")
+		}
+		if _, ok := payload["arguments"]; !ok {
+			return Item{}, NewValidationError(param, "function_call arguments are required")
+		}
+	case "custom_tool_call":
+		if strings.TrimSpace(asString(payload["name"])) == "" {
+			return Item{}, NewValidationError(param, "custom_tool_call name is required")
+		}
+		if _, ok := payload["input"]; !ok {
+			return Item{}, NewValidationError(param, "custom_tool_call input is required")
+		}
+	case "function_call_output", "custom_tool_call_output":
+		if strings.TrimSpace(asString(payload["call_id"])) == "" {
+			return Item{}, NewValidationError(param, itemType+" call_id is required")
+		}
+		if _, ok := payload["output"]; !ok {
+			return Item{}, NewValidationError(param, itemType+" output is required")
+		}
+	case "reasoning":
+	default:
+		// Unknown item families are preserved losslessly so they can still be
+		// stored, replayed upstream, and returned from read APIs.
+	}
+
+	normalized, err := json.Marshal(payload)
+	if err != nil {
+		return Item{}, fmt.Errorf("marshal normalized item: %w", err)
+	}
+	item, err := NewItem(normalized)
+	if err != nil {
+		return Item{}, err
+	}
+	switch item.Type {
+	case "custom_tool_call":
+		item.Meta = &ItemMeta{
+			Transport:     "passthrough",
+			CanonicalType: "custom_tool_call",
+			ToolName:      item.Name(),
+			ToolNamespace: item.Namespace(),
+		}
+	case "custom_tool_call_output":
+		item.Meta = &ItemMeta{
+			Transport:     "passthrough",
+			CanonicalType: "custom_tool_call_output",
 		}
 	}
-	switch role {
-	case "system", "user", "assistant":
-	default:
-		return MessageItem{}, NewValidationError("role", "unsupported role")
-	}
-
-	content, err := normalizeContent(payload.Content)
-	if err != nil {
-		return MessageItem{}, err
-	}
-
-	return MessageItem{
-		Type:    "message",
-		Role:    role,
-		Content: content,
-	}, nil
+	return item, nil
 }
 
-func normalizeContent(raw json.RawMessage) ([]TextPart, error) {
+func normalizeMessageContent(value any) ([]TextPart, error) {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
 		return nil, NewValidationError("content", "content is required")
 	}
-
 	switch trimmed[0] {
 	case '"':
 		var text string
@@ -174,21 +204,27 @@ func normalizeContent(raw json.RawMessage) ([]TextPart, error) {
 		}
 		return []TextPart{{Type: "input_text", Text: text}}, nil
 	case '[':
-		var rawParts []json.RawMessage
+		var rawParts []map[string]any
 		if err := json.Unmarshal(trimmed, &rawParts); err != nil {
 			return nil, fmt.Errorf("decode content array: %w", err)
 		}
 		if len(rawParts) == 0 {
 			return nil, NewValidationError("content", "content array must not be empty")
 		}
-
 		parts := make([]TextPart, 0, len(rawParts))
 		for _, rawPart := range rawParts {
-			part, err := normalizeContentPart(rawPart)
-			if err != nil {
-				return nil, err
+			partType := strings.TrimSpace(asString(rawPart["type"]))
+			switch partType {
+			case "", "text", "input_text", "output_text", "input_image", "input_file", "file", "image":
+			default:
+				// Preserve unknown content parts losslessly as long as the array shape is valid.
 			}
-			parts = append(parts, part)
+			if text := strings.TrimSpace(asString(rawPart["text"])); text != "" {
+				if partType == "" {
+					partType = "text"
+				}
+				parts = append(parts, TextPart{Type: partType, Text: text})
+			}
 		}
 		return parts, nil
 	default:
@@ -196,29 +232,10 @@ func normalizeContent(raw json.RawMessage) ([]TextPart, error) {
 	}
 }
 
-func normalizeContentPart(raw json.RawMessage) (TextPart, error) {
-	var payload struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
+func MessageText(item Item) string {
+	if item.Type != "message" {
+		return ""
 	}
-	if err := json.Unmarshal(raw, &payload); err != nil {
-		return TextPart{}, fmt.Errorf("decode content part: %w", err)
-	}
-
-	partType := strings.TrimSpace(payload.Type)
-	switch partType {
-	case "", "text", "input_text", "output_text":
-	default:
-		return TextPart{}, NewValidationError("content", "only text content is supported in v1")
-	}
-
-	return TextPart{
-		Type: "input_text",
-		Text: payload.Text,
-	}, nil
-}
-
-func MessageText(item MessageItem) string {
 	var parts []string
 	for _, part := range item.Content {
 		parts = append(parts, part.Text)

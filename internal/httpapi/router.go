@@ -11,16 +11,24 @@ import (
 )
 
 type RouterDeps struct {
-	Logger              *slog.Logger
-	LlamaClient         *llama.Client
-	ResponseService     *service.ResponseService
-	ConversationService *service.ConversationService
-	Store               *sqlite.Store
+	Logger                                *slog.Logger
+	LlamaClient                           *llama.Client
+	ResponseService                       *service.ResponseService
+	ConversationService                   *service.ConversationService
+	ResponsesCustomToolsMode              string
+	ResponsesCodexForceToolChoiceRequired bool
+	Store                                 *sqlite.Store
 }
 
 func NewRouter(deps RouterDeps) http.Handler {
 	proxyHandler := newProxyHandler(deps.Logger, deps.LlamaClient)
-	responseHandler := newResponseHandler(deps.Logger, deps.ResponseService, proxyHandler)
+	responseHandler := newResponseHandler(
+		deps.Logger,
+		deps.ResponseService,
+		proxyHandler,
+		deps.ResponsesCustomToolsMode,
+		deps.ResponsesCodexForceToolChoiceRequired,
+	)
 	conversationHandler := newConversationHandler(deps.Logger, deps.ConversationService)
 
 	mux := http.NewServeMux()
@@ -56,12 +64,26 @@ func NewRouter(deps RouterDeps) http.Handler {
 		}
 		responseHandler.get(w, r)
 	})
+	mux.HandleFunc("/v1/responses/{id}/input_items", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			WriteError(w, http.StatusMethodNotAllowed, "invalid_request_error", "method not allowed", "")
+			return
+		}
+		responseHandler.getInputItems(w, r)
+	})
 	mux.HandleFunc("/v1/conversations", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			WriteError(w, http.StatusMethodNotAllowed, "invalid_request_error", "method not allowed", "")
 			return
 		}
 		conversationHandler.create(w, r)
+	})
+	mux.HandleFunc("/v1/conversations/{id}/items", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			WriteError(w, http.StatusMethodNotAllowed, "invalid_request_error", "method not allowed", "")
+			return
+		}
+		conversationHandler.listItems(w, r)
 	})
 	mux.HandleFunc("/v1/chat/completions", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {

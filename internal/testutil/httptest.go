@@ -22,6 +22,10 @@ type TestApp struct {
 }
 
 func NewTestApp(t *testing.T) *TestApp {
+	return NewTestAppWithCustomToolsMode(t, "")
+}
+
+func NewTestAppWithCustomToolsMode(t *testing.T, customToolsMode string) *TestApp {
 	t.Helper()
 
 	llamaServer := NewFakeLlamaServer(t)
@@ -36,11 +40,13 @@ func NewTestApp(t *testing.T) *TestApp {
 	conversationService := service.NewConversationService(store)
 
 	server := httptest.NewServer(httpapi.NewRouter(httpapi.RouterDeps{
-		Logger:              logger,
-		LlamaClient:         llamaClient,
-		ResponseService:     responseService,
-		ConversationService: conversationService,
-		Store:               store,
+		Logger:                                logger,
+		LlamaClient:                           llamaClient,
+		ResponseService:                       responseService,
+		ConversationService:                   conversationService,
+		ResponsesCustomToolsMode:              customToolsMode,
+		ResponsesCodexForceToolChoiceRequired: false,
+		Store:                                 store,
 	}))
 
 	t.Cleanup(func() {

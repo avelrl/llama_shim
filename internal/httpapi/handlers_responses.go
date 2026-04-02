@@ -17,21 +17,26 @@ type ResponseService interface {
 	Create(ctx context.Context, input service.CreateResponseInput) (domain.Response, error)
 	CreateStream(ctx context.Context, input service.CreateResponseInput, hooks service.StreamHooks) (domain.Response, error)
 	Get(ctx context.Context, id string) (domain.Response, error)
+	GetInputItems(ctx context.Context, id string) ([]domain.Item, error)
 	PrepareCreateContext(ctx context.Context, input service.CreateResponseInput) (service.PreparedResponseContext, error)
 	SaveExternalResponse(ctx context.Context, prepared service.PreparedResponseContext, input service.CreateResponseInput, response domain.Response) (domain.Response, error)
 }
 
 type responseHandler struct {
-	logger  *slog.Logger
-	service *service.ResponseService
-	proxy   *proxyHandler
+	logger                       *slog.Logger
+	service                      *service.ResponseService
+	proxy                        *proxyHandler
+	customToolsMode              string
+	forceCodexToolChoiceRequired bool
 }
 
-func newResponseHandler(logger *slog.Logger, service *service.ResponseService, proxy *proxyHandler) *responseHandler {
+func newResponseHandler(logger *slog.Logger, service *service.ResponseService, proxy *proxyHandler, customToolsMode string, forceCodexToolChoiceRequired bool) *responseHandler {
 	return &responseHandler{
-		logger:  logger,
-		service: service,
-		proxy:   proxy,
+		logger:                       logger,
+		service:                      service,
+		proxy:                        proxy,
+		customToolsMode:              customToolsMode,
+		forceCodexToolChoiceRequired: forceCodexToolChoiceRequired,
 	}
 }
 
@@ -65,15 +70,19 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 	}
 	if shouldProxy {
 		if request.Stream != nil && *request.Stream {
-			h.proxy.forwardWithBody(w, r, rawBody)
+			h.proxyCreateStream(w, r, request, requestJSON, rawFields)
 			return
 		}
-		h.proxyCreateWithShadowStore(w, r, request, rawBody, requestJSON)
+		h.proxyCreateWithShadowStore(w, r, request, rawBody, requestJSON, rawFields)
 		return
 	}
 
 	generationOptions := buildGenerationOptions(rawFields)
 	if request.Stream != nil && *request.Stream {
+		if !supportsLocalShimState(rawFields) {
+			h.createStreamViaUpstream(w, r, request, requestJSON, rawFields)
+			return
+		}
 		h.createStream(w, r, request, requestJSON, generationOptions)
 		return
 	}
@@ -133,24 +142,31 @@ func (h *responseHandler) createLocalStateViaUpstream(ctx context.Context, reque
 		return domain.Response{}, err
 	}
 
-	upstreamBody, err := buildUpstreamResponsesBody(rawFields, prepared.ContextItems)
+	upstreamBody, plan, err := buildUpstreamResponsesBody(rawFields, prepared.ContextItems, prepared.NormalizedInput, prepared.ToolCallRefs, h.customToolsMode, h.forceCodexToolChoiceRequired)
 	if err != nil {
 		return domain.Response{}, err
 	}
+	logCustomToolTransport(ctx, h.logger, rawFields, upstreamBody, plan)
 
 	rawResponse, err := h.proxy.client.CreateResponse(ctx, upstreamBody)
 	if err != nil {
 		return domain.Response{}, err
 	}
 
-	response, err := domain.ParseUpstreamResponse(rawResponse)
+	responseBody, err := normalizeUpstreamResponseBody(rawResponse, plan, shouldApplyCodexCompatibility(rawFields, decodeToolList(rawFields)))
 	if err != nil {
 		return domain.Response{}, err
 	}
-	if response.OutputText == "" || len(response.Output) == 0 {
+
+	response, err := domain.ParseUpstreamResponse(responseBody)
+	if err != nil {
+		return domain.Response{}, err
+	}
+	response = annotateResponseCustomToolMetadata(response, plan)
+	if response.OutputText == "" && len(response.Output) == 0 {
 		return domain.Response{}, &domain.ValidationError{
 			Param:   "output",
-			Message: "upstream response did not include assistant text output",
+			Message: "upstream response did not include output items",
 		}
 	}
 
@@ -231,6 +247,32 @@ func (h *responseHandler) get(w http.ResponseWriter, r *http.Request) {
 		}
 		h.writeError(w, r, err)
 		return
+	}
+	WriteJSON(w, http.StatusOK, response)
+}
+
+func (h *responseHandler) getInputItems(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	items, err := h.service.GetInputItems(r.Context(), id)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+
+	response := listConversationItemsResponse{
+		Object:  "list",
+		Data:    make([]map[string]any, 0, len(items)),
+		HasMore: false,
+	}
+	for _, item := range items {
+		payload := item.Map()
+		response.Data = append(response.Data, payload)
+	}
+	if len(response.Data) > 0 {
+		firstID := payloadID(response.Data[0])
+		lastID := payloadID(response.Data[len(response.Data)-1])
+		response.FirstID = &firstID
+		response.LastID = &lastID
 	}
 	WriteJSON(w, http.StatusOK, response)
 }
@@ -333,15 +375,22 @@ func supportsLocalShimState(rawFields map[string]json.RawMessage) bool {
 
 func shouldFallbackLocalState(err error) bool {
 	mapped := service.MapGeneratorError(err)
-	return errors.Is(mapped, service.ErrUpstreamFailure) || errors.Is(mapped, service.ErrUpstreamTimeout)
+	return errors.Is(mapped, service.ErrUpstreamFailure) || errors.Is(mapped, service.ErrUpstreamTimeout) || errors.Is(err, domain.ErrUnsupportedShape)
 }
 
-func (h *responseHandler) proxyCreateWithShadowStore(w http.ResponseWriter, r *http.Request, request CreateResponseRequest, rawBody []byte, requestJSON string) {
+func (h *responseHandler) proxyCreateWithShadowStore(w http.ResponseWriter, r *http.Request, request CreateResponseRequest, rawBody []byte, requestJSON string, rawFields map[string]json.RawMessage) {
+	upstreamBody, plan, err := remapCustomToolsPayload(rawFields, h.customToolsMode, h.forceCodexToolChoiceRequired)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	logCustomToolTransport(r.Context(), h.logger, rawFields, upstreamBody, plan)
+
 	cloned := r.Clone(r.Context())
-	cloned.Body = io.NopCloser(bytes.NewReader(rawBody))
-	cloned.ContentLength = int64(len(rawBody))
+	cloned.Body = io.NopCloser(bytes.NewReader(upstreamBody))
+	cloned.ContentLength = int64(len(upstreamBody))
 	cloned.GetBody = func() (io.ReadCloser, error) {
-		return io.NopCloser(bytes.NewReader(rawBody)), nil
+		return io.NopCloser(bytes.NewReader(upstreamBody)), nil
 	}
 	if cloned.Header.Get("X-Request-Id") == "" {
 		cloned.Header.Set("X-Request-Id", RequestIDFromContext(cloned.Context()))
@@ -361,9 +410,25 @@ func (h *responseHandler) proxyCreateWithShadowStore(w http.ResponseWriter, r *h
 		return
 	}
 
+	responseBody := body
+	if response.StatusCode >= 200 && response.StatusCode < 300 {
+		remappedBody, err := normalizeUpstreamResponseBody(body, plan, shouldApplyCodexCompatibility(rawFields, decodeToolList(rawFields)))
+		if err != nil {
+			h.logger.WarnContext(r.Context(), "custom tool response remap failed",
+				"request_id", RequestIDFromContext(r.Context()),
+				"err", err,
+			)
+		} else {
+			responseBody = remappedBody
+		}
+	}
+
 	copyResponseHeaders(w.Header(), response.Header)
+	if !bytes.Equal(responseBody, body) {
+		w.Header().Del("Content-Length")
+	}
 	w.WriteHeader(response.StatusCode)
-	_, _ = w.Write(body)
+	_, _ = w.Write(responseBody)
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return
@@ -374,10 +439,11 @@ func (h *responseHandler) proxyCreateWithShadowStore(w http.ResponseWriter, r *h
 		return
 	}
 
-	parsed, err := domain.ParseUpstreamResponse(body)
-	if err != nil || parsed.OutputText == "" || len(parsed.Output) == 0 {
+	parsed, err := domain.ParseUpstreamResponse(responseBody)
+	if err != nil || (parsed.OutputText == "" && len(parsed.Output) == 0) {
 		return
 	}
+	parsed = annotateResponseCustomToolMetadata(parsed, plan)
 
 	_, err = h.service.SaveExternalResponse(r.Context(), prepared, input, parsed)
 	if err != nil {
@@ -408,45 +474,62 @@ func prepareShadowStore(request CreateResponseRequest, requestJSON string) (serv
 	}, input, true
 }
 
-func buildUpstreamResponsesBody(rawFields map[string]json.RawMessage, contextItems []domain.MessageItem) ([]byte, error) {
-	payload := make(map[string]any, len(rawFields)+1)
-	for key, raw := range rawFields {
+func buildUpstreamResponsesBody(rawFields map[string]json.RawMessage, contextItems []domain.Item, currentInput []domain.Item, refs map[string]domain.ToolCallReference, customToolsMode string, forceCodexToolChoiceRequired bool) ([]byte, customToolTransportPlan, error) {
+	effectiveMode := customToolsMode
+	if parseCustomToolsMode(customToolsMode) == customToolsModeAuto && contextHasPassthroughCustomItems(contextItems) {
+		effectiveMode = string(customToolsModePassthrough)
+	}
+
+	body, plan, err := remapCustomToolsPayload(rawFields, effectiveMode, forceCodexToolChoiceRequired)
+	if err != nil {
+		return nil, customToolTransportPlan{}, err
+	}
+
+	payload, err := decodeRawFields(body)
+	if err != nil {
+		return nil, customToolTransportPlan{}, err
+	}
+
+	out := make(map[string]any, len(payload)+1)
+	for key, raw := range payload {
 		switch key {
 		case "input", "previous_response_id", "conversation", "instructions":
 			continue
 		case "store":
-			payload[key] = false
+			out[key] = false
 		default:
-			payload[key] = json.RawMessage(raw)
+			out[key] = json.RawMessage(raw)
 		}
 	}
-	if _, ok := payload["store"]; !ok {
-		payload["store"] = false
+	if _, ok := out["store"]; !ok {
+		out["store"] = false
 	}
-	payload["input"] = buildUpstreamInputItems(contextItems)
-	return json.Marshal(payload)
+
+	itemsForUpstream := contextItems
+	if shouldApplyCodexCompatibility(rawFields, decodeToolList(payload)) {
+		itemsForUpstream = injectCodexCompatibilityContext(itemsForUpstream, len(currentInput))
+	}
+
+	items, err := remapItemsForUpstream(itemsForUpstream, plan, refs)
+	if err != nil {
+		return nil, customToolTransportPlan{}, err
+	}
+	out["input"] = items
+	encoded, err := json.Marshal(out)
+	if err != nil {
+		return nil, customToolTransportPlan{}, err
+	}
+	return encoded, plan, nil
 }
 
-func buildUpstreamInputItems(items []domain.MessageItem) []map[string]any {
-	out := make([]map[string]any, 0, len(items))
+func buildUpstreamInputItems(items []domain.Item) []json.RawMessage {
+	out := make([]json.RawMessage, 0, len(items))
 	for _, item := range items {
-		content := domain.MessageText(item)
-		if len(out) == 0 || out[len(out)-1]["role"] != item.Role {
-			out = append(out, map[string]any{
-				"role":    item.Role,
-				"content": content,
-			})
+		raw, err := item.MarshalJSON()
+		if err != nil {
 			continue
 		}
-
-		if content == "" {
-			continue
-		}
-		if previous, ok := out[len(out)-1]["content"].(string); ok && previous != "" {
-			out[len(out)-1]["content"] = previous + "\n\n" + content
-			continue
-		}
-		out[len(out)-1]["content"] = content
+		out = append(out, raw)
 	}
 	return out
 }

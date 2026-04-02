@@ -13,8 +13,8 @@ import (
 )
 
 type Generator interface {
-	Generate(ctx context.Context, model string, items []domain.MessageItem, options map[string]json.RawMessage) (string, error)
-	GenerateStream(ctx context.Context, model string, items []domain.MessageItem, options map[string]json.RawMessage, onDelta func(string) error) error
+	Generate(ctx context.Context, model string, items []domain.Item, options map[string]json.RawMessage) (string, error)
+	GenerateStream(ctx context.Context, model string, items []domain.Item, options map[string]json.RawMessage, onDelta func(string) error) error
 }
 
 type ResponseStore interface {
@@ -25,7 +25,7 @@ type ResponseStore interface {
 
 type ConversationStore interface {
 	GetConversation(ctx context.Context, id string) (domain.Conversation, []domain.ConversationItem, error)
-	SaveResponseAndAppendConversation(ctx context.Context, conversation domain.Conversation, response domain.StoredResponse, input []domain.MessageItem, assistant domain.MessageItem) error
+	SaveResponseAndAppendConversation(ctx context.Context, conversation domain.Conversation, response domain.StoredResponse, input []domain.Item, output []domain.Item) error
 }
 
 type CreateResponseInput struct {
@@ -41,9 +41,10 @@ type CreateResponseInput struct {
 }
 
 type PreparedResponseContext struct {
-	NormalizedInput []domain.MessageItem
-	ContextItems    []domain.MessageItem
+	NormalizedInput []domain.Item
+	ContextItems    []domain.Item
 	Conversation    domain.Conversation
+	ToolCallRefs    map[string]domain.ToolCallReference
 }
 
 type StreamHooks struct {
@@ -70,6 +71,9 @@ func (s *ResponseService) Create(ctx context.Context, input CreateResponseInput)
 	if err != nil {
 		return domain.Response{}, err
 	}
+	if err := domain.ValidateLocalShimItems(prepared.ContextItems); err != nil {
+		return domain.Response{}, err
+	}
 
 	outputText, err := s.generator.Generate(ctx, input.Model, prepared.ContextItems, input.GenerationOptions)
 	if err != nil {
@@ -93,8 +97,10 @@ func (s *ResponseService) PrepareCreateContext(ctx context.Context, input Create
 	}
 
 	var (
-		contextItems []domain.MessageItem
+		baseItems    []domain.Item
+		contextItems []domain.Item
 		conversation domain.Conversation
+		toolCallRefs map[string]domain.ToolCallReference
 	)
 
 	switch {
@@ -103,9 +109,9 @@ func (s *ResponseService) PrepareCreateContext(ctx context.Context, input Create
 		if err != nil {
 			return PreparedResponseContext{}, err
 		}
-		contextItems, err = domain.BuildLineageContext(lineage, input.Instructions, normalizedInput)
-		if err != nil {
-			return PreparedResponseContext{}, err
+		for _, response := range lineage {
+			baseItems = append(baseItems, response.NormalizedInputItems...)
+			baseItems = append(baseItems, response.Output...)
 		}
 	case input.ConversationID != "":
 		var items []domain.ConversationItem
@@ -113,15 +119,22 @@ func (s *ResponseService) PrepareCreateContext(ctx context.Context, input Create
 		if err != nil {
 			return PreparedResponseContext{}, err
 		}
-		contextItems = domain.BuildConversationContext(items, input.Instructions, normalizedInput)
+		baseItems = domainItemsFromConversation(items)
 	default:
-		contextItems = domain.AppendCurrentRequestContext(nil, input.Instructions, normalizedInput)
+		baseItems = nil
 	}
+	toolCallRefs = domain.CollectToolCallReferences(baseItems)
+	normalizedInput, err = domain.CanonicalizeToolOutputs(normalizedInput, toolCallRefs)
+	if err != nil {
+		return PreparedResponseContext{}, err
+	}
+	contextItems = domain.AppendCurrentRequestContext(baseItems, input.Instructions, normalizedInput)
 
 	return PreparedResponseContext{
 		NormalizedInput: normalizedInput,
 		ContextItems:    contextItems,
 		Conversation:    conversation,
+		ToolCallRefs:    toolCallRefs,
 	}, nil
 }
 
@@ -137,10 +150,18 @@ func (s *ResponseService) SaveExternalResponse(ctx context.Context, prepared Pre
 		response.Conversation = input.ConversationID
 	}
 	if strings.TrimSpace(response.OutputText) != "" && len(response.Output) == 0 {
-		response.Output = []domain.MessageItem{domain.NewOutputTextMessage(response.OutputText)}
+		response.Output = []domain.Item{domain.NewOutputTextMessage(response.OutputText)}
 	}
 	if len(response.Output) == 0 {
 		return domain.Response{}, domain.NewValidationError("output", "assistant output is required")
+	}
+	normalizedInput, err := domain.EnsureItemIDs(prepared.NormalizedInput)
+	if err != nil {
+		return domain.Response{}, err
+	}
+	response.Output, err = domain.EnsureItemIDs(response.Output)
+	if err != nil {
+		return domain.Response{}, err
 	}
 
 	now := domain.FormatTime(domain.NowUTC())
@@ -149,7 +170,7 @@ func (s *ResponseService) SaveExternalResponse(ctx context.Context, prepared Pre
 		ID:                   response.ID,
 		Model:                response.Model,
 		RequestJSON:          input.RequestJSON,
-		NormalizedInputItems: prepared.NormalizedInput,
+		NormalizedInputItems: normalizedInput,
 		Output:               response.Output,
 		OutputText:           response.OutputText,
 		PreviousResponseID:   response.PreviousResponseID,
@@ -161,7 +182,7 @@ func (s *ResponseService) SaveExternalResponse(ctx context.Context, prepared Pre
 
 	switch {
 	case input.ConversationID != "":
-		if err := s.conversations.SaveResponseAndAppendConversation(ctx, prepared.Conversation, stored, prepared.NormalizedInput, response.Output[0]); err != nil {
+		if err := s.conversations.SaveResponseAndAppendConversation(ctx, prepared.Conversation, stored, normalizedInput, response.Output); err != nil {
 			return domain.Response{}, err
 		}
 	case shouldStore:
@@ -176,6 +197,9 @@ func (s *ResponseService) SaveExternalResponse(ctx context.Context, prepared Pre
 func (s *ResponseService) CreateStream(ctx context.Context, input CreateResponseInput, hooks StreamHooks) (domain.Response, error) {
 	prepared, err := s.prepareCreate(ctx, input)
 	if err != nil {
+		return domain.Response{}, err
+	}
+	if err := domain.ValidateLocalShimItems(prepared.ContextItems); err != nil {
 		return domain.Response{}, err
 	}
 
@@ -238,6 +262,15 @@ func (s *ResponseService) prepareCreate(ctx context.Context, input CreateRespons
 
 func (s *ResponseService) completeCreate(ctx context.Context, prepared preparedResponse, input CreateResponseInput, outputText string) (domain.Response, error) {
 	response := domain.NewResponse(prepared.ResponseID, input.Model, outputText, input.PreviousResponseID, input.ConversationID)
+	var err error
+	prepared.NormalizedInput, err = domain.EnsureItemIDs(prepared.NormalizedInput)
+	if err != nil {
+		return domain.Response{}, err
+	}
+	response.Output, err = domain.EnsureItemIDs(response.Output)
+	if err != nil {
+		return domain.Response{}, err
+	}
 	now := domain.FormatTime(domain.NowUTC())
 	stored := domain.StoredResponse{
 		ID:                   response.ID,
@@ -253,10 +286,9 @@ func (s *ResponseService) completeCreate(ctx context.Context, prepared preparedR
 		CompletedAt:          now,
 	}
 
-	assistantItem := response.Output[0]
 	switch {
 	case input.ConversationID != "":
-		if err := s.conversations.SaveResponseAndAppendConversation(ctx, prepared.Conversation, stored, prepared.NormalizedInput, assistantItem); err != nil {
+		if err := s.conversations.SaveResponseAndAppendConversation(ctx, prepared.Conversation, stored, prepared.NormalizedInput, response.Output); err != nil {
 			return domain.Response{}, err
 		}
 	case input.PreviousResponseID != "":
@@ -276,8 +308,8 @@ func (s *ResponseService) completeCreate(ctx context.Context, prepared preparedR
 
 type preparedResponse struct {
 	ResponseID      string
-	NormalizedInput []domain.MessageItem
-	ContextItems    []domain.MessageItem
+	NormalizedInput []domain.Item
+	ContextItems    []domain.Item
 	Conversation    domain.Conversation
 }
 
@@ -293,6 +325,18 @@ func (s *ResponseService) Get(ctx context.Context, id string) (domain.Response, 
 	return domain.ResponseFromStored(stored), nil
 }
 
+func (s *ResponseService) GetInputItems(ctx context.Context, id string) ([]domain.Item, error) {
+	if id == "" {
+		return nil, domain.NewValidationError("id", "response id is required")
+	}
+
+	stored, err := s.responses.GetResponse(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return stored.NormalizedInputItems, nil
+}
+
 func MapStorageError(err error) error {
 	switch {
 	case err == nil:
@@ -304,6 +348,14 @@ func MapStorageError(err error) error {
 	default:
 		return err
 	}
+}
+
+func domainItemsFromConversation(items []domain.ConversationItem) []domain.Item {
+	out := make([]domain.Item, 0, len(items))
+	for _, item := range items {
+		out = append(out, item.Item)
+	}
+	return out
 }
 
 func MapGeneratorError(err error) error {
