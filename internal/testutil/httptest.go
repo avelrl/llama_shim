@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"llama_shim/internal/config"
 	"llama_shim/internal/httpapi"
 	"llama_shim/internal/llama"
 	"llama_shim/internal/service"
@@ -22,14 +23,42 @@ type TestApp struct {
 }
 
 func NewTestApp(t *testing.T) *TestApp {
-	return NewTestAppWithCodexSettings(t, "", false, false)
+	return NewTestAppWithOptions(t, TestAppOptions{})
 }
 
 func NewTestAppWithCustomToolsMode(t *testing.T, customToolsMode string) *TestApp {
-	return NewTestAppWithCodexSettings(t, customToolsMode, false, false)
+	return NewTestAppWithOptions(t, TestAppOptions{CustomToolsMode: customToolsMode})
+}
+
+func NewTestAppWithResponsesMode(t *testing.T, responsesMode string) *TestApp {
+	return NewTestAppWithOptions(t, TestAppOptions{ResponsesMode: responsesMode})
 }
 
 func NewTestAppWithCodexSettings(t *testing.T, customToolsMode string, codexCompatibilityEnabled bool, forceToolChoiceRequired bool) *TestApp {
+	return NewTestAppWithOptions(t, TestAppOptions{
+		CustomToolsMode:           customToolsMode,
+		CodexCompatibilityEnabled: codexCompatibilityEnabled,
+		ForceToolChoiceRequired:   forceToolChoiceRequired,
+	})
+}
+
+func NewTestAppWithResponsesAndCodexSettings(t *testing.T, responsesMode string, customToolsMode string, codexCompatibilityEnabled bool, forceToolChoiceRequired bool) *TestApp {
+	return NewTestAppWithOptions(t, TestAppOptions{
+		ResponsesMode:             responsesMode,
+		CustomToolsMode:           customToolsMode,
+		CodexCompatibilityEnabled: codexCompatibilityEnabled,
+		ForceToolChoiceRequired:   forceToolChoiceRequired,
+	})
+}
+
+type TestAppOptions struct {
+	ResponsesMode             string
+	CustomToolsMode           string
+	CodexCompatibilityEnabled bool
+	ForceToolChoiceRequired   bool
+}
+
+func NewTestAppWithOptions(t *testing.T, options TestAppOptions) *TestApp {
 	t.Helper()
 
 	llamaServer := NewFakeLlamaServer(t)
@@ -43,14 +72,20 @@ func NewTestAppWithCodexSettings(t *testing.T, customToolsMode string, codexComp
 	responseService := service.NewResponseService(store, store, llamaClient)
 	conversationService := service.NewConversationService(store)
 
+	responsesMode := options.ResponsesMode
+	if responsesMode == "" {
+		responsesMode = config.ResponsesModePreferLocal
+	}
+
 	server := httptest.NewServer(httpapi.NewRouter(httpapi.RouterDeps{
 		Logger:                                logger,
 		LlamaClient:                           llamaClient,
 		ResponseService:                       responseService,
 		ConversationService:                   conversationService,
-		ResponsesCustomToolsMode:              customToolsMode,
-		ResponsesCodexEnableCompatibility:     codexCompatibilityEnabled,
-		ResponsesCodexForceToolChoiceRequired: forceToolChoiceRequired,
+		ResponsesMode:                         responsesMode,
+		ResponsesCustomToolsMode:              options.CustomToolsMode,
+		ResponsesCodexEnableCompatibility:     options.CodexCompatibilityEnabled,
+		ResponsesCodexForceToolChoiceRequired: options.ForceToolChoiceRequired,
 		Store:                                 store,
 	}))
 

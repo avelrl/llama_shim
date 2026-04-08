@@ -138,14 +138,21 @@ func NewFakeLlamaServer(t *testing.T) *httptest.Server {
 				},
 			}))
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/chat/completions":
-			var request fakeLlamaRequest
+			var request map[string]any
 			require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
 
-			output := fakeLlamaOutput(request.Messages)
-			if request.Stream {
+			if response, ok := buildFakeChatCompletionToolResponse(request); ok {
+				w.Header().Set("Content-Type", "application/json")
+				require.NoError(t, json.NewEncoder(w).Encode(response))
+				return
+			}
+
+			output := fakeLlamaOutputFromChatMessages(chatMessagesFromRequest(request["messages"]))
+			if stream, _ := request["stream"].(bool); stream {
 				writeFakeChatCompletionStream(t, w, output)
 				return
 			}
+			w.Header().Set("Content-Type", "application/json")
 			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
 				"choices": []map[string]any{
 					{
@@ -171,6 +178,170 @@ func NewFakeLlamaServer(t *testing.T) *httptest.Server {
 			http.NotFound(w, r)
 		}
 	}))
+}
+
+func buildFakeChatCompletionToolResponse(request map[string]any) (map[string]any, bool) {
+	tools, ok := request["tools"].([]any)
+	if !ok || len(tools) == 0 {
+		return nil, false
+	}
+
+	messages := chatMessagesFromRequest(request["messages"])
+	if output, ok := fakeToolOutputReplyFromChatMessages(messages); ok {
+		return map[string]any{
+			"choices": []map[string]any{
+				{
+					"message": map[string]any{
+						"content": output,
+					},
+				},
+			},
+		}, true
+	}
+
+	firstTool, ok := tools[0].(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	function, ok := firstTool["function"].(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	name := strings.TrimSpace(asString(function["name"]))
+	if name == "" {
+		name = "tool"
+	}
+
+	joined := strings.ToLower(joinChatMessageContent(messages))
+	arguments := fakeToolArguments(name)
+	switch {
+	case name == "math_exp" && strings.Contains(joined, "always invalid grammar tool"):
+		arguments = `{"input":"4+4"}`
+	case name == "math_exp" && strings.Contains(joined, "invalid grammar first attempt") && !hasConstrainedCustomToolRepairPrompt(messages):
+		arguments = `{"input":"4+4"}`
+	}
+	message := map[string]any{
+		"content": nil,
+		"tool_calls": []map[string]any{
+			{
+				"id":   "call_chat_1",
+				"type": "function",
+				"function": map[string]any{
+					"name":      name,
+					"arguments": arguments,
+				},
+			},
+		},
+	}
+	if name == "update_plan" && strings.Contains(joined, "completed plan reasoning stream") {
+		message["content"] = "All tasks are complete. Let me provide a summary to the user."
+	}
+
+	return map[string]any{
+		"choices": []map[string]any{
+			{
+				"message": message,
+			},
+		},
+	}, true
+}
+
+func hasConstrainedCustomToolRepairPrompt(messages []map[string]any) bool {
+	for _, message := range messages {
+		if !strings.EqualFold(strings.TrimSpace(asString(message["role"])), "system") {
+			continue
+		}
+		content := strings.ToLower(chatMessageContent(message))
+		if strings.Contains(content, "previous attempt for custom tool") &&
+			strings.Contains(content, "produced invalid raw input") {
+			return true
+		}
+	}
+	return false
+}
+
+func chatMessagesFromRequest(value any) []map[string]any {
+	rawMessages, ok := value.([]any)
+	if !ok {
+		return nil
+	}
+	messages := make([]map[string]any, 0, len(rawMessages))
+	for _, rawMessage := range rawMessages {
+		message, ok := rawMessage.(map[string]any)
+		if !ok {
+			continue
+		}
+		messages = append(messages, message)
+	}
+	return messages
+}
+
+func fakeLlamaOutputFromChatMessages(messages []map[string]any) string {
+	if len(messages) == 0 {
+		return "EMPTY"
+	}
+	if output, ok := fakeToolOutputReplyFromChatMessages(messages); ok {
+		return output
+	}
+
+	last := strings.ToLower(chatMessageContent(messages[len(messages)-1]))
+	joined := strings.ToLower(joinChatMessageContent(messages))
+
+	switch {
+	case strings.Contains(last, "what was my code") && strings.Contains(joined, "my code = 123"):
+		return "123"
+	case strings.Contains(last, "what is the code") && strings.Contains(joined, "code=777"):
+		return "777"
+	case strings.Contains(last, "say ok and nothing else"):
+		return "OK"
+	case strings.Contains(last, "reply ok"):
+		return "OK"
+	default:
+		return "UNHANDLED"
+	}
+}
+
+func joinChatMessageContent(messages []map[string]any) string {
+	parts := make([]string, 0, len(messages))
+	for _, message := range messages {
+		if content := chatMessageContent(message); content != "" {
+			parts = append(parts, content)
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
+func chatMessageContent(message map[string]any) string {
+	if message == nil {
+		return ""
+	}
+	switch content := message["content"].(type) {
+	case string:
+		return content
+	case []any:
+		var builder strings.Builder
+		for _, rawPart := range content {
+			part, ok := rawPart.(map[string]any)
+			if !ok {
+				continue
+			}
+			builder.WriteString(asString(part["text"]))
+		}
+		return builder.String()
+	default:
+		return ""
+	}
+}
+
+func fakeToolOutputReplyFromChatMessages(messages []map[string]any) (string, bool) {
+	for i := len(messages) - 1; i >= 0; i-- {
+		message := messages[i]
+		if !strings.EqualFold(strings.TrimSpace(asString(message["role"])), "tool") {
+			continue
+		}
+		return chatMessageContent(message), true
+	}
+	return "", false
 }
 
 func fakeLlamaOutput(messages []fakeLlamaMessage) string {
@@ -270,6 +441,26 @@ func buildFakeWrappedValidationErrorResponse(request map[string]any) (map[string
 }
 
 func buildFakeResponseForTools(id, model string, request map[string]any) (map[string]any, int, string, bool) {
+	if shouldRejectStructuredInputArray(request) {
+		return map[string]any{
+			"error": map[string]any{
+				"type":    "invalid_request_error",
+				"message": "426 validation errors:\n  {'type': 'string_type', 'loc': ('body', 'input', 'str'), 'msg': 'Input should be a valid string'}",
+				"param":   nil,
+				"code":    nil,
+			},
+		}, http.StatusBadRequest, "", true
+	}
+	if shouldRejectReplayedTypedInput(request) {
+		return map[string]any{
+			"error": map[string]any{
+				"type":    "invalid_request_error",
+				"message": "637 validation errors:\n  {'type': 'string_type', 'loc': ('body', 'input', 'str'), 'msg': 'Input should be a valid string'}",
+				"param":   nil,
+				"code":    nil,
+			},
+		}, http.StatusBadRequest, "", true
+	}
 	if requestHasToolOutput(request["input"]) {
 		return buildFakeResponse(id, model, fakeToolOutputReply(request["input"])), http.StatusOK, "message", true
 	}
@@ -301,6 +492,14 @@ func buildFakeResponseForTools(id, model string, request map[string]any) (map[st
 			},
 		}, http.StatusBadRequest, "", true
 	}
+	if strings.Contains(joinedInput, "backend rejects native custom tools") && requestHasNativeCustomTool(tools) {
+		return map[string]any{
+			"error": map[string]any{
+				"type":    "invalid_request_error",
+				"message": "tool type custom not supported",
+			},
+		}, http.StatusBadRequest, "", true
+	}
 
 	firstTool, ok := tools[0].(map[string]any)
 	if !ok {
@@ -308,7 +507,7 @@ func buildFakeResponseForTools(id, model string, request map[string]any) (map[st
 	}
 
 	switch strings.TrimSpace(asString(firstTool["type"])) {
-	case "custom":
+	case "custom", "custom_tool":
 		name := strings.TrimSpace(asString(firstTool["name"]))
 		if name == "" {
 			name = "tool"
@@ -329,6 +528,25 @@ func buildFakeResponseForTools(id, model string, request map[string]any) (map[st
 	}
 }
 
+func shouldRejectStructuredInputArray(request map[string]any) bool {
+	items, ok := request["input"].([]any)
+	if !ok || len(items) == 0 {
+		return false
+	}
+	return strings.Contains(strings.ToLower(marshalAny(items)), "backend rejects structured input arrays")
+}
+
+func shouldRejectReplayedTypedInput(request map[string]any) bool {
+	if _, ok := request["previous_response_id"]; ok {
+		return false
+	}
+	items, ok := request["input"].([]any)
+	if !ok || len(items) < 2 {
+		return false
+	}
+	return strings.Contains(strings.ToLower(marshalAny(items)), "backend rejects replayed typed input")
+}
+
 func firstUnsupportedToolType(tools []any) string {
 	for _, tool := range tools {
 		payload, ok := tool.(map[string]any)
@@ -345,6 +563,20 @@ func firstUnsupportedToolType(tools []any) string {
 		}
 	}
 	return ""
+}
+
+func requestHasNativeCustomTool(tools []any) bool {
+	for _, tool := range tools {
+		payload, ok := tool.(map[string]any)
+		if !ok {
+			continue
+		}
+		switch strings.TrimSpace(asString(payload["type"])) {
+		case "custom", "custom_tool":
+			return true
+		}
+	}
+	return false
 }
 
 func buildFakeFunctionToolCallResponse(id, model, name, arguments string) map[string]any {
@@ -421,6 +653,8 @@ func fakeToolArguments(name string) string {
 	switch name {
 	case "code_exec":
 		return `{"input":"print(\"hello world\")"}`
+	case "math_exp":
+		return `{"input":"4 + 4"}`
 	case "exec_command":
 		return `{"cmd":"cd /tmp/snake_test && go test ./game -v 2>&1","sandbox_permissions":"require_escalated","justification":"Need approval to run tests"}`
 	case "add":
@@ -434,6 +668,8 @@ func fakeCustomToolInput(name string) string {
 	switch name {
 	case "code_exec":
 		return `print("hello world")`
+	case "math_exp":
+		return "4 + 4"
 	default:
 		return "tool input"
 	}

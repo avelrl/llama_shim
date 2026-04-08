@@ -29,6 +29,7 @@ log:
   level: debug
   file_path: ./tmp/shim.log
 responses:
+  mode: prefer_upstream
   custom_tools:
     mode: bridge
   codex:
@@ -47,6 +48,7 @@ responses:
 	require.Equal(t, 45*time.Second, cfg.IdleTimeout)
 	require.Equal(t, slog.LevelDebug, cfg.LogLevel)
 	require.Equal(t, "./tmp/shim.log", cfg.LogFilePath)
+	require.Equal(t, config.ResponsesModePreferUpstream, cfg.ResponsesMode)
 	require.Equal(t, "bridge", cfg.ResponsesCustomToolsMode)
 	require.True(t, cfg.ResponsesCodexEnableCompatibility)
 	require.True(t, cfg.ResponsesCodexForceToolChoiceRequired)
@@ -63,6 +65,7 @@ llama:
 log:
   level: info
 responses:
+  mode: prefer_upstream
   codex:
     enable_compatibility: false
     force_tool_choice_required: false
@@ -72,6 +75,7 @@ responses:
 	t.Setenv("LLAMA_TIMEOUT", "25s")
 	t.Setenv("LOG_LEVEL", "warn")
 	t.Setenv("LOG_FILE_PATH", "./override.log")
+	t.Setenv("RESPONSES_MODE", "local_only")
 	t.Setenv("RESPONSES_CODEX_ENABLE_COMPATIBILITY", "true")
 	t.Setenv("RESPONSES_CODEX_FORCE_TOOL_CHOICE_REQUIRED", "true")
 
@@ -81,6 +85,7 @@ responses:
 	require.Equal(t, 25*time.Second, cfg.LlamaTimeout)
 	require.Equal(t, slog.LevelWarn, cfg.LogLevel)
 	require.Equal(t, "./override.log", cfg.LogFilePath)
+	require.Equal(t, config.ResponsesModeLocalOnly, cfg.ResponsesMode)
 	require.True(t, cfg.ResponsesCodexEnableCompatibility)
 	require.True(t, cfg.ResponsesCodexForceToolChoiceRequired)
 }
@@ -96,6 +101,8 @@ func TestLoadUsesCodexSafeDefaults(t *testing.T) {
 
 	cfg, err := config.Load("")
 	require.NoError(t, err)
+	require.Equal(t, config.ResponsesModePreferLocal, cfg.ResponsesMode)
+	require.Equal(t, "auto", cfg.ResponsesCustomToolsMode)
 	require.True(t, cfg.ResponsesCodexEnableCompatibility)
 	require.True(t, cfg.ResponsesCodexForceToolChoiceRequired)
 }

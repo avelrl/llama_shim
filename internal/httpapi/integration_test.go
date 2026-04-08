@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"llama_shim/internal/config"
 	"llama_shim/internal/domain"
 	"llama_shim/internal/testutil"
 )
@@ -72,7 +73,8 @@ func TestResponsesPreviousResponseIDWithSupportedGenerationFieldsUsesLocalShim(t
 		"temperature": 0,
 	})
 
-	require.Equal(t, "upstream_resp_1", first.ID)
+	require.NotEmpty(t, first.ID)
+	require.NotEqual(t, "upstream_resp_1", first.ID)
 	require.NotEmpty(t, second.ID)
 	require.NotEqual(t, "upstream_resp_2", second.ID)
 	require.Equal(t, first.ID, second.PreviousResponseID)
@@ -220,7 +222,7 @@ func TestCreateResponseRejectsMutuallyExclusiveStateFields(t *testing.T) {
 }
 
 func TestResponsesCanonicalizeWrappedUpstreamValidationError(t *testing.T) {
-	app := testutil.NewTestApp(t)
+	app := testutil.NewTestAppWithResponsesMode(t, config.ResponsesModePreferUpstream)
 
 	status, payload := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
 		"model": "test-model",
@@ -447,7 +449,7 @@ func TestResponsesStream(t *testing.T) {
 }
 
 func TestResponsesStreamNormalizesDeltaOnlyUpstreamFlow(t *testing.T) {
-	app := testutil.NewTestApp(t)
+	app := testutil.NewTestAppWithResponsesMode(t, config.ResponsesModePreferUpstream)
 
 	reqBody, err := json.Marshal(map[string]any{
 		"model":  "test-model",
@@ -489,8 +491,30 @@ func TestResponsesStreamNormalizesDeltaOnlyUpstreamFlow(t *testing.T) {
 	require.Equal(t, "DELTA_ONLY_STREAM_OK", got.OutputText)
 }
 
-func TestResponsesWithSupportedGenerationFieldsProxyUpstreamAndShadowStore(t *testing.T) {
+func TestResponsesWithSupportedGenerationFieldsUseLocalShimByDefault(t *testing.T) {
 	app := testutil.NewTestApp(t)
+
+	response := postResponse(t, app, map[string]any{
+		"model": "test-model",
+		"store": true,
+		"input": "Say OK and nothing else",
+		"reasoning": map[string]any{
+			"effort": "minimal",
+		},
+		"temperature": 0,
+	})
+
+	require.NotEmpty(t, response.ID)
+	require.NotEqual(t, "upstream_resp_1", response.ID)
+	require.Equal(t, "OK", response.OutputText)
+
+	got := getResponse(t, app, response.ID)
+	require.Equal(t, response.ID, got.ID)
+	require.Equal(t, "OK", got.OutputText)
+}
+
+func TestResponsesWithSupportedGenerationFieldsPreferUpstreamProxyAndShadowStore(t *testing.T) {
+	app := testutil.NewTestAppWithResponsesMode(t, config.ResponsesModePreferUpstream)
 
 	response := postResponse(t, app, map[string]any{
 		"model": "test-model",
@@ -526,6 +550,339 @@ func TestResponsesWithUnsupportedFieldsAreProxiedUpstream(t *testing.T) {
 
 	require.Equal(t, "upstream_resp_1", response.ID)
 	require.Equal(t, "OK", response.OutputText)
+}
+
+func TestResponsesLocalOnlyRejectsUnsupportedFields(t *testing.T) {
+	app := testutil.NewTestAppWithResponsesMode(t, config.ResponsesModeLocalOnly)
+
+	status, payload := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model": "test-model",
+		"store": true,
+		"input": "Say OK and nothing else",
+		"text": map[string]any{
+			"format": map[string]any{
+				"type": "json_object",
+			},
+		},
+	})
+
+	require.Equal(t, http.StatusBadRequest, status)
+	errorPayload := payload["error"].(map[string]any)
+	require.Equal(t, "invalid_request_error", errorPayload["type"])
+	require.Equal(t, "responses.mode", errorPayload["param"])
+	require.Contains(t, asStringAny(errorPayload["message"]), "responses.mode=local_only")
+}
+
+func TestResponsesPreferLocalHandlesGrammarCustomToolsLocally(t *testing.T) {
+	app := testutil.NewTestAppWithCustomToolsMode(t, "auto")
+
+	status, body := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model": "test-model",
+		"input": "Use grammar tool",
+		"tools": []map[string]any{
+			{
+				"type": "custom",
+				"name": "math_exp",
+				"format": map[string]any{
+					"type":       "grammar",
+					"syntax":     "lark",
+					"definition": "start: expr\nexpr: term (SP ADD SP term)* -> add\n| term\nterm: INT\nSP: \" \"\nADD: \"+\"\n%import common.INT",
+				},
+			},
+		},
+	})
+
+	require.Equal(t, http.StatusOK, status)
+	require.NotEqual(t, "upstream_resp_1", body["id"])
+
+	output, ok := body["output"].([]any)
+	require.True(t, ok)
+	require.Len(t, output, 1)
+	item, ok := output[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "custom_tool_call", item["type"])
+	require.Equal(t, "math_exp", item["name"])
+	require.Equal(t, "4 + 4", item["input"])
+}
+
+func TestResponsesLocalOnlyHandlesGrammarCustomToolsLocally(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		ResponsesMode:   config.ResponsesModeLocalOnly,
+		CustomToolsMode: "auto",
+	})
+
+	status, body := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model": "test-model",
+		"input": "Use grammar tool",
+		"tools": []map[string]any{
+			{
+				"type": "custom",
+				"name": "math_exp",
+				"format": map[string]any{
+					"type":       "grammar",
+					"syntax":     "lark",
+					"definition": "start: expr\nexpr: term (SP ADD SP term)* -> add\n| term\nterm: INT\nSP: \" \"\nADD: \"+\"\n%import common.INT",
+				},
+			},
+		},
+	})
+
+	require.Equal(t, http.StatusOK, status)
+	require.NotEqual(t, "upstream_resp_1", body["id"])
+	output, ok := body["output"].([]any)
+	require.True(t, ok)
+	require.Len(t, output, 1)
+	item, ok := output[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "custom_tool_call", item["type"])
+	require.Equal(t, "4 + 4", item["input"])
+}
+
+func TestResponsesStreamHandlesGrammarCustomToolsLocally(t *testing.T) {
+	app := testutil.NewTestAppWithCustomToolsMode(t, "auto")
+
+	reqBody, err := json.Marshal(map[string]any{
+		"model":  "test-model",
+		"stream": true,
+		"input": []map[string]any{
+			{"role": "user", "content": "Use grammar tool"},
+		},
+		"tools": []map[string]any{
+			{
+				"type": "custom",
+				"name": "math_exp",
+				"format": map[string]any{
+					"type":       "grammar",
+					"syntax":     "lark",
+					"definition": "start: expr\nexpr: term (SP ADD SP term)* -> add\n| term\nterm: INT\nSP: \" \"\nADD: \"+\"\n%import common.INT",
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	req, err := http.NewRequest(http.MethodPost, app.Server.URL+"/v1/responses", bytes.NewReader(reqBody))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	events := readSSEEvents(t, resp.Body)
+	require.Contains(t, eventTypes(events), "response.custom_tool_call_input.delta")
+	require.Contains(t, eventTypes(events), "response.custom_tool_call_input.done")
+
+	done := findEvent(t, events, "response.custom_tool_call_input.done").Data
+	doneItem, ok := done["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "custom_tool_call", doneItem["type"])
+	require.Equal(t, "4 + 4", doneItem["input"])
+}
+
+func TestResponsesPreferLocalRepairsInvalidGrammarCustomToolOutput(t *testing.T) {
+	app := testutil.NewTestAppWithCustomToolsMode(t, "auto")
+
+	status, body := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model": "test-model",
+		"input": "Invalid grammar first attempt. Use grammar tool",
+		"tools": []map[string]any{
+			{
+				"type": "custom",
+				"name": "math_exp",
+				"format": map[string]any{
+					"type":       "grammar",
+					"syntax":     "lark",
+					"definition": "start: expr\nexpr: term (SP ADD SP term)* -> add\n| term\nterm: INT\nSP: \" \"\nADD: \"+\"\n%import common.INT",
+				},
+			},
+		},
+	})
+
+	require.Equal(t, http.StatusOK, status)
+	output, ok := body["output"].([]any)
+	require.True(t, ok)
+	require.Len(t, output, 1)
+	item, ok := output[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "custom_tool_call", item["type"])
+	require.Equal(t, "4 + 4", item["input"])
+}
+
+func TestResponsesStreamRepairsInvalidGrammarCustomToolOutput(t *testing.T) {
+	app := testutil.NewTestAppWithCustomToolsMode(t, "auto")
+
+	reqBody, err := json.Marshal(map[string]any{
+		"model":  "test-model",
+		"stream": true,
+		"input": []map[string]any{
+			{"role": "user", "content": "Invalid grammar first attempt. Use grammar tool"},
+		},
+		"tools": []map[string]any{
+			{
+				"type": "custom",
+				"name": "math_exp",
+				"format": map[string]any{
+					"type":       "grammar",
+					"syntax":     "lark",
+					"definition": "start: expr\nexpr: term (SP ADD SP term)* -> add\n| term\nterm: INT\nSP: \" \"\nADD: \"+\"\n%import common.INT",
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	req, err := http.NewRequest(http.MethodPost, app.Server.URL+"/v1/responses", bytes.NewReader(reqBody))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	events := readSSEEvents(t, resp.Body)
+	done := findEvent(t, events, "response.custom_tool_call_input.done").Data
+	doneItem, ok := done["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "custom_tool_call", doneItem["type"])
+	require.Equal(t, "4 + 4", doneItem["input"])
+}
+
+func TestResponsesPreferLocalFailsWhenGrammarCustomToolRepairIsExhausted(t *testing.T) {
+	app := testutil.NewTestAppWithCustomToolsMode(t, "auto")
+
+	status, payload := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model": "test-model",
+		"input": "Always invalid grammar tool. Use grammar tool",
+		"tools": []map[string]any{
+			{
+				"type": "custom",
+				"name": "math_exp",
+				"format": map[string]any{
+					"type":       "grammar",
+					"syntax":     "lark",
+					"definition": "start: expr\nexpr: term (SP ADD SP term)* -> add\n| term\nterm: INT\nSP: \" \"\nADD: \"+\"\n%import common.INT",
+				},
+			},
+		},
+	})
+
+	require.Equal(t, http.StatusBadGateway, status)
+	errorPayload := payload["error"].(map[string]any)
+	require.Equal(t, "upstream_error", errorPayload["type"])
+	require.Equal(t, "llama.cpp request failed", errorPayload["message"])
+}
+
+func TestResponsesLocalOnlyRejectsUnsupportedGrammarCustomTools(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		ResponsesMode:   config.ResponsesModeLocalOnly,
+		CustomToolsMode: "auto",
+	})
+
+	status, payload := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model": "test-model",
+		"input": "Use grammar tool",
+		"tools": []map[string]any{
+			{
+				"type": "custom",
+				"name": "math_exp",
+				"format": map[string]any{
+					"type":       "grammar",
+					"syntax":     "lark",
+					"definition": "start: expr\nexpr: expr ADD INT | INT\nADD: \"+\"\n%import common.INT",
+				},
+			},
+		},
+	})
+
+	require.Equal(t, http.StatusBadRequest, status)
+	errorPayload := payload["error"].(map[string]any)
+	require.Equal(t, "invalid_request_error", errorPayload["type"])
+	require.Equal(t, "tools", errorPayload["param"])
+	require.Contains(t, asStringAny(errorPayload["message"]), "recursive lark rule")
+}
+
+func TestResponsesRetryStructuredInputAsStringForProxyRequests(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	status, body := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model":       "test-model",
+		"tool_choice": "required",
+		"input": []map[string]any{
+			{
+				"role":    "user",
+				"content": "backend rejects structured input arrays. Call add.",
+			},
+		},
+		"tools": []map[string]any{
+			{
+				"type": "function",
+				"name": "add",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"a": map[string]any{"type": "number"},
+						"b": map[string]any{"type": "number"},
+					},
+					"required": []string{"a", "b"},
+				},
+			},
+		},
+	})
+
+	require.Equal(t, http.StatusOK, status)
+	output, ok := body["output"].([]any)
+	require.True(t, ok)
+	require.Len(t, output, 1)
+	item, ok := output[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "function_call", item["type"])
+	require.Equal(t, "add", item["name"])
+}
+
+func TestResponsesStreamRetryStructuredInputAsStringForProxyRequests(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	reqBody, err := json.Marshal(map[string]any{
+		"model":       "test-model",
+		"stream":      true,
+		"tool_choice": "required",
+		"input": []map[string]any{
+			{
+				"role":    "user",
+				"content": "backend rejects structured input arrays. Call add.",
+			},
+		},
+		"tools": []map[string]any{
+			{
+				"type": "function",
+				"name": "add",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"a": map[string]any{"type": "number"},
+						"b": map[string]any{"type": "number"},
+					},
+					"required": []string{"a", "b"},
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	req, err := http.NewRequest(http.MethodPost, app.Server.URL+"/v1/responses", bytes.NewReader(reqBody))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	events := readSSEEvents(t, resp.Body)
+	require.Contains(t, eventTypes(events), "response.function_call_arguments.done")
 }
 
 func TestResponsesDisabledWebSearchToolIsDroppedForUpstreamCompatibility(t *testing.T) {
@@ -612,6 +969,7 @@ func TestResponsesCustomToolsAreBridged(t *testing.T) {
 	})
 
 	require.Equal(t, http.StatusOK, status)
+	require.NotEqual(t, "upstream_resp_1", body["id"])
 	require.Empty(t, body["output_text"])
 
 	output, ok := body["output"].([]any)
@@ -656,6 +1014,7 @@ func TestResponsesFunctionToolsRemainFunctionCalls(t *testing.T) {
 	})
 
 	require.Equal(t, http.StatusOK, status)
+	require.NotEqual(t, "upstream_resp_1", body["id"])
 
 	output, ok := body["output"].([]any)
 	require.True(t, ok)
@@ -709,7 +1068,7 @@ func TestResponsesRetryToolChoiceWithAutoOnUnsupportedBackend(t *testing.T) {
 }
 
 func TestResponsesRetryToolChoiceWithAutoRejectsAssistantText(t *testing.T) {
-	app := testutil.NewTestApp(t)
+	app := testutil.NewTestAppWithResponsesMode(t, config.ResponsesModePreferUpstream)
 
 	status, body := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
 		"model":       "test-model",
@@ -939,7 +1298,7 @@ func TestResponsesStreamRetriesToolChoiceWithAutoOnUnsupportedBackend(t *testing
 }
 
 func TestResponsesStreamRetryToolChoiceWithAutoRejectsAssistantText(t *testing.T) {
-	app := testutil.NewTestApp(t)
+	app := testutil.NewTestAppWithResponsesMode(t, config.ResponsesModePreferUpstream)
 
 	reqBody, err := json.Marshal(map[string]any{
 		"model":       "test-model",
@@ -983,6 +1342,114 @@ func TestResponsesStreamRetryToolChoiceWithAutoRejectsAssistantText(t *testing.T
 	errorPayload, ok := payload["error"].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, "tool_choice_incompatible_backend", errorPayload["code"])
+}
+
+func TestResponsesCodexRequestsUseLocalToolLoopByDefault(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	response := postResponse(t, app, map[string]any{
+		"model":        "test-model",
+		"store":        true,
+		"tool_choice":  "required",
+		"instructions": "You are a coding agent running in the Codex CLI, a terminal-based coding assistant.",
+		"input": []map[string]any{
+			{
+				"role":    "user",
+				"content": "Run tests and do not answer directly.",
+			},
+		},
+		"tools": []map[string]any{
+			{
+				"type": "function",
+				"name": "exec_command",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"cmd": map[string]any{"type": "string"},
+					},
+					"required": []string{"cmd"},
+				},
+			},
+		},
+	})
+
+	require.NotEmpty(t, response.ID)
+	require.NotEqual(t, "upstream_resp_1", response.ID)
+	require.Empty(t, response.OutputText)
+	require.Len(t, response.Output, 1)
+	require.Equal(t, "function_call", response.Output[0].Type)
+	require.Equal(t, "exec_command", response.Output[0].Name())
+	require.Contains(t, response.Output[0].Arguments(), `"cmd":"cd /tmp/snake_test && go test ./game -v 2>&1"`)
+}
+
+func TestResponsesCodexToolOutputFollowUpUsesLocalToolLoop(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	first := postResponse(t, app, map[string]any{
+		"model":        "test-model",
+		"store":        true,
+		"tool_choice":  "required",
+		"instructions": "You are a coding agent running in the Codex CLI, a terminal-based coding assistant.",
+		"input": []map[string]any{
+			{
+				"role":    "user",
+				"content": "Run tests and do not answer directly.",
+			},
+		},
+		"tools": []map[string]any{
+			{
+				"type": "function",
+				"name": "exec_command",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"cmd": map[string]any{"type": "string"},
+					},
+					"required": []string{"cmd"},
+				},
+			},
+		},
+	})
+	require.Len(t, first.Output, 1)
+	callID := first.Output[0].CallID()
+	require.NotEmpty(t, callID)
+
+	second := postResponse(t, app, map[string]any{
+		"model":                "test-model",
+		"store":                true,
+		"previous_response_id": first.ID,
+		"instructions":         "You are a coding agent running in the Codex CLI, a terminal-based coding assistant.",
+		"input": []map[string]any{
+			{
+				"type":    "function_call_output",
+				"call_id": callID,
+				"output":  "tool says hi",
+			},
+		},
+		"tools": []map[string]any{
+			{
+				"type": "function",
+				"name": "exec_command",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"cmd": map[string]any{"type": "string"},
+					},
+					"required": []string{"cmd"},
+				},
+			},
+		},
+	})
+
+	require.NotEmpty(t, second.ID)
+	require.NotEqual(t, "upstream_resp_2", second.ID)
+	require.Equal(t, first.ID, second.PreviousResponseID)
+	require.Equal(t, "tool says hi", second.OutputText)
+
+	got := getResponse(t, app, second.ID)
+	require.Equal(t, second.ID, got.ID)
+	require.Equal(t, first.ID, got.PreviousResponseID)
+	require.Equal(t, "tool says hi", got.OutputText)
 }
 
 func TestResponsesStreamKeepsSafeExecCommandEscalationByDefault(t *testing.T) {
@@ -1176,6 +1643,7 @@ func TestResponsesCustomToolFollowUpWithPreviousResponseID(t *testing.T) {
 		},
 	})
 	require.Len(t, first.Output, 1)
+	require.NotEqual(t, "upstream_resp_1", first.ID)
 	require.Equal(t, "custom_tool_call", first.Output[0].Type)
 	require.Equal(t, "code_exec", first.Output[0].Name())
 	require.Equal(t, `print("hello world")`, first.Output[0].Input())
@@ -1197,6 +1665,7 @@ func TestResponsesCustomToolFollowUpWithPreviousResponseID(t *testing.T) {
 		},
 	})
 
+	require.NotEqual(t, "upstream_resp_2", second.ID)
 	require.Equal(t, first.ID, second.PreviousResponseID)
 	require.Equal(t, "tool says hi", second.OutputText)
 
@@ -1209,6 +1678,273 @@ func TestResponsesCustomToolFollowUpWithPreviousResponseID(t *testing.T) {
 	firstPart, ok := outputParts[0].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, "tool says hi", firstPart["text"])
+}
+
+func TestResponsesGrammarCustomToolFollowUpWithPreviousResponseID(t *testing.T) {
+	app := testutil.NewTestAppWithCustomToolsMode(t, "auto")
+
+	first := postResponse(t, app, map[string]any{
+		"model":       "test-model",
+		"store":       true,
+		"tool_choice": "required",
+		"input": []map[string]any{
+			{
+				"role":    "user",
+				"content": "Use grammar tool",
+			},
+		},
+		"tools": []map[string]any{
+			{
+				"type": "custom",
+				"name": "math_exp",
+				"format": map[string]any{
+					"type":       "grammar",
+					"syntax":     "lark",
+					"definition": "start: expr\nexpr: term (SP ADD SP term)* -> add\n| term\nterm: INT\nSP: \" \"\nADD: \"+\"\n%import common.INT",
+				},
+			},
+		},
+	})
+	require.Len(t, first.Output, 1)
+	require.NotEqual(t, "upstream_resp_1", first.ID)
+	require.Equal(t, "custom_tool_call", first.Output[0].Type)
+	require.Equal(t, "math_exp", first.Output[0].Name())
+	require.Equal(t, "4 + 4", first.Output[0].Input())
+	callID := first.Output[0].CallID()
+	require.NotEmpty(t, callID)
+
+	second := postResponse(t, app, map[string]any{
+		"model":                "test-model",
+		"store":                true,
+		"previous_response_id": first.ID,
+		"input": []map[string]any{
+			{
+				"type":    "custom_tool_call_output",
+				"call_id": callID,
+				"output": []map[string]any{
+					{"type": "input_text", "text": "grammar tool says hi"},
+				},
+			},
+		},
+	})
+
+	require.NotEqual(t, "upstream_resp_2", second.ID)
+	require.Equal(t, first.ID, second.PreviousResponseID)
+	require.Equal(t, "grammar tool says hi", second.OutputText)
+}
+
+func TestResponsesRetryStructuredInputAsStringForLocalStateRequests(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	first := postResponse(t, app, map[string]any{
+		"model": "test-model",
+		"store": true,
+		"input": "Reply OK",
+	})
+	require.NotEmpty(t, first.ID)
+
+	status, body := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model":                "test-model",
+		"previous_response_id": first.ID,
+		"tool_choice":          "required",
+		"input": []map[string]any{
+			{
+				"role":    "user",
+				"content": "backend rejects structured input arrays. Call add.",
+			},
+		},
+		"tools": []map[string]any{
+			{
+				"type": "function",
+				"name": "add",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"a": map[string]any{"type": "number"},
+						"b": map[string]any{"type": "number"},
+					},
+					"required": []string{"a", "b"},
+				},
+			},
+		},
+	})
+
+	require.Equal(t, http.StatusOK, status)
+	output, ok := body["output"].([]any)
+	require.True(t, ok)
+	require.Len(t, output, 1)
+	item, ok := output[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "function_call", item["type"])
+	require.Equal(t, "add", item["name"])
+}
+
+func TestResponsesPreviousResponseIDWithToolsFallsBackToDirectProxyWhenReplayInputRejected(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	first := postResponse(t, app, map[string]any{
+		"model":       "test-model",
+		"store":       true,
+		"tool_choice": "required",
+		"input": []map[string]any{
+			{
+				"role":    "user",
+				"content": "backend rejects replayed typed input. Call add.",
+			},
+		},
+		"tools": []map[string]any{
+			{
+				"type": "function",
+				"name": "add",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"a": map[string]any{"type": "number"},
+						"b": map[string]any{"type": "number"},
+					},
+					"required": []string{"a", "b"},
+				},
+			},
+		},
+	})
+	require.Len(t, first.Output, 1)
+	require.Equal(t, "function_call", first.Output[0].Type)
+	callID := first.Output[0].CallID()
+	require.NotEmpty(t, callID)
+
+	second := postResponse(t, app, map[string]any{
+		"model":                "test-model",
+		"store":                true,
+		"previous_response_id": first.ID,
+		"input": []map[string]any{
+			{
+				"type":    "function_call_output",
+				"call_id": callID,
+				"output":  "tool says hi",
+			},
+		},
+		"tools": []map[string]any{
+			{
+				"type": "function",
+				"name": "add",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"a": map[string]any{"type": "number"},
+						"b": map[string]any{"type": "number"},
+					},
+					"required": []string{"a", "b"},
+				},
+			},
+		},
+	})
+
+	require.Equal(t, first.ID, second.PreviousResponseID)
+	require.Equal(t, "tool says hi", second.OutputText)
+
+	got := getResponse(t, app, second.ID)
+	require.Equal(t, second.ID, got.ID)
+	require.Equal(t, first.ID, got.PreviousResponseID)
+	require.Equal(t, "tool says hi", got.OutputText)
+
+	inputItems := getResponseInputItems(t, app, second.ID)
+	require.Len(t, inputItems.Data, 1)
+	require.Equal(t, "function_call_output", asStringAny(inputItems.Data[0]["type"]))
+	require.Equal(t, "tool says hi", asStringAny(inputItems.Data[0]["output"]))
+}
+
+func TestResponsesStreamPreviousResponseIDWithToolsFallsBackToDirectProxyWhenReplayInputRejected(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	first := postResponse(t, app, map[string]any{
+		"model":       "test-model",
+		"store":       true,
+		"tool_choice": "required",
+		"input": []map[string]any{
+			{
+				"role":    "user",
+				"content": "backend rejects replayed typed input. Call add.",
+			},
+		},
+		"tools": []map[string]any{
+			{
+				"type": "function",
+				"name": "add",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"a": map[string]any{"type": "number"},
+						"b": map[string]any{"type": "number"},
+					},
+					"required": []string{"a", "b"},
+				},
+			},
+		},
+	})
+	require.Len(t, first.Output, 1)
+	require.Equal(t, "function_call", first.Output[0].Type)
+	callID := first.Output[0].CallID()
+	require.NotEmpty(t, callID)
+
+	reqBody, err := json.Marshal(map[string]any{
+		"model":                "test-model",
+		"metadata":             map[string]any{"case": "force-upstream-replay-fallback"},
+		"store":                true,
+		"stream":               true,
+		"previous_response_id": first.ID,
+		"input": []map[string]any{
+			{
+				"type":    "function_call_output",
+				"call_id": callID,
+				"output":  "tool says hi",
+			},
+		},
+		"tools": []map[string]any{
+			{
+				"type": "function",
+				"name": "add",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"a": map[string]any{"type": "number"},
+						"b": map[string]any{"type": "number"},
+					},
+					"required": []string{"a", "b"},
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	req, err := http.NewRequest(http.MethodPost, app.Server.URL+"/v1/responses", bytes.NewReader(reqBody))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Contains(t, resp.Header.Get("Content-Type"), "text/event-stream")
+
+	events := readSSEEvents(t, resp.Body)
+	require.Contains(t, eventTypes(events), "response.output_text.delta")
+	completed := findEvent(t, events, "response.completed").Data
+	responsePayload, ok := completed["response"].(map[string]any)
+	require.True(t, ok)
+	responseID := asStringAny(responsePayload["id"])
+	require.NotEmpty(t, responseID)
+	require.Equal(t, "tool says hi", asStringAny(responsePayload["output_text"]))
+
+	got := getResponse(t, app, responseID)
+	require.Equal(t, responseID, got.ID)
+	require.Equal(t, first.ID, got.PreviousResponseID)
+	require.Equal(t, "tool says hi", got.OutputText)
+
+	inputItems := getResponseInputItems(t, app, responseID)
+	require.Len(t, inputItems.Data, 1)
+	require.Equal(t, "function_call_output", asStringAny(inputItems.Data[0]["type"]))
+	require.Equal(t, "tool says hi", asStringAny(inputItems.Data[0]["output"]))
 }
 
 func TestResponsesNamespacedCustomToolsAreBridged(t *testing.T) {
@@ -1232,6 +1968,7 @@ func TestResponsesNamespacedCustomToolsAreBridged(t *testing.T) {
 		},
 	})
 	require.Equal(t, http.StatusOK, status)
+	require.NotEqual(t, "upstream_resp_1", body["id"])
 
 	output, ok := body["output"].([]any)
 	require.True(t, ok)
@@ -1243,10 +1980,13 @@ func TestResponsesNamespacedCustomToolsAreBridged(t *testing.T) {
 	require.Equal(t, "exec", item["name"])
 }
 
-func TestResponsesBridgeRejectsGrammarCustomTools(t *testing.T) {
-	app := testutil.NewTestApp(t)
+func TestResponsesPreferUpstreamBridgeRejectsGrammarCustomTools(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		ResponsesMode:   config.ResponsesModePreferUpstream,
+		CustomToolsMode: "bridge",
+	})
 
-	status, body := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+	status, payload := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
 		"model": "test-model",
 		"input": "Use grammar tool",
 		"tools": []map[string]any{
@@ -1262,11 +2002,17 @@ func TestResponsesBridgeRejectsGrammarCustomTools(t *testing.T) {
 		},
 	})
 	require.Equal(t, http.StatusBadRequest, status)
-	require.Equal(t, "invalid_request_error", body["error"].(map[string]any)["type"])
+	errorPayload := payload["error"].(map[string]any)
+	require.Equal(t, "invalid_request_error", errorPayload["type"])
+	require.Equal(t, "tools", errorPayload["param"])
+	require.Contains(t, asStringAny(errorPayload["message"]), "custom tool format is not supported in bridge mode")
 }
 
-func TestResponsesAutoPassthroughsGrammarCustomTools(t *testing.T) {
-	app := testutil.NewTestAppWithCustomToolsMode(t, "auto")
+func TestResponsesPreferUpstreamAutoPassthroughsGrammarCustomTools(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		ResponsesMode:   config.ResponsesModePreferUpstream,
+		CustomToolsMode: "auto",
+	})
 
 	status, body := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
 		"model": "test-model",
@@ -1285,6 +2031,7 @@ func TestResponsesAutoPassthroughsGrammarCustomTools(t *testing.T) {
 		},
 	})
 	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, "upstream_resp_1", body["id"])
 
 	output, ok := body["output"].([]any)
 	require.True(t, ok)
@@ -1293,6 +2040,142 @@ func TestResponsesAutoPassthroughsGrammarCustomTools(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "custom_tool_call", item["type"])
 	require.Equal(t, "shell", item["namespace"])
+}
+
+func TestResponsesPreferLocalHandlesGrammarCustomToolsWithoutUpstreamResponsesSupport(t *testing.T) {
+	app := testutil.NewTestAppWithCustomToolsMode(t, "auto")
+
+	status, payload := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model": "test-model",
+		"input": "Backend rejects native custom tools. Use grammar tool",
+		"tools": []map[string]any{
+			{
+				"type": "custom",
+				"name": "code_exec",
+				"format": map[string]any{
+					"type":       "grammar",
+					"syntax":     "lark",
+					"definition": "start: /.+/",
+				},
+			},
+		},
+	})
+	require.Equal(t, http.StatusOK, status)
+	output, ok := payload["output"].([]any)
+	require.True(t, ok)
+	require.Len(t, output, 1)
+	item, ok := output[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "custom_tool_call", item["type"])
+	require.Equal(t, `print("hello world")`, item["input"])
+}
+
+func TestResponsesStreamPreferLocalHandlesGrammarCustomToolsWithoutUpstreamResponsesSupport(t *testing.T) {
+	app := testutil.NewTestAppWithCustomToolsMode(t, "auto")
+
+	reqBody, err := json.Marshal(map[string]any{
+		"model":  "test-model",
+		"stream": true,
+		"input": []map[string]any{
+			{"role": "user", "content": "Backend rejects native custom tools. Use grammar tool"},
+		},
+		"tools": []map[string]any{
+			{
+				"type": "custom",
+				"name": "code_exec",
+				"format": map[string]any{
+					"type":       "grammar",
+					"syntax":     "lark",
+					"definition": "start: /.+/",
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	req, err := http.NewRequest(http.MethodPost, app.Server.URL+"/v1/responses", bytes.NewReader(reqBody))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	events := readSSEEvents(t, resp.Body)
+	done := findEvent(t, events, "response.custom_tool_call_input.done").Data
+	doneItem, ok := done["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "custom_tool_call", doneItem["type"])
+	require.Equal(t, `print("hello world")`, doneItem["input"])
+}
+
+func TestResponsesPreferLocalHandlesGrammarCustomToolsAfterStructuredInputRetryMarkers(t *testing.T) {
+	app := testutil.NewTestAppWithCustomToolsMode(t, "auto")
+
+	status, payload := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model": "test-model",
+		"input": []map[string]any{
+			{"role": "user", "content": "Backend rejects structured input arrays. Backend rejects native custom tools. Use grammar tool"},
+		},
+		"tools": []map[string]any{
+			{
+				"type": "custom",
+				"name": "code_exec",
+				"format": map[string]any{
+					"type":       "grammar",
+					"syntax":     "lark",
+					"definition": "start: /.+/",
+				},
+			},
+		},
+	})
+	require.Equal(t, http.StatusOK, status)
+	output, ok := payload["output"].([]any)
+	require.True(t, ok)
+	require.Len(t, output, 1)
+	item, ok := output[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "custom_tool_call", item["type"])
+	require.Equal(t, `print("hello world")`, item["input"])
+}
+
+func TestResponsesStreamPreferLocalHandlesGrammarCustomToolsAfterStructuredInputRetryMarkers(t *testing.T) {
+	app := testutil.NewTestAppWithCustomToolsMode(t, "auto")
+
+	reqBody, err := json.Marshal(map[string]any{
+		"model":  "test-model",
+		"stream": true,
+		"input": []map[string]any{
+			{"role": "user", "content": "Backend rejects structured input arrays. Backend rejects native custom tools. Use grammar tool"},
+		},
+		"tools": []map[string]any{
+			{
+				"type": "custom",
+				"name": "code_exec",
+				"format": map[string]any{
+					"type":       "grammar",
+					"syntax":     "lark",
+					"definition": "start: /.+/",
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	req, err := http.NewRequest(http.MethodPost, app.Server.URL+"/v1/responses", bytes.NewReader(reqBody))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	events := readSSEEvents(t, resp.Body)
+	done := findEvent(t, events, "response.custom_tool_call_input.done").Data
+	doneItem, ok := done["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "custom_tool_call", doneItem["type"])
+	require.Equal(t, `print("hello world")`, doneItem["input"])
 }
 
 func TestConversationsPreservePhaseAndMixedItems(t *testing.T) {

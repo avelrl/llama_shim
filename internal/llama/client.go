@@ -108,6 +108,42 @@ func (c *Client) CreateResponse(ctx context.Context, requestBody []byte) ([]byte
 	return body, nil
 }
 
+func (c *Client) CreateChatCompletion(ctx context.Context, requestBody []byte) ([]byte, error) {
+	endpoint, err := url.JoinPath(c.baseURL, "/v1/chat/completions")
+	if err != nil {
+		return nil, fmt.Errorf("build llama url: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(requestBody))
+	if err != nil {
+		return nil, fmt.Errorf("create llama request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	applyContextHeaders(ctx, req.Header)
+
+	resp, err := c.requestClient.Do(req)
+	if err != nil {
+		if mappedErr := mapTimeoutError(err); mappedErr != nil {
+			return nil, mappedErr
+		}
+		return nil, fmt.Errorf("call llama: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if err != nil {
+		return nil, fmt.Errorf("read llama response: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, &UpstreamError{
+			StatusCode: resp.StatusCode,
+			Message:    string(bytes.TrimSpace(body)),
+		}
+	}
+
+	return body, nil
+}
+
 func (c *Client) Generate(ctx context.Context, model string, items []domain.Item, options map[string]json.RawMessage) (string, error) {
 	requestBody, err := c.buildChatCompletionRequest(model, items, false, options)
 	if err != nil {

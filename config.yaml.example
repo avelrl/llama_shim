@@ -33,12 +33,18 @@ log:
 
 # Settings for the OpenAI Responses-compatible layer.
 responses:
+  # How /v1/responses is routed.
+  # prefer_local: default; handle locally whenever the shim supports the request.
+  # prefer_upstream: preserve the legacy proxy-first behavior for standalone requests.
+  # local_only: never call upstream /v1/responses; reject unsupported features instead.
+  mode: prefer_local
   custom_tools:
     # How custom tools are transported to the upstream.
-    # bridge: rewrite custom tools into a compatible upstream format and back.
-    # passthrough: forward them unchanged.
-    # auto: choose automatically based on the payload.
-    mode: bridge
+    # auto: recommended default; bridge plain-text custom tools when possible
+    # and fall back to passthrough for grammar-constrained tools.
+    # bridge: always rewrite custom tools into a compatible upstream format.
+    # passthrough: always forward them unchanged.
+    mode: auto
   codex:
     # Enables Codex-compatible payload and response adaptations for /v1/responses.
     enable_compatibility: true

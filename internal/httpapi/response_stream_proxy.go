@@ -30,7 +30,70 @@ func (h *responseHandler) proxyCreateStream(w http.ResponseWriter, r *http.Reque
 		WriteJSON(w, status, apiErrorPayload{Error: payload})
 		return
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if resp != nil {
+			_ = resp.Body.Close()
+		}
+	}()
+
+	retryWithBridge, err := shouldRetryCustomToolsWithBridgeResponse(resp, plan)
+	if err != nil {
+		WriteError(w, http.StatusBadGateway, "upstream_error", "failed to read upstream response", "")
+		return
+	}
+	if retryWithBridge {
+		upstreamBody, plan, err = h.buildBridgedProxyResponsesBody(r.Context(), rawFields)
+		if err != nil {
+			h.writeError(w, r, err)
+			return
+		}
+		_ = resp.Body.Close()
+		resp, err = h.proxyResponseRequest(r, upstreamBody)
+		if err != nil {
+			status, payload := MapError(r.Context(), h.logger, err)
+			WriteJSON(w, status, apiErrorPayload{Error: payload})
+			return
+		}
+	}
+
+	retryWithStringifiedInput, err := shouldRetryResponsesInputAsStringResponse(resp, upstreamBody)
+	if err != nil {
+		WriteError(w, http.StatusBadGateway, "upstream_error", "failed to read upstream response", "")
+		return
+	}
+	if retryWithStringifiedInput {
+		upstreamBody, err = h.buildStringifiedResponsesBody(r.Context(), upstreamBody)
+		if err != nil {
+			h.writeError(w, r, err)
+			return
+		}
+		_ = resp.Body.Close()
+		resp, err = h.proxyResponseRequest(r, upstreamBody)
+		if err != nil {
+			status, payload := MapError(r.Context(), h.logger, err)
+			WriteJSON(w, status, apiErrorPayload{Error: payload})
+			return
+		}
+	}
+	retryWithBridge, err = shouldRetryCustomToolsWithBridgeResponse(resp, plan)
+	if err != nil {
+		WriteError(w, http.StatusBadGateway, "upstream_error", "failed to read upstream response", "")
+		return
+	}
+	if retryWithBridge {
+		upstreamBody, plan, err = h.buildBridgedCurrentResponsesBody(r.Context(), upstreamBody)
+		if err != nil {
+			h.writeError(w, r, err)
+			return
+		}
+		_ = resp.Body.Close()
+		resp, err = h.proxyResponseRequest(r, upstreamBody)
+		if err != nil {
+			status, payload := MapError(r.Context(), h.logger, err)
+			WriteJSON(w, status, apiErrorPayload{Error: payload})
+			return
+		}
+	}
 
 	retryWithAuto, err := shouldRetryToolChoiceWithAutoResponse(resp, plan)
 	if err != nil {
@@ -115,7 +178,86 @@ func (h *responseHandler) createStreamViaUpstream(w http.ResponseWriter, r *http
 		WriteJSON(w, status, apiErrorPayload{Error: payload})
 		return
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if resp != nil {
+			_ = resp.Body.Close()
+		}
+	}()
+
+	retryWithBridge, err := shouldRetryCustomToolsWithBridgeResponse(resp, plan)
+	if err != nil {
+		WriteError(w, http.StatusBadGateway, "upstream_error", "failed to read upstream response", "")
+		return
+	}
+	if retryWithBridge {
+		upstreamBody, plan, err = h.buildBridgedUpstreamResponsesBody(r.Context(), rawFields, prepared.ContextItems, prepared.NormalizedInput, prepared.ToolCallRefs)
+		if err != nil {
+			h.writeError(w, r, err)
+			return
+		}
+		_ = resp.Body.Close()
+		resp, err = h.proxyResponseRequest(r, upstreamBody)
+		if err != nil {
+			status, payload := MapError(r.Context(), h.logger, err)
+			WriteJSON(w, status, apiErrorPayload{Error: payload})
+			return
+		}
+	}
+
+	retryWithStringifiedInput, err := shouldRetryResponsesInputAsStringResponse(resp, upstreamBody)
+	if err != nil {
+		WriteError(w, http.StatusBadGateway, "upstream_error", "failed to read upstream response", "")
+		return
+	}
+	retryWithDirectProxy, err := shouldRetryLocalStateWithDirectProxyResponse(resp, request)
+	if err != nil {
+		WriteError(w, http.StatusBadGateway, "upstream_error", "failed to read upstream response", "")
+		return
+	}
+	if retryWithDirectProxy {
+		if h.logger != nil {
+			h.logger.InfoContext(r.Context(), "retrying previous_response_id stream with upstream-managed state after local replay validation failure",
+				"request_id", RequestIDFromContext(r.Context()),
+			)
+		}
+		_ = resp.Body.Close()
+		resp = nil
+		h.proxyCreateStream(w, r, request, requestJSON, rawFields)
+		return
+	}
+	if retryWithStringifiedInput {
+		upstreamBody, err = h.buildStringifiedResponsesBody(r.Context(), upstreamBody)
+		if err != nil {
+			h.writeError(w, r, err)
+			return
+		}
+		_ = resp.Body.Close()
+		resp, err = h.proxyResponseRequest(r, upstreamBody)
+		if err != nil {
+			status, payload := MapError(r.Context(), h.logger, err)
+			WriteJSON(w, status, apiErrorPayload{Error: payload})
+			return
+		}
+	}
+	retryWithBridge, err = shouldRetryCustomToolsWithBridgeResponse(resp, plan)
+	if err != nil {
+		WriteError(w, http.StatusBadGateway, "upstream_error", "failed to read upstream response", "")
+		return
+	}
+	if retryWithBridge {
+		upstreamBody, plan, err = h.buildBridgedCurrentResponsesBody(r.Context(), upstreamBody)
+		if err != nil {
+			h.writeError(w, r, err)
+			return
+		}
+		_ = resp.Body.Close()
+		resp, err = h.proxyResponseRequest(r, upstreamBody)
+		if err != nil {
+			status, payload := MapError(r.Context(), h.logger, err)
+			WriteJSON(w, status, apiErrorPayload{Error: payload})
+			return
+		}
+	}
 
 	retryWithAuto, err := shouldRetryToolChoiceWithAutoResponse(resp, plan)
 	if err != nil {
@@ -827,7 +969,12 @@ func (p *responseStreamEventProxy) captureResponseEnvelope(responsePayload map[s
 			if !ok || strings.TrimSpace(asString(item["type"])) != "message" {
 				continue
 			}
-			p.itemID = fallbackString(strings.TrimSpace(asString(item["id"])), p.itemID)
+			itemID := strings.TrimSpace(asString(item["id"]))
+			if p.sawItemAdded || p.sawOutputTextDone || p.outputText.Len() > 0 {
+				p.itemID = fallbackString(p.itemID, itemID)
+			} else {
+				p.itemID = fallbackString(itemID, p.itemID)
+			}
 			content, ok := item["content"].([]any)
 			if !ok {
 				continue

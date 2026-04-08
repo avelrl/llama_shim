@@ -8,7 +8,10 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"sort"
+	"strings"
 
+	"llama_shim/internal/config"
 	"llama_shim/internal/domain"
 	"llama_shim/internal/service"
 )
@@ -26,16 +29,18 @@ type responseHandler struct {
 	logger                       *slog.Logger
 	service                      *service.ResponseService
 	proxy                        *proxyHandler
+	responsesMode                string
 	customToolsMode              string
 	codexCompatibilityEnabled    bool
 	forceCodexToolChoiceRequired bool
 }
 
-func newResponseHandler(logger *slog.Logger, service *service.ResponseService, proxy *proxyHandler, customToolsMode string, codexCompatibilityEnabled bool, forceCodexToolChoiceRequired bool) *responseHandler {
+func newResponseHandler(logger *slog.Logger, service *service.ResponseService, proxy *proxyHandler, responsesMode string, customToolsMode string, codexCompatibilityEnabled bool, forceCodexToolChoiceRequired bool) *responseHandler {
 	return &responseHandler{
 		logger:                       logger,
 		service:                      service,
 		proxy:                        proxy,
+		responsesMode:                normalizeResponsesMode(responsesMode),
 		customToolsMode:              customToolsMode,
 		codexCompatibilityEnabled:    codexCompatibilityEnabled,
 		forceCodexToolChoiceRequired: forceCodexToolChoiceRequired,
@@ -65,12 +70,12 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	shouldProxy, err := h.shouldProxyCreate(r.Context(), request)
+	hasLocalState, err := h.hasLocalCreateState(r.Context(), request)
 	if err != nil {
 		h.writeError(w, r, err)
 		return
 	}
-	if shouldProxy {
+	if request.PreviousResponseID != "" && !hasLocalState {
 		if request.Stream != nil && *request.Stream {
 			h.proxyCreateStream(w, r, request, requestJSON, rawFields)
 			return
@@ -79,17 +84,84 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	localToolLoop := supportsLocalToolLoop(rawFields)
+	localSupported := supportsLocalShimState(rawFields)
 	generationOptions := buildGenerationOptions(rawFields)
 	if request.Stream != nil && *request.Stream {
-		if !supportsLocalShimState(rawFields) {
+		switch {
+		case h.responsesMode == config.ResponsesModePreferUpstream && !hasLocalState:
+			h.proxyCreateStream(w, r, request, requestJSON, rawFields)
+		case localToolLoop:
+			response, err := h.createLocalToolLoopResponse(r.Context(), request, requestJSON, rawFields)
+			if err == nil {
+				rawResponse, marshalErr := json.Marshal(response)
+				if marshalErr != nil {
+					h.writeError(w, r, marshalErr)
+					return
+				}
+				if err := writeCompletedResponseAsSSE(r.Context(), h.logger, w, rawResponse, customToolTransportPlan{}); err != nil && !shouldIgnoreStreamProxyError(err) {
+					h.logger.WarnContext(r.Context(), "local tool loop stream failed", "request_id", RequestIDFromContext(r.Context()), "err", err)
+				}
+				return
+			}
+			if shouldFallbackLocalState(h.responsesMode, err) {
+				if hasLocalState {
+					h.createStreamViaUpstream(w, r, request, requestJSON, rawFields)
+					return
+				}
+				h.proxyCreateStream(w, r, request, requestJSON, rawFields)
+				return
+			}
+			h.writeError(w, r, normalizeLocalOnlyCreateError(h.responsesMode, err))
+		case localSupported:
+			if err := h.createStream(w, r, request, requestJSON, generationOptions); err != nil {
+				if shouldFallbackLocalState(h.responsesMode, err) {
+					h.createStreamViaUpstream(w, r, request, requestJSON, rawFields)
+					return
+				}
+				h.writeError(w, r, normalizeLocalOnlyCreateError(h.responsesMode, err))
+			}
+		case hasLocalState:
+			if h.responsesMode == config.ResponsesModeLocalOnly {
+				h.writeError(w, r, newLocalOnlyUnsupportedFieldsError(rawFields))
+				return
+			}
 			h.createStreamViaUpstream(w, r, request, requestJSON, rawFields)
-			return
+		case h.responsesMode == config.ResponsesModeLocalOnly:
+			h.writeError(w, r, newLocalOnlyUnsupportedFieldsError(rawFields))
+		default:
+			h.proxyCreateStream(w, r, request, requestJSON, rawFields)
 		}
-		h.createStream(w, r, request, requestJSON, generationOptions)
 		return
 	}
 
-	if supportsLocalShimState(rawFields) {
+	switch {
+	case h.responsesMode == config.ResponsesModePreferUpstream && !hasLocalState:
+		h.proxyCreateWithShadowStore(w, r, request, rawBody, requestJSON, rawFields)
+		return
+	case localToolLoop:
+		response, err := h.createLocalToolLoopResponse(r.Context(), request, requestJSON, rawFields)
+		if err == nil {
+			WriteJSON(w, http.StatusOK, response)
+			return
+		}
+		if shouldFallbackLocalState(h.responsesMode, err) {
+			var response domain.Response
+			var fallbackErr error
+			if hasLocalState {
+				response, fallbackErr = h.createLocalStateViaUpstream(r.Context(), request, requestJSON, rawFields)
+			} else {
+				response, fallbackErr = h.createProxyResponseViaUpstream(r.Context(), request, requestJSON, rawFields)
+			}
+			if fallbackErr == nil {
+				WriteJSON(w, http.StatusOK, response)
+				return
+			}
+			err = fallbackErr
+		}
+		h.writeError(w, r, normalizeLocalOnlyCreateError(h.responsesMode, err))
+		return
+	case localSupported:
 		response, err := h.service.Create(r.Context(), service.CreateResponseInput{
 			Model:              request.Model,
 			Input:              request.Input,
@@ -105,7 +177,7 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 			WriteJSON(w, http.StatusOK, response)
 			return
 		}
-		if shouldFallbackLocalState(err) {
+		if shouldFallbackLocalState(h.responsesMode, err) {
 			response, fallbackErr := h.createLocalStateViaUpstream(r.Context(), request, requestJSON, rawFields)
 			if fallbackErr == nil {
 				WriteJSON(w, http.StatusOK, response)
@@ -113,17 +185,26 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 			}
 			err = fallbackErr
 		}
-		h.writeError(w, r, err)
+		h.writeError(w, r, normalizeLocalOnlyCreateError(h.responsesMode, err))
+		return
+	case hasLocalState:
+		if h.responsesMode == config.ResponsesModeLocalOnly {
+			h.writeError(w, r, newLocalOnlyUnsupportedFieldsError(rawFields))
+			return
+		}
+		response, err := h.createLocalStateViaUpstream(r.Context(), request, requestJSON, rawFields)
+		if err != nil {
+			h.writeError(w, r, err)
+			return
+		}
+		WriteJSON(w, http.StatusOK, response)
+		return
+	case h.responsesMode == config.ResponsesModeLocalOnly:
+		h.writeError(w, r, newLocalOnlyUnsupportedFieldsError(rawFields))
 		return
 	}
 
-	response, err := h.createLocalStateViaUpstream(r.Context(), request, requestJSON, rawFields)
-	if err != nil {
-		h.writeError(w, r, err)
-		return
-	}
-
-	WriteJSON(w, http.StatusOK, response)
+	h.proxyCreateWithShadowStore(w, r, request, rawBody, requestJSON, rawFields)
 }
 
 func (h *responseHandler) createLocalStateViaUpstream(ctx context.Context, request CreateResponseRequest, requestJSON string, rawFields map[string]json.RawMessage) (domain.Response, error) {
@@ -151,6 +232,39 @@ func (h *responseHandler) createLocalStateViaUpstream(ctx context.Context, reque
 	logCustomToolTransport(ctx, h.logger, rawFields, upstreamBody, plan, h.codexCompatibilityEnabled)
 
 	rawResponse, usedFallback, err := h.createResponseWithToolChoiceFallback(ctx, upstreamBody, plan)
+	if err != nil && shouldRetryCustomToolsWithBridgeError(err, plan) {
+		upstreamBody, plan, err = h.buildBridgedUpstreamResponsesBody(ctx, rawFields, prepared.ContextItems, prepared.NormalizedInput, prepared.ToolCallRefs)
+		if err != nil {
+			return domain.Response{}, err
+		}
+		rawResponse, usedFallback, err = h.createResponseWithToolChoiceFallback(ctx, upstreamBody, plan)
+	}
+	if err != nil && shouldRetryLocalStateWithDirectProxyError(err, request) {
+		response, proxyErr := h.createProxyResponseViaUpstream(ctx, request, requestJSON, rawFields)
+		if proxyErr == nil {
+			return response, nil
+		}
+		if h.logger != nil {
+			h.logger.WarnContext(ctx, "previous_response_id direct-proxy fallback failed after local replay validation error",
+				"request_id", RequestIDFromContext(ctx),
+				"err", proxyErr,
+			)
+		}
+	}
+	if err != nil && shouldRetryResponsesInputAsStringError(err, upstreamBody) {
+		upstreamBody, err = h.buildStringifiedResponsesBody(ctx, upstreamBody)
+		if err != nil {
+			return domain.Response{}, err
+		}
+		rawResponse, usedFallback, err = h.createResponseWithToolChoiceFallback(ctx, upstreamBody, plan)
+	}
+	if err != nil && shouldRetryCustomToolsWithBridgeError(err, plan) {
+		upstreamBody, plan, err = h.buildBridgedCurrentResponsesBody(ctx, upstreamBody)
+		if err != nil {
+			return domain.Response{}, err
+		}
+		rawResponse, usedFallback, err = h.createResponseWithToolChoiceFallback(ctx, upstreamBody, plan)
+	}
 	if err != nil {
 		return domain.Response{}, err
 	}
@@ -161,6 +275,76 @@ func (h *responseHandler) createLocalStateViaUpstream(ctx context.Context, reque
 	}
 
 	return h.service.SaveExternalResponse(ctx, prepared, input, response)
+}
+
+func (h *responseHandler) createProxyResponseViaUpstream(ctx context.Context, request CreateResponseRequest, requestJSON string, rawFields map[string]json.RawMessage) (domain.Response, error) {
+	upstreamBody, plan, err := remapCustomToolsPayload(rawFields, h.customToolsMode, h.codexCompatibilityEnabled, h.forceCodexToolChoiceRequired)
+	if err != nil {
+		return domain.Response{}, err
+	}
+	if h.logger != nil {
+		h.logger.InfoContext(ctx, "retrying previous_response_id request with upstream-managed state after local replay validation failure",
+			"request_id", RequestIDFromContext(ctx),
+		)
+	}
+	logCustomToolTransport(ctx, h.logger, rawFields, upstreamBody, plan, h.codexCompatibilityEnabled)
+
+	rawResponse, usedFallback, err := h.createResponseWithToolChoiceFallback(ctx, upstreamBody, plan)
+	if err != nil && shouldRetryCustomToolsWithBridgeError(err, plan) {
+		upstreamBody, plan, err = h.buildBridgedProxyResponsesBody(ctx, rawFields)
+		if err != nil {
+			return domain.Response{}, err
+		}
+		rawResponse, usedFallback, err = h.createResponseWithToolChoiceFallback(ctx, upstreamBody, plan)
+	}
+	if err != nil && shouldRetryResponsesInputAsStringError(err, upstreamBody) {
+		upstreamBody, err = h.buildStringifiedResponsesBody(ctx, upstreamBody)
+		if err != nil {
+			return domain.Response{}, err
+		}
+		rawResponse, usedFallback, err = h.createResponseWithToolChoiceFallback(ctx, upstreamBody, plan)
+	}
+	if err != nil && shouldRetryCustomToolsWithBridgeError(err, plan) {
+		upstreamBody, plan, err = h.buildBridgedCurrentResponsesBody(ctx, upstreamBody)
+		if err != nil {
+			return domain.Response{}, err
+		}
+		rawResponse, usedFallback, err = h.createResponseWithToolChoiceFallback(ctx, upstreamBody, plan)
+	}
+	if err != nil {
+		return domain.Response{}, err
+	}
+
+	_, response, err := finalizeUpstreamResponse(rawResponse, plan, usedFallback)
+	if err != nil {
+		return domain.Response{}, err
+	}
+
+	prepared, input, ok := prepareShadowStore(request, requestJSON)
+	if !ok {
+		if response.PreviousResponseID == "" && request.PreviousResponseID != "" {
+			response.PreviousResponseID = request.PreviousResponseID
+		}
+		if response.Conversation == "" && request.Conversation != "" {
+			response.Conversation = request.Conversation
+		}
+		return response, nil
+	}
+
+	stored, err := h.service.SaveExternalResponse(ctx, prepared, input, response)
+	if err != nil {
+		if h.logger != nil {
+			h.logger.ErrorContext(ctx, "shadow store failed", "request_id", RequestIDFromContext(ctx), "err", err)
+		}
+		if response.PreviousResponseID == "" && request.PreviousResponseID != "" {
+			response.PreviousResponseID = request.PreviousResponseID
+		}
+		if response.Conversation == "" && request.Conversation != "" {
+			response.Conversation = request.Conversation
+		}
+		return response, nil
+	}
+	return stored, nil
 }
 
 func (h *responseHandler) createResponseWithToolChoiceFallback(ctx context.Context, upstreamBody []byte, plan customToolTransportPlan) ([]byte, bool, error) {
@@ -200,6 +384,69 @@ func (h *responseHandler) retryResponseWithAuto(ctx context.Context, upstreamBod
 	return h.proxy.client.CreateResponse(ctx, retryBody)
 }
 
+func (h *responseHandler) buildBridgedProxyResponsesBody(ctx context.Context, rawFields map[string]json.RawMessage) ([]byte, customToolTransportPlan, error) {
+	body, plan, err := remapCustomToolsPayload(rawFields, string(customToolsModeBridge), h.codexCompatibilityEnabled, h.forceCodexToolChoiceRequired)
+	if err != nil {
+		return nil, customToolTransportPlan{}, err
+	}
+
+	if h.logger != nil {
+		h.logger.InfoContext(ctx, "retrying responses request with bridged custom tools after native custom-tool rejection",
+			"request_id", RequestIDFromContext(ctx),
+		)
+	}
+	logCustomToolTransport(ctx, h.logger, rawFields, body, plan, h.codexCompatibilityEnabled)
+	return body, plan, nil
+}
+
+func (h *responseHandler) buildBridgedCurrentResponsesBody(ctx context.Context, upstreamBody []byte) ([]byte, customToolTransportPlan, error) {
+	rawFields, err := decodeRawFields(upstreamBody)
+	if err != nil {
+		return nil, customToolTransportPlan{}, err
+	}
+
+	body, plan, err := remapCustomToolsPayload(rawFields, string(customToolsModeBridge), h.codexCompatibilityEnabled, h.forceCodexToolChoiceRequired)
+	if err != nil {
+		return nil, customToolTransportPlan{}, err
+	}
+
+	if h.logger != nil {
+		h.logger.InfoContext(ctx, "retrying responses request with bridged custom tools after native custom-tool rejection",
+			"request_id", RequestIDFromContext(ctx),
+		)
+	}
+	logCustomToolTransport(ctx, h.logger, rawFields, body, plan, h.codexCompatibilityEnabled)
+	return body, plan, nil
+}
+
+func (h *responseHandler) buildStringifiedResponsesBody(ctx context.Context, upstreamBody []byte) ([]byte, error) {
+	body, err := rewriteResponsesInputAsStringBody(upstreamBody)
+	if err != nil {
+		return nil, err
+	}
+	if h.logger != nil {
+		h.logger.InfoContext(ctx, "retrying responses request with stringified input after structured-input validation failure",
+			"request_id", RequestIDFromContext(ctx),
+		)
+	}
+	return body, nil
+}
+
+func (h *responseHandler) buildBridgedUpstreamResponsesBody(ctx context.Context, rawFields map[string]json.RawMessage, contextItems []domain.Item, currentInput []domain.Item, refs map[string]domain.ToolCallReference) ([]byte, customToolTransportPlan, error) {
+	body, plan, err := buildUpstreamResponsesBody(rawFields, contextItems, currentInput, refs, string(customToolsModeBridge), h.codexCompatibilityEnabled, h.forceCodexToolChoiceRequired)
+	if err != nil {
+		return nil, customToolTransportPlan{}, err
+	}
+
+	if h.logger != nil {
+		h.logger.InfoContext(ctx, "retrying responses request with bridged custom tools after native custom-tool rejection",
+			"request_id", RequestIDFromContext(ctx),
+		)
+	}
+	logCustomToolTransport(ctx, h.logger, rawFields, body, plan, h.codexCompatibilityEnabled)
+	return body, plan, nil
+}
+
 func finalizeUpstreamResponse(rawResponse []byte, plan customToolTransportPlan, enforceContract bool) ([]byte, domain.Response, error) {
 	responseBody, err := normalizeUpstreamResponseBody(rawResponse, plan)
 	if err != nil {
@@ -226,7 +473,7 @@ func finalizeUpstreamResponse(rawResponse []byte, plan customToolTransportPlan, 
 	return responseBody, response, nil
 }
 
-func (h *responseHandler) createStream(w http.ResponseWriter, r *http.Request, request CreateResponseRequest, requestJSON string, generationOptions map[string]json.RawMessage) {
+func (h *responseHandler) createStream(w http.ResponseWriter, r *http.Request, request CreateResponseRequest, requestJSON string, generationOptions map[string]json.RawMessage) error {
 	var (
 		emitter    *responseStreamEmitter
 		responseID string
@@ -265,28 +512,27 @@ func (h *responseHandler) createStream(w http.ResponseWriter, r *http.Request, r
 		},
 	})
 	if err != nil {
-		if emitter == nil {
-			h.writeError(w, r, err)
-			return
-		}
 		if errors.Is(err, context.Canceled) {
-			return
+			return nil
 		}
-
+		if emitter == nil {
+			return err
+		}
 		_, payload := MapError(r.Context(), h.logger, err)
 		_ = emitter.error(payload)
-		return
+		return nil
 	}
 
 	if err := emitter.outputTextDone(itemID, response.OutputText); err != nil {
-		return
+		return nil
 	}
 	if err := emitter.outputItemDone(itemID, response.OutputText); err != nil {
-		return
+		return nil
 	}
 	if err := emitter.responseCompleted(response); err != nil {
-		return
+		return nil
 	}
+	return nil
 }
 
 func (h *responseHandler) get(w http.ResponseWriter, r *http.Request) {
@@ -375,26 +621,6 @@ var shimLocalStateBaseFields = map[string]struct{}{
 	"instructions":         {},
 }
 
-func (h *responseHandler) shouldProxyCreate(ctx context.Context, request CreateResponseRequest) (bool, error) {
-	if request.Conversation != "" {
-		return false, nil
-	}
-
-	if request.PreviousResponseID != "" {
-		_, err := h.service.Get(ctx, request.PreviousResponseID)
-		if err == nil {
-			return false, nil
-		}
-		mapped := service.MapStorageError(err)
-		if errors.Is(mapped, service.ErrNotFound) {
-			return true, nil
-		}
-		return false, err
-	}
-
-	return true, nil
-}
-
 func decodeRawFields(raw []byte) (map[string]json.RawMessage, error) {
 	var out map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &out); err != nil {
@@ -426,9 +652,87 @@ func supportsLocalShimState(rawFields map[string]json.RawMessage) bool {
 	return true
 }
 
-func shouldFallbackLocalState(err error) bool {
+func unsupportedLocalShimFields(rawFields map[string]json.RawMessage) []string {
+	unsupported := make([]string, 0)
+	for key := range rawFields {
+		if _, ok := shimLocalStateBaseFields[key]; ok {
+			continue
+		}
+		if _, ok := shimLocalGenerationFields[key]; ok {
+			continue
+		}
+		unsupported = append(unsupported, key)
+	}
+	sort.Strings(unsupported)
+	return unsupported
+}
+
+func shouldFallbackLocalState(responsesMode string, err error) bool {
 	mapped := service.MapGeneratorError(err)
-	return errors.Is(mapped, service.ErrUpstreamFailure) || errors.Is(mapped, service.ErrUpstreamTimeout) || errors.Is(err, domain.ErrUnsupportedShape)
+	if errors.Is(err, domain.ErrUnsupportedShape) {
+		return responsesMode != config.ResponsesModeLocalOnly
+	}
+	if responsesMode != config.ResponsesModePreferUpstream {
+		return false
+	}
+	return errors.Is(mapped, service.ErrUpstreamFailure) || errors.Is(mapped, service.ErrUpstreamTimeout)
+}
+
+func (h *responseHandler) hasLocalCreateState(ctx context.Context, request CreateResponseRequest) (bool, error) {
+	if request.Conversation != "" {
+		return true, nil
+	}
+
+	if request.PreviousResponseID == "" {
+		return false, nil
+	}
+
+	_, err := h.service.Get(ctx, request.PreviousResponseID)
+	if err == nil {
+		return true, nil
+	}
+	mapped := service.MapStorageError(err)
+	if errors.Is(mapped, service.ErrNotFound) {
+		if h.responsesMode == config.ResponsesModeLocalOnly {
+			return false, mapped
+		}
+		return false, nil
+	}
+	return false, err
+}
+
+func normalizeResponsesMode(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case config.ResponsesModePreferUpstream, config.ResponsesModeLocalOnly:
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return config.ResponsesModePreferLocal
+	}
+}
+
+func newLocalOnlyUnsupportedFieldsError(rawFields map[string]json.RawMessage) error {
+	fields := unsupportedLocalShimFields(rawFields)
+	if len(fields) == 0 {
+		return domain.NewValidationError("responses.mode", "request is not supported when responses.mode=local_only")
+	}
+	return domain.NewValidationError("responses.mode", "request uses fields that require upstream /v1/responses and are not supported when responses.mode=local_only: "+joinCSV(fields))
+}
+
+func normalizeLocalOnlyCreateError(responsesMode string, err error) error {
+	if responsesMode == config.ResponsesModeLocalOnly && errors.Is(err, domain.ErrUnsupportedShape) {
+		return domain.NewValidationError("input", "input shape is not supported when responses.mode=local_only")
+	}
+	return err
+}
+
+func joinCSV(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	if len(values) == 1 {
+		return values[0]
+	}
+	return strings.Join(values, ", ")
 }
 
 func (h *responseHandler) proxyCreateWithShadowStore(w http.ResponseWriter, r *http.Request, request CreateResponseRequest, rawBody []byte, requestJSON string, rawFields map[string]json.RawMessage) {
@@ -455,12 +759,79 @@ func (h *responseHandler) proxyCreateWithShadowStore(w http.ResponseWriter, r *h
 		WriteJSON(w, status, apiErrorPayload{Error: payload})
 		return
 	}
-	defer response.Body.Close()
+	defer func() {
+		if response != nil {
+			_ = response.Body.Close()
+		}
+	}()
 
 	body, err := io.ReadAll(response.Body)
 	if err != nil {
 		WriteError(w, http.StatusBadGateway, "upstream_error", "failed to read upstream response", "")
 		return
+	}
+	if shouldRetryCustomToolsWithBridgeBody(response.StatusCode, body, plan) {
+		upstreamBody, plan, err = h.buildBridgedProxyResponsesBody(r.Context(), rawFields)
+		if err != nil {
+			h.writeError(w, r, err)
+			return
+		}
+
+		_ = response.Body.Close()
+		response, err = h.proxyResponseRequest(r, upstreamBody)
+		if err != nil {
+			status, payload := MapError(r.Context(), h.logger, err)
+			WriteJSON(w, status, apiErrorPayload{Error: payload})
+			return
+		}
+
+		body, err = io.ReadAll(response.Body)
+		if err != nil {
+			WriteError(w, http.StatusBadGateway, "upstream_error", "failed to read upstream response", "")
+			return
+		}
+	}
+	if shouldRetryResponsesInputAsStringBody(response.StatusCode, body, upstreamBody) {
+		upstreamBody, err = h.buildStringifiedResponsesBody(r.Context(), upstreamBody)
+		if err != nil {
+			h.writeError(w, r, err)
+			return
+		}
+
+		_ = response.Body.Close()
+		response, err = h.proxyResponseRequest(r, upstreamBody)
+		if err != nil {
+			status, payload := MapError(r.Context(), h.logger, err)
+			WriteJSON(w, status, apiErrorPayload{Error: payload})
+			return
+		}
+
+		body, err = io.ReadAll(response.Body)
+		if err != nil {
+			WriteError(w, http.StatusBadGateway, "upstream_error", "failed to read upstream response", "")
+			return
+		}
+	}
+	if shouldRetryCustomToolsWithBridgeBody(response.StatusCode, body, plan) {
+		upstreamBody, plan, err = h.buildBridgedCurrentResponsesBody(r.Context(), upstreamBody)
+		if err != nil {
+			h.writeError(w, r, err)
+			return
+		}
+
+		_ = response.Body.Close()
+		response, err = h.proxyResponseRequest(r, upstreamBody)
+		if err != nil {
+			status, payload := MapError(r.Context(), h.logger, err)
+			WriteJSON(w, status, apiErrorPayload{Error: payload})
+			return
+		}
+
+		body, err = io.ReadAll(response.Body)
+		if err != nil {
+			WriteError(w, http.StatusBadGateway, "upstream_error", "failed to read upstream response", "")
+			return
+		}
 	}
 	if looksLikeSSEPayload(response.Header.Get("Content-Type"), body) {
 		h.logger.WarnContext(r.Context(), "unexpected SSE payload on non-stream responses request",
@@ -540,12 +911,14 @@ func (h *responseHandler) proxyCreateWithShadowStore(w http.ResponseWriter, r *h
 
 func prepareShadowStore(request CreateResponseRequest, requestJSON string) (service.PreparedResponseContext, service.CreateResponseInput, bool) {
 	input := service.CreateResponseInput{
-		Model:        request.Model,
-		Input:        request.Input,
-		Store:        request.Store,
-		Stream:       request.Stream,
-		Instructions: request.Instructions,
-		RequestJSON:  requestJSON,
+		Model:              request.Model,
+		Input:              request.Input,
+		Store:              request.Store,
+		Stream:             request.Stream,
+		PreviousResponseID: request.PreviousResponseID,
+		ConversationID:     request.Conversation,
+		Instructions:       request.Instructions,
+		RequestJSON:        requestJSON,
 	}
 	if input.Model == "" {
 		return service.PreparedResponseContext{}, input, false

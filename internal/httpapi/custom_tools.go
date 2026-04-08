@@ -24,6 +24,8 @@ type customToolDescriptor struct {
 	Name          string
 	Namespace     string
 	SyntheticName string
+	Transport     string
+	Constraint    *customToolConstraint
 }
 
 type customToolBridge struct {
@@ -35,6 +37,7 @@ type customToolBridge struct {
 type customToolTransportPlan struct {
 	Mode                customToolsMode
 	Bridge              customToolBridge
+	BridgeFallbackSafe  bool
 	DroppedBuiltinTools []string
 	ToolChoiceContract  toolChoiceContract
 }
@@ -142,6 +145,8 @@ func buildCustomToolTransportPlan(rawFields map[string]json.RawMessage, configur
 
 	containsCustom := false
 	requiresPassthrough := false
+	bridgeUnsupported := false
+	bridgeFallbackSafe := true
 	droppedBuiltinTools := make([]string, 0, 1)
 	bridge := customToolBridge{
 		ByModelName: make(map[string]customToolDescriptor),
@@ -167,14 +172,21 @@ func buildCustomToolTransportPlan(rawFields map[string]json.RawMessage, configur
 			formatType := detectCustomToolFormatType(tool)
 			switch formatType {
 			case "", "text":
+			case "grammar":
+				requiresPassthrough = true
+				bridgeUnsupported = true
+				bridgeFallbackSafe = false
 			default:
 				requiresPassthrough = true
+				bridgeUnsupported = true
+				bridgeFallbackSafe = false
 			}
 
 			descriptor := customToolDescriptor{
 				Name:          name,
 				Namespace:     namespace,
 				SyntheticName: syntheticCustomToolName(namespace, name),
+				Transport:     "passthrough",
 			}
 			key := canonicalCustomToolKey(namespace, name)
 			if _, exists := bridge.ByCanonical[key]; exists {
@@ -205,30 +217,40 @@ func buildCustomToolTransportPlan(rawFields map[string]json.RawMessage, configur
 
 	switch mode {
 	case customToolsModePassthrough:
-		return customToolTransportPlan{Mode: customToolsModePassthrough}, tools, nil
+		return customToolTransportPlan{
+			Mode:               customToolsModePassthrough,
+			BridgeFallbackSafe: bridgeFallbackSafe,
+		}, tools, nil
 	case customToolsModeAuto:
 		if requiresPassthrough {
-			return customToolTransportPlan{Mode: customToolsModePassthrough}, tools, nil
+			return customToolTransportPlan{
+				Mode:               customToolsModePassthrough,
+				BridgeFallbackSafe: bridgeFallbackSafe,
+			}, tools, nil
 		}
 	case customToolsModeBridge:
-		if requiresPassthrough {
-			return customToolTransportPlan{}, nil, domain.NewValidationError("tools", "grammar-constrained custom tools are not supported in bridge mode")
+		if bridgeUnsupported {
+			return customToolTransportPlan{}, nil, domain.NewValidationError("tools", "custom tool format is not supported in bridge mode")
 		}
 	}
 
 	for _, descriptor := range customDescriptors {
+		descriptor.Transport = "bridge"
 		if _, conflict := usedNames[descriptor.Name]; conflict {
 			return customToolTransportPlan{}, nil, domain.NewValidationError("tools", "custom tool name conflicts with an existing function tool name")
 		}
 		if _, exists := bridge.ByModelName[descriptor.Name]; exists {
 			return customToolTransportPlan{}, nil, domain.NewValidationError("tools", "custom tools must not repeat the same name in bridge mode")
 		}
+		bridge.ByCanonical[canonicalCustomToolKey(descriptor.Namespace, descriptor.Name)] = descriptor
+		bridge.BySynthetic[descriptor.SyntheticName] = descriptor
 		bridge.ByModelName[descriptor.Name] = descriptor
 	}
 
 	return customToolTransportPlan{
 		Mode:                customToolsModeBridge,
 		Bridge:              bridge,
+		BridgeFallbackSafe:  true,
 		DroppedBuiltinTools: droppedBuiltinTools,
 	}, filteredTools, nil
 }
@@ -676,14 +698,18 @@ func annotateResponseCustomToolMetadata(response domain.Response, plan customToo
 				ToolName:      item.Name(),
 				ToolNamespace: item.Namespace(),
 			}
-			if plan.BridgeActive() {
-				meta.Transport = "bridge"
-				if descriptor, ok := plan.Bridge.ByCanonicalIdentity(item.Name(), item.Namespace()); ok {
-					meta.SyntheticName = descriptor.SyntheticName
-					meta.ToolName = descriptor.Name
-					meta.ToolNamespace = descriptor.Namespace
+			if descriptor, ok := plan.Bridge.ByCanonicalIdentity(item.Name(), item.Namespace()); ok {
+				meta.SyntheticName = descriptor.SyntheticName
+				meta.ToolName = descriptor.Name
+				meta.ToolNamespace = descriptor.Namespace
+				if strings.TrimSpace(descriptor.Transport) != "" {
+					meta.Transport = descriptor.Transport
 				}
-			} else {
+			}
+			if meta.Transport == "" && plan.BridgeActive() {
+				meta.Transport = "bridge"
+			}
+			if meta.Transport == "" {
 				meta.Transport = "passthrough"
 			}
 			item = item.WithMeta(meta)
@@ -738,8 +764,8 @@ func contextHasPassthroughCustomItems(items []domain.Item) bool {
 func remapItemForBridgeUpstream(item domain.Item, bridge customToolBridge, refs map[string]domain.ToolCallReference) (domain.Item, error) {
 	switch item.Type {
 	case "custom_tool_call":
-		if item.Meta == nil || item.Meta.Transport == "passthrough" {
-			return domain.Item{}, domain.NewValidationError("input", "bridge mode cannot replay passthrough-native custom tool calls from history")
+		if item.Meta == nil || item.Meta.Transport != "bridge" {
+			return domain.Item{}, domain.NewValidationError("input", "bridge mode cannot replay non-bridged custom tool calls from history")
 		}
 		descriptor := descriptorForItem(item, bridge)
 		if descriptor.SyntheticName == "" {
@@ -761,8 +787,8 @@ func remapItemForBridgeUpstream(item domain.Item, bridge customToolBridge, refs 
 		if !ok {
 			return domain.Item{}, domain.NewValidationError("input", "custom_tool_call_output must reference a known custom tool call")
 		}
-		if ref.Meta == nil || ref.Meta.Transport == "passthrough" {
-			return domain.Item{}, domain.NewValidationError("input", "bridge mode cannot replay passthrough-native custom tool outputs from history")
+		if ref.Meta == nil || ref.Meta.Transport != "bridge" {
+			return domain.Item{}, domain.NewValidationError("input", "bridge mode cannot replay non-bridged custom tool outputs from history")
 		}
 		payload := item.Map()
 		payload["type"] = "function_call_output"
@@ -782,6 +808,7 @@ func descriptorForItem(item domain.Item, bridge customToolBridge) customToolDesc
 			Name:          fallbackString(item.Meta.ToolName, item.Name()),
 			Namespace:     fallbackString(item.Meta.ToolNamespace, item.Namespace()),
 			SyntheticName: item.Meta.SyntheticName,
+			Transport:     item.Meta.Transport,
 		}
 	}
 	if descriptor, ok := bridge.ByCanonicalIdentity(item.Name(), item.Namespace()); ok {
@@ -979,6 +1006,7 @@ func bridgeFromToolCallRefs(refs map[string]domain.ToolCallReference) (customToo
 			Name:          name,
 			Namespace:     namespace,
 			SyntheticName: fallbackString(ref.Meta.SyntheticName, syntheticCustomToolName(namespace, name)),
+			Transport:     ref.Meta.Transport,
 		}
 
 		key := canonicalCustomToolKey(namespace, name)

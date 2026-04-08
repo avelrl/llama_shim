@@ -15,6 +15,7 @@ type RouterDeps struct {
 	LlamaClient                           *llama.Client
 	ResponseService                       *service.ResponseService
 	ConversationService                   *service.ConversationService
+	ResponsesMode                         string
 	ResponsesCustomToolsMode              string
 	ResponsesCodexEnableCompatibility     bool
 	ResponsesCodexForceToolChoiceRequired bool
@@ -27,6 +28,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 		deps.Logger,
 		deps.ResponseService,
 		proxyHandler,
+		deps.ResponsesMode,
 		deps.ResponsesCustomToolsMode,
 		deps.ResponsesCodexEnableCompatibility,
 		deps.ResponsesCodexForceToolChoiceRequired,

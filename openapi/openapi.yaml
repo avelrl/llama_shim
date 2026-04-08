@@ -1,0 +1,628 @@
+openapi: 3.1.0
+info:
+  title: llama_shim API
+  version: 0.1.0
+  summary: Minimal OpenAI-compatible surface owned by llama_shim
+  description: |
+    Versioned API contract for the routes currently implemented or explicitly
+    owned by `llama_shim`.
+
+    The spec is intentionally narrow:
+    - only routes that exist in the current server are documented
+    - operation status is marked with `x-shim-status`
+    - `implemented` means the shim owns the route contract
+    - `partial` means the shim owns only part of the route behavior or request surface
+    - `proxy` means the route is validated and then forwarded to the upstream backend
+
+    Notes:
+    - `/v1/responses` is local-first for the supported subset and may still proxy
+      unsupported features upstream depending on `responses.mode`
+    - item payloads are intentionally described as typed open objects because the
+      shim preserves normalized raw item bodies across several Responses and
+      Conversations flows
+servers:
+  - url: http://127.0.0.1:8080
+tags:
+  - name: health
+  - name: responses
+  - name: conversations
+  - name: chat
+paths:
+  /healthz:
+    get:
+      tags: [health]
+      summary: Liveness probe
+      x-shim-status: implemented
+      responses:
+        "200":
+          description: Service process is alive
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+              example:
+                status: ok
+        "405":
+          $ref: "#/components/responses/ErrorResponse"
+  /readyz:
+    get:
+      tags: [health]
+      summary: Readiness probe
+      x-shim-status: implemented
+      responses:
+        "200":
+          description: SQLite store is reachable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+              example:
+                status: ready
+        "503":
+          description: SQLite store is not ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                error:
+                  message: sqlite is not ready
+                  type: service_unavailable
+                  param: null
+                  code: null
+        "405":
+          $ref: "#/components/responses/ErrorResponse"
+  /v1/responses:
+    post:
+      tags: [responses]
+      summary: Create a response
+      x-shim-status: partial
+      description: |
+        Creates a response using the shim-owned Responses surface.
+
+        The request body is a partial OpenAI Responses-compatible object:
+        - core fields such as `model`, `input`, `store`, `stream`,
+          `previous_response_id`, `conversation`, and `instructions` are owned
+          by the shim
+        - a supported local subset is executed entirely inside the shim
+        - unsupported fields may be proxied to upstream `/v1/responses` when
+          `responses.mode` allows it
+
+        When `stream=true`, the response is emitted as SSE with events such as:
+        `response.created`, `response.output_item.added`,
+        `response.output_text.delta`, `response.output_text.done`,
+        `response.output_item.done`, `response.completed`,
+        `response.custom_tool_call_input.delta`,
+        `response.custom_tool_call_input.done`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateResponseRequest"
+            examples:
+              minimal:
+                summary: Minimal text request
+                value:
+                  model: test-model
+                  store: true
+                  input: Say OK and nothing else
+              followup:
+                summary: Follow up by previous_response_id
+                value:
+                  model: test-model
+                  store: true
+                  previous_response_id: resp_prev_123
+                  input: What was my code? Reply with just the number.
+              conversation:
+                summary: Follow up in a conversation
+                value:
+                  model: test-model
+                  store: true
+                  conversation: conv_123
+                  input: What is the code? Reply with just the number.
+      responses:
+        "200":
+          description: JSON response or SSE stream
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Response"
+              examples:
+                text_response:
+                  summary: Completed text response
+                  value:
+                    id: resp_123
+                    object: response
+                    model: test-model
+                    output_text: OK
+                    output:
+                      - id: msg_123
+                        type: message
+                        role: assistant
+                        content:
+                          - type: output_text
+                            text: OK
+                custom_tool_call:
+                  summary: Custom tool call output item
+                  value:
+                    id: resp_456
+                    object: response
+                    model: test-model
+                    output_text: ""
+                    output:
+                      - id: item_456
+                        type: custom_tool_call
+                        call_id: call_123
+                        name: code_exec
+                        input: print("hello world")
+                        status: completed
+            text/event-stream:
+              schema:
+                type: string
+              example: |
+                event: response.created
+                data: {"type":"response.created","response":{"id":"resp_123","object":"response","model":"test-model"}}
+
+                event: response.output_text.delta
+                data: {"type":"response.output_text.delta","delta":"OK"}
+
+                event: response.output_text.done
+                data: {"type":"response.output_text.done","text":"OK"}
+
+                event: response.completed
+                data: {"type":"response.completed","response":{"id":"resp_123","object":"response","model":"test-model","output_text":"OK","output":[{"id":"msg_123","type":"message","role":"assistant","content":[{"type":"output_text","text":"OK"}]}]}}
+        "400":
+          $ref: "#/components/responses/ErrorResponse"
+        "404":
+          $ref: "#/components/responses/ErrorResponse"
+        "409":
+          $ref: "#/components/responses/ErrorResponse"
+        "502":
+          $ref: "#/components/responses/ErrorResponse"
+        "504":
+          $ref: "#/components/responses/ErrorResponse"
+  /v1/responses/{id}:
+    get:
+      tags: [responses]
+      summary: Get a stored response
+      x-shim-status: partial
+      description: |
+        Returns a locally stored response when present. If the response is not
+        found in shim storage, the request is forwarded to upstream
+        `/v1/responses/{id}`.
+      parameters:
+        - $ref: "#/components/parameters/ResponseID"
+      responses:
+        "200":
+          description: Response object
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Response"
+        "404":
+          $ref: "#/components/responses/ErrorResponse"
+        "502":
+          $ref: "#/components/responses/ErrorResponse"
+        "504":
+          $ref: "#/components/responses/ErrorResponse"
+  /v1/responses/{id}/input_items:
+    get:
+      tags: [responses]
+      summary: List normalized input items for a stored response
+      x-shim-status: implemented
+      parameters:
+        - $ref: "#/components/parameters/ResponseID"
+      responses:
+        "200":
+          description: Normalized input items stored for the response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ItemListResponse"
+              example:
+                object: list
+                data:
+                  - id: msg_user_1
+                    type: message
+                    role: user
+                    content:
+                      - type: input_text
+                        text: Remember code 123
+                first_id: msg_user_1
+                last_id: msg_user_1
+                has_more: false
+        "404":
+          $ref: "#/components/responses/ErrorResponse"
+  /v1/conversations:
+    post:
+      tags: [conversations]
+      summary: Create a conversation
+      x-shim-status: partial
+      description: |
+        Creates a shim-owned conversation from initial items.
+
+        Compared with the official OpenAI Conversations API surface:
+        - the shim currently owns only the `items`-based create flow
+        - extra request fields are not part of the shim contract
+        - the returned conversation object is a shim-specific compact shape with
+          inline normalized `items`
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateConversationRequest"
+            example:
+              items:
+                - type: message
+                  role: system
+                  content: You are a test assistant.
+                - type: message
+                  role: user
+                  content: Remember code 777. Reply OK.
+      responses:
+        "200":
+          description: Created conversation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Conversation"
+              example:
+                id: conv_123
+                object: conversation
+                items:
+                  - id: item_1
+                    type: message
+                    role: system
+                    content:
+                      - type: input_text
+                        text: You are a test assistant.
+                  - id: item_2
+                    type: message
+                    role: user
+                    content:
+                      - type: input_text
+                        text: Remember code 777. Reply OK.
+        "400":
+          $ref: "#/components/responses/ErrorResponse"
+        "409":
+          $ref: "#/components/responses/ErrorResponse"
+  /v1/conversations/{id}/items:
+    get:
+      tags: [conversations]
+      summary: List conversation items
+      x-shim-status: partial
+      parameters:
+        - $ref: "#/components/parameters/ConversationID"
+        - name: after
+          in: query
+          description: Return items after the given item id
+          schema:
+            type: string
+        - name: limit
+          in: query
+          description: Page size from 1 to 100. Default is 20.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: order
+          in: query
+          description: Sort order. Default is `desc`.
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+        - name: include
+          in: query
+          description: Currently unsupported. Any value returns 400.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Paginated conversation items
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ItemListResponse"
+              example:
+                object: list
+                data:
+                  - id: item_2
+                    type: message
+                    role: user
+                    content:
+                      - type: input_text
+                        text: Remember code 777. Reply OK.
+                first_id: item_2
+                last_id: item_2
+                has_more: false
+        "400":
+          $ref: "#/components/responses/ErrorResponse"
+        "404":
+          $ref: "#/components/responses/ErrorResponse"
+  /v1/chat/completions:
+    post:
+      tags: [chat]
+      summary: Validate and proxy Chat Completions
+      x-shim-status: proxy
+      description: |
+        Validates a small core of the request (`model`, `messages`) and then
+        forwards the request to the upstream backend. Successful JSON responses
+        are sanitized to remove some backend-specific fields. SSE responses are
+        proxied through unchanged.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatCompletionsRequest"
+            example:
+              model: test-model
+              messages:
+                - role: user
+                  content: Say OK and nothing else
+      responses:
+        "200":
+          description: Upstream JSON or SSE response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProxyJSONResponse"
+            text/event-stream:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/ErrorResponse"
+        "502":
+          $ref: "#/components/responses/ErrorResponse"
+        "504":
+          $ref: "#/components/responses/ErrorResponse"
+components:
+  parameters:
+    ResponseID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Response identifier
+    ConversationID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Conversation identifier
+  responses:
+    ErrorResponse:
+      description: Canonical OpenAI-shaped error envelope
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+          example:
+            error:
+              message: model is required
+              type: invalid_request_error
+              param: model
+              code: null
+  schemas:
+    StatusResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          $ref: "#/components/schemas/APIError"
+    APIError:
+      type: object
+      required: [message, type]
+      properties:
+        message:
+          type: string
+        type:
+          type: string
+        param:
+          type:
+            - string
+            - "null"
+        code:
+          type:
+            - string
+            - "null"
+    CreateResponseRequest:
+      type: object
+      required: [model, input]
+      additionalProperties: true
+      properties:
+        model:
+          type: string
+        input:
+          $ref: "#/components/schemas/InputField"
+        store:
+          type: boolean
+        stream:
+          type: boolean
+        previous_response_id:
+          type: string
+        conversation:
+          type: string
+        instructions:
+          type: string
+      description: |
+        Partial Responses-compatible request body. The shim guarantees only the
+        documented core fields; other fields may be handled locally, proxied
+        upstream, or rejected depending on `responses.mode`.
+    InputField:
+      description: String input or typed item payload accepted by the shim
+      oneOf:
+        - type: string
+        - $ref: "#/components/schemas/Item"
+        - type: array
+          items:
+            $ref: "#/components/schemas/Item"
+    Response:
+      type: object
+      description: |
+        Compact shim-owned subset of the OpenAI `response` object.
+
+        Unlike the full OpenAI Response resource documented in the official API
+        reference, the shim does not currently guarantee fields such as
+        `created_at`, `status`, `error`, `usage`, `reasoning`, `tools`,
+        `tool_choice`, `text`, or `metadata` in this route contract.
+      required: [id, object, model, output_text, output]
+      properties:
+        id:
+          type: string
+        object:
+          type: string
+          const: response
+        model:
+          type: string
+        previous_response_id:
+          type: string
+        conversation:
+          type: string
+        output_text:
+          type: string
+        output:
+          type: array
+          items:
+            $ref: "#/components/schemas/Item"
+    CreateConversationRequest:
+      type: object
+      required: [items]
+      additionalProperties: true
+      description: |
+        Shim create-conversation request.
+
+        The shim currently owns only the `items` field. Additional request
+        fields are outside the current shim contract and should not be relied on
+        for compatibility with the official OpenAI Conversations API.
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Item"
+    Conversation:
+      type: object
+      description: |
+        Shim conversation resource.
+
+        This differs from the official OpenAI conversation resource: the shim
+        returns inline normalized `items`, while fields like `created_at` and
+        `metadata` are not part of the current shim contract.
+      required: [id, object, items]
+      properties:
+        id:
+          type: string
+        object:
+          type: string
+          const: conversation
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Item"
+    ItemListResponse:
+      type: object
+      required: [object, data, has_more]
+      properties:
+        object:
+          type: string
+          const: list
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Item"
+        first_id:
+          type:
+            - string
+            - "null"
+        last_id:
+          type:
+            - string
+            - "null"
+        has_more:
+          type: boolean
+    TextPart:
+      type: object
+      additionalProperties: true
+      properties:
+        type:
+          type: string
+        text:
+          type: string
+    Item:
+      type: object
+      description: |
+        Typed Responses or Conversations item. The shim preserves normalized raw
+        item payloads, so the schema is intentionally permissive beyond the
+        common stable fields listed here.
+      additionalProperties: true
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+        role:
+          type: string
+        content:
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                $ref: "#/components/schemas/TextPart"
+        status:
+          type: string
+        name:
+          type: string
+        namespace:
+          type: string
+        call_id:
+          type: string
+        input:
+          type: string
+        arguments:
+          type: string
+        output:
+          description: Tool output payload
+    ChatCompletionsRequest:
+      type: object
+      description: |
+        Minimal validated request for shim `/v1/chat/completions` proxying.
+
+        The official OpenAI Chat Completions API supports many more fields; the
+        shim validates only `model` and `messages` before forwarding the request
+        upstream and does not claim full ownership of the upstream schema.
+      required: [model, messages]
+      additionalProperties: true
+      properties:
+        model:
+          type: string
+        messages:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            additionalProperties: true
+            properties:
+              role:
+                type: string
+              content:
+                oneOf:
+                  - type: string
+                  - type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+    ProxyJSONResponse:
+      type: object
+      additionalProperties: true

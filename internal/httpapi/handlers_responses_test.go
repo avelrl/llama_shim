@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"llama_shim/internal/config"
 	"llama_shim/internal/domain"
 	"llama_shim/internal/llama"
 )
@@ -55,12 +56,85 @@ func TestPrepareShadowStoreKeepsMixedInputItems(t *testing.T) {
 	require.Equal(t, "function_call_output", prepared.NormalizedInput[1].Type)
 }
 
+func TestPrepareShadowStorePreservesStateFields(t *testing.T) {
+	request := CreateResponseRequest{
+		Model:              "test-model",
+		PreviousResponseID: "resp_prev",
+		Conversation:       "conv_1",
+		Input:              json.RawMessage(`"hello"`),
+	}
+
+	_, input, ok := prepareShadowStore(request, `{"model":"test-model"}`)
+
+	require.True(t, ok)
+	require.Equal(t, "resp_prev", input.PreviousResponseID)
+	require.Equal(t, "conv_1", input.ConversationID)
+}
+
 func TestShouldFallbackLocalState(t *testing.T) {
-	require.True(t, shouldFallbackLocalState(&llama.UpstreamError{
+	require.True(t, shouldFallbackLocalState(config.ResponsesModePreferUpstream, &llama.UpstreamError{
 		StatusCode: 500,
 		Message:    "backend failed",
 	}))
-	require.False(t, shouldFallbackLocalState(domain.NewValidationError("input", "input is required")))
+	require.False(t, shouldFallbackLocalState(config.ResponsesModePreferLocal, &llama.UpstreamError{
+		StatusCode: 500,
+		Message:    "backend failed",
+	}))
+	require.True(t, shouldFallbackLocalState(config.ResponsesModePreferLocal, domain.ErrUnsupportedShape))
+	require.False(t, shouldFallbackLocalState(config.ResponsesModeLocalOnly, domain.ErrUnsupportedShape))
+	require.False(t, shouldFallbackLocalState(config.ResponsesModePreferLocal, domain.NewValidationError("input", "input is required")))
+}
+
+func TestShouldRetryLocalStateWithDirectProxyBody(t *testing.T) {
+	request := CreateResponseRequest{PreviousResponseID: "resp_prev"}
+
+	require.True(t, shouldRetryLocalStateWithDirectProxyBody(http.StatusBadRequest, []byte(`{
+		"error":{
+			"type":"invalid_request_error",
+			"message":"637 validation errors:\n  {'type': 'string_type', 'loc': ('body', 'input', 'str'), 'msg': 'Input should be a valid string'}"
+		}
+	}`), request))
+	require.False(t, shouldRetryLocalStateWithDirectProxyBody(http.StatusBadRequest, []byte(`{
+		"error":{"type":"invalid_request_error","message":"tool type custom not supported"}
+	}`), request))
+	require.False(t, shouldRetryLocalStateWithDirectProxyBody(http.StatusBadRequest, []byte(`{
+		"error":{"type":"invalid_request_error","message":"Input should be a valid string"}
+	}`), CreateResponseRequest{}))
+}
+
+func TestShouldRetryResponsesInputAsStringBody(t *testing.T) {
+	requestBody := []byte(`{"input":[{"type":"message","role":"user","content":"backend rejects structured input arrays"}]}`)
+
+	require.True(t, shouldRetryResponsesInputAsStringBody(http.StatusBadRequest, []byte(`{
+		"error":{"type":"invalid_request_error","message":"426 validation errors:\n  {'type': 'string_type', 'loc': ('body', 'input', 'str'), 'msg': 'Input should be a valid string'}"}
+	}`), requestBody))
+	require.True(t, shouldRetryResponsesInputAsStringBody(http.StatusBadRequest, []byte(`{
+		"error":{"type":"invalid_request_error","message":"Field required: 'input': {'type': 'message'}"}
+	}`), requestBody))
+	require.False(t, shouldRetryResponsesInputAsStringBody(http.StatusBadRequest, []byte(`{
+		"error":{"type":"invalid_request_error","message":"Input should be a valid string"}
+	}`), []byte(`{"input":"hello"}`)))
+}
+
+func TestRewriteResponsesInputAsStringBody(t *testing.T) {
+	body, err := rewriteResponsesInputAsStringBody([]byte(`{
+		"model":"test-model",
+		"input":[
+			{"type":"message","role":"developer","content":[{"type":"input_text","text":"You are helpful."}]},
+			{"type":"message","role":"user","content":[{"type":"input_text","text":"Call add."}]},
+			{"type":"function_call_output","call_id":"call_1","output":"{\"result\":3}"}
+		]
+	}`))
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(body, &payload))
+	input, ok := payload["input"].(string)
+	require.True(t, ok)
+	require.Contains(t, input, "DEVELOPER:")
+	require.Contains(t, input, "USER:")
+	require.Contains(t, input, "FUNCTION CALL OUTPUT (call_1):")
+	require.Contains(t, input, `{"result":3}`)
 }
 
 func TestRemapCustomToolsPayloadRewritesCustomToolsAndSpecificToolChoice(t *testing.T) {
@@ -107,7 +181,7 @@ func TestRemapCustomToolsPayloadRewritesCustomToolsAndSpecificToolChoice(t *test
 	require.Equal(t, "code_exec", toolChoice["name"])
 }
 
-func TestRemapCustomToolsPayloadRejectsUnsupportedGrammar(t *testing.T) {
+func TestRemapCustomToolsPayloadRejectsGrammarCustomToolsInBridgeMode(t *testing.T) {
 	rawFields := map[string]json.RawMessage{
 		"tools": json.RawMessage(`[
 			{"type":"custom","name":"code_exec","grammar":{"syntax":"lark","definition":"start: /.+/"}}
@@ -119,6 +193,7 @@ func TestRemapCustomToolsPayloadRejectsUnsupportedGrammar(t *testing.T) {
 	var validationErr *domain.ValidationError
 	require.ErrorAs(t, err, &validationErr)
 	require.Equal(t, "tools", validationErr.Param)
+	require.Contains(t, validationErr.Message, "custom tool format is not supported in bridge mode")
 }
 
 func TestRemapCustomToolsPayloadAcceptsCustomToolAlias(t *testing.T) {
@@ -261,6 +336,16 @@ func TestShouldRetryToolChoiceWithAutoBody(t *testing.T) {
 
 	require.True(t, shouldRetryToolChoiceWithAutoBody(http.StatusNotImplemented, []byte(`{"error":{"message":"Only 'auto' tool_choice is supported in response API with Harmony"}}`), plan))
 	require.False(t, shouldRetryToolChoiceWithAutoBody(http.StatusNotImplemented, []byte(`{"error":{"message":"different error"}}`), plan))
+}
+
+func TestShouldRetryCustomToolsWithBridgeBody(t *testing.T) {
+	plan := customToolTransportPlan{Mode: customToolsModePassthrough, BridgeFallbackSafe: true}
+
+	require.True(t, shouldRetryCustomToolsWithBridgeBody(http.StatusBadRequest, []byte(`{"error":{"message":"tool type custom not supported","type":"invalid_request_error"}}`), plan))
+	require.True(t, shouldRetryCustomToolsWithBridgeBody(http.StatusBadRequest, []byte(`{"error":{"message":"'type' of tool must be 'function'","type":"invalid_request_error","param":"tools"}}`), plan))
+	require.False(t, shouldRetryCustomToolsWithBridgeBody(http.StatusBadRequest, []byte(`{"error":{"message":"messages is required","type":"invalid_request_error"}}`), plan))
+	require.False(t, shouldRetryCustomToolsWithBridgeBody(http.StatusBadRequest, []byte(`{"error":{"message":"tool type custom not supported","type":"invalid_request_error"}}`), customToolTransportPlan{Mode: customToolsModePassthrough}))
+	require.False(t, shouldRetryCustomToolsWithBridgeBody(http.StatusBadRequest, []byte(`{"error":{"message":"tool type custom not supported","type":"invalid_request_error"}}`), customToolTransportPlan{Mode: customToolsModeBridge}))
 }
 
 func TestEnforceToolChoiceContractRejectsAssistantText(t *testing.T) {

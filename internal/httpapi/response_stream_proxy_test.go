@@ -47,6 +47,34 @@ func TestResponseStreamEventProxyLogsOutputTextAndSummary(t *testing.T) {
 	require.Contains(t, output, `"event_count":5`)
 }
 
+func TestResponseStreamEventProxyKeepsStreamedMessageIDOnCompleted(t *testing.T) {
+	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, nil)
+
+	var out bytes.Buffer
+	lines := []string{
+		"event: response.created\n",
+		"data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_test\",\"model\":\"google/gemma-4-26b-a4b:latest\",\"output_text\":\"\",\"output\":[]}}\n",
+		"\n",
+		"event: response.output_text.done\n",
+		"data: {\"type\":\"response.output_text.done\",\"response_id\":\"resp_test\",\"item_id\":\"msg_stream\",\"output_index\":0,\"content_index\":0,\"text\":\"hello\"}\n",
+		"\n",
+		"event: response.completed\n",
+		"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_test\",\"model\":\"google/gemma-4-26b-a4b:latest\",\"output_text\":\"hello\",\"output\":[{\"id\":\"msg_completed\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hello\"}]}]}}\n",
+		"\n",
+	}
+
+	for _, line := range lines {
+		require.NoError(t, proxy.WriteLine(&out, line))
+	}
+	require.NoError(t, proxy.Flush(io.Discard))
+
+	output := out.String()
+	require.Contains(t, output, `"item_id":"msg_stream"`)
+	require.Contains(t, output, `"id":"msg_stream"`)
+	require.NotContains(t, output, `"msg_completed"`)
+	require.Equal(t, 1, strings.Count(output, "event: response.output_item.done\n"))
+}
+
 func TestLooksLikeSSEPayload(t *testing.T) {
 	require.True(t, looksLikeSSEPayload("text/event-stream", nil))
 	require.True(t, looksLikeSSEPayload("application/octet-stream", []byte("event: response.created\n")))

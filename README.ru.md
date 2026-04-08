@@ -87,8 +87,9 @@ log:
   file_path: ./.data/shim.log
 
 responses:
+  mode: prefer_local
   custom_tools:
-    mode: bridge
+    mode: auto
   codex:
     enable_compatibility: true
     force_tool_choice_required: true
@@ -119,7 +120,10 @@ SHIM_CONFIG=./config.yaml go run ./cmd/shim
 - `LLAMA_BASE_URL` переопределяет `llama.base_url`
 - `SQLITE_PATH` переопределяет `sqlite.path`
 - `SHIM_ADDR` переопределяет `shim.addr`
+- `RESPONSES_MODE` переопределяет `responses.mode`; поддерживаются `prefer_local`, `prefer_upstream`, `local_only`
+  `prefer_local` теперь используется по умолчанию: shim сам ведет `/v1/responses` для локально-поддерживаемого subset и обращается к upstream `/v1/responses` только для неподдерживаемых фич.
 - `RESPONSES_CUSTOM_TOOLS_MODE` переопределяет `responses.custom_tools.mode`; поддерживаются `bridge`, `auto`, `passthrough`
+  Для дефолтного режима лучше `auto`: он сохраняет bridge для обычных text custom tools и не ломает grammar-constrained инструменты, пропуская их passthrough.
 - `RESPONSES_CODEX_ENABLE_COMPATIBILITY` переопределяет `responses.codex.enable_compatibility`; если выключено, shim перестает добавлять Codex-specific instructions/context и пропускает Codex-specific normalизацию response
 - `RESPONSES_CODEX_FORCE_TOOL_CHOICE_REQUIRED` переопределяет `responses.codex.force_tool_choice_required`; если включено, Codex-like запросы с `tool_choice: "auto"` переписываются в `required`
 
@@ -214,6 +218,8 @@ Shim отправляет SSE events, включая:
 
 ## Примечания по API
 
+- versioned OpenAPI spec для текущего surface shim лежит в [openapi/openapi.yaml](openapi/openapi.yaml)
+- в spec операции помечены через `x-shim-status: implemented|partial|proxy`, чтобы было видно, где контрактом владеет сам shim, а где он только проксирует upstream
 - `previous_response_id` и `conversation` взаимоисключающие
 - все API-ошибки возвращаются в JSON
 - `output_text` всегда присутствует в успешных ответах

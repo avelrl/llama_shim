@@ -89,8 +89,9 @@ log:
   file_path: ./.data/shim.log
 
 responses:
+  mode: prefer_local
   custom_tools:
-    mode: bridge
+    mode: auto
   codex:
     enable_compatibility: true
     force_tool_choice_required: true
@@ -121,7 +122,10 @@ Supported environment overrides:
 - `LLAMA_BASE_URL` overrides `llama.base_url`
 - `SQLITE_PATH` overrides `sqlite.path`
 - `SHIM_ADDR` overrides `shim.addr`
+- `RESPONSES_MODE` overrides `responses.mode`; supported values: `prefer_local`, `prefer_upstream`, `local_only`
+  `prefer_local` is the default: the shim owns `/v1/responses` whenever the request fits the locally-supported subset, and falls back to upstream `/v1/responses` only for unsupported features.
 - `RESPONSES_CUSTOM_TOOLS_MODE` overrides `responses.custom_tools.mode`; supported values: `bridge`, `auto`, `passthrough`
+  Use `auto` for the default path: it keeps bridge behavior for plain-text custom tools and avoids breaking grammar-constrained tools by forwarding them unchanged.
 - `RESPONSES_CODEX_ENABLE_COMPATIBILITY` overrides `responses.codex.enable_compatibility`; when disabled, the shim stops injecting Codex-specific instructions/context and skips Codex-specific response normalization
 - `RESPONSES_CODEX_FORCE_TOOL_CHOICE_REQUIRED` overrides `responses.codex.force_tool_choice_required`; when enabled, Codex-like requests with `tool_choice: "auto"` are rewritten to `required`
 
@@ -216,6 +220,8 @@ The shim emits SSE events including:
 
 ## API notes
 
+- versioned OpenAPI spec for the current shim-owned surface lives in [openapi/openapi.yaml](openapi/openapi.yaml)
+- operations in the spec are marked with `x-shim-status: implemented|partial|proxy` so it is clear where the shim owns the contract and where it only forwards to upstream
 - `previous_response_id` and `conversation` are mutually exclusive
 - all API errors are returned as JSON
 - `output_text` is always present on successful responses

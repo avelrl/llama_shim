@@ -22,11 +22,18 @@ type Config struct {
 	IdleTimeout                           time.Duration
 	LogLevel                              slog.Level
 	LogFilePath                           string
+	ResponsesMode                         string
 	ResponsesCustomToolsMode              string
 	ResponsesCodexEnableCompatibility     bool
 	ResponsesCodexForceToolChoiceRequired bool
 	ConfigFile                            string
 }
+
+const (
+	ResponsesModePreferLocal    = "prefer_local"
+	ResponsesModePreferUpstream = "prefer_upstream"
+	ResponsesModeLocalOnly      = "local_only"
+)
 
 func Load(configPath string) (Config, error) {
 	v := viper.New()
@@ -46,6 +53,7 @@ func Load(configPath string) (Config, error) {
 		ConfigFile:                            v.ConfigFileUsed(),
 		LogLevel:                              slog.LevelInfo,
 		LogFilePath:                           strings.TrimSpace(v.GetString("log.file_path")),
+		ResponsesMode:                         strings.ToLower(strings.TrimSpace(v.GetString("responses.mode"))),
 		ResponsesCustomToolsMode:              strings.ToLower(strings.TrimSpace(v.GetString("responses.custom_tools.mode"))),
 		ResponsesCodexEnableCompatibility:     v.GetBool("responses.codex.enable_compatibility"),
 		ResponsesCodexForceToolChoiceRequired: v.GetBool("responses.codex.force_tool_choice_required"),
@@ -66,6 +74,9 @@ func Load(configPath string) (Config, error) {
 	if err := parseLogLevel(v.GetString("log.level"), &cfg.LogLevel); err != nil {
 		return Config{}, fmt.Errorf("parse log.level: %w", err)
 	}
+	if err := parseResponsesMode(cfg.ResponsesMode); err != nil {
+		return Config{}, fmt.Errorf("parse responses.mode: %w", err)
+	}
 	if err := parseCustomToolsMode(cfg.ResponsesCustomToolsMode); err != nil {
 		return Config{}, fmt.Errorf("parse responses.custom_tools.mode: %w", err)
 	}
@@ -83,7 +94,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("llama.timeout", "60s")
 	v.SetDefault("log.level", "info")
 	v.SetDefault("log.file_path", "")
-	v.SetDefault("responses.custom_tools.mode", "bridge")
+	v.SetDefault("responses.mode", ResponsesModePreferLocal)
+	v.SetDefault("responses.custom_tools.mode", "auto")
 	v.SetDefault("responses.codex.enable_compatibility", true)
 	v.SetDefault("responses.codex.force_tool_choice_required", true)
 }
@@ -149,6 +161,15 @@ func parseLogLevel(value string, dst *slog.Level) error {
 func parseCustomToolsMode(value string) error {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "", "bridge", "passthrough", "auto":
+		return nil
+	default:
+		return strconv.ErrSyntax
+	}
+}
+
+func parseResponsesMode(value string) error {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", ResponsesModePreferLocal, ResponsesModePreferUpstream, ResponsesModeLocalOnly:
 		return nil
 	default:
 		return strconv.ErrSyntax
