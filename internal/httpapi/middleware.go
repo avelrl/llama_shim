@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -17,6 +18,14 @@ type contextKey string
 
 const requestIDKey contextKey = "request_id"
 const maxDebugLogBodyBytes = 16 << 10
+const omittedSSEBodyLog = "[text/event-stream body omitted]"
+
+type capturedBody struct {
+	text          string
+	totalBytes    int
+	capturedBytes int
+	truncated     bool
+}
 
 func RequestIDFromContext(ctx context.Context) string {
 	value, _ := ctx.Value(requestIDKey).(string)
@@ -69,7 +78,7 @@ func RequestLogMiddleware(logger *slog.Logger) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
 			captureBodies := logger.Enabled(r.Context(), slog.LevelDebug)
-			requestBody := ""
+			requestBody := capturedBody{}
 			if captureBodies {
 				requestBody = captureRequestBody(r)
 			}
@@ -87,15 +96,17 @@ func RequestLogMiddleware(logger *slog.Logger) func(http.Handler) http.Handler {
 				"status", recorder.status,
 				"duration_ms", time.Since(start).Milliseconds(),
 				"remote_addr", r.RemoteAddr,
+				"response_content_type", recorder.Header().Get("Content-Type"),
 			)
 			if captureBodies {
-				logger.DebugContext(r.Context(), "http request/response bodies",
+				attrs := []any{
 					"request_id", RequestIDFromContext(r.Context()),
 					"method", r.Method,
 					"path", r.URL.Path,
-					"request_body", requestBody,
-					"response_body", recorder.bodyString(),
-				)
+				}
+				attrs = appendBodyLogAttrs(attrs, "request", requestBody)
+				attrs = appendBodyLogAttrs(attrs, "response", recorder.capturedBody())
+				logger.DebugContext(r.Context(), "http request/response bodies", attrs...)
 			}
 		})
 	}
@@ -103,10 +114,11 @@ func RequestLogMiddleware(logger *slog.Logger) func(http.Handler) http.Handler {
 
 type statusRecorder struct {
 	http.ResponseWriter
-	status        int
-	body          []byte
-	captureBody   bool
-	bodyTruncated bool
+	status         int
+	body           []byte
+	totalBodyBytes int
+	captureBody    bool
+	bodyTruncated  bool
 }
 
 func (r *statusRecorder) WriteHeader(status int) {
@@ -115,7 +127,8 @@ func (r *statusRecorder) WriteHeader(status int) {
 }
 
 func (r *statusRecorder) Write(p []byte) (int, error) {
-	if r.captureBody && len(p) > 0 {
+	r.totalBodyBytes += len(p)
+	if r.captureBody && !r.omitBodyFromLogs() && len(p) > 0 {
 		remaining := maxDebugLogBodyBytes - len(r.body)
 		switch {
 		case remaining > 0 && len(p) > remaining:
@@ -142,27 +155,66 @@ func (r *statusRecorder) Unwrap() http.ResponseWriter {
 }
 
 func (r *statusRecorder) bodyString() string {
+	if r.omitBodyFromLogs() {
+		return omittedSSEBodyLog
+	}
 	return formatBodyForLog(r.body, r.bodyTruncated)
 }
 
-func captureRequestBody(r *http.Request) string {
+func (r *statusRecorder) capturedBody() capturedBody {
+	capturedBytes := len(r.body)
+	if r.omitBodyFromLogs() {
+		capturedBytes = 0
+	}
+	return capturedBody{
+		text:          r.bodyString(),
+		totalBytes:    r.totalBodyBytes,
+		capturedBytes: capturedBytes,
+		truncated:     r.bodyTruncated,
+	}
+}
+
+func (r *statusRecorder) omitBodyFromLogs() bool {
+	return strings.Contains(strings.ToLower(r.Header().Get("Content-Type")), "text/event-stream")
+}
+
+func captureRequestBody(r *http.Request) capturedBody {
 	if r.Body == nil {
-		return ""
+		return capturedBody{}
 	}
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		r.Body = io.NopCloser(bytes.NewReader(nil))
-		return "[failed to read request body]"
+		return capturedBody{
+			text:       "[failed to read request body]",
+			truncated:  false,
+			totalBytes: 0,
+		}
 	}
 	r.Body = io.NopCloser(bytes.NewReader(body))
 
 	truncated := false
+	captured := body
 	if len(body) > maxDebugLogBodyBytes {
-		body = body[:maxDebugLogBodyBytes]
+		captured = body[:maxDebugLogBodyBytes]
 		truncated = true
 	}
-	return formatBodyForLog(body, truncated)
+	return capturedBody{
+		text:          formatBodyForLog(captured, truncated),
+		totalBytes:    len(body),
+		capturedBytes: len(captured),
+		truncated:     truncated,
+	}
+}
+
+func appendBodyLogAttrs(attrs []any, prefix string, body capturedBody) []any {
+	return append(attrs,
+		prefix+"_body", body.text,
+		prefix+"_body_bytes", body.totalBytes,
+		prefix+"_body_captured_bytes", body.capturedBytes,
+		prefix+"_body_truncated", body.truncated,
+	)
 }
 
 func formatBodyForLog(body []byte, truncated bool) string {

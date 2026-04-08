@@ -1,316 +1,306 @@
 # Backlog / roadmap toward v2
 
-Актуализировано по состоянию на 31 марта 2026 на основе текущего состояния репозитория и актуальных OpenAI docs по `Responses API`, `Conversations API`, tool calling и `file_search`.
+Актуализировано по состоянию на 8 апреля 2026 на основе:
 
-## Current baseline in repo
+- текущего состояния репозитория, маршрутов и тестов
+- текущего staged diff
+- официального OpenAI API surface и docs:
+  [Conversation state](https://developers.openai.com/api/docs/guides/conversation-state),
+  [Streaming responses](https://developers.openai.com/api/docs/guides/streaming-responses),
+  [Function calling](https://developers.openai.com/api/docs/guides/function-calling),
+  [Structured outputs](https://developers.openai.com/api/docs/guides/structured-outputs),
+  [File search](https://developers.openai.com/api/docs/guides/tools-file-search),
+  [Compaction](https://developers.openai.com/api/docs/guides/conversation-state#compaction),
+  [Token counting](https://developers.openai.com/api/docs/guides/token-counting#api-reference)
 
-Сейчас в репозитории уже есть базовый stateful shim, поэтому это больше не “roadmap after v1”, а roadmap от текущего working baseline:
+## Текущий baseline в репе
+
+Сейчас в коде уже есть не “заготовка под future”, а рабочий stateful shim с таким public surface:
 
 - `POST /v1/responses`
 - `GET /v1/responses/{id}`
+- `GET /v1/responses/{id}/input_items`
 - `POST /v1/conversations`
+- `GET /v1/conversations/{id}/items`
+- `POST /v1/chat/completions`
 - `POST /v1/responses` with `stream: true` over SSE
-- `healthz` и базовый `/readyz`
+- `/healthz`
+- `/readyz` с проверкой SQLite readiness
 - SQLite migrations, `WAL`, default `busy_timeout`
-- request IDs и JSON request logs
 - hybrid mode: локальная stateful логика + proxy/shadow-store через upstream `responses`
 - локально поддерживаемые generation fields: `reasoning`, `temperature`, `top_p`, penalties, `stop`, `max_output_tokens`
 
-Из этого следуют два важных вывода:
+Из этого следуют два практических вывода:
 
-1. streaming уже не отдельная “будущая фича”, а тема для parity и hardening
-2. следующий реальный шаг для v2 это не “ещё один endpoint”, а доведение совместимости `Conversations` + `Responses` до более честного OpenAI-compatible уровня
+1. `GET /v1/responses/{id}/input_items`, `GET /v1/conversations/{id}/items` и базовый `/readyz` больше не backlog items, а уже текущий baseline.
+2. Следующий шаг для v2 это не “добавить еще один endpoint ради endpoint”, а довести совместимость surface до честного OpenAI-compatible уровня и оформить это нормальной спецификацией.
 
----
+## Что сделали в текущей пачке
 
-## Product direction
+Последняя пачка уже закрыла несколько старых дыр, которые раньше висели в roadmap:
 
-- `llama.cpp` остаётся stateless inference backend
-- shim продолжает владеть state semantics
-- где это разумно, выбираем OpenAI-compatible surface вместо bespoke API
-- сначала закрываем episodic memory, response fidelity и conversations
-- потом tools и richer items
-- только потом retrieval/vector stores и multi-instance story
+- добавлен `GET /v1/responses/{id}/input_items`
+- добавлен `GET /v1/conversations/{id}/items` с ordering / pagination coverage в integration tests
+- `/readyz` теперь реально проверяет SQLite, а не просто отвечает `200`
+- `/v1/chat/completions` очищает provider-specific поля в обычном JSON и SSE потоке
+- усилен bridge для custom tools и `tool_choice`: normalizing, contract tracking, fallback/retry для upstream-ов, которые принимают только `tool_choice=auto`
+- улучшена canonical error mapping для response/tool-choice ошибок
+- усилена SSE reconstruction / final response persistence для tool-call потоков
+- добавлены тесты на store, middleware, stream proxy, chat sanitization и integration scenarios
+- docs/config cleanup для публичной репы: английские комментарии в конфиге, отдельный русский README, ссылка на него из английского README
 
----
+## Что делаем дальше
 
-## Phase 1. Conversations and response fidelity
+- [ ] - OpenAPI spec и docs для текущего surface shim ([детали](#task-openapi-docs))
+- [ ] - `GET /v1/conversations/{id}` и честный read-model разговора ([детали](#task-get-conversation))
+- [ ] - `POST /v1/conversations/{id}/items` и canonical append flow ([детали](#task-conversation-append))
+- [ ] - `text.format` / JSON mode subset для Responses API ([детали](#task-structured-outputs))
+- [ ] - response lifecycle parity: metadata, delete/cancel, retention semantics ([детали](#task-response-lifecycle))
+- [ ] - streaming parity и `stream_options` ([детали](#task-streaming-parity))
+- [ ] - compatibility для `/responses/compact` и `/responses/input_tokens` ([детали](#task-compaction-and-token-counting))
+- [ ] - retrieval-compatible слой: vector stores + `file_search` ([детали](#task-retrieval-layer))
+- [ ] - operational hardening: backend readiness, retention job, local DX ([детали](#task-ops-hardening))
 
-### 1.1. Conversations API parity
+## <a id="task-openapi-docs"></a>OpenAPI spec и docs для текущего surface shim
+
+Почему это следующий шаг:
+
+- репа собирается в публичный GitHub, но у shim до сих пор нет собственного versioned OpenAPI spec
+- без spec сложно проверить, где мы реально OpenAI-compatible, а где у нас conscious subset
+- backlog дальше будет только разрастаться, если не зафиксировать текущий contract
+
+Что входит:
+
+- `openapi/openapi.yaml` только для уже реализованных routes
+- examples для `responses`, `responses/{id}`, `responses/{id}/input_items`, `conversations`, `conversations/{id}/items`, `chat/completions`, `healthz`, `readyz`
+- описание error envelope и SSE streaming contract
+- ссылка на spec из `README.md`
+
+Definition of done:
+
+- spec соответствует фактическим handlers и integration tests
+- явно помечены `implemented`, `partial`, `proxy/fallback`
+- нет выдуманных endpoints “на будущее”
+
+Полезные reference:
+
+- [Responses API](https://developers.openai.com/api/docs/api-reference/responses/create)
+- [Responses streaming](https://developers.openai.com/api/docs/api-reference/responses-streaming)
+- [Conversation state](https://developers.openai.com/api/docs/guides/conversation-state)
+
+## <a id="task-get-conversation"></a>`GET /v1/conversations/{id}` и честный read-model разговора
+
+Почему это важно:
+
+- официальный OpenAI surface включает `GET /conversations/{conversation_id}`
+- сейчас у нас already есть list items, но нет верхнего conversation object read path
+- без этого клиентам сложнее восстанавливать state и проверять существование conversation
+
+Что входит:
 
 - `GET /v1/conversations/{id}`
-- `GET /v1/conversations/{id}/items`
+- стабильный conversation object shape
+- нормальный `404` / validation contract
+- при необходимости задел под `GET /v1/conversations/{id}/items/{item_id}`
+
+Definition of done:
+
+- conversation можно получить без list-items обходного пути
+- response shape зафиксирован в OpenAPI spec и integration tests
+- объект не течет внутренними storage-полями
+
+Полезные reference:
+
+- [Conversation state](https://developers.openai.com/api/docs/guides/conversation-state)
+
+## <a id="task-conversation-append"></a>`POST /v1/conversations/{id}/items` и canonical append flow
+
+Почему это важно:
+
+- официальный surface включает append path для conversation items
+- это нужен не только для parity, но и для tool outputs / manual item injection / replay flows
+- без append path conversation остается read-only abstraction поверх `responses`
+
+Что входит:
+
 - `POST /v1/conversations/{id}/items`
-- позже, если понадобится item mutation: `DELETE /v1/conversations/{id}/items/{item_id}`
-- pagination / ordering contract for conversation items
-- стабильная публичная shape for items, даже если внутри хранится больше служебных полей
+- canonical normalization для message, `function_call_output`, `custom_tool_call_output` и связанных item types
+- append semantics без дублирования и без рассинхрона с response lineage
+- задел под `DELETE /v1/conversations/{id}/items/{item_id}` как lower-priority follow-up
 
-### 1.2. Responses API parity around stored state
+Definition of done:
 
-- `GET /v1/responses/{id}/input_items`
+- item append не ломает последующий `POST /v1/responses` с `conversation`
+- list order и stored representation детерминированы
+- integration tests закрывают manual append + follow-up response flows
+
+Полезные reference:
+
+- [Conversation state](https://developers.openai.com/api/docs/guides/conversation-state)
+- [Function calling](https://developers.openai.com/api/docs/guides/function-calling)
+
+## <a id="task-structured-outputs"></a>`text.format` / JSON mode subset для Responses API
+
+Почему это важно:
+
+- OpenAI docs прямо указывают, что в `Responses API` structured outputs идут через `text.format`, а не через chat-style `response_format`
+- это один из самых заметных пробелов в request surface по сравнению с official API
+- без этого часть клиентов будет либо ломаться, либо откатываться на bespoke prompting
+
+Что входит:
+
+- `text.format: {type:"json_object"}` minimal JSON mode subset
+- `text.format: {type:"json_schema", ...}` ограниченный subset, который мы реально можем поддерживать
+- refusal / parse-failure semantics в response object
+- явная ошибка, если клиент просит неподдерживаемый schema feature
+
+Definition of done:
+
+- happy-path examples проходят через shim и документированы в spec/README
+- unsupported schema features не ломают local state silently
+- streaming и non-streaming поведение согласованы
+
+Полезные reference:
+
+- [Structured outputs](https://developers.openai.com/api/docs/guides/structured-outputs)
+- [Migrate to Responses: additional differences](https://developers.openai.com/api/docs/guides/migrate-to-responses#additional-differences)
+
+## <a id="task-response-lifecycle"></a>Response lifecycle parity: metadata, delete/cancel, retention semantics
+
+Почему это важно:
+
+- response object у OpenAI богаче, чем наш текущий stored shape
+- в official docs response objects по умолчанию хранятся 30 дней, а conversation items живут дольше
+- пока у нас нет ясного ответа на delete/cancel/retention policy для public API surface
+
+Что входит:
+
+- richer response fields: `created_at`, `status`, `usage`, `error`, `incomplete_details`, `metadata`
 - `DELETE /v1/responses/{id}`
-- позже, если появится background mode: `POST /v1/responses/{id}/cancel`
-- чёткая retention semantics для standalone responses vs responses attached to conversation
+- `POST /v1/responses/{id}/cancel` как endpoint под background / long-running режим, даже если сначала вернем explicit not-supported
+- documented retention semantics для standalone responses vs conversation-attached items
 
-### 1.3. Better response object fidelity
+Definition of done:
 
-- `created_at`
-- `status`
-- `usage`
-- `incomplete_details`
-- `error`
-- `metadata`
-- максимально без потерь сохранять upstream response fields, если они уже пришли из backend-а
+- response object не выглядит “обрезанным” для common OpenAI clients
+- delete semantics понятны и покрыты тестами
+- retention policy описана в README/OpenAPI и не конфликтует с storage implementation
 
-### 1.4. Request surface expansion
+Полезные reference:
 
-- request `metadata`
-- `text.format` subset
-- `include`
-- `truncation`
-- `parallel_tool_calls`
-- более аккуратное решение для mixed supported/unsupported fields, чтобы local state не ломался из-за одного дополнительного поля
+- [Conversation state](https://developers.openai.com/api/docs/guides/conversation-state)
+- [`/responses/{response_id}/cancel`](https://developers.openai.com/api/docs/api-reference/responses/cancel)
 
-### 1.5. Richer input/output items
+## <a id="task-streaming-parity"></a>Streaming parity и `stream_options`
 
-- full content arrays, а не только collapsed text
-- `input_text`
-- подготовка к `input_image`
-- attachments / file refs
-- annotations
-- lossless item metadata
+Почему это важно:
 
----
+- streaming уже есть, но это еще не full parity
+- OpenAI streaming contract основан на typed semantic events, а не просто на “каких-то delta line”
+- особенно критичны tool-call streams, lifecycle events и стабильная сборка stored form
 
-## Phase 2. Streaming parity and lifecycle hardening
+Что входит:
 
-Current state: basic SSE for `POST /v1/responses` уже есть и финальный response сохраняется. Следующий шаг это не “сделать streaming”, а сделать его более точным и надёжным.
-
-### 2.1. Streaming contract fidelity
-
-- event flow ближе к реальному `Responses API`
 - support `stream_options`
-- стабильные IDs между streamed и stored form
-- явная стратегия: когда используем local SSE wrapper, а когда можно честно проксировать upstream `/v1/responses` stream
+- event flow ближе к official `Responses` streaming API
+- стабильные IDs между streamed и stored representation
+- понятная политика при client disconnect, upstream error и partial tool-call stream
 
-### 2.2. Lifecycle persistence
+Definition of done:
 
-- `in_progress` / `completed` / `failed` / `cancelled`
-- partial output buffer
-- finalization timestamp
-- понятная политика при client disconnect
-- понятная политика при upstream error после partial deltas
-- post-stream `usage` / accounting fields, когда это возможно
+- stream и post-stream `GET /v1/responses/{id}` не расходятся по смыслу
+- tool/function/custom tool events собираются детерминированно
+- есть отдельные tests на error path, interrupted stream и finalization
 
-### 2.3. Runtime safety
+Полезные reference:
 
-- graceful shutdown с drain активных стримов
-- streaming error taxonomy
-- timeout policy for streams
-- cancel path, если появится background generation
+- [Streaming responses](https://developers.openai.com/api/docs/guides/streaming-responses)
+- [Function calling: streaming](https://developers.openai.com/api/docs/guides/function-calling#streaming)
+- [Structured outputs: streaming](https://developers.openai.com/api/docs/guides/structured-outputs#streaming)
 
----
+## <a id="task-compaction-and-token-counting"></a>Compatibility для `/responses/compact` и `/responses/input_tokens`
 
-## Phase 3. Tools and richer conversation items
+Почему это важно:
 
-OpenAI Conversations хранят не только messages, но и tool calls / tool outputs. Для v2 это должен быть основной compatibility target.
+- оба endpoint-а уже есть в официальном OpenAI surface
+- compaction это естественное продолжение stateful shim story, а не отдельная “future fancy feature”
+- token counting полезен и для DX, и для safe context management перед вызовом локального backend-а
 
-### 3.1. Tool-call abstraction in the shim
+Что входит:
 
-- принимать tool definitions
-- support `tool_choice`
-- support `parallel_tool_calls`
-- передавать tool config backend-у, если backend это умеет
-- иначе запускать явный orchestration loop в shim
+- `POST /v1/responses/input_tokens`
+- `POST /v1/responses/compact`
+- documented policy: что считаем локально, что проксируем, что не поддерживаем
+- связь compaction с `previous_response_id` / conversation flows
 
-### 3.2. First supported tool subset
+Definition of done:
 
-- function tools with JSON schema subset
-- deterministic storage of tool call items
-- deterministic storage of tool call output items
-- canonical append of tool results into conversation items
-- чистый bridge для follow-up turns через `call_id`
+- endpoint contracts зафиксированы в OpenAPI spec
+- результат compaction пригоден для следующего request без ручной чистки
+- token counting дает предсказуемый ответ хотя бы для поддерживаемого subset input items
 
-### 3.3. Guardrails
+Полезные reference:
 
-- max tool iterations
-- per-tool timeout
-- max total tool time
-- audit trail
-- allowlist / policy hooks для инструментов, которые могут менять внешний мир
+- [Compaction](https://developers.openai.com/api/docs/guides/conversation-state#compaction)
+- [Token counting](https://developers.openai.com/api/docs/guides/token-counting#api-reference)
+- [Conversation state](https://developers.openai.com/api/docs/guides/conversation-state)
 
----
+## <a id="task-retrieval-layer"></a>Retrieval-compatible слой: vector stores + `file_search`
 
-## Phase 4. Retrieval and knowledge layer
+Почему это важно:
 
-Важно: это отдельный слой поверх episodic memory, а не замена `previous_response_id` и `conversation`.
+- если идти в retrieval, лучше делать это через OpenAI-compatible surface, а не через bespoke `/knowledge/*`
+- официальный `file_search` завязан на `vector_stores`, files и annotations/citations
+- это отдельный слой поверх episodic memory, а не замена conversation state
 
-### 4.1. Compatibility-first direction
+Что входит:
 
-Если цель проекта остаётся OpenAI-совместимость, retrieval лучше вести не через bespoke `/v1/knowledge/*`, а через совместимый subset вокруг:
-
-- `vector_stores`
+- минимальный roadmap для `vector_stores`
 - `vector_stores/{id}/search`
-- `file_search`-like tool contract inside `Responses API`
+- `file_search`-compatible tool contract внутри `responses`
+- metadata filtering и citation shape
 
-### 4.2. Storage choices
+Definition of done:
 
-#### Single-node / local-first
+- есть четко описанный MVP subset, а не “когда-нибудь сделаем retrieval”
+- архитектурно понятно, где hosted-tool semantics эмулируем, а где честно говорим `not supported`
+- storage choice для local-first (`sqlite-vec`) и later production (`pgvector`) описан заранее
 
-- SQLite + `sqlite-vec`
+Полезные reference:
 
-Плюсы:
+- [File search](https://developers.openai.com/api/docs/guides/tools-file-search)
+- [Retrieval guide](https://developers.openai.com/api/docs/guides/retrieval)
 
-- low ops
-- один локальный DB file
-- быстрый путь для экспериментов
+## <a id="task-ops-hardening"></a>Operational hardening: backend readiness, retention job, local DX
 
-Минусы:
+Почему это важно:
 
-- слабее ecosystem
-- выше риск миграции позже
+- `/readyz` уже проверяет SQLite, но еще не покрывает llama backend readiness
+- публичная репа без нормального local DX и maintenance path быстро зарастает ручными шагами
+- retention и vacuum/backup story нельзя оставлять “на потом”, если shim хранит state локально
 
-#### Multi-instance / production
+Что входит:
 
-- Postgres + `pgvector`
-
-Плюсы:
-
-- лучше operational story
-- проще shared state и backup flows
-- естественный дом для episodic + semantic state
-
-Минусы:
-
-- выше infra cost
-- выше цена миграции
-
-### 4.3. Retrieval policy
-
-- явно разделять system instructions, episodic memory, retrieved knowledge, current input
-- логировать, какие chunks/files были подмешаны
-- metadata filtering
-- namespace / tenant isolation
-- predictable citation shape for retrieved content
-
----
-
-## Phase 5. Storage abstraction and multi-instance mode
-
-### 5.1. Prepare for Postgres without abstraction zoo
-
-- `ResponseStore`
-- `ConversationStore`
-- optional `VectorStore` / `KnowledgeStore`
-- explicit SQL per backend, без лишней магии
-
-### 5.2. Concurrency and idempotency
-
-- optimistic locking for conversations via `version`
-- transaction retries
-- idempotency keys for create endpoints
-- background jobs, безопасные для multi-instance режима
-
-### 5.3. State ownership
-
-- не держать DB transaction во время вызова llama backend
-- deterministic append semantics for conversation items
-- реалистичный migration path from SQLite to Postgres
-
----
-
-## Phase 6. Security, tenancy, governance
-
-### 6.1. Auth and tenanting
-
-- API keys
-- per-tenant quotas
-- tenant scoping for responses / conversations / vector stores / files
-
-### 6.2. Data governance
-
-- retention policies
-- hard delete vs soft delete
-- redact sensitive fields in logs
-- optional encryption at rest for selected columns
-
-### 6.3. Abuse limits
-
-- request size limits
-- rate limits
-- circuit breaker for failing llama backend
-- safe defaults for tool execution
-
----
-
-## Phase 7. Operations and DX
-
-### 7.1. Observability
-
-- request latency
-- upstream latency
-- DB latency
-- error rates by class
-- response chain depth
-- conversation length distribution
-- stream success / interruption metrics
-
-### 7.2. Health and admin endpoints
-
-- расширить `/readyz`, чтобы он проверял и DB, и llama backend
-- inspect response lineage
-- inspect conversation timeline
-- dump normalized context for debugging
-- optional replay to upstream for incident analysis
-
-### 7.3. SQLite operations
-
-- configurable busy timeout
-- backup/restore commands
+- расширить `/readyz`: DB + llama backend
 - retention cleanup job
-- vacuum / optimize maintenance path
+- backup / restore / vacuum / optimize path
+- `Makefile`, dev script, `Dockerfile`, `docker-compose` или их осознанный минимальный subset
 
-### 7.4. Developer experience
+Definition of done:
 
-- Makefile
-- dev script for shim + fake llama
-- seed fixtures
-- `.env.example`
-- Dockerfile
-- `docker-compose` for local dev
+- локальный запуск и smoke path документированы
+- оператору понятно, как проверить готовность и как чистить state
+- maintenance story не размазана по ad-hoc shell snippets
 
----
+## Более поздние milestone-пункты
 
-## Future API backlog, prioritized
+Это не “делаем прямо сейчас”, но важно не потерять:
 
-### High priority
-
-- `GET /v1/conversations/{id}`
-- `GET /v1/conversations/{id}/items`
-- `GET /v1/responses/{id}/input_items`
-- richer response metadata: `created_at`, `status`, `usage`, `error`, `incomplete_details`, `metadata`
-- `text.format` / JSON-mode subset
-- better upstream error reporting
-- retention management + `DELETE /v1/responses/{id}`
-
-### Medium priority
-
-- `POST /v1/conversations/{id}/items`
-- tool calls / function calling
-- streaming lifecycle parity
-- vector-store / file-search compatible retrieval
-- idempotency keys
-- metadata filtering and citations for retrieval
-
-### Lower priority
-
-- Postgres multi-instance mode
-- dashboards
-- tenant admin UI
-- broad multimodal parity
-- full parity with every OpenAI field
-
----
+- Postgres / multi-instance mode без abstraction zoo
+- auth, tenanting, quotas
+- governance: redact logs, hard delete vs soft delete, optional encryption at rest
+- metrics / dashboards / admin tooling
+- full multimodal parity только после стабилизации core Responses/Conversations surface
 
 ## Technical debt watchlist
 
@@ -320,31 +310,4 @@ OpenAI Conversations хранят не только messages, но и tool calls
 - output parsing assumptions against upstream нужно закрывать тестами
 - conversation append logic должна оставаться централизованной
 - integration tests должны оставаться на deterministic fake backends, а не на реальных моделях
-
----
-
-## Suggested next practical milestone
-
-### v1.2
-
-- `GET /v1/conversations/{id}`
-- `GET /v1/conversations/{id}/items`
-- `GET /v1/responses/{id}/input_items`
-- richer response metadata
-- `text.format` JSON-mode subset
-- Dockerfile + Makefile + local dev script
-- retention cleanup job
-- `/readyz` backend probe
-
----
-
-## Suggested v2.0 milestone
-
-### v2.0
-
-- Conversations API parity for read paths and canonical item storage
-- response object fidelity good enough for common OpenAI clients
-- tools/function-calling MVP with stored tool items
-- streaming lifecycle parity beyond basic SSE
-- retrieval via vector-store / file-search compatible subset
-- clear migration path from SQLite single-node to Postgres multi-instance
+- spec-first discipline нужна до того, как surface вырастет еще на несколько endpoints

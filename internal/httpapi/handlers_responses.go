@@ -27,15 +27,17 @@ type responseHandler struct {
 	service                      *service.ResponseService
 	proxy                        *proxyHandler
 	customToolsMode              string
+	codexCompatibilityEnabled    bool
 	forceCodexToolChoiceRequired bool
 }
 
-func newResponseHandler(logger *slog.Logger, service *service.ResponseService, proxy *proxyHandler, customToolsMode string, forceCodexToolChoiceRequired bool) *responseHandler {
+func newResponseHandler(logger *slog.Logger, service *service.ResponseService, proxy *proxyHandler, customToolsMode string, codexCompatibilityEnabled bool, forceCodexToolChoiceRequired bool) *responseHandler {
 	return &responseHandler{
 		logger:                       logger,
 		service:                      service,
 		proxy:                        proxy,
 		customToolsMode:              customToolsMode,
+		codexCompatibilityEnabled:    codexCompatibilityEnabled,
 		forceCodexToolChoiceRequired: forceCodexToolChoiceRequired,
 	}
 }
@@ -142,35 +144,86 @@ func (h *responseHandler) createLocalStateViaUpstream(ctx context.Context, reque
 		return domain.Response{}, err
 	}
 
-	upstreamBody, plan, err := buildUpstreamResponsesBody(rawFields, prepared.ContextItems, prepared.NormalizedInput, prepared.ToolCallRefs, h.customToolsMode, h.forceCodexToolChoiceRequired)
+	upstreamBody, plan, err := buildUpstreamResponsesBody(rawFields, prepared.ContextItems, prepared.NormalizedInput, prepared.ToolCallRefs, h.customToolsMode, h.codexCompatibilityEnabled, h.forceCodexToolChoiceRequired)
 	if err != nil {
 		return domain.Response{}, err
 	}
-	logCustomToolTransport(ctx, h.logger, rawFields, upstreamBody, plan)
+	logCustomToolTransport(ctx, h.logger, rawFields, upstreamBody, plan, h.codexCompatibilityEnabled)
 
+	rawResponse, usedFallback, err := h.createResponseWithToolChoiceFallback(ctx, upstreamBody, plan)
+	if err != nil {
+		return domain.Response{}, err
+	}
+
+	_, response, err := finalizeUpstreamResponse(rawResponse, plan, usedFallback)
+	if err != nil {
+		return domain.Response{}, err
+	}
+
+	return h.service.SaveExternalResponse(ctx, prepared, input, response)
+}
+
+func (h *responseHandler) createResponseWithToolChoiceFallback(ctx context.Context, upstreamBody []byte, plan customToolTransportPlan) ([]byte, bool, error) {
 	rawResponse, err := h.proxy.client.CreateResponse(ctx, upstreamBody)
-	if err != nil {
-		return domain.Response{}, err
+	if err == nil {
+		return rawResponse, false, nil
+	}
+	if !shouldRetryToolChoiceWithAutoError(err, plan) {
+		return nil, false, err
 	}
 
-	responseBody, err := normalizeUpstreamResponseBody(rawResponse, plan, shouldApplyCodexCompatibility(rawFields, decodeToolList(rawFields)))
+	// Some upstreams only accept tool_choice=auto even when the caller asked for
+	// required semantics. Retry with auto, then validate the final output against
+	// the original contract before storing or returning it.
+	rawResponse, err = h.retryResponseWithAuto(ctx, upstreamBody, plan)
 	if err != nil {
-		return domain.Response{}, err
+		return nil, true, err
+	}
+	return rawResponse, true, nil
+}
+
+func (h *responseHandler) retryResponseWithAuto(ctx context.Context, upstreamBody []byte, plan customToolTransportPlan) ([]byte, error) {
+	retryBody, err := rewriteToolChoiceRetryBody(upstreamBody)
+	if err != nil {
+		return nil, err
+	}
+
+	if h.logger != nil {
+		h.logger.InfoContext(ctx, "retrying responses request with tool_choice=auto after unsupported tool_choice",
+			"request_id", RequestIDFromContext(ctx),
+			"contract_mode", plan.ToolChoiceContract.Mode,
+			"contract_name", plan.ToolChoiceContract.Name,
+			"contract_namespace", plan.ToolChoiceContract.Namespace,
+		)
+	}
+
+	return h.proxy.client.CreateResponse(ctx, retryBody)
+}
+
+func finalizeUpstreamResponse(rawResponse []byte, plan customToolTransportPlan, enforceContract bool) ([]byte, domain.Response, error) {
+	responseBody, err := normalizeUpstreamResponseBody(rawResponse, plan)
+	if err != nil {
+		return nil, domain.Response{}, err
 	}
 
 	response, err := domain.ParseUpstreamResponse(responseBody)
 	if err != nil {
-		return domain.Response{}, err
+		return nil, domain.Response{}, err
 	}
 	response = annotateResponseCustomToolMetadata(response, plan)
 	if response.OutputText == "" && len(response.Output) == 0 {
-		return domain.Response{}, &domain.ValidationError{
+		return nil, domain.Response{}, &domain.ValidationError{
 			Param:   "output",
 			Message: "upstream response did not include output items",
 		}
 	}
+	if enforceContract {
+		if err := enforceToolChoiceContract(response, plan.ToolChoiceContract); err != nil {
+			return nil, domain.Response{}, err
+		}
+	}
 
-	return h.service.SaveExternalResponse(ctx, prepared, input, response)
+	return responseBody, response, nil
 }
 
 func (h *responseHandler) createStream(w http.ResponseWriter, r *http.Request, request CreateResponseRequest, requestJSON string, generationOptions map[string]json.RawMessage) {
@@ -379,12 +432,12 @@ func shouldFallbackLocalState(err error) bool {
 }
 
 func (h *responseHandler) proxyCreateWithShadowStore(w http.ResponseWriter, r *http.Request, request CreateResponseRequest, rawBody []byte, requestJSON string, rawFields map[string]json.RawMessage) {
-	upstreamBody, plan, err := remapCustomToolsPayload(rawFields, h.customToolsMode, h.forceCodexToolChoiceRequired)
+	upstreamBody, plan, err := remapCustomToolsPayload(rawFields, h.customToolsMode, h.codexCompatibilityEnabled, h.forceCodexToolChoiceRequired)
 	if err != nil {
 		h.writeError(w, r, err)
 		return
 	}
-	logCustomToolTransport(r.Context(), h.logger, rawFields, upstreamBody, plan)
+	logCustomToolTransport(r.Context(), h.logger, rawFields, upstreamBody, plan, h.codexCompatibilityEnabled)
 
 	cloned := r.Clone(r.Context())
 	cloned.Body = io.NopCloser(bytes.NewReader(upstreamBody))
@@ -409,10 +462,17 @@ func (h *responseHandler) proxyCreateWithShadowStore(w http.ResponseWriter, r *h
 		WriteError(w, http.StatusBadGateway, "upstream_error", "failed to read upstream response", "")
 		return
 	}
+	if looksLikeSSEPayload(response.Header.Get("Content-Type"), body) {
+		h.logger.WarnContext(r.Context(), "unexpected SSE payload on non-stream responses request",
+			"request_id", RequestIDFromContext(r.Context()),
+			"content_type", response.Header.Get("Content-Type"),
+			"body_preview", bodyPreviewForLog(body, 512),
+		)
+	}
 
 	responseBody := body
 	if response.StatusCode >= 200 && response.StatusCode < 300 {
-		remappedBody, err := normalizeUpstreamResponseBody(body, plan, shouldApplyCodexCompatibility(rawFields, decodeToolList(rawFields)))
+		remappedBody, err := normalizeUpstreamResponseBody(body, plan)
 		if err != nil {
 			h.logger.WarnContext(r.Context(), "custom tool response remap failed",
 				"request_id", RequestIDFromContext(r.Context()),
@@ -421,6 +481,33 @@ func (h *responseHandler) proxyCreateWithShadowStore(w http.ResponseWriter, r *h
 		} else {
 			responseBody = remappedBody
 		}
+	} else if shouldRetryToolChoiceWithAutoBody(response.StatusCode, body, plan) {
+		rawResponse, err := h.retryResponseWithAuto(r.Context(), upstreamBody, plan)
+		if err != nil {
+			h.writeError(w, r, err)
+			return
+		}
+
+		finalBody, parsed, err := finalizeUpstreamResponse(rawResponse, plan, true)
+		if err != nil {
+			h.writeError(w, r, err)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(finalBody)
+
+		prepared, input, ok := prepareShadowStore(request, requestJSON)
+		if !ok {
+			return
+		}
+		if _, err := h.service.SaveExternalResponse(r.Context(), prepared, input, parsed); err != nil {
+			h.logger.ErrorContext(r.Context(), "shadow store failed", "request_id", RequestIDFromContext(r.Context()), "err", err)
+		}
+		return
+	} else if canonical, ok, err := canonicalizeAPIErrorBody(response.StatusCode, body); err == nil && ok {
+		responseBody = canonical
 	}
 
 	copyResponseHeaders(w.Header(), response.Header)
@@ -474,15 +561,24 @@ func prepareShadowStore(request CreateResponseRequest, requestJSON string) (serv
 	}, input, true
 }
 
-func buildUpstreamResponsesBody(rawFields map[string]json.RawMessage, contextItems []domain.Item, currentInput []domain.Item, refs map[string]domain.ToolCallReference, customToolsMode string, forceCodexToolChoiceRequired bool) ([]byte, customToolTransportPlan, error) {
+func buildUpstreamResponsesBody(rawFields map[string]json.RawMessage, contextItems []domain.Item, currentInput []domain.Item, refs map[string]domain.ToolCallReference, customToolsMode string, codexCompatibilityEnabled bool, forceCodexToolChoiceRequired bool) ([]byte, customToolTransportPlan, error) {
 	effectiveMode := customToolsMode
 	if parseCustomToolsMode(customToolsMode) == customToolsModeAuto && contextHasPassthroughCustomItems(contextItems) {
 		effectiveMode = string(customToolsModePassthrough)
 	}
 
-	body, plan, err := remapCustomToolsPayload(rawFields, effectiveMode, forceCodexToolChoiceRequired)
+	body, plan, err := remapCustomToolsPayload(rawFields, effectiveMode, codexCompatibilityEnabled, forceCodexToolChoiceRequired)
 	if err != nil {
 		return nil, customToolTransportPlan{}, err
+	}
+	if plan.Mode == customToolsModeBridge && !plan.Bridge.Active() {
+		bridge, err := bridgeFromToolCallRefs(refs)
+		if err != nil {
+			return nil, customToolTransportPlan{}, err
+		}
+		if bridge.Active() {
+			plan.Bridge = bridge
+		}
 	}
 
 	payload, err := decodeRawFields(body)
@@ -506,7 +602,7 @@ func buildUpstreamResponsesBody(rawFields map[string]json.RawMessage, contextIte
 	}
 
 	itemsForUpstream := contextItems
-	if shouldApplyCodexCompatibility(rawFields, decodeToolList(payload)) {
+	if shouldApplyCodexCompatibility(rawFields, decodeToolList(payload), codexCompatibilityEnabled) {
 		itemsForUpstream = injectCodexCompatibilityContext(itemsForUpstream, len(currentInput))
 	}
 

@@ -22,10 +22,14 @@ type TestApp struct {
 }
 
 func NewTestApp(t *testing.T) *TestApp {
-	return NewTestAppWithCustomToolsMode(t, "")
+	return NewTestAppWithCodexSettings(t, "", false, false)
 }
 
 func NewTestAppWithCustomToolsMode(t *testing.T, customToolsMode string) *TestApp {
+	return NewTestAppWithCodexSettings(t, customToolsMode, false, false)
+}
+
+func NewTestAppWithCodexSettings(t *testing.T, customToolsMode string, codexCompatibilityEnabled bool, forceToolChoiceRequired bool) *TestApp {
 	t.Helper()
 
 	llamaServer := NewFakeLlamaServer(t)
@@ -45,7 +49,8 @@ func NewTestAppWithCustomToolsMode(t *testing.T, customToolsMode string) *TestAp
 		ResponseService:                       responseService,
 		ConversationService:                   conversationService,
 		ResponsesCustomToolsMode:              customToolsMode,
-		ResponsesCodexForceToolChoiceRequired: false,
+		ResponsesCodexEnableCompatibility:     codexCompatibilityEnabled,
+		ResponsesCodexForceToolChoiceRequired: forceToolChoiceRequired,
 		Store:                                 store,
 	}))
 

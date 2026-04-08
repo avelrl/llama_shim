@@ -2,6 +2,7 @@ package config_test
 
 import (
 	"log/slog"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -26,10 +27,12 @@ llama:
   timeout: 12s
 log:
   level: debug
+  file_path: ./tmp/shim.log
 responses:
   custom_tools:
     mode: bridge
   codex:
+    enable_compatibility: true
     force_tool_choice_required: true
 `)
 
@@ -43,7 +46,9 @@ responses:
 	require.Equal(t, 30*time.Second, cfg.WriteTimeout)
 	require.Equal(t, 45*time.Second, cfg.IdleTimeout)
 	require.Equal(t, slog.LevelDebug, cfg.LogLevel)
+	require.Equal(t, "./tmp/shim.log", cfg.LogFilePath)
 	require.Equal(t, "bridge", cfg.ResponsesCustomToolsMode)
+	require.True(t, cfg.ResponsesCodexEnableCompatibility)
 	require.True(t, cfg.ResponsesCodexForceToolChoiceRequired)
 	require.Equal(t, configPath, cfg.ConfigFile)
 }
@@ -59,12 +64,15 @@ log:
   level: info
 responses:
   codex:
+    enable_compatibility: false
     force_tool_choice_required: false
 `)
 
 	t.Setenv("SHIM_ADDR", ":7070")
 	t.Setenv("LLAMA_TIMEOUT", "25s")
 	t.Setenv("LOG_LEVEL", "warn")
+	t.Setenv("LOG_FILE_PATH", "./override.log")
+	t.Setenv("RESPONSES_CODEX_ENABLE_COMPATIBILITY", "true")
 	t.Setenv("RESPONSES_CODEX_FORCE_TOOL_CHOICE_REQUIRED", "true")
 
 	cfg, err := config.Load(configPath)
@@ -72,5 +80,22 @@ responses:
 	require.Equal(t, ":7070", cfg.Addr)
 	require.Equal(t, 25*time.Second, cfg.LlamaTimeout)
 	require.Equal(t, slog.LevelWarn, cfg.LogLevel)
+	require.Equal(t, "./override.log", cfg.LogFilePath)
+	require.True(t, cfg.ResponsesCodexEnableCompatibility)
+	require.True(t, cfg.ResponsesCodexForceToolChoiceRequired)
+}
+
+func TestLoadUsesCodexSafeDefaults(t *testing.T) {
+	tempDir := t.TempDir()
+	previousWD, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(tempDir))
+	t.Cleanup(func() {
+		_ = os.Chdir(previousWD)
+	})
+
+	cfg, err := config.Load("")
+	require.NoError(t, err)
+	require.True(t, cfg.ResponsesCodexEnableCompatibility)
 	require.True(t, cfg.ResponsesCodexForceToolChoiceRequired)
 }

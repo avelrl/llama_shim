@@ -21,7 +21,9 @@ type Config struct {
 	WriteTimeout                          time.Duration
 	IdleTimeout                           time.Duration
 	LogLevel                              slog.Level
+	LogFilePath                           string
 	ResponsesCustomToolsMode              string
+	ResponsesCodexEnableCompatibility     bool
 	ResponsesCodexForceToolChoiceRequired bool
 	ConfigFile                            string
 }
@@ -43,7 +45,9 @@ func Load(configPath string) (Config, error) {
 		LlamaBaseURL:                          strings.TrimRight(strings.TrimSpace(v.GetString("llama.base_url")), "/"),
 		ConfigFile:                            v.ConfigFileUsed(),
 		LogLevel:                              slog.LevelInfo,
+		LogFilePath:                           strings.TrimSpace(v.GetString("log.file_path")),
 		ResponsesCustomToolsMode:              strings.ToLower(strings.TrimSpace(v.GetString("responses.custom_tools.mode"))),
+		ResponsesCodexEnableCompatibility:     v.GetBool("responses.codex.enable_compatibility"),
 		ResponsesCodexForceToolChoiceRequired: v.GetBool("responses.codex.force_tool_choice_required"),
 	}
 
@@ -78,8 +82,10 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("llama.base_url", "http://127.0.0.1:8081")
 	v.SetDefault("llama.timeout", "60s")
 	v.SetDefault("log.level", "info")
+	v.SetDefault("log.file_path", "")
 	v.SetDefault("responses.custom_tools.mode", "bridge")
-	v.SetDefault("responses.codex.force_tool_choice_required", false)
+	v.SetDefault("responses.codex.enable_compatibility", true)
+	v.SetDefault("responses.codex.force_tool_choice_required", true)
 }
 
 func resolveConfigPath(configPath string) string {

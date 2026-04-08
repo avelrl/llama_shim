@@ -2,6 +2,8 @@
 
 `llama_shim` is a small Go 1.26 HTTP service that exposes a minimal OpenAI-compatible subset for Responses + Conversations while keeping `llama.cpp` as an unchanged stateless backend.
 
+For a Russian translation, see [README.ru.md](README.ru.md).
+
 v1 supports:
 
 - `POST /v1/responses`
@@ -64,7 +66,7 @@ go run ./cmd/shim
 
 ### YAML config
 
-An example file is provided in [config.yaml.example](/Users/avel/Projects/llama_shim/config.yaml.example).
+An example file is provided in [config.yaml.example](config.yaml.example).
 
 Example:
 
@@ -84,12 +86,14 @@ llama:
 
 log:
   level: info
+  file_path: ./.data/shim.log
 
 responses:
   custom_tools:
     mode: bridge
   codex:
-    force_tool_choice_required: false
+    enable_compatibility: true
+    force_tool_choice_required: true
 ```
 
 Run with an explicit config file:
@@ -113,10 +117,12 @@ Supported environment overrides:
 - `SHIM_WRITE_TIMEOUT` default `90s`
 - `SHIM_IDLE_TIMEOUT` default `60s`
 - `LOG_LEVEL` default `info`; set `debug` to emit an additional debug log line with request and response bodies
+- `LOG_FILE_PATH` overrides `log.file_path`; when set, logs are duplicated to stdout and the configured file
 - `LLAMA_BASE_URL` overrides `llama.base_url`
 - `SQLITE_PATH` overrides `sqlite.path`
 - `SHIM_ADDR` overrides `shim.addr`
 - `RESPONSES_CUSTOM_TOOLS_MODE` overrides `responses.custom_tools.mode`; supported values: `bridge`, `auto`, `passthrough`
+- `RESPONSES_CODEX_ENABLE_COMPATIBILITY` overrides `responses.codex.enable_compatibility`; when disabled, the shim stops injecting Codex-specific instructions/context and skips Codex-specific response normalization
 - `RESPONSES_CODEX_FORCE_TOOL_CHOICE_REQUIRED` overrides `responses.codex.force_tool_choice_required`; when enabled, Codex-like requests with `tool_choice: "auto"` are rewritten to `required`
 
 ## curl examples

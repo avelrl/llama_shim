@@ -16,6 +16,7 @@ type RouterDeps struct {
 	ResponseService                       *service.ResponseService
 	ConversationService                   *service.ConversationService
 	ResponsesCustomToolsMode              string
+	ResponsesCodexEnableCompatibility     bool
 	ResponsesCodexForceToolChoiceRequired bool
 	Store                                 *sqlite.Store
 }
@@ -27,6 +28,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 		deps.ResponseService,
 		proxyHandler,
 		deps.ResponsesCustomToolsMode,
+		deps.ResponsesCodexEnableCompatibility,
 		deps.ResponsesCodexForceToolChoiceRequired,
 	)
 	conversationHandler := newConversationHandler(deps.Logger, deps.ConversationService)

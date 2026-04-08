@@ -1,21 +1,47 @@
+# HTTP server for the shim itself.
 shim:
+  # Address where the shim listens for incoming requests.
   addr: ":8080"
+  # Maximum time allowed to read an HTTP request from the client.
   read_timeout: 15s
+  # Maximum time allowed to write an HTTP response to the client.
+  # SSE responses lift the write deadline while a live stream is active.
   write_timeout: 90s
+  # Idle timeout for keep-alive connections.
   idle_timeout: 60s
 
+# Local state storage owned by the shim.
 sqlite:
+  # Path to the SQLite file that stores responses and conversations.
   path: ./.data/shim.db
 
+# Upstream OpenAI-compatible backend.
 llama:
+  # Base URL of the upstream server.
+  # Local generation calls its /v1/chat/completions endpoint.
   base_url: http://127.0.0.1:8081
+  # Timeout for ordinary upstream requests.
+  # Streaming uses a dedicated client without a shared request timeout.
   timeout: 60s
 
+# Shim logging.
 log:
+  # Log level: debug, info, warn, error.
   level: info
+  # When set, logs are written to both stdout and this file.
+  file_path: ./.data/shim.log
 
+# Settings for the OpenAI Responses-compatible layer.
 responses:
   custom_tools:
+    # How custom tools are transported to the upstream.
+    # bridge: rewrite custom tools into a compatible upstream format and back.
+    # passthrough: forward them unchanged.
+    # auto: choose automatically based on the payload.
     mode: bridge
   codex:
-    force_tool_choice_required: false
+    # Enables Codex-compatible payload and response adaptations for /v1/responses.
+    enable_compatibility: true
+    # When true, Codex-like requests with tool_choice=auto are rewritten to
+    # required before they are sent upstream.
+    force_tool_choice_required: true

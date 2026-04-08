@@ -42,6 +42,12 @@ func NewFakeLlamaServer(t *testing.T) *httptest.Server {
 			require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
 
 			model, _ := request["model"].(string)
+			if response, statusCode, ok := buildFakeWrappedValidationErrorResponse(request); ok {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(statusCode)
+				require.NoError(t, json.NewEncoder(w).Encode(response))
+				return
+			}
 			mu.Lock()
 			nextID++
 			id := "upstream_resp_" + strconv.Itoa(nextID)
@@ -247,9 +253,38 @@ func buildFakeResponse(id, model, output string) map[string]any {
 	}
 }
 
+func buildFakeWrappedValidationErrorResponse(request map[string]any) (map[string]any, int, bool) {
+	inputValue, ok := request["input"].(float64)
+	if !ok || inputValue != 1 {
+		return nil, 0, false
+	}
+
+	return map[string]any{
+		"error": map[string]any{
+			"message": `litellm.BadRequestError: OpenAIException - {"error":{"message":"Input should be a valid string","type":"Bad Request","param":null,"code":400}}. Received Model Group=test-model`,
+			"type":    nil,
+			"param":   nil,
+			"code":    "400",
+		},
+	}, http.StatusBadRequest, true
+}
+
 func buildFakeResponseForTools(id, model string, request map[string]any) (map[string]any, int, string, bool) {
 	if requestHasToolOutput(request["input"]) {
 		return buildFakeResponse(id, model, fakeToolOutputReply(request["input"])), http.StatusOK, "message", true
+	}
+
+	joinedInput := strings.ToLower(marshalAny(request["input"]))
+	if strings.Contains(joinedInput, "auto-only tool_choice backend") && !isAutoToolChoice(request["tool_choice"]) {
+		return map[string]any{
+			"error": map[string]any{
+				"type":    "server_error",
+				"message": "Only 'auto' tool_choice is supported in response API with Harmony",
+			},
+		}, http.StatusNotImplemented, "", true
+	}
+	if strings.Contains(joinedInput, "auto-only tool_choice backend returns text") && isAutoToolChoice(request["tool_choice"]) {
+		return buildFakeResponse(id, model, "AUTO_FALLBACK_TEXT"), http.StatusOK, "message", true
 	}
 
 	tools, ok := request["tools"].([]any)
@@ -391,9 +426,6 @@ func fakeToolArguments(name string) string {
 	case "add":
 		return `{"a":1,"b":2}`
 	default:
-		if strings.HasPrefix(name, "shim_custom_") {
-			return `{"input":"print(\"hello world\")"}`
-		}
 		return `{"input":"tool input"}`
 	}
 }
@@ -410,6 +442,11 @@ func fakeCustomToolInput(name string) string {
 func asString(value any) string {
 	text, _ := value.(string)
 	return text
+}
+
+func isAutoToolChoice(value any) bool {
+	text, ok := value.(string)
+	return ok && strings.EqualFold(strings.TrimSpace(text), "auto")
 }
 
 func writeFakeChatCompletionStream(t *testing.T, w http.ResponseWriter, output string) {

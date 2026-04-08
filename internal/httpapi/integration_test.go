@@ -219,6 +219,25 @@ func TestCreateResponseRejectsMutuallyExclusiveStateFields(t *testing.T) {
 	require.Equal(t, "invalid_request_error", payload["error"].(map[string]any)["type"])
 }
 
+func TestResponsesCanonicalizeWrappedUpstreamValidationError(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	status, payload := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model": "test-model",
+		"input": 1,
+	})
+	require.Equal(t, http.StatusBadRequest, status)
+
+	errorPayload, ok := payload["error"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "invalid_request_error", errorPayload["type"])
+	require.Equal(t, "Input should be a valid string", errorPayload["message"])
+	require.Contains(t, errorPayload, "param")
+	require.Nil(t, errorPayload["param"])
+	require.Contains(t, errorPayload, "code")
+	require.Nil(t, errorPayload["code"])
+}
+
 func TestConversationItemsMissingConversationReturns404(t *testing.T) {
 	app := testutil.NewTestApp(t)
 
@@ -329,6 +348,63 @@ func TestProxySSEPassesThrough(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(body), `"index":3`)
 	require.Contains(t, string(body), "data: [DONE]")
+}
+
+func TestChatCompletionsStreamPassesThrough(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	reqBody, err := json.Marshal(map[string]any{
+		"model":  "test-model",
+		"stream": true,
+		"messages": []map[string]any{
+			{
+				"role":    "user",
+				"content": "Say OK and nothing else",
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	req, err := http.NewRequest(http.MethodPost, app.Server.URL+"/v1/chat/completions", bytes.NewReader(reqBody))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Contains(t, resp.Header.Get("Content-Type"), "text/event-stream")
+
+	events := readSSEEvents(t, resp.Body)
+	require.NotEmpty(t, events)
+	require.Equal(t, "[DONE]", events[len(events)-1].Raw)
+
+	var deltaText strings.Builder
+	for _, event := range events[:len(events)-1] {
+		require.Empty(t, event.Event)
+
+		choices, ok := event.Data["choices"].([]any)
+		require.True(t, ok)
+		require.NotEmpty(t, choices)
+
+		choice, ok := choices[0].(map[string]any)
+		require.True(t, ok)
+
+		if finishReason, ok := choice["finish_reason"].(string); ok {
+			require.Equal(t, "stop", finishReason)
+			continue
+		}
+
+		delta, ok := choice["delta"].(map[string]any)
+		require.True(t, ok)
+
+		content, ok := delta["content"].(string)
+		require.True(t, ok)
+		deltaText.WriteString(content)
+	}
+
+	require.Equal(t, "OK", deltaText.String())
 }
 
 func TestResponsesStream(t *testing.T) {
@@ -592,6 +668,82 @@ func TestResponsesFunctionToolsRemainFunctionCalls(t *testing.T) {
 	require.Equal(t, `{"a":1,"b":2}`, item["arguments"])
 }
 
+func TestResponsesRetryToolChoiceWithAutoOnUnsupportedBackend(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	status, body := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model":       "test-model",
+		"tool_choice": "required",
+		"input": []map[string]any{
+			{
+				"role":    "user",
+				"content": "auto-only tool_choice backend. Call add.",
+			},
+		},
+		"tools": []map[string]any{
+			{
+				"type": "function",
+				"name": "add",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"a": map[string]any{"type": "number"},
+						"b": map[string]any{"type": "number"},
+					},
+					"required": []string{"a", "b"},
+				},
+			},
+		},
+	})
+
+	require.Equal(t, http.StatusOK, status)
+
+	output, ok := body["output"].([]any)
+	require.True(t, ok)
+	require.Len(t, output, 1)
+
+	item, ok := output[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "function_call", item["type"])
+	require.Equal(t, "add", item["name"])
+}
+
+func TestResponsesRetryToolChoiceWithAutoRejectsAssistantText(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	status, body := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model":       "test-model",
+		"tool_choice": "required",
+		"input": []map[string]any{
+			{
+				"role":    "user",
+				"content": "auto-only tool_choice backend returns text. Call add.",
+			},
+		},
+		"tools": []map[string]any{
+			{
+				"type": "function",
+				"name": "add",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"a": map[string]any{"type": "number"},
+						"b": map[string]any{"type": "number"},
+					},
+					"required": []string{"a", "b"},
+				},
+			},
+		},
+	})
+
+	require.Equal(t, http.StatusNotImplemented, status)
+	errorPayload, ok := body["error"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "server_error", errorPayload["type"])
+	require.Equal(t, "tool_choice", errorPayload["param"])
+	require.Equal(t, "tool_choice_incompatible_backend", errorPayload["code"])
+}
+
 func TestResponsesCustomToolsStreamAreBridgedAndShadowStored(t *testing.T) {
 	app := testutil.NewTestApp(t)
 
@@ -632,18 +784,36 @@ func TestResponsesCustomToolsStreamAreBridgedAndShadowStored(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "custom_tool_call", item["type"])
 	require.Equal(t, "code_exec", item["name"])
+	require.Equal(t, "", asStringAny(item["input"]))
+
+	done := findEvent(t, events, "response.custom_tool_call_input.done").Data
+	doneItem, ok := done["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "custom_tool_call", doneItem["type"])
+	require.Equal(t, "code_exec", doneItem["name"])
+	require.Equal(t, `print("hello world")`, asStringAny(done["input"]))
+	require.Equal(t, `print("hello world")`, asStringAny(doneItem["input"]))
 
 	completed := findEvent(t, events, "response.completed").Data
 	responsePayload, ok := completed["response"].(map[string]any)
 	require.True(t, ok)
 	responseID := asStringAny(responsePayload["id"])
 	require.NotEmpty(t, responseID)
+	output, ok := responsePayload["output"].([]any)
+	require.True(t, ok)
+	require.Len(t, output, 1)
+	completedItem, ok := output[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "custom_tool_call", completedItem["type"])
+	require.Equal(t, "code_exec", completedItem["name"])
+	require.Equal(t, `print("hello world")`, completedItem["input"])
 
 	got := getResponse(t, app, responseID)
 	require.Equal(t, responseID, got.ID)
 	require.Len(t, got.Output, 1)
 	require.Equal(t, "custom_tool_call", got.Output[0].Type)
 	require.Equal(t, "code_exec", got.Output[0].Name())
+	require.Equal(t, `print("hello world")`, got.Output[0].Input())
 }
 
 func TestResponsesStreamNormalizesCompletedOnlyFunctionCallFlow(t *testing.T) {
@@ -723,7 +893,99 @@ func TestResponsesStreamNormalizesCompletedOnlyFunctionCallFlow(t *testing.T) {
 	require.Equal(t, "add", got.Output[0].Name())
 }
 
-func TestResponsesStreamDowngradesSafeExecCommandEscalation(t *testing.T) {
+func TestResponsesStreamRetriesToolChoiceWithAutoOnUnsupportedBackend(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	reqBody, err := json.Marshal(map[string]any{
+		"model":       "test-model",
+		"stream":      true,
+		"tool_choice": "required",
+		"input": []map[string]any{
+			{
+				"role":    "user",
+				"content": "auto-only tool_choice backend. completed only tool stream",
+			},
+		},
+		"tools": []map[string]any{
+			{
+				"type": "function",
+				"name": "add",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"a": map[string]any{"type": "number"},
+						"b": map[string]any{"type": "number"},
+					},
+					"required": []string{"a", "b"},
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	req, err := http.NewRequest(http.MethodPost, app.Server.URL+"/v1/responses", bytes.NewReader(reqBody))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Contains(t, resp.Header.Get("Content-Type"), "text/event-stream")
+
+	events := readSSEEvents(t, resp.Body)
+	require.Contains(t, eventTypes(events), "response.function_call_arguments.done")
+	require.NotContains(t, eventTypes(events), "response.output_text.done")
+}
+
+func TestResponsesStreamRetryToolChoiceWithAutoRejectsAssistantText(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	reqBody, err := json.Marshal(map[string]any{
+		"model":       "test-model",
+		"stream":      true,
+		"tool_choice": "required",
+		"input": []map[string]any{
+			{
+				"role":    "user",
+				"content": "auto-only tool_choice backend returns text. Call add.",
+			},
+		},
+		"tools": []map[string]any{
+			{
+				"type": "function",
+				"name": "add",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"a": map[string]any{"type": "number"},
+						"b": map[string]any{"type": "number"},
+					},
+					"required": []string{"a", "b"},
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	req, err := http.NewRequest(http.MethodPost, app.Server.URL+"/v1/responses", bytes.NewReader(reqBody))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusNotImplemented, resp.StatusCode)
+	require.Contains(t, resp.Header.Get("Content-Type"), "application/json")
+
+	var payload map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&payload))
+	errorPayload, ok := payload["error"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "tool_choice_incompatible_backend", errorPayload["code"])
+}
+
+func TestResponsesStreamKeepsSafeExecCommandEscalationByDefault(t *testing.T) {
 	app := testutil.NewTestApp(t)
 
 	reqBody, err := json.Marshal(map[string]any{
@@ -767,15 +1029,66 @@ func TestResponsesStreamDowngradesSafeExecCommandEscalation(t *testing.T) {
 	item, ok := done["item"].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, "exec_command", item["name"])
-	require.NotContains(t, asStringAny(item["arguments"]), "require_escalated")
-	require.NotContains(t, asStringAny(done["arguments"]), "require_escalated")
-	require.Contains(t, asStringAny(item["arguments"]), `"workdir":"/tmp/snake_test"`)
-	require.Contains(t, asStringAny(item["arguments"]), `"cmd":"go test ./game -v"`)
-	require.Contains(t, asStringAny(item["arguments"]), `"yield_time_ms":30000`)
+	require.Contains(t, asStringAny(item["arguments"]), "require_escalated")
+	require.Contains(t, asStringAny(done["arguments"]), "require_escalated")
+	require.Contains(t, asStringAny(item["arguments"]), `"cmd":"cd /tmp/snake_test && go test ./game -v 2>&1"`)
+	require.NotContains(t, asStringAny(item["arguments"]), `"workdir":"/tmp/snake_test"`)
+	require.NotContains(t, asStringAny(item["arguments"]), `"yield_time_ms":30000`)
 }
 
-func TestResponsesStreamDropsCompletedPlanLoopAndShowsSummary(t *testing.T) {
-	app := testutil.NewTestApp(t)
+func TestResponsesStreamKeepsExecCommandUntouchedWhenCodexCompatibilityEnabled(t *testing.T) {
+	app := testutil.NewTestAppWithCodexSettings(t, "", true, false)
+
+	reqBody, err := json.Marshal(map[string]any{
+		"model":        "test-model",
+		"store":        true,
+		"stream":       true,
+		"tool_choice":  "required",
+		"instructions": "You are a coding agent running in the Codex CLI, a terminal-based coding assistant.",
+		"input": []map[string]any{
+			{
+				"role":    "user",
+				"content": "completed only tool stream",
+			},
+		},
+		"tools": []map[string]any{
+			{
+				"type": "function",
+				"name": "exec_command",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"cmd": map[string]any{"type": "string"},
+					},
+					"required": []string{"cmd"},
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	req, err := http.NewRequest(http.MethodPost, app.Server.URL+"/v1/responses", bytes.NewReader(reqBody))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	events := readSSEEvents(t, resp.Body)
+	done := findEvent(t, events, "response.function_call_arguments.done").Data
+	item, ok := done["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "exec_command", item["name"])
+	require.Contains(t, asStringAny(item["arguments"]), "require_escalated")
+	require.Contains(t, asStringAny(done["arguments"]), "require_escalated")
+	require.Contains(t, asStringAny(item["arguments"]), `"cmd":"cd /tmp/snake_test && go test ./game -v 2>&1"`)
+	require.NotContains(t, asStringAny(item["arguments"]), `"workdir":"/tmp/snake_test"`)
+	require.NotContains(t, asStringAny(item["arguments"]), `"yield_time_ms":30000`)
+}
+
+func TestResponsesStreamKeepsCompletedPlanLoopAndDoesNotSynthesizeSummary(t *testing.T) {
+	app := testutil.NewTestAppWithCodexSettings(t, "", true, false)
 
 	reqBody, err := json.Marshal(map[string]any{
 		"model":        "test-model",
@@ -825,20 +1138,21 @@ func TestResponsesStreamDropsCompletedPlanLoopAndShowsSummary(t *testing.T) {
 	defer resp.Body.Close()
 
 	events := readSSEEvents(t, resp.Body)
-	require.Contains(t, eventTypes(events), "response.output_text.done")
-	require.NotContains(t, eventTypes(events), "response.function_call_arguments.done")
+	require.NotContains(t, eventTypes(events), "response.output_text.done")
+	require.Contains(t, eventTypes(events), "response.function_call_arguments.done")
 
 	completed := findEvent(t, events, "response.completed").Data
 	responsePayload, ok := completed["response"].(map[string]any)
 	require.True(t, ok)
 	responseID := asStringAny(responsePayload["id"])
 	require.NotEmpty(t, responseID)
-	require.Equal(t, "All tasks are complete.", asStringAny(responsePayload["output_text"]))
+	require.Empty(t, asStringAny(responsePayload["output_text"]))
 
 	got := getResponse(t, app, responseID)
-	require.Equal(t, "All tasks are complete.", got.OutputText)
-	require.Len(t, got.Output, 1)
-	require.Equal(t, "message", got.Output[0].Type)
+	require.Empty(t, got.OutputText)
+	require.Len(t, got.Output, 2)
+	require.Equal(t, "reasoning", got.Output[0].Type)
+	require.Equal(t, "function_call", got.Output[1].Type)
 }
 
 func TestResponsesCustomToolFollowUpWithPreviousResponseID(t *testing.T) {
@@ -862,6 +1176,9 @@ func TestResponsesCustomToolFollowUpWithPreviousResponseID(t *testing.T) {
 		},
 	})
 	require.Len(t, first.Output, 1)
+	require.Equal(t, "custom_tool_call", first.Output[0].Type)
+	require.Equal(t, "code_exec", first.Output[0].Name())
+	require.Equal(t, `print("hello world")`, first.Output[0].Input())
 	callID := first.Output[0].CallID()
 	require.NotEmpty(t, callID)
 

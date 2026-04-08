@@ -4,9 +4,11 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 
 	"llama_shim/internal/config"
 	"llama_shim/internal/httpapi"
@@ -25,7 +27,16 @@ func main() {
 		os.Exit(1)
 	}
 
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+	logWriter, logFile, err := buildLogWriter(cfg.LogFilePath)
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "open log file: %v\n", err)
+		os.Exit(1)
+	}
+	if logFile != nil {
+		defer logFile.Close()
+	}
+
+	logger := slog.New(slog.NewJSONHandler(logWriter, &slog.HandlerOptions{
 		Level: cfg.LogLevel,
 	}))
 
@@ -49,6 +60,7 @@ func main() {
 			ResponseService:                       responseService,
 			ConversationService:                   conversationService,
 			ResponsesCustomToolsMode:              cfg.ResponsesCustomToolsMode,
+			ResponsesCodexEnableCompatibility:     cfg.ResponsesCodexEnableCompatibility,
 			ResponsesCodexForceToolChoiceRequired: cfg.ResponsesCodexForceToolChoiceRequired,
 			Store:                                 store,
 		}),
@@ -63,11 +75,31 @@ func main() {
 		"llama_base_url", cfg.LlamaBaseURL,
 		"sqlite_path", cfg.SQLitePath,
 		"config_file", cfg.ConfigFile,
+		"log_file_path", cfg.LogFilePath,
 		"responses_custom_tools_mode", cfg.ResponsesCustomToolsMode,
+		"responses_codex_enable_compatibility", cfg.ResponsesCodexEnableCompatibility,
 		"responses_codex_force_tool_choice_required", cfg.ResponsesCodexForceToolChoiceRequired,
 	)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		logger.Error("server stopped", "err", err)
 		os.Exit(1)
 	}
+}
+
+func buildLogWriter(logFilePath string) (io.Writer, *os.File, error) {
+	if logFilePath == "" {
+		return os.Stdout, nil, nil
+	}
+
+	if dir := filepath.Dir(logFilePath); dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return nil, nil, err
+		}
+	}
+
+	file, err := os.OpenFile(logFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return nil, nil, err
+	}
+	return io.MultiWriter(os.Stdout, file), file, nil
 }

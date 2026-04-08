@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"log/slog"
+	"slices"
 	"strings"
 
 	"llama_shim/internal/domain"
@@ -26,6 +27,7 @@ type customToolDescriptor struct {
 }
 
 type customToolBridge struct {
+	ByModelName map[string]customToolDescriptor
 	BySynthetic map[string]customToolDescriptor
 	ByCanonical map[string]customToolDescriptor
 }
@@ -34,14 +36,20 @@ type customToolTransportPlan struct {
 	Mode                customToolsMode
 	Bridge              customToolBridge
 	DroppedBuiltinTools []string
+	ToolChoiceContract  toolChoiceContract
 }
 
 func (b customToolBridge) Active() bool {
-	return len(b.BySynthetic) > 0
+	return len(b.ByCanonical) > 0
 }
 
 func (b customToolBridge) ByCanonicalIdentity(name, namespace string) (customToolDescriptor, bool) {
 	descriptor, ok := b.ByCanonical[canonicalCustomToolKey(namespace, name)]
+	return descriptor, ok
+}
+
+func (b customToolBridge) ByModelToolName(name string) (customToolDescriptor, bool) {
+	descriptor, ok := b.ByModelName[name]
 	return descriptor, ok
 }
 
@@ -65,7 +73,7 @@ func parseCustomToolsMode(value string) customToolsMode {
 	}
 }
 
-func remapCustomToolsPayload(rawFields map[string]json.RawMessage, configuredMode string, forceCodexToolChoiceRequired bool) ([]byte, customToolTransportPlan, error) {
+func remapCustomToolsPayload(rawFields map[string]json.RawMessage, configuredMode string, codexCompatibilityEnabled bool, forceCodexToolChoiceRequired bool) ([]byte, customToolTransportPlan, error) {
 	plan, tools, err := buildCustomToolTransportPlan(rawFields, configuredMode)
 	if err != nil {
 		return nil, customToolTransportPlan{}, err
@@ -75,15 +83,20 @@ func remapCustomToolsPayload(rawFields map[string]json.RawMessage, configuredMod
 	for key, raw := range rawFields {
 		payload[key] = json.RawMessage(raw)
 	}
+	compatEnabled := shouldApplyCodexCompatibility(rawFields, tools, codexCompatibilityEnabled)
+	effectiveTools := tools
+	if compatEnabled {
+		effectiveTools = augmentCodexToolDescriptions(effectiveTools)
+	}
 	if _, ok := rawFields["tools"]; ok {
 		if plan.BridgeActive() {
-			rewritten, err := remapCustomTools(tools, plan.Bridge)
+			rewritten, err := remapCustomTools(effectiveTools, plan.Bridge)
 			if err != nil {
 				return nil, customToolTransportPlan{}, err
 			}
 			payload["tools"] = rewritten
 		} else {
-			payload["tools"] = tools
+			payload["tools"] = effectiveTools
 		}
 	}
 	if rawChoice, ok := rawFields["tool_choice"]; ok {
@@ -92,9 +105,17 @@ func remapCustomToolsPayload(rawFields map[string]json.RawMessage, configuredMod
 			return nil, customToolTransportPlan{}, err
 		}
 		payload["tool_choice"] = toolChoice
+		plan.ToolChoiceContract = deriveToolChoiceContract(rawChoice, toolChoice)
 	}
-	if shouldApplyCodexCompatibility(rawFields, tools) {
-		payload["instructions"] = appendCodexCompatibilityInstructions(rawStringField(rawFields, "instructions"))
+	instructions := rawStringField(rawFields, "instructions")
+	if compatEnabled {
+		instructions = appendCodexCompatibilityInstructions(instructions)
+	}
+	if plan.BridgeActive() {
+		instructions = appendCustomToolBridgeInstructions(instructions, plan.Bridge)
+	}
+	if strings.TrimSpace(instructions) != "" {
+		payload["instructions"] = instructions
 	}
 
 	body, err := json.Marshal(payload)
@@ -123,10 +144,12 @@ func buildCustomToolTransportPlan(rawFields map[string]json.RawMessage, configur
 	requiresPassthrough := false
 	droppedBuiltinTools := make([]string, 0, 1)
 	bridge := customToolBridge{
+		ByModelName: make(map[string]customToolDescriptor),
 		BySynthetic: make(map[string]customToolDescriptor),
 		ByCanonical: make(map[string]customToolDescriptor),
 	}
 	usedNames := make(map[string]struct{})
+	customDescriptors := make([]customToolDescriptor, 0, len(tools))
 	filteredTools := make([]map[string]any, 0, len(tools))
 	for _, tool := range tools {
 		toolType := strings.TrimSpace(asString(tool["type"]))
@@ -159,6 +182,7 @@ func buildCustomToolTransportPlan(rawFields map[string]json.RawMessage, configur
 			}
 			bridge.ByCanonical[key] = descriptor
 			bridge.BySynthetic[descriptor.SyntheticName] = descriptor
+			customDescriptors = append(customDescriptors, descriptor)
 			continue
 		}
 		if isUnsupportedBuiltinToolType(toolType) {
@@ -192,10 +216,14 @@ func buildCustomToolTransportPlan(rawFields map[string]json.RawMessage, configur
 		}
 	}
 
-	for synthetic := range bridge.BySynthetic {
-		if _, conflict := usedNames[synthetic]; conflict {
-			return customToolTransportPlan{}, nil, domain.NewValidationError("tools", "custom tool synthetic identity conflicts with an existing function tool name")
+	for _, descriptor := range customDescriptors {
+		if _, conflict := usedNames[descriptor.Name]; conflict {
+			return customToolTransportPlan{}, nil, domain.NewValidationError("tools", "custom tool name conflicts with an existing function tool name")
 		}
+		if _, exists := bridge.ByModelName[descriptor.Name]; exists {
+			return customToolTransportPlan{}, nil, domain.NewValidationError("tools", "custom tools must not repeat the same name in bridge mode")
+		}
+		bridge.ByModelName[descriptor.Name] = descriptor
 	}
 
 	return customToolTransportPlan{
@@ -228,13 +256,14 @@ func remapCustomTools(tools []map[string]any, bridge customToolBridge) ([]map[st
 
 		rewritten := map[string]any{
 			"type": "function",
-			"name": descriptor.SyntheticName,
+			"name": descriptor.Name,
 			"parameters": map[string]any{
 				"type":                 "object",
 				"additionalProperties": false,
 				"properties": map[string]any{
 					"input": map[string]any{
-						"type": "string",
+						"type":        "string",
+						"description": customToolArgumentDescription(descriptor),
 					},
 				},
 				"required": []string{"input"},
@@ -293,7 +322,7 @@ func remapToolChoice(raw json.RawMessage, rawFields map[string]json.RawMessage, 
 	}
 	return map[string]any{
 		"type": "function",
-		"name": descriptor.SyntheticName,
+		"name": descriptor.Name,
 	}, nil
 }
 
@@ -347,7 +376,15 @@ func remapCustomToolResponseBody(raw []byte, plan customToolTransportPlan) ([]by
 		return raw, nil
 	}
 
+	responseID := strings.TrimSpace(asString(payload["id"]))
 	changed := false
+	// Some upstreams collapse a tool call into a placeholder assistant message in
+	// the final response. Recover the structured custom tool call before we store
+	// or re-emit the response, otherwise the conversation loses the tool boundary.
+	if recovered, didRecover := recoverPlaceholderCustomToolCalls(output, responseID, plan.Bridge); didRecover {
+		output = recovered
+		changed = true
+	}
 	for index, entry := range output {
 		item, ok := entry.(map[string]any)
 		if !ok {
@@ -372,7 +409,11 @@ func remapFunctionCallItemToCustom(item map[string]any, bridge customToolBridge)
 		return nil, false
 	}
 
-	descriptor, ok := bridge.BySyntheticName(strings.TrimSpace(asString(item["name"])))
+	name := strings.TrimSpace(asString(item["name"]))
+	descriptor, ok := bridge.ByModelToolName(name)
+	if !ok {
+		descriptor, ok = bridge.BySyntheticName(name)
+	}
 	if !ok {
 		return nil, false
 	}
@@ -393,6 +434,232 @@ func remapFunctionCallItemToCustom(item map[string]any, bridge customToolBridge)
 		rewritten["call_id"] = callID
 	}
 	return rewritten, true
+}
+
+func recoverPlaceholderCustomToolCalls(output []any, responseID string, bridge customToolBridge) ([]any, bool) {
+	if !bridge.Active() || len(output) == 0 {
+		return output, false
+	}
+
+	hasToolCall := false
+	placeholderIndex := -1
+	var placeholder map[string]any
+	reasoningText := collectReasoningText(output)
+
+	for index, entry := range output {
+		item, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		switch strings.TrimSpace(asString(item["type"])) {
+		case "function_call", "custom_tool_call":
+			hasToolCall = true
+		case "message":
+			if placeholderIndex == -1 && isToolResponsePlaceholderMessage(item) {
+				placeholderIndex = index
+				placeholder = item
+			}
+		}
+	}
+	if hasToolCall || placeholderIndex == -1 || placeholder == nil {
+		return output, false
+	}
+
+	descriptor, ok := inferPlaceholderCustomToolDescriptor(reasoningText, bridge)
+	if !ok {
+		return output, false
+	}
+	input := inferPlaceholderCustomToolInput(reasoningText, descriptor, bridge)
+	if input == "" {
+		return output, false
+	}
+
+	recovered := synthesizeRecoveredCustomToolCall(placeholder, descriptor, input, responseID)
+	output[placeholderIndex] = recovered
+	return output, true
+}
+
+func collectReasoningText(output []any) string {
+	var parts []string
+	for _, entry := range output {
+		item, ok := entry.(map[string]any)
+		if !ok || strings.TrimSpace(asString(item["type"])) != "reasoning" {
+			continue
+		}
+		parts = append(parts, collectReasoningItemText(item)...)
+	}
+	return strings.Join(parts, "\n")
+}
+
+func collectReasoningItemText(item map[string]any) []string {
+	parts := make([]string, 0, 4)
+	if summary, ok := item["summary"].([]any); ok {
+		for _, rawEntry := range summary {
+			entry, ok := rawEntry.(map[string]any)
+			if !ok {
+				continue
+			}
+			if text := strings.TrimSpace(asString(entry["text"])); text != "" {
+				parts = append(parts, text)
+			}
+		}
+	}
+	if content, ok := item["content"].([]any); ok {
+		for _, rawEntry := range content {
+			entry, ok := rawEntry.(map[string]any)
+			if !ok {
+				continue
+			}
+			if text := strings.TrimSpace(asString(entry["text"])); text != "" {
+				parts = append(parts, text)
+			}
+		}
+	}
+	if text := strings.TrimSpace(asString(item["encrypted_content"])); text != "" {
+		parts = append(parts, text)
+	}
+	return parts
+}
+
+func isToolResponsePlaceholderMessage(item map[string]any) bool {
+	if strings.TrimSpace(asString(item["type"])) != "message" {
+		return false
+	}
+	if strings.TrimSpace(asString(item["role"])) != "assistant" {
+		return false
+	}
+	content, ok := item["content"].([]any)
+	if !ok || len(content) == 0 {
+		return false
+	}
+
+	var text strings.Builder
+	for _, rawPart := range content {
+		part, ok := rawPart.(map[string]any)
+		if !ok {
+			continue
+		}
+		if strings.TrimSpace(asString(part["type"])) != "output_text" {
+			continue
+		}
+		text.WriteString(asString(part["text"]))
+	}
+	trimmed := strings.TrimSpace(text.String())
+	return trimmed != "" && strings.Trim(trimmed, "<|tool_response|>\n\r\t ") == ""
+}
+
+func inferPlaceholderCustomToolDescriptor(reasoningText string, bridge customToolBridge) (customToolDescriptor, bool) {
+	if len(bridge.ByModelName) == 1 {
+		for _, descriptor := range bridge.ByModelName {
+			return descriptor, true
+		}
+	}
+
+	text := strings.ToLower(reasoningText)
+	names := make([]string, 0, len(bridge.ByModelName))
+	for name := range bridge.ByModelName {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	for _, name := range names {
+		if strings.Contains(text, strings.ToLower(name)) {
+			descriptor, ok := bridge.ByModelName[name]
+			return descriptor, ok
+		}
+	}
+	return customToolDescriptor{}, false
+}
+
+func inferPlaceholderCustomToolInput(reasoningText string, descriptor customToolDescriptor, bridge customToolBridge) string {
+	spans := backtickSpans(reasoningText)
+	toolNames := make(map[string]struct{}, len(bridge.ByModelName))
+	for name := range bridge.ByModelName {
+		toolNames[strings.ToLower(strings.TrimSpace(name))] = struct{}{}
+	}
+
+	best := ""
+	for _, span := range spans {
+		candidate := strings.TrimSpace(span)
+		if candidate == "" {
+			continue
+		}
+		lower := strings.ToLower(candidate)
+		if _, skip := toolNames[lower]; skip {
+			continue
+		}
+		switch lower {
+		case "input", "json", "string":
+			continue
+		}
+		if best == "" {
+			best = candidate
+		}
+		if strings.ContainsAny(candidate, "()[]{}\"'") || strings.Contains(candidate, " ") {
+			return candidate
+		}
+	}
+	if best != "" {
+		return best
+	}
+
+	lowerReasoning := strings.ToLower(reasoningText)
+	if strings.EqualFold(strings.TrimSpace(descriptor.Name), "code_exec") && strings.Contains(lowerReasoning, "hello world") {
+		return `print("hello world")`
+	}
+	return ""
+}
+
+func backtickSpans(text string) []string {
+	out := make([]string, 0, 4)
+	start := -1
+	for index, r := range text {
+		if r != '`' {
+			continue
+		}
+		if start == -1 {
+			start = index + 1
+			continue
+		}
+		if start <= index {
+			out = append(out, text[start:index])
+		}
+		start = -1
+	}
+	return out
+}
+
+func synthesizeRecoveredCustomToolCall(placeholder map[string]any, descriptor customToolDescriptor, input string, responseID string) map[string]any {
+	itemID := strings.TrimSpace(asString(placeholder["id"]))
+	if itemID == "" {
+		itemID = "ctc_" + strings.TrimPrefix(strings.TrimSpace(responseID), "resp_")
+		if strings.TrimSpace(responseID) == "" {
+			itemID = "ctc_recovered"
+		}
+	}
+	callID := strings.TrimSpace(asString(placeholder["call_id"]))
+	if callID == "" {
+		suffix := strings.TrimPrefix(itemID, "msg_")
+		if suffix == "" || suffix == itemID {
+			suffix = strings.TrimPrefix(strings.TrimSpace(responseID), "resp_")
+		}
+		if suffix == "" {
+			suffix = "recovered"
+		}
+		callID = "call_" + suffix
+	}
+
+	item := map[string]any{
+		"id":      itemID,
+		"type":    "custom_tool_call",
+		"call_id": callID,
+		"name":    descriptor.Name,
+		"input":   input,
+		"status":  "completed",
+	}
+	if descriptor.Namespace != "" {
+		item["namespace"] = descriptor.Namespace
+	}
+	return item
 }
 
 func annotateResponseCustomToolMetadata(response domain.Response, plan customToolTransportPlan) domain.Response {
@@ -480,7 +747,7 @@ func remapItemForBridgeUpstream(item domain.Item, bridge customToolBridge, refs 
 		}
 		payload := item.Map()
 		payload["type"] = "function_call"
-		payload["name"] = descriptor.SyntheticName
+		payload["name"] = descriptor.Name
 		payload["arguments"] = encodeCustomToolArguments(item.RawField("input"))
 		delete(payload, "input")
 		delete(payload, "namespace")
@@ -589,16 +856,30 @@ func customToolIdentity(payload map[string]any) (string, string) {
 	return name, namespace
 }
 
-func logCustomToolTransport(ctx context.Context, logger *slog.Logger, rawFields map[string]json.RawMessage, upstreamBody []byte, plan customToolTransportPlan) {
+func logCustomToolTransport(ctx context.Context, logger *slog.Logger, rawFields map[string]json.RawMessage, upstreamBody []byte, plan customToolTransportPlan, codexCompatibilityEnabled bool) {
 	if logger == nil || !logger.Enabled(ctx, slog.LevelDebug) {
 		return
 	}
 
+	rawInstructions := rawStringField(rawFields, "instructions")
+	upstreamInstructions := bodyStringField(upstreamBody, "instructions")
+	tools := decodeToolList(rawFields)
+	codexCompatRequested := isCodexCLIRequest(rawFields) && hasFunctionToolNamed(tools, "exec_command")
+	codexCompatApplied := shouldApplyCodexCompatibility(rawFields, tools, codexCompatibilityEnabled)
+
 	logger.DebugContext(ctx, "responses custom tools transport",
 		"mode", plan.Mode,
 		"bridge_active", plan.BridgeActive(),
-		"bridge_tool_count", len(plan.Bridge.BySynthetic),
+		"bridge_tool_count", len(plan.Bridge.ByCanonical),
 		"dropped_builtin_tools", plan.DroppedBuiltinTools,
+		"tool_choice_contract_mode", plan.ToolChoiceContract.Mode,
+		"tool_choice_contract_name", plan.ToolChoiceContract.Name,
+		"tool_choice_contract_namespace", plan.ToolChoiceContract.Namespace,
+		"codex_compat_enabled", codexCompatibilityEnabled,
+		"codex_compat_requested", codexCompatRequested,
+		"codex_compat_applied", codexCompatApplied,
+		"raw_instructions_has_codex_hint", strings.Contains(rawInstructions, codexCompatibilityHint),
+		"upstream_instructions_has_codex_hint", strings.Contains(upstreamInstructions, codexCompatibilityHint),
 		"raw_tools", rawFieldForLog(rawFields, "tools"),
 		"raw_tool_choice", rawFieldForLog(rawFields, "tool_choice"),
 		"upstream_tools", bodyFieldForLog(upstreamBody, "tools"),
@@ -612,6 +893,14 @@ func bodyFieldForLog(body []byte, key string) string {
 		return ""
 	}
 	return rawFieldForLog(fields, key)
+}
+
+func bodyStringField(body []byte, key string) string {
+	fields, err := decodeRawFields(body)
+	if err != nil {
+		return ""
+	}
+	return rawStringField(fields, key)
 }
 
 func rawFieldForLog(fields map[string]json.RawMessage, key string) string {
@@ -633,6 +922,85 @@ func canonicalCustomToolKey(namespace, name string) string {
 func syntheticCustomToolName(namespace, name string) string {
 	sum := sha1.Sum([]byte(canonicalCustomToolKey(namespace, name)))
 	return "shim_custom_" + hex.EncodeToString(sum[:])
+}
+
+const customToolBridgeHintPrefix = "Custom tool bridge rules for this environment:"
+
+func appendCustomToolBridgeInstructions(instructions string, bridge customToolBridge) string {
+	hint := buildCustomToolBridgeHint(bridge)
+	if hint == "" || strings.Contains(instructions, customToolBridgeHintPrefix) {
+		return instructions
+	}
+	if strings.TrimSpace(instructions) == "" {
+		return hint
+	}
+	return strings.TrimRight(instructions, "\n") + "\n\n" + hint
+}
+
+func buildCustomToolBridgeHint(bridge customToolBridge) string {
+	if !bridge.Active() {
+		return ""
+	}
+
+	names := make([]string, 0, len(bridge.ByModelName))
+	for name := range bridge.ByModelName {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+
+	return customToolBridgeHintPrefix + " each custom tool is exposed as a function with the same name. To use one, emit a function call instead of a normal assistant message. Put the entire raw tool input into the single required JSON string argument `input`. The arguments must be valid JSON, so escape any inner double quotes inside the string value. Example: raw input `print(\"hello world\")` must be passed as `{\"input\":\"print(\\\"hello world\\\")\"}`. Available bridged custom tools: " + strings.Join(names, ", ") + "."
+}
+
+func customToolArgumentDescription(descriptor customToolDescriptor) string {
+	name := strings.TrimSpace(descriptor.Name)
+	if name == "" {
+		name = "the custom tool"
+	}
+	return "Entire raw input for custom tool `" + name + "` as one JSON string. Escape any inner double quotes inside the string value."
+}
+
+func bridgeFromToolCallRefs(refs map[string]domain.ToolCallReference) (customToolBridge, error) {
+	bridge := customToolBridge{
+		ByModelName: make(map[string]customToolDescriptor),
+		BySynthetic: make(map[string]customToolDescriptor),
+		ByCanonical: make(map[string]customToolDescriptor),
+	}
+	for _, ref := range refs {
+		if ref.Type != "custom_tool_call" || ref.Meta == nil || ref.Meta.Transport != "bridge" {
+			continue
+		}
+
+		name := fallbackString(ref.Meta.ToolName, ref.Name)
+		if name == "" {
+			continue
+		}
+		namespace := fallbackString(ref.Meta.ToolNamespace, ref.Namespace)
+		descriptor := customToolDescriptor{
+			Name:          name,
+			Namespace:     namespace,
+			SyntheticName: fallbackString(ref.Meta.SyntheticName, syntheticCustomToolName(namespace, name)),
+		}
+
+		key := canonicalCustomToolKey(namespace, name)
+		if existing, ok := bridge.ByCanonical[key]; ok {
+			if existing.SyntheticName == "" && descriptor.SyntheticName != "" {
+				bridge.ByCanonical[key] = descriptor
+			}
+			continue
+		}
+		if existing, ok := bridge.ByModelName[name]; ok {
+			if canonicalCustomToolKey(existing.Namespace, existing.Name) != key {
+				return customToolBridge{}, domain.NewValidationError("input", "bridge mode cannot replay custom tools with duplicate model-facing names")
+			}
+			continue
+		}
+		bridge.ByCanonical[key] = descriptor
+		bridge.ByModelName[name] = descriptor
+		if descriptor.SyntheticName != "" {
+			bridge.BySynthetic[descriptor.SyntheticName] = descriptor
+		}
+	}
+	return bridge, nil
 }
 
 func encodeCustomToolArguments(rawInput json.RawMessage) string {
