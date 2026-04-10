@@ -97,6 +97,51 @@ func TestProxyResponsesStreamCanonicalizesErrorBody(t *testing.T) {
 	require.JSONEq(t, `{"error":{"message":"messages is required","type":"invalid_request_error","param":null,"code":null}}`, recorder.Body.String())
 }
 
+func TestWriteCompletedResponseAsSSEReplaysCoreEventSequence(t *testing.T) {
+	recorder := httptest.NewRecorder()
+
+	err := writeCompletedResponseAsSSE(context.Background(), nil, recorder, []byte(`{
+		"id":"resp_test",
+		"object":"response",
+		"created_at":1741900000,
+		"status":"completed",
+		"completed_at":1741900001,
+		"model":"test-model",
+		"background":false,
+		"store":true,
+		"text":{"format":{"type":"text"}},
+		"usage":null,
+		"metadata":{},
+		"output_text":"OK",
+		"output":[
+			{
+				"id":"msg_test",
+				"type":"message",
+				"role":"assistant",
+				"status":"completed",
+				"content":[
+					{"type":"output_text","text":"OK","annotations":[]}
+				]
+			}
+		]
+	}`), customToolTransportPlan{}, true)
+	require.NoError(t, err)
+
+	body := recorder.Body.String()
+	require.Contains(t, body, "event: response.created\n")
+	require.Contains(t, body, "event: response.in_progress\n")
+	require.Contains(t, body, "event: response.content_part.added\n")
+	require.Contains(t, body, "event: response.output_text.delta\n")
+	require.Contains(t, body, `"delta":"OK"`)
+	require.Contains(t, body, `"obfuscation":"xx"`)
+	require.Contains(t, body, "event: response.output_text.done\n")
+	require.Contains(t, body, `"response_id":"resp_test"`)
+	require.Contains(t, body, "event: response.content_part.done\n")
+	require.Contains(t, body, "event: response.output_item.done\n")
+	require.Contains(t, body, "event: response.completed\n")
+	require.Contains(t, body, "data: [DONE]\n\n")
+}
+
 func TestShouldIgnoreStreamProxyError(t *testing.T) {
 	require.True(t, shouldIgnoreStreamProxyError(context.Canceled))
 	require.False(t, shouldIgnoreStreamProxyError(io.EOF))

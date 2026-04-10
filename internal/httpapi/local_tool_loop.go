@@ -16,6 +16,7 @@ import (
 var shimLocalToolLoopFields = map[string]struct{}{
 	"model":                {},
 	"input":                {},
+	"text":                 {},
 	"store":                {},
 	"stream":               {},
 	"previous_response_id": {},
@@ -118,8 +119,11 @@ func (h *responseHandler) createLocalToolLoopResponse(ctx context.Context, reque
 	input := service.CreateResponseInput{
 		Model:              request.Model,
 		Input:              request.Input,
+		TextConfig:         request.Text,
+		Metadata:           request.Metadata,
 		Store:              request.Store,
 		Stream:             request.Stream,
+		Background:         request.Background,
 		PreviousResponseID: request.PreviousResponseID,
 		ConversationID:     request.Conversation,
 		Instructions:       request.Instructions,
@@ -129,6 +133,9 @@ func (h *responseHandler) createLocalToolLoopResponse(ctx context.Context, reque
 
 	prepared, err := h.service.PrepareCreateContext(ctx, input)
 	if err != nil {
+		return domain.Response{}, err
+	}
+	if _, err := h.service.PrepareLocalResponseText(input, prepared.ContextItems); err != nil {
 		return domain.Response{}, err
 	}
 
@@ -152,6 +159,10 @@ func (h *responseHandler) createLocalToolLoopResponse(ctx context.Context, reque
 		response, err := parseLocalToolLoopChatCompletion(rawResponse, responseID, input.Model, input.PreviousResponseID, input.ConversationID, plan)
 		if err == nil {
 			if err := enforceToolChoiceContract(response, plan.ToolChoiceContract); err != nil {
+				return domain.Response{}, err
+			}
+			response, err = h.service.FinalizeLocalResponse(input, prepared.ContextItems, response)
+			if err != nil {
 				return domain.Response{}, err
 			}
 			return h.service.SaveExternalResponse(ctx, prepared, input, response)
@@ -525,7 +536,7 @@ func parseLocalToolLoopChatCompletion(raw []byte, responseID string, model strin
 			Object:             "response",
 			Model:              model,
 			PreviousResponseID: previousResponseID,
-			Conversation:       conversationID,
+			Conversation:       domain.NewConversationReference(conversationID),
 			OutputText:         "",
 			Output:             toolCalls,
 		}
@@ -536,7 +547,7 @@ func parseLocalToolLoopChatCompletion(raw []byte, responseID string, model strin
 		return domain.Response{}, &llama.InvalidResponseError{Message: "chat completion response did not include assistant text or tool calls"}
 	}
 
-	return domain.NewResponse(responseID, model, content, previousResponseID, conversationID), nil
+	return domain.NewResponse(responseID, model, content, previousResponseID, conversationID, domain.NowUTC().Unix()), nil
 }
 
 func extractChatCompletionContent(raw json.RawMessage) string {

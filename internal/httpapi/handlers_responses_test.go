@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"testing"
@@ -47,7 +48,7 @@ func TestPrepareShadowStoreKeepsMixedInputItems(t *testing.T) {
 		]`),
 	}
 
-	prepared, input, ok := prepareShadowStore(request, `{"model":"test-model"}`)
+	prepared, input, ok := prepareShadowStore(context.Background(), nil, request, `{"model":"test-model"}`)
 
 	require.True(t, ok)
 	require.Equal(t, "test-model", input.Model)
@@ -64,11 +65,29 @@ func TestPrepareShadowStorePreservesStateFields(t *testing.T) {
 		Input:              json.RawMessage(`"hello"`),
 	}
 
-	_, input, ok := prepareShadowStore(request, `{"model":"test-model"}`)
+	_, input, ok := prepareShadowStore(context.Background(), nil, request, `{"model":"test-model"}`)
 
 	require.True(t, ok)
 	require.Equal(t, "resp_prev", input.PreviousResponseID)
 	require.Equal(t, "conv_1", input.ConversationID)
+}
+
+func TestParseCreateResponseStreamOptionsRequiresStream(t *testing.T) {
+	_, err := parseCreateResponseStreamOptions(nil, json.RawMessage(`{"include_obfuscation":false}`))
+
+	var validationErr *domain.ValidationError
+	require.ErrorAs(t, err, &validationErr)
+	require.Equal(t, "stream_options", validationErr.Param)
+}
+
+func TestParseCreateResponseStreamOptionsRejectsUnsupportedField(t *testing.T) {
+	stream := true
+	_, err := parseCreateResponseStreamOptions(&stream, json.RawMessage(`{"include_usage":true}`))
+
+	var validationErr *domain.ValidationError
+	require.ErrorAs(t, err, &validationErr)
+	require.Equal(t, "stream_options", validationErr.Param)
+	require.Contains(t, validationErr.Message, "unsupported stream_options field")
 }
 
 func TestShouldFallbackLocalState(t *testing.T) {

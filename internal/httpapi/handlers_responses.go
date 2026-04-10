@@ -19,8 +19,13 @@ import (
 type ResponseService interface {
 	Create(ctx context.Context, input service.CreateResponseInput) (domain.Response, error)
 	CreateStream(ctx context.Context, input service.CreateResponseInput, hooks service.StreamHooks) (domain.Response, error)
+	CountInputTokens(ctx context.Context, input service.CreateResponseInput) (domain.ResponseInputTokens, error)
+	Compact(ctx context.Context, input service.CreateResponseInput) (domain.ResponseCompaction, error)
 	Get(ctx context.Context, id string) (domain.Response, error)
+	HasPreviousResponse(ctx context.Context, id string) (bool, error)
 	GetInputItems(ctx context.Context, id string) ([]domain.Item, error)
+	Delete(ctx context.Context, id string) (domain.ResponseDeletion, error)
+	Refresh(ctx context.Context, response domain.Response) (domain.Response, error)
 	PrepareCreateContext(ctx context.Context, input service.CreateResponseInput) (service.PreparedResponseContext, error)
 	SaveExternalResponse(ctx context.Context, prepared service.PreparedResponseContext, input service.CreateResponseInput, response domain.Response) (domain.Response, error)
 }
@@ -53,20 +58,19 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var request CreateResponseRequest
-	if err := json.Unmarshal(rawBody, &request); err != nil {
+	request, rawFields, requestJSON, err := decodeCreateResponseRequestBody(rawBody, false)
+	if err != nil {
+		var validationErr *domain.ValidationError
+		if errors.As(err, &validationErr) {
+			h.writeError(w, r, err)
+			return
+		}
 		WriteError(w, http.StatusBadRequest, "invalid_request_error", "malformed JSON body", "")
 		return
 	}
-	rawFields, err := decodeRawFields(rawBody)
+	streamOptions, err := parseCreateResponseStreamOptions(request.Stream, request.StreamOptions)
 	if err != nil {
-		WriteError(w, http.StatusBadRequest, "invalid_request_error", "malformed JSON body", "")
-		return
-	}
-
-	requestJSON, err := compactBody(rawBody)
-	if err != nil {
-		WriteError(w, http.StatusBadRequest, "invalid_request_error", "malformed JSON body", "")
+		h.writeError(w, r, err)
 		return
 	}
 
@@ -77,7 +81,7 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 	}
 	if request.PreviousResponseID != "" && !hasLocalState {
 		if request.Stream != nil && *request.Stream {
-			h.proxyCreateStream(w, r, request, requestJSON, rawFields)
+			h.proxyCreateStream(w, r, request, requestJSON, rawFields, streamOptions)
 			return
 		}
 		h.proxyCreateWithShadowStore(w, r, request, rawBody, requestJSON, rawFields)
@@ -90,7 +94,7 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 	if request.Stream != nil && *request.Stream {
 		switch {
 		case h.responsesMode == config.ResponsesModePreferUpstream && !hasLocalState:
-			h.proxyCreateStream(w, r, request, requestJSON, rawFields)
+			h.proxyCreateStream(w, r, request, requestJSON, rawFields, streamOptions)
 		case localToolLoop:
 			response, err := h.createLocalToolLoopResponse(r.Context(), request, requestJSON, rawFields)
 			if err == nil {
@@ -99,24 +103,24 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 					h.writeError(w, r, marshalErr)
 					return
 				}
-				if err := writeCompletedResponseAsSSE(r.Context(), h.logger, w, rawResponse, customToolTransportPlan{}); err != nil && !shouldIgnoreStreamProxyError(err) {
+				if err := writeCompletedResponseAsSSE(r.Context(), h.logger, w, rawResponse, customToolTransportPlan{}, streamOptions.IncludeObfuscation); err != nil && !shouldIgnoreStreamProxyError(err) {
 					h.logger.WarnContext(r.Context(), "local tool loop stream failed", "request_id", RequestIDFromContext(r.Context()), "err", err)
 				}
 				return
 			}
 			if shouldFallbackLocalState(h.responsesMode, err) {
 				if hasLocalState {
-					h.createStreamViaUpstream(w, r, request, requestJSON, rawFields)
+					h.createStreamViaUpstream(w, r, request, requestJSON, rawFields, streamOptions)
 					return
 				}
-				h.proxyCreateStream(w, r, request, requestJSON, rawFields)
+				h.proxyCreateStream(w, r, request, requestJSON, rawFields, streamOptions)
 				return
 			}
 			h.writeError(w, r, normalizeLocalOnlyCreateError(h.responsesMode, err))
 		case localSupported:
-			if err := h.createStream(w, r, request, requestJSON, generationOptions); err != nil {
+			if err := h.createStream(w, r, request, requestJSON, generationOptions, streamOptions); err != nil {
 				if shouldFallbackLocalState(h.responsesMode, err) {
-					h.createStreamViaUpstream(w, r, request, requestJSON, rawFields)
+					h.createStreamViaUpstream(w, r, request, requestJSON, rawFields, streamOptions)
 					return
 				}
 				h.writeError(w, r, normalizeLocalOnlyCreateError(h.responsesMode, err))
@@ -126,11 +130,11 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 				h.writeError(w, r, newLocalOnlyUnsupportedFieldsError(rawFields))
 				return
 			}
-			h.createStreamViaUpstream(w, r, request, requestJSON, rawFields)
+			h.createStreamViaUpstream(w, r, request, requestJSON, rawFields, streamOptions)
 		case h.responsesMode == config.ResponsesModeLocalOnly:
 			h.writeError(w, r, newLocalOnlyUnsupportedFieldsError(rawFields))
 		default:
-			h.proxyCreateStream(w, r, request, requestJSON, rawFields)
+			h.proxyCreateStream(w, r, request, requestJSON, rawFields, streamOptions)
 		}
 		return
 	}
@@ -165,8 +169,11 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 		response, err := h.service.Create(r.Context(), service.CreateResponseInput{
 			Model:              request.Model,
 			Input:              request.Input,
+			TextConfig:         request.Text,
+			Metadata:           request.Metadata,
 			Store:              request.Store,
 			Stream:             request.Stream,
+			Background:         request.Background,
 			PreviousResponseID: request.PreviousResponseID,
 			ConversationID:     request.Conversation,
 			Instructions:       request.Instructions,
@@ -207,12 +214,135 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 	h.proxyCreateWithShadowStore(w, r, request, rawBody, requestJSON, rawFields)
 }
 
+func (h *responseHandler) inputTokens(w http.ResponseWriter, r *http.Request) {
+	rawBody, err := readJSONBody(w, r)
+	if err != nil {
+		return
+	}
+
+	request, rawFields, requestJSON, err := decodeCreateResponseRequestBody(rawBody, true)
+	if err != nil {
+		var validationErr *domain.ValidationError
+		if errors.As(err, &validationErr) {
+			h.writeError(w, r, err)
+			return
+		}
+		WriteError(w, http.StatusBadRequest, "invalid_request_error", "malformed JSON body", "")
+		return
+	}
+
+	hasLocalState, err := h.hasLocalCreateState(r.Context(), request)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	localSupported := supportsLocalDerivedResponsesState(rawFields)
+
+	switch {
+	case h.responsesMode == config.ResponsesModePreferUpstream && !hasLocalState:
+		h.proxyBufferedJSONRequest(w, r, rawBody)
+		return
+	case localSupported:
+		response, err := h.service.CountInputTokens(r.Context(), service.CreateResponseInput{
+			Model:              request.Model,
+			Input:              request.Input,
+			TextConfig:         request.Text,
+			Metadata:           request.Metadata,
+			PreviousResponseID: request.PreviousResponseID,
+			ConversationID:     request.Conversation,
+			Instructions:       request.Instructions,
+			RequestJSON:        requestJSON,
+		})
+		if err == nil {
+			WriteJSON(w, http.StatusOK, response)
+			return
+		}
+		if !hasLocalState && shouldFallbackLocalState(h.responsesMode, err) {
+			h.proxyBufferedJSONRequest(w, r, rawBody)
+			return
+		}
+		h.writeError(w, r, normalizeLocalOnlyCreateError(h.responsesMode, err))
+		return
+	case hasLocalState:
+		h.writeError(w, r, newLocalStateUnsupportedDerivedFieldsError("/v1/responses/input_tokens", rawFields))
+		return
+	case h.responsesMode == config.ResponsesModeLocalOnly:
+		h.writeError(w, r, newLocalOnlyUnsupportedDerivedFieldsError("/v1/responses/input_tokens", rawFields))
+		return
+	default:
+		h.proxyBufferedJSONRequest(w, r, rawBody)
+	}
+}
+
+func (h *responseHandler) compact(w http.ResponseWriter, r *http.Request) {
+	rawBody, err := readJSONBody(w, r)
+	if err != nil {
+		return
+	}
+
+	request, rawFields, requestJSON, err := decodeCreateResponseRequestBody(rawBody, false)
+	if err != nil {
+		var validationErr *domain.ValidationError
+		if errors.As(err, &validationErr) {
+			h.writeError(w, r, err)
+			return
+		}
+		WriteError(w, http.StatusBadRequest, "invalid_request_error", "malformed JSON body", "")
+		return
+	}
+
+	hasLocalState, err := h.hasLocalCreateState(r.Context(), request)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	localSupported := supportsLocalDerivedResponsesState(rawFields)
+
+	switch {
+	case h.responsesMode == config.ResponsesModePreferUpstream && !hasLocalState:
+		h.proxyBufferedJSONRequest(w, r, rawBody)
+		return
+	case localSupported:
+		response, err := h.service.Compact(r.Context(), service.CreateResponseInput{
+			Model:              request.Model,
+			Input:              request.Input,
+			TextConfig:         request.Text,
+			Metadata:           request.Metadata,
+			PreviousResponseID: request.PreviousResponseID,
+			ConversationID:     request.Conversation,
+			Instructions:       request.Instructions,
+			RequestJSON:        requestJSON,
+		})
+		if err == nil {
+			WriteJSON(w, http.StatusOK, response)
+			return
+		}
+		if !hasLocalState && shouldFallbackLocalState(h.responsesMode, err) {
+			h.proxyBufferedJSONRequest(w, r, rawBody)
+			return
+		}
+		h.writeError(w, r, normalizeLocalOnlyCreateError(h.responsesMode, err))
+		return
+	case hasLocalState:
+		h.writeError(w, r, newLocalStateUnsupportedDerivedFieldsError("/v1/responses/compact", rawFields))
+		return
+	case h.responsesMode == config.ResponsesModeLocalOnly:
+		h.writeError(w, r, newLocalOnlyUnsupportedDerivedFieldsError("/v1/responses/compact", rawFields))
+		return
+	default:
+		h.proxyBufferedJSONRequest(w, r, rawBody)
+	}
+}
+
 func (h *responseHandler) createLocalStateViaUpstream(ctx context.Context, request CreateResponseRequest, requestJSON string, rawFields map[string]json.RawMessage) (domain.Response, error) {
 	input := service.CreateResponseInput{
 		Model:              request.Model,
 		Input:              request.Input,
+		TextConfig:         request.Text,
+		Metadata:           request.Metadata,
 		Store:              request.Store,
 		Stream:             request.Stream,
+		Background:         request.Background,
 		PreviousResponseID: request.PreviousResponseID,
 		ConversationID:     request.Conversation,
 		Instructions:       request.Instructions,
@@ -320,13 +450,13 @@ func (h *responseHandler) createProxyResponseViaUpstream(ctx context.Context, re
 		return domain.Response{}, err
 	}
 
-	prepared, input, ok := prepareShadowStore(request, requestJSON)
+	prepared, input, ok := prepareShadowStore(ctx, h.service.PrepareCreateContext, request, requestJSON)
 	if !ok {
 		if response.PreviousResponseID == "" && request.PreviousResponseID != "" {
 			response.PreviousResponseID = request.PreviousResponseID
 		}
-		if response.Conversation == "" && request.Conversation != "" {
-			response.Conversation = request.Conversation
+		if response.Conversation == nil && request.Conversation != "" {
+			response.Conversation = domain.NewConversationReference(request.Conversation)
 		}
 		return response, nil
 	}
@@ -339,8 +469,8 @@ func (h *responseHandler) createProxyResponseViaUpstream(ctx context.Context, re
 		if response.PreviousResponseID == "" && request.PreviousResponseID != "" {
 			response.PreviousResponseID = request.PreviousResponseID
 		}
-		if response.Conversation == "" && request.Conversation != "" {
-			response.Conversation = request.Conversation
+		if response.Conversation == nil && request.Conversation != "" {
+			response.Conversation = domain.NewConversationReference(request.Conversation)
 		}
 		return response, nil
 	}
@@ -473,7 +603,7 @@ func finalizeUpstreamResponse(rawResponse []byte, plan customToolTransportPlan, 
 	return responseBody, response, nil
 }
 
-func (h *responseHandler) createStream(w http.ResponseWriter, r *http.Request, request CreateResponseRequest, requestJSON string, generationOptions map[string]json.RawMessage) error {
+func (h *responseHandler) createStream(w http.ResponseWriter, r *http.Request, request CreateResponseRequest, requestJSON string, generationOptions map[string]json.RawMessage, streamOptions responseStreamOptions) error {
 	var (
 		emitter    *responseStreamEmitter
 		responseID string
@@ -483,8 +613,11 @@ func (h *responseHandler) createStream(w http.ResponseWriter, r *http.Request, r
 	response, err := h.service.CreateStream(r.Context(), service.CreateResponseInput{
 		Model:              request.Model,
 		Input:              request.Input,
+		TextConfig:         request.Text,
+		Metadata:           request.Metadata,
 		Store:              request.Store,
 		Stream:             request.Stream,
+		Background:         request.Background,
 		PreviousResponseID: request.PreviousResponseID,
 		ConversationID:     request.Conversation,
 		Instructions:       request.Instructions,
@@ -493,7 +626,7 @@ func (h *responseHandler) createStream(w http.ResponseWriter, r *http.Request, r
 	}, service.StreamHooks{
 		OnCreated: func(response domain.Response) error {
 			var err error
-			emitter, err = newResponseStreamEmitter(w)
+			emitter, err = newResponseStreamEmitter(w, streamOptions.IncludeObfuscation)
 			if err != nil {
 				return err
 			}
@@ -505,7 +638,13 @@ func (h *responseHandler) createStream(w http.ResponseWriter, r *http.Request, r
 			if err := emitter.responseCreated(response); err != nil {
 				return err
 			}
-			return emitter.outputItemAdded(itemID)
+			if err := emitter.responseInProgress(response); err != nil {
+				return err
+			}
+			if err := emitter.outputItemAdded(itemID); err != nil {
+				return err
+			}
+			return emitter.contentPartAdded(itemID)
 		},
 		OnDelta: func(delta string) error {
 			return emitter.outputTextDelta(responseID, itemID, delta)
@@ -523,21 +662,60 @@ func (h *responseHandler) createStream(w http.ResponseWriter, r *http.Request, r
 		return nil
 	}
 
-	if err := emitter.outputTextDone(itemID, response.OutputText); err != nil {
+	response, err = normalizeResponseForStreaming(response, map[int]string{0: itemID})
+	if err != nil {
+		return err
+	}
+	if err := emitter.outputTextDone(responseID, itemID, response.OutputText); err != nil {
 		return nil
 	}
-	if err := emitter.outputItemDone(itemID, response.OutputText); err != nil {
+	if err := emitter.contentPartDone(itemID, response.OutputText); err != nil {
+		return nil
+	}
+	if err := emitter.outputItemDone(itemID, response.Output[0]); err != nil {
 		return nil
 	}
 	if err := emitter.responseCompleted(response); err != nil {
 		return nil
 	}
-	return nil
+	return emitter.done()
 }
 
 func (h *responseHandler) get(w http.ResponseWriter, r *http.Request) {
+	query, err := parseResponseRetrieveQuery(r)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+
 	id := r.PathValue("id")
 	response, err := h.service.Get(r.Context(), id)
+	if err != nil {
+		mapped := service.MapStorageError(err)
+		if errors.Is(mapped, service.ErrNotFound) {
+			h.proxy.forward(w, r)
+			return
+		}
+		h.writeError(w, r, err)
+		return
+	}
+	if query.Stream {
+		if err := writeResponseReplayAsSSE(w, response, query.StartingAfter, query.IncludeObfuscation); err != nil {
+			if errors.Is(err, context.Canceled) {
+				return
+			}
+			if h.logger != nil {
+				h.logger.WarnContext(r.Context(), "response replay stream failed", "request_id", RequestIDFromContext(r.Context()), "err", err)
+			}
+		}
+		return
+	}
+	WriteJSON(w, http.StatusOK, response)
+}
+
+func (h *responseHandler) delete(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	response, err := h.service.Delete(r.Context(), id)
 	if err != nil {
 		mapped := service.MapStorageError(err)
 		if errors.Is(mapped, service.ErrNotFound) {
@@ -550,28 +728,88 @@ func (h *responseHandler) get(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, response)
 }
 
-func (h *responseHandler) getInputItems(w http.ResponseWriter, r *http.Request) {
+func (h *responseHandler) cancel(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	items, err := h.service.GetInputItems(r.Context(), id)
+	response, err := h.service.Get(r.Context(), id)
+	if err != nil {
+		mapped := service.MapStorageError(err)
+		if errors.Is(mapped, service.ErrNotFound) {
+			h.proxy.forward(w, r)
+			return
+		}
+		h.writeError(w, r, err)
+		return
+	}
+	if response.Background == nil || !*response.Background {
+		WriteError(w, http.StatusBadRequest, "invalid_request_error", "only background responses can be cancelled", "background")
+		return
+	}
+
+	cloned := r.Clone(r.Context())
+	if cloned.Header.Get("X-Request-Id") == "" {
+		cloned.Header.Set("X-Request-Id", RequestIDFromContext(cloned.Context()))
+	}
+
+	upstreamResp, err := h.proxy.client.Proxy(cloned.Context(), cloned)
+	if err != nil {
+		status, payload := MapError(r.Context(), h.logger, err)
+		WriteJSON(w, status, apiErrorPayload{Error: payload})
+		return
+	}
+	defer upstreamResp.Body.Close()
+
+	body, err := io.ReadAll(upstreamResp.Body)
+	if err != nil {
+		WriteError(w, http.StatusBadGateway, "upstream_error", "failed to read upstream response", "")
+		return
+	}
+	if canonical, ok, err := canonicalizeAPIErrorBody(upstreamResp.StatusCode, body); err == nil && ok {
+		body = canonical
+	}
+	if upstreamResp.StatusCode >= 200 && upstreamResp.StatusCode < 300 {
+		parsed, err := domain.ParseUpstreamResponse(body)
+		if err == nil {
+			refreshed, refreshErr := h.service.Refresh(r.Context(), parsed)
+			if refreshErr == nil {
+				encoded, marshalErr := json.Marshal(refreshed)
+				if marshalErr == nil {
+					body = encoded
+				}
+			} else if h.logger != nil {
+				h.logger.ErrorContext(r.Context(), "response refresh failed after upstream cancel", "request_id", RequestIDFromContext(r.Context()), "err", refreshErr)
+			}
+		}
+	}
+
+	copyResponseHeaders(w.Header(), upstreamResp.Header)
+	w.Header().Del("Content-Length")
+	w.WriteHeader(upstreamResp.StatusCode)
+	_, _ = w.Write(body)
+}
+
+func (h *responseHandler) getInputItems(w http.ResponseWriter, r *http.Request) {
+	query, err := parseResponseInputItemsQuery(r)
 	if err != nil {
 		h.writeError(w, r, err)
 		return
 	}
 
-	response := listConversationItemsResponse{
-		Object:  "list",
-		Data:    make([]map[string]any, 0, len(items)),
-		HasMore: false,
+	id := r.PathValue("id")
+	items, err := h.service.GetInputItems(r.Context(), id)
+	if err != nil {
+		mapped := service.MapStorageError(err)
+		if errors.Is(mapped, service.ErrNotFound) {
+			h.proxy.forward(w, r)
+			return
+		}
+		h.writeError(w, r, err)
+		return
 	}
-	for _, item := range items {
-		payload := item.Map()
-		response.Data = append(response.Data, payload)
-	}
-	if len(response.Data) > 0 {
-		firstID := payloadID(response.Data[0])
-		lastID := payloadID(response.Data[len(response.Data)-1])
-		response.FirstID = &firstID
-		response.LastID = &lastID
+
+	response, err := paginateResponseInputItems(items, query)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
 	}
 	WriteJSON(w, http.StatusOK, response)
 }
@@ -579,6 +817,32 @@ func (h *responseHandler) getInputItems(w http.ResponseWriter, r *http.Request) 
 func (h *responseHandler) writeError(w http.ResponseWriter, r *http.Request, err error) {
 	status, payload := MapError(r.Context(), h.logger, err)
 	WriteJSON(w, status, apiErrorPayload{Error: payload})
+}
+
+func (h *responseHandler) proxyBufferedJSONRequest(w http.ResponseWriter, r *http.Request, body []byte) {
+	resp, err := h.proxyResponseRequest(r, body)
+	if err != nil {
+		status, payload := MapError(r.Context(), h.logger, err)
+		WriteJSON(w, status, apiErrorPayload{Error: payload})
+		return
+	}
+	defer resp.Body.Close()
+
+	responseBody, readErr := io.ReadAll(resp.Body)
+	if readErr != nil {
+		WriteError(w, http.StatusBadGateway, "upstream_error", "failed to read upstream response", "")
+		return
+	}
+	if canonical, ok, err := canonicalizeAPIErrorBody(resp.StatusCode, responseBody); err == nil && ok {
+		responseBody = canonical
+	}
+
+	copyResponseHeaders(w.Header(), resp.Header)
+	if len(responseBody) > 0 {
+		w.Header().Del("Content-Length")
+	}
+	w.WriteHeader(resp.StatusCode)
+	_, _ = w.Write(responseBody)
 }
 
 func readJSONBody(w http.ResponseWriter, r *http.Request) ([]byte, error) {
@@ -601,6 +865,84 @@ func compactBody(raw []byte) (string, error) {
 	return domain.CompactJSON(raw)
 }
 
+func decodeCreateResponseRequestBody(rawBody []byte, allowEmpty bool) (CreateResponseRequest, map[string]json.RawMessage, string, error) {
+	trimmed := bytes.TrimSpace(rawBody)
+	if len(trimmed) == 0 {
+		if !allowEmpty {
+			return CreateResponseRequest{}, nil, "", io.EOF
+		}
+		return CreateResponseRequest{}, map[string]json.RawMessage{}, `{}`, nil
+	}
+
+	var payload struct {
+		Model              string          `json:"model"`
+		Input              json.RawMessage `json:"input"`
+		Text               json.RawMessage `json:"text,omitempty"`
+		Metadata           json.RawMessage `json:"metadata,omitempty"`
+		Store              *bool           `json:"store,omitempty"`
+		Stream             *bool           `json:"stream,omitempty"`
+		StreamOptions      json.RawMessage `json:"stream_options,omitempty"`
+		Background         *bool           `json:"background,omitempty"`
+		PreviousResponseID string          `json:"previous_response_id,omitempty"`
+		Conversation       json.RawMessage `json:"conversation,omitempty"`
+		Instructions       string          `json:"instructions,omitempty"`
+	}
+	if err := json.Unmarshal(trimmed, &payload); err != nil {
+		return CreateResponseRequest{}, nil, "", err
+	}
+
+	rawFields, err := decodeRawFields(trimmed)
+	if err != nil {
+		return CreateResponseRequest{}, nil, "", err
+	}
+	requestJSON, err := compactBody(trimmed)
+	if err != nil {
+		return CreateResponseRequest{}, nil, "", err
+	}
+	conversationID, err := decodeCreateResponseConversationID(payload.Conversation)
+	if err != nil {
+		return CreateResponseRequest{}, nil, "", err
+	}
+
+	return CreateResponseRequest{
+		Model:              payload.Model,
+		Input:              payload.Input,
+		Text:               payload.Text,
+		Metadata:           payload.Metadata,
+		Store:              payload.Store,
+		Stream:             payload.Stream,
+		StreamOptions:      payload.StreamOptions,
+		Background:         payload.Background,
+		PreviousResponseID: payload.PreviousResponseID,
+		Conversation:       conversationID,
+		Instructions:       payload.Instructions,
+	}, rawFields, requestJSON, nil
+}
+
+func decodeCreateResponseConversationID(raw json.RawMessage) (string, error) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return "", nil
+	}
+
+	var conversationID string
+	if err := json.Unmarshal(trimmed, &conversationID); err == nil {
+		return strings.TrimSpace(conversationID), nil
+	}
+
+	var payload struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(trimmed, &payload); err == nil {
+		if strings.TrimSpace(payload.ID) == "" {
+			return "", domain.NewValidationError("conversation", "conversation.id is required")
+		}
+		return strings.TrimSpace(payload.ID), nil
+	}
+
+	return "", domain.NewValidationError("conversation", "conversation must be a string or object with id")
+}
+
 var shimLocalGenerationFields = map[string]struct{}{
 	"temperature":       {},
 	"top_p":             {},
@@ -614,8 +956,21 @@ var shimLocalGenerationFields = map[string]struct{}{
 var shimLocalStateBaseFields = map[string]struct{}{
 	"model":                {},
 	"input":                {},
+	"text":                 {},
+	"metadata":             {},
 	"store":                {},
 	"stream":               {},
+	"stream_options":       {},
+	"previous_response_id": {},
+	"conversation":         {},
+	"instructions":         {},
+}
+
+var shimLocalDerivedResponsesBaseFields = map[string]struct{}{
+	"model":                {},
+	"input":                {},
+	"text":                 {},
+	"metadata":             {},
 	"previous_response_id": {},
 	"conversation":         {},
 	"instructions":         {},
@@ -652,6 +1007,16 @@ func supportsLocalShimState(rawFields map[string]json.RawMessage) bool {
 	return true
 }
 
+func supportsLocalDerivedResponsesState(rawFields map[string]json.RawMessage) bool {
+	for key := range rawFields {
+		if _, ok := shimLocalDerivedResponsesBaseFields[key]; ok {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
 func unsupportedLocalShimFields(rawFields map[string]json.RawMessage) []string {
 	unsupported := make([]string, 0)
 	for key := range rawFields {
@@ -659,6 +1024,18 @@ func unsupportedLocalShimFields(rawFields map[string]json.RawMessage) []string {
 			continue
 		}
 		if _, ok := shimLocalGenerationFields[key]; ok {
+			continue
+		}
+		unsupported = append(unsupported, key)
+	}
+	sort.Strings(unsupported)
+	return unsupported
+}
+
+func unsupportedLocalDerivedFields(rawFields map[string]json.RawMessage) []string {
+	unsupported := make([]string, 0)
+	for key := range rawFields {
+		if _, ok := shimLocalDerivedResponsesBaseFields[key]; ok {
 			continue
 		}
 		unsupported = append(unsupported, key)
@@ -687,8 +1064,8 @@ func (h *responseHandler) hasLocalCreateState(ctx context.Context, request Creat
 		return false, nil
 	}
 
-	_, err := h.service.Get(ctx, request.PreviousResponseID)
-	if err == nil {
+	ok, err := h.service.HasPreviousResponse(ctx, request.PreviousResponseID)
+	if err == nil && ok {
 		return true, nil
 	}
 	mapped := service.MapStorageError(err)
@@ -716,6 +1093,22 @@ func newLocalOnlyUnsupportedFieldsError(rawFields map[string]json.RawMessage) er
 		return domain.NewValidationError("responses.mode", "request is not supported when responses.mode=local_only")
 	}
 	return domain.NewValidationError("responses.mode", "request uses fields that require upstream /v1/responses and are not supported when responses.mode=local_only: "+joinCSV(fields))
+}
+
+func newLocalOnlyUnsupportedDerivedFieldsError(endpoint string, rawFields map[string]json.RawMessage) error {
+	fields := unsupportedLocalDerivedFields(rawFields)
+	if len(fields) == 0 {
+		return domain.NewValidationError("responses.mode", "request is not supported when responses.mode=local_only")
+	}
+	return domain.NewValidationError("responses.mode", "request uses fields that require upstream "+endpoint+" and are not supported when responses.mode=local_only: "+joinCSV(fields))
+}
+
+func newLocalStateUnsupportedDerivedFieldsError(endpoint string, rawFields map[string]json.RawMessage) error {
+	fields := unsupportedLocalDerivedFields(rawFields)
+	if len(fields) == 0 {
+		return domain.NewValidationError("input", "request depends on shim-local state and is not supported by "+endpoint)
+	}
+	return domain.NewValidationError("input", "request depends on shim-local state but uses fields that require upstream "+endpoint+": "+joinCSV(fields))
 }
 
 func normalizeLocalOnlyCreateError(responsesMode string, err error) error {
@@ -869,7 +1262,7 @@ func (h *responseHandler) proxyCreateWithShadowStore(w http.ResponseWriter, r *h
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(finalBody)
 
-		prepared, input, ok := prepareShadowStore(request, requestJSON)
+		prepared, input, ok := prepareShadowStore(r.Context(), h.service.PrepareCreateContext, request, requestJSON)
 		if !ok {
 			return
 		}
@@ -892,7 +1285,7 @@ func (h *responseHandler) proxyCreateWithShadowStore(w http.ResponseWriter, r *h
 		return
 	}
 
-	prepared, input, ok := prepareShadowStore(request, requestJSON)
+	prepared, input, ok := prepareShadowStore(r.Context(), h.service.PrepareCreateContext, request, requestJSON)
 	if !ok {
 		return
 	}
@@ -909,12 +1302,15 @@ func (h *responseHandler) proxyCreateWithShadowStore(w http.ResponseWriter, r *h
 	}
 }
 
-func prepareShadowStore(request CreateResponseRequest, requestJSON string) (service.PreparedResponseContext, service.CreateResponseInput, bool) {
+func prepareShadowStore(ctx context.Context, prepare func(context.Context, service.CreateResponseInput) (service.PreparedResponseContext, error), request CreateResponseRequest, requestJSON string) (service.PreparedResponseContext, service.CreateResponseInput, bool) {
 	input := service.CreateResponseInput{
 		Model:              request.Model,
 		Input:              request.Input,
+		TextConfig:         request.Text,
+		Metadata:           request.Metadata,
 		Store:              request.Store,
 		Stream:             request.Stream,
+		Background:         request.Background,
 		PreviousResponseID: request.PreviousResponseID,
 		ConversationID:     request.Conversation,
 		Instructions:       request.Instructions,
@@ -924,13 +1320,22 @@ func prepareShadowStore(request CreateResponseRequest, requestJSON string) (serv
 		return service.PreparedResponseContext{}, input, false
 	}
 
+	if prepare != nil {
+		prepared, err := prepare(ctx, input)
+		if err != nil {
+			return service.PreparedResponseContext{}, input, false
+		}
+		return prepared, input, true
+	}
+
 	normalizedInput, err := domain.NormalizeInput(input.Input)
 	if err != nil {
 		return service.PreparedResponseContext{}, input, false
 	}
-
 	return service.PreparedResponseContext{
 		NormalizedInput: normalizedInput,
+		EffectiveInput:  normalizedInput,
+		ContextItems:    normalizedInput,
 	}, input, true
 }
 

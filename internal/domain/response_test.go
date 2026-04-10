@@ -9,12 +9,13 @@ import (
 )
 
 func TestNewResponseNormalizesAssistantOutput(t *testing.T) {
-	response := domain.NewResponse("resp_1", "test-model", "OK", "resp_prev", "conv_1")
+	response := domain.NewResponse("resp_1", "test-model", "OK", "resp_prev", "conv_1", 1)
 	require.Equal(t, "resp_1", response.ID)
 	require.Equal(t, "response", response.Object)
 	require.Equal(t, "test-model", response.Model)
 	require.Equal(t, "resp_prev", response.PreviousResponseID)
-	require.Equal(t, "conv_1", response.Conversation)
+	require.NotNil(t, response.Conversation)
+	require.Equal(t, "conv_1", response.Conversation.ID)
 	require.Equal(t, "OK", response.OutputText)
 	require.Len(t, response.Output, 1)
 	require.Equal(t, "assistant", response.Output[0].Role)

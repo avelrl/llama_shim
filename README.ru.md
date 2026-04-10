@@ -127,6 +127,12 @@ SHIM_CONFIG=./config.yaml go run ./cmd/shim
 - `RESPONSES_CODEX_ENABLE_COMPATIBILITY` переопределяет `responses.codex.enable_compatibility`; если выключено, shim перестает добавлять Codex-specific instructions/context и пропускает Codex-specific normalизацию response
 - `RESPONSES_CODEX_FORCE_TOOL_CHOICE_REQUIRED` переопределяет `responses.codex.force_tool_choice_required`; если включено, Codex-like запросы с `tool_choice: "auto"` переписываются в `required`
 
+Заметки по retention для responses:
+
+- standalone-объекты `/v1/responses` следуют outward `store` contract, который возвращается в самом response object
+- conversation-attached items живут по lifecycle разговора, а не по retention standalone response
+- shim может хранить внутренние hidden response rows для локального `previous_response_id` replay даже когда outward response сообщает `store=false`
+
 ## Примеры curl
 
 ### POST `/v1/responses`

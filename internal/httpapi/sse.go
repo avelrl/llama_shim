@@ -4,25 +4,21 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"llama_shim/internal/domain"
 )
 
 type responseStreamEmitter struct {
-	w       http.ResponseWriter
-	flusher http.Flusher
-	seq     int
+	w                  http.ResponseWriter
+	flusher            http.Flusher
+	seq                int
+	includeObfuscation bool
 }
 
-type streamOutputItem struct {
-	ID      string            `json:"id"`
-	Type    string            `json:"type"`
-	Role    string            `json:"role"`
-	Content []domain.TextPart `json:"content"`
-}
-
-func newResponseStreamEmitter(w http.ResponseWriter) (*responseStreamEmitter, error) {
+func newResponseStreamEmitter(w http.ResponseWriter, includeObfuscation bool) (*responseStreamEmitter, error) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		return nil, fmt.Errorf("response writer does not support streaming")
@@ -36,8 +32,9 @@ func newResponseStreamEmitter(w http.ResponseWriter) (*responseStreamEmitter, er
 	disableWriteDeadline(w)
 
 	return &responseStreamEmitter{
-		w:       w,
-		flusher: flusher,
+		w:                  w,
+		flusher:            flusher,
+		includeObfuscation: includeObfuscation,
 	}, nil
 }
 
@@ -49,22 +46,46 @@ func (e *responseStreamEmitter) responseCreated(response domain.Response) error 
 	})
 }
 
+func (e *responseStreamEmitter) responseInProgress(response domain.Response) error {
+	return e.write("response.in_progress", map[string]any{
+		"type":            "response.in_progress",
+		"sequence_number": e.nextSequence(),
+		"response":        response,
+	})
+}
+
 func (e *responseStreamEmitter) outputItemAdded(itemID string) error {
 	return e.write("response.output_item.added", map[string]any{
 		"type":            "response.output_item.added",
 		"sequence_number": e.nextSequence(),
 		"output_index":    0,
-		"item": streamOutputItem{
-			ID:      itemID,
-			Type:    "message",
-			Role:    "assistant",
-			Content: []domain.TextPart{{Type: "output_text", Text: ""}},
+		"item": map[string]any{
+			"id":      itemID,
+			"type":    "message",
+			"status":  "in_progress",
+			"role":    "assistant",
+			"content": []any{},
+		},
+	})
+}
+
+func (e *responseStreamEmitter) contentPartAdded(itemID string) error {
+	return e.write("response.content_part.added", map[string]any{
+		"type":            "response.content_part.added",
+		"sequence_number": e.nextSequence(),
+		"item_id":         itemID,
+		"output_index":    0,
+		"content_index":   0,
+		"part": map[string]any{
+			"type":        "output_text",
+			"text":        "",
+			"annotations": []any{},
 		},
 	})
 }
 
 func (e *responseStreamEmitter) outputTextDelta(responseID, itemID, delta string) error {
-	return e.write("response.output_text.delta", map[string]any{
+	payload := map[string]any{
 		"type":            "response.output_text.delta",
 		"sequence_number": e.nextSequence(),
 		"response_id":     responseID,
@@ -72,13 +93,18 @@ func (e *responseStreamEmitter) outputTextDelta(responseID, itemID, delta string
 		"output_index":    0,
 		"content_index":   0,
 		"delta":           delta,
-	})
+	}
+	if e.includeObfuscation {
+		payload["obfuscation"] = strings.Repeat("x", utf8.RuneCountInString(delta))
+	}
+	return e.write("response.output_text.delta", payload)
 }
 
-func (e *responseStreamEmitter) outputTextDone(itemID, text string) error {
+func (e *responseStreamEmitter) outputTextDone(responseID, itemID, text string) error {
 	return e.write("response.output_text.done", map[string]any{
 		"type":            "response.output_text.done",
 		"sequence_number": e.nextSequence(),
+		"response_id":     responseID,
 		"item_id":         itemID,
 		"output_index":    0,
 		"content_index":   0,
@@ -86,17 +112,29 @@ func (e *responseStreamEmitter) outputTextDone(itemID, text string) error {
 	})
 }
 
-func (e *responseStreamEmitter) outputItemDone(itemID, text string) error {
+func (e *responseStreamEmitter) contentPartDone(itemID, text string) error {
+	return e.write("response.content_part.done", map[string]any{
+		"type":            "response.content_part.done",
+		"sequence_number": e.nextSequence(),
+		"item_id":         itemID,
+		"output_index":    0,
+		"content_index":   0,
+		"part": map[string]any{
+			"type":        "output_text",
+			"text":        text,
+			"annotations": []any{},
+		},
+	})
+}
+
+func (e *responseStreamEmitter) outputItemDone(itemID string, item domain.Item) error {
+	payload := item.Map()
+	payload["id"] = itemID
 	return e.write("response.output_item.done", map[string]any{
 		"type":            "response.output_item.done",
 		"sequence_number": e.nextSequence(),
 		"output_index":    0,
-		"item": streamOutputItem{
-			ID:      itemID,
-			Type:    "message",
-			Role:    "assistant",
-			Content: []domain.TextPart{{Type: "output_text", Text: text}},
-		},
+		"item":            payload,
 	})
 }
 
@@ -114,6 +152,14 @@ func (e *responseStreamEmitter) error(payload apiError) error {
 		"sequence_number": e.nextSequence(),
 		"error":           payload,
 	})
+}
+
+func (e *responseStreamEmitter) done() error {
+	if _, err := fmt.Fprint(e.w, "data: [DONE]\n\n"); err != nil {
+		return err
+	}
+	e.flusher.Flush()
+	return nil
 }
 
 func (e *responseStreamEmitter) write(eventType string, payload any) error {

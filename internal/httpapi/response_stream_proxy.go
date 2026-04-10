@@ -16,7 +16,7 @@ import (
 	"llama_shim/internal/service"
 )
 
-func (h *responseHandler) proxyCreateStream(w http.ResponseWriter, r *http.Request, request CreateResponseRequest, requestJSON string, rawFields map[string]json.RawMessage) {
+func (h *responseHandler) proxyCreateStream(w http.ResponseWriter, r *http.Request, request CreateResponseRequest, requestJSON string, rawFields map[string]json.RawMessage, streamOptions responseStreamOptions) {
 	upstreamBody, plan, err := remapCustomToolsPayload(rawFields, h.customToolsMode, h.codexCompatibilityEnabled, h.forceCodexToolChoiceRequired)
 	if err != nil {
 		h.writeError(w, r, err)
@@ -101,7 +101,7 @@ func (h *responseHandler) proxyCreateStream(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	prepared, input, ok := prepareShadowStore(request, requestJSON)
+	prepared, input, ok := prepareShadowStore(r.Context(), h.service.PrepareCreateContext, request, requestJSON)
 	if retryWithAuto {
 		rawResponse, err := h.retryResponseWithAuto(r.Context(), upstreamBody, plan)
 		if err != nil {
@@ -119,7 +119,7 @@ func (h *responseHandler) proxyCreateStream(w http.ResponseWriter, r *http.Reque
 				h.logger.ErrorContext(r.Context(), "shadow store failed", "request_id", RequestIDFromContext(r.Context()), "err", err)
 			}
 		}
-		if err := writeCompletedResponseAsSSE(r.Context(), h.logger, w, responseBody, plan); err != nil && !shouldIgnoreStreamProxyError(err) {
+		if err := writeCompletedResponseAsSSE(r.Context(), h.logger, w, responseBody, plan, streamOptions.IncludeObfuscation); err != nil && !shouldIgnoreStreamProxyError(err) {
 			h.logger.WarnContext(r.Context(), "stream proxy failed", "request_id", RequestIDFromContext(r.Context()), "err", err)
 		}
 		return
@@ -146,12 +146,15 @@ func (h *responseHandler) proxyCreateStream(w http.ResponseWriter, r *http.Reque
 	}
 }
 
-func (h *responseHandler) createStreamViaUpstream(w http.ResponseWriter, r *http.Request, request CreateResponseRequest, requestJSON string, rawFields map[string]json.RawMessage) {
+func (h *responseHandler) createStreamViaUpstream(w http.ResponseWriter, r *http.Request, request CreateResponseRequest, requestJSON string, rawFields map[string]json.RawMessage, streamOptions responseStreamOptions) {
 	input := service.CreateResponseInput{
 		Model:              request.Model,
 		Input:              request.Input,
+		TextConfig:         request.Text,
+		Metadata:           request.Metadata,
 		Store:              request.Store,
 		Stream:             request.Stream,
+		Background:         request.Background,
 		PreviousResponseID: request.PreviousResponseID,
 		ConversationID:     request.Conversation,
 		Instructions:       request.Instructions,
@@ -222,7 +225,7 @@ func (h *responseHandler) createStreamViaUpstream(w http.ResponseWriter, r *http
 		}
 		_ = resp.Body.Close()
 		resp = nil
-		h.proxyCreateStream(w, r, request, requestJSON, rawFields)
+		h.proxyCreateStream(w, r, request, requestJSON, rawFields, streamOptions)
 		return
 	}
 	if retryWithStringifiedInput {
@@ -279,7 +282,7 @@ func (h *responseHandler) createStreamViaUpstream(w http.ResponseWriter, r *http
 		if _, err := h.service.SaveExternalResponse(r.Context(), prepared, input, response); err != nil {
 			h.logger.ErrorContext(r.Context(), "upstream local-state stream failed", "request_id", RequestIDFromContext(r.Context()), "err", err)
 		}
-		if err := writeCompletedResponseAsSSE(r.Context(), h.logger, w, responseBody, plan); err != nil && !shouldIgnoreStreamProxyError(err) {
+		if err := writeCompletedResponseAsSSE(r.Context(), h.logger, w, responseBody, plan, streamOptions.IncludeObfuscation); err != nil && !shouldIgnoreStreamProxyError(err) {
 			h.logger.WarnContext(r.Context(), "upstream local-state stream failed", "request_id", RequestIDFromContext(r.Context()), "err", err)
 		}
 		return
@@ -377,15 +380,17 @@ func proxyResponsesStream(ctx context.Context, logger *slog.Logger, w http.Respo
 	}
 }
 
-func writeCompletedResponseAsSSE(ctx context.Context, logger *slog.Logger, w http.ResponseWriter, rawResponse []byte, plan customToolTransportPlan) error {
-	var responsePayload map[string]any
-	if err := json.Unmarshal(rawResponse, &responsePayload); err != nil {
+func writeCompletedResponseAsSSE(ctx context.Context, logger *slog.Logger, w http.ResponseWriter, rawResponse []byte, plan customToolTransportPlan, includeObfuscation bool) error {
+	response, err := domain.ParseUpstreamResponse(rawResponse)
+	if err != nil {
+		return err
+	}
+	response = annotateResponseCustomToolMetadata(response, plan)
+	response, err = normalizeResponseForStreaming(response, nil)
+	if err != nil {
 		return err
 	}
 
-	// The retry path disables upstream streaming. Rebuild a minimal Responses SSE
-	// transcript from the terminal response so downstream clients still see a
-	// normal event flow.
 	headers := w.Header()
 	headers.Set("Content-Type", "text/event-stream")
 	headers.Set("Cache-Control", "no-cache")
@@ -394,28 +399,29 @@ func writeCompletedResponseAsSSE(ctx context.Context, logger *slog.Logger, w htt
 	disableWriteDeadline(w)
 	w.WriteHeader(http.StatusOK)
 
-	parser := newResponseStreamEventProxy(ctx, logger, plan, nil)
-	payload := map[string]any{
-		"type":     "response.completed",
-		"response": responsePayload,
+	emitter, err := newResponseStreamEmitter(w, false)
+	if err != nil {
+		return err
 	}
-	before, eventType, remappedPayload := parser.normalizeCompletedToolCallEvent("response.completed", payload)
-	for _, event := range before {
-		if err := parser.writeEvent(w, event.eventType, event.payload); err != nil {
+	events := buildResponseReplayEvents(response, includeObfuscation)
+	for index, event := range events {
+		event.payload["sequence_number"] = index + 1
+		if err := emitter.write(event.eventType, event.payload); err != nil {
 			return err
 		}
 	}
-	if err := parser.writeEvent(w, eventType, remappedPayload); err != nil {
+	if err := emitter.done(); err != nil {
 		return err
 	}
-	if _, err := io.WriteString(w, "data: [DONE]\n\n"); err != nil {
-		return err
+	if logger != nil && logger.Enabled(ctx, slog.LevelDebug) && len(events) > 0 {
+		logger.DebugContext(ctx, "responses stream summary",
+			"request_id", RequestIDFromContext(ctx),
+			"event_count", len(events),
+			"last_event_type", events[len(events)-1].eventType,
+			"response_id", response.ID,
+			"output_text_preview", truncateForLog(response.OutputText, 240),
+		)
 	}
-	if flusher, ok := w.(http.Flusher); ok {
-		flusher.Flush()
-	}
-	parser.sawCompleted = true
-	parser.logStreamSummary()
 	return nil
 }
 

@@ -3,6 +3,7 @@ package httpapi_test
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -20,17 +21,539 @@ func TestResponsesStoreAndGet(t *testing.T) {
 	app := testutil.NewTestApp(t)
 
 	response := postResponse(t, app, map[string]any{
+		"model":    "test-model",
+		"store":    true,
+		"metadata": map[string]any{"topic": "demo"},
+		"input":    "Say OK and nothing else",
+	})
+
+	require.NotEmpty(t, response.ID)
+	require.NotEmpty(t, response.OutputText)
+	require.Equal(t, "response", response.Object)
+	require.NotZero(t, response.CreatedAt)
+	require.Equal(t, "completed", response.Status)
+	require.NotNil(t, response.CompletedAt)
+	require.JSONEq(t, "null", string(response.Error))
+	require.JSONEq(t, "null", string(response.IncompleteDetails))
+	require.JSONEq(t, "null", string(response.Usage))
+	require.Equal(t, map[string]string{"topic": "demo"}, response.Metadata)
+	require.NotNil(t, response.Store)
+	require.True(t, *response.Store)
+	require.NotNil(t, response.Background)
+	require.False(t, *response.Background)
+
+	got := getResponse(t, app, response.ID)
+	require.Equal(t, response.ID, got.ID)
+	require.NotEmpty(t, got.OutputText)
+	require.Equal(t, response.CreatedAt, got.CreatedAt)
+	require.Equal(t, response.Status, got.Status)
+	require.Equal(t, response.Metadata, got.Metadata)
+	require.NotNil(t, got.Store)
+	require.True(t, *got.Store)
+}
+
+func TestResponsesGetIncludesExpandedResponseSurface(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	response := postResponse(t, app, map[string]any{
+		"model":        "test-model",
+		"store":        true,
+		"instructions": "Be terse.",
+		"reasoning": map[string]any{
+			"effort": "minimal",
+		},
+		"temperature": 0,
+		"top_p":       0.25,
+		"input":       "Say OK and nothing else",
+	})
+
+	require.JSONEq(t, `"Be terse."`, string(response.Instructions))
+	require.JSONEq(t, "null", string(response.MaxOutputTokens))
+	require.JSONEq(t, "true", string(response.ParallelToolCalls))
+	require.JSONEq(t, `{"effort":"minimal","summary":null}`, string(response.Reasoning))
+	require.JSONEq(t, "0", string(response.Temperature))
+	require.JSONEq(t, `0.25`, string(response.TopP))
+	require.JSONEq(t, `"auto"`, string(response.ToolChoice))
+	require.JSONEq(t, `[]`, string(response.Tools))
+	require.JSONEq(t, `"disabled"`, string(response.Truncation))
+	require.JSONEq(t, "null", string(response.User))
+
+	got := getResponse(t, app, response.ID)
+	require.JSONEq(t, `"Be terse."`, string(got.Instructions))
+	require.JSONEq(t, "null", string(got.MaxOutputTokens))
+	require.JSONEq(t, "true", string(got.ParallelToolCalls))
+	require.JSONEq(t, `{"effort":"minimal","summary":null}`, string(got.Reasoning))
+	require.JSONEq(t, "0", string(got.Temperature))
+	require.JSONEq(t, `0.25`, string(got.TopP))
+	require.JSONEq(t, `"auto"`, string(got.ToolChoice))
+	require.JSONEq(t, `[]`, string(got.Tools))
+	require.JSONEq(t, `"disabled"`, string(got.Truncation))
+	require.JSONEq(t, "null", string(got.User))
+}
+
+func TestResponsesGetStreamReplaysStoredResponse(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	response := postResponse(t, app, map[string]any{
+		"model":        "test-model",
+		"store":        true,
+		"instructions": "Be terse.",
+		"input":        "Say OK and nothing else",
+	})
+
+	req, err := http.NewRequest(http.MethodGet, app.Server.URL+"/v1/responses/"+response.ID+"?stream=true&include_obfuscation=true", nil)
+	require.NoError(t, err)
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Contains(t, resp.Header.Get("Content-Type"), "text/event-stream")
+
+	events := readSSEEvents(t, resp.Body)
+	require.Equal(t, "response.created", events[0].Event)
+	require.Contains(t, eventTypes(events), "response.in_progress")
+	require.Contains(t, eventTypes(events), "response.content_part.added")
+	require.Contains(t, eventTypes(events), "response.output_text.delta")
+	require.Contains(t, eventTypes(events), "response.content_part.done")
+	require.Contains(t, eventTypes(events), "response.completed")
+
+	delta := findEvent(t, events, "response.output_text.delta").Data
+	require.Equal(t, response.OutputText, asStringAny(delta["delta"]))
+	require.Equal(t, strings.Repeat("x", len([]rune(response.OutputText))), asStringAny(delta["obfuscation"]))
+
+	completed := findEvent(t, events, "response.completed").Data
+	responsePayload, ok := completed["response"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, response.ID, asStringAny(responsePayload["id"]))
+	require.Equal(t, response.OutputText, asStringAny(responsePayload["output_text"]))
+}
+
+func TestResponsesGetStreamIncludesObfuscationByDefault(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	response := postResponse(t, app, map[string]any{
 		"model": "test-model",
 		"store": true,
 		"input": "Say OK and nothing else",
 	})
 
-	require.NotEmpty(t, response.ID)
-	require.NotEmpty(t, response.OutputText)
+	req, err := http.NewRequest(http.MethodGet, app.Server.URL+"/v1/responses/"+response.ID+"?stream=true", nil)
+	require.NoError(t, err)
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Contains(t, resp.Header.Get("Content-Type"), "text/event-stream")
+
+	events := readSSEEvents(t, resp.Body)
+	delta := findEvent(t, events, "response.output_text.delta").Data
+	require.Equal(t, response.OutputText, asStringAny(delta["delta"]))
+	require.Equal(t, strings.Repeat("x", len([]rune(response.OutputText))), asStringAny(delta["obfuscation"]))
+}
+
+func TestResponsesGetStreamReplaysMultipleOutputItems(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	functionCall, err := domain.NewItem([]byte(`{"id":"fc_test","type":"function_call","call_id":"call_test","name":"lookup","arguments":"{\"id\":123}","status":"completed"}`))
+	require.NoError(t, err)
+	message, err := domain.NewItem([]byte(`{"id":"msg_test","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"done"}]}`))
+	require.NoError(t, err)
+
+	stored := domain.StoredResponse{
+		ID:                   "resp_multi",
+		Model:                "test-model",
+		RequestJSON:          `{"model":"test-model","store":true,"input":"hi"}`,
+		ResponseJSON:         `{"id":"resp_multi","object":"response","created_at":1712059200,"status":"completed","completed_at":1712059200,"error":null,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"model":"test-model","output":[{"id":"fc_test","type":"function_call","call_id":"call_test","name":"lookup","arguments":"{\"id\":123}","status":"completed"},{"id":"msg_test","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"done"}]}],"parallel_tool_calls":true,"previous_response_id":null,"reasoning":{"effort":null,"summary":null},"store":true,"temperature":1.0,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[],"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{},"output_text":"done"}`,
+		NormalizedInputItems: []domain.Item{domain.NewInputTextMessage("user", "hi")},
+		EffectiveInputItems:  []domain.Item{domain.NewInputTextMessage("user", "hi")},
+		Output:               []domain.Item{functionCall, message},
+		OutputText:           "done",
+		Store:                true,
+		CreatedAt:            "2026-04-10T10:00:00Z",
+		CompletedAt:          "2026-04-10T10:00:01Z",
+	}
+	require.NoError(t, app.Store.SaveResponse(context.Background(), stored))
+
+	req, err := http.NewRequest(http.MethodGet, app.Server.URL+"/v1/responses/resp_multi?stream=true", nil)
+	require.NoError(t, err)
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Contains(t, resp.Header.Get("Content-Type"), "text/event-stream")
+
+	events := readSSEEvents(t, resp.Body)
+	addedEvents := findEvents(events, "response.output_item.added")
+	require.Len(t, addedEvents, 2)
+	require.Equal(t, float64(0), addedEvents[0].Data["output_index"])
+	require.Equal(t, "function_call", asStringAny(addedEvents[0].Data["item"].(map[string]any)["type"]))
+	require.Equal(t, float64(1), addedEvents[1].Data["output_index"])
+	require.Equal(t, "message", asStringAny(addedEvents[1].Data["item"].(map[string]any)["type"]))
+
+	doneEvents := findEvents(events, "response.output_item.done")
+	require.Len(t, doneEvents, 2)
+	require.Equal(t, float64(0), doneEvents[0].Data["output_index"])
+	require.Equal(t, float64(1), doneEvents[1].Data["output_index"])
+
+	completed := findEvent(t, events, "response.completed").Data
+	responsePayload, ok := completed["response"].(map[string]any)
+	require.True(t, ok)
+	output, ok := responsePayload["output"].([]any)
+	require.True(t, ok)
+	require.Len(t, output, 2)
+}
+
+func TestResponsesGetStreamReplaysReasoningTextEvents(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	reasoning, err := domain.NewItem([]byte(`{"id":"rs_test","type":"reasoning","status":"completed","content":[{"type":"reasoning_text","text":"Need to inspect the files before replying."}]}`))
+	require.NoError(t, err)
+	functionCall, err := domain.NewItem([]byte(`{"id":"fc_test","type":"function_call","call_id":"call_test","name":"update_plan","arguments":"{\"plan\":[{\"status\":\"completed\",\"step\":\"inspect\"}]}","status":"completed"}`))
+	require.NoError(t, err)
+
+	stored := domain.StoredResponse{
+		ID:                   "resp_reasoning",
+		Model:                "test-model",
+		RequestJSON:          `{"model":"test-model","store":true,"input":"hi"}`,
+		ResponseJSON:         `{"id":"resp_reasoning","object":"response","created_at":1712059200,"status":"completed","completed_at":1712059200,"error":null,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"model":"test-model","output":[{"id":"rs_test","type":"reasoning","status":"completed","content":[{"type":"reasoning_text","text":"Need to inspect the files before replying."}]},{"id":"fc_test","type":"function_call","call_id":"call_test","name":"update_plan","arguments":"{\"plan\":[{\"status\":\"completed\",\"step\":\"inspect\"}]}","status":"completed"}],"parallel_tool_calls":true,"previous_response_id":null,"reasoning":{"effort":null,"summary":null},"store":true,"temperature":1.0,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[],"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{},"output_text":""}`,
+		NormalizedInputItems: []domain.Item{domain.NewInputTextMessage("user", "hi")},
+		EffectiveInputItems:  []domain.Item{domain.NewInputTextMessage("user", "hi")},
+		Output:               []domain.Item{reasoning, functionCall},
+		OutputText:           "",
+		Store:                true,
+		CreatedAt:            "2026-04-10T10:00:00Z",
+		CompletedAt:          "2026-04-10T10:00:01Z",
+	}
+	require.NoError(t, app.Store.SaveResponse(context.Background(), stored))
+
+	req, err := http.NewRequest(http.MethodGet, app.Server.URL+"/v1/responses/resp_reasoning?stream=true", nil)
+	require.NoError(t, err)
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Contains(t, resp.Header.Get("Content-Type"), "text/event-stream")
+
+	events := readSSEEvents(t, resp.Body)
+	require.Contains(t, eventTypes(events), "response.reasoning_text.delta")
+	require.Contains(t, eventTypes(events), "response.reasoning_text.done")
+
+	delta := findEvent(t, events, "response.reasoning_text.delta").Data
+	require.Equal(t, "rs_test", asStringAny(delta["item_id"]))
+	require.Equal(t, float64(0), delta["output_index"])
+	require.Equal(t, float64(0), delta["content_index"])
+	require.Equal(t, "Need to inspect the files before replying.", asStringAny(delta["delta"]))
+
+	done := findEvent(t, events, "response.reasoning_text.done").Data
+	require.Equal(t, "rs_test", asStringAny(done["item_id"]))
+	require.Equal(t, float64(0), done["output_index"])
+	require.Equal(t, float64(0), done["content_index"])
+	require.Equal(t, "Need to inspect the files before replying.", asStringAny(done["text"]))
+}
+
+func TestResponsesGetStreamSupportsStartingAfter(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	response := postResponse(t, app, map[string]any{
+		"model": "test-model",
+		"store": true,
+		"input": "Say OK and nothing else",
+	})
+
+	req, err := http.NewRequest(http.MethodGet, app.Server.URL+"/v1/responses/"+response.ID+"?stream=true&starting_after=4", nil)
+	require.NoError(t, err)
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	events := readSSEEvents(t, resp.Body)
+	require.NotEmpty(t, events)
+	require.Equal(t, float64(5), events[0].Data["sequence_number"])
+	require.NotContains(t, eventTypes(events), "response.created")
+	require.Contains(t, eventTypes(events), "response.completed")
+}
+
+func TestResponsesDeleteRemovesLocalStoredResponse(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	response := postResponse(t, app, map[string]any{
+		"model": "test-model",
+		"store": true,
+		"input": "Say OK and nothing else",
+	})
+
+	status, payload := rawRequest(t, app, http.MethodDelete, "/v1/responses/"+response.ID, nil)
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, response.ID, payload["id"])
+	require.Equal(t, "response", payload["object"])
+	require.Equal(t, true, payload["deleted"])
+
+	status, payload = rawRequest(t, app, http.MethodGet, "/v1/responses/"+response.ID, nil)
+	require.Equal(t, http.StatusNotFound, status)
+	require.Equal(t, "not_found_error", payload["error"].(map[string]any)["type"])
+}
+
+func TestResponsesCancelRejectsNonBackgroundLocalResponse(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	response := postResponse(t, app, map[string]any{
+		"model": "test-model",
+		"store": true,
+		"input": "Say OK and nothing else",
+	})
+
+	status, payload := rawRequest(t, app, http.MethodPost, "/v1/responses/"+response.ID+"/cancel", nil)
+	require.Equal(t, http.StatusBadRequest, status)
+	require.Equal(t, "invalid_request_error", payload["error"].(map[string]any)["type"])
+	require.Equal(t, "background", payload["error"].(map[string]any)["param"])
+}
+
+func TestResponsesCancelRefreshesShadowStoredBackgroundResponse(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	response := postResponse(t, app, map[string]any{
+		"model":      "test-model",
+		"store":      true,
+		"background": true,
+		"metadata":   map[string]any{"topic": "demo"},
+		"input":      "Do this in the background",
+	})
+	require.Equal(t, "in_progress", response.Status)
+	require.Nil(t, response.CompletedAt)
+	require.NotNil(t, response.Background)
+	require.True(t, *response.Background)
+
+	status, payload := rawRequest(t, app, http.MethodPost, "/v1/responses/"+response.ID+"/cancel", nil)
+	require.Equal(t, http.StatusOK, status)
+
+	var cancelled domain.Response
+	mustDecode(t, payload, &cancelled)
+	require.Equal(t, response.ID, cancelled.ID)
+	require.Equal(t, "cancelled", cancelled.Status)
+	require.Nil(t, cancelled.CompletedAt)
+	require.Equal(t, map[string]string{"topic": "demo"}, cancelled.Metadata)
 
 	got := getResponse(t, app, response.ID)
-	require.Equal(t, response.ID, got.ID)
-	require.NotEmpty(t, got.OutputText)
+	require.Equal(t, "cancelled", got.Status)
+	require.Nil(t, got.CompletedAt)
+	require.Equal(t, map[string]string{"topic": "demo"}, got.Metadata)
+	require.NotNil(t, got.Background)
+	require.True(t, *got.Background)
+}
+
+func TestResponsesInputTokensCountLocalSubset(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	status, payload := rawRequest(t, app, http.MethodPost, "/v1/responses/input_tokens", map[string]any{
+		"model": "test-model",
+		"input": "Count this input locally.",
+	})
+	require.Equal(t, http.StatusOK, status)
+
+	var counted domain.ResponseInputTokens
+	mustDecode(t, payload, &counted)
+	require.Equal(t, "response.input_tokens", counted.Object)
+	require.Greater(t, counted.InputTokens, 0)
+}
+
+func TestResponsesInputTokensAllowsEmptyBody(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	status, payload := rawRequest(t, app, http.MethodPost, "/v1/responses/input_tokens", nil)
+	require.Equal(t, http.StatusOK, status)
+
+	var counted domain.ResponseInputTokens
+	mustDecode(t, payload, &counted)
+	require.Equal(t, "response.input_tokens", counted.Object)
+	require.Zero(t, counted.InputTokens)
+}
+
+func TestResponsesInputTokensAcceptConversationObject(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	conversation := postConversation(t, app, map[string]any{
+		"items": []map[string]any{
+			{
+				"type":    "message",
+				"role":    "user",
+				"content": "Remember the code is 777.",
+			},
+		},
+	})
+
+	status, payload := rawRequest(t, app, http.MethodPost, "/v1/responses/input_tokens", map[string]any{
+		"conversation": map[string]any{"id": conversation.ID},
+	})
+	require.Equal(t, http.StatusOK, status)
+
+	var counted domain.ResponseInputTokens
+	mustDecode(t, payload, &counted)
+	require.Equal(t, "response.input_tokens", counted.Object)
+	require.Greater(t, counted.InputTokens, 0)
+}
+
+func TestResponsesInputTokensIncludePreviousResponseState(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	first := postResponse(t, app, map[string]any{
+		"model": "test-model",
+		"store": true,
+		"input": "Remember that the secret code is 777.",
+	})
+	require.NotEmpty(t, first.ID)
+
+	baseStatus, basePayload := rawRequest(t, app, http.MethodPost, "/v1/responses/input_tokens", map[string]any{
+		"model": "test-model",
+		"input": "What is the code?",
+	})
+	require.Equal(t, http.StatusOK, baseStatus)
+	var base domain.ResponseInputTokens
+	mustDecode(t, basePayload, &base)
+
+	statefulStatus, statefulPayload := rawRequest(t, app, http.MethodPost, "/v1/responses/input_tokens", map[string]any{
+		"model":                "test-model",
+		"previous_response_id": first.ID,
+		"input":                "What is the code?",
+	})
+	require.Equal(t, http.StatusOK, statefulStatus)
+	var stateful domain.ResponseInputTokens
+	mustDecode(t, statefulPayload, &stateful)
+
+	require.Greater(t, stateful.InputTokens, base.InputTokens)
+}
+
+func TestResponsesInputTokensPreferUpstreamWhenNoLocalState(t *testing.T) {
+	app := testutil.NewTestAppWithResponsesMode(t, config.ResponsesModePreferUpstream)
+
+	status, payload := rawRequest(t, app, http.MethodPost, "/v1/responses/input_tokens", map[string]any{
+		"model": "test-model",
+		"input": "123456",
+	})
+	require.Equal(t, http.StatusOK, status)
+
+	var counted domain.ResponseInputTokens
+	mustDecode(t, payload, &counted)
+	require.Equal(t, "response.input_tokens", counted.Object)
+	require.Equal(t, 3, counted.InputTokens)
+}
+
+func TestResponsesCompactReturnsSyntheticCompactionResource(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	status, payload := rawRequest(t, app, http.MethodPost, "/v1/responses/compact", map[string]any{
+		"model": "test-model",
+		"input": []map[string]any{
+			{
+				"type":    "message",
+				"role":    "user",
+				"content": "Remember that the launch code is 777.",
+			},
+			{
+				"type":    "message",
+				"role":    "assistant",
+				"content": []map[string]any{{"type": "output_text", "text": "I will remember the launch code."}},
+			},
+		},
+	})
+	require.Equal(t, http.StatusOK, status)
+
+	var compacted domain.ResponseCompaction
+	mustDecode(t, payload, &compacted)
+	require.NotEmpty(t, compacted.ID)
+	require.Equal(t, "response.compaction", compacted.Object)
+	require.NotZero(t, compacted.CreatedAt)
+	require.Len(t, compacted.Output, 1)
+	require.Equal(t, "compaction", compacted.Output[0].Type)
+	require.NotEmpty(t, compacted.Output[0].StringField("encrypted_content"))
+
+	var usage map[string]any
+	require.NoError(t, json.Unmarshal(compacted.Usage, &usage))
+	require.Greater(t, int(usage["input_tokens"].(float64)), 0)
+	require.Greater(t, int(usage["output_tokens"].(float64)), 0)
+	require.Greater(t, int(usage["total_tokens"].(float64)), 0)
+}
+
+func TestResponsesCompactAllowsModelOnlyRequest(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	status, payload := rawRequest(t, app, http.MethodPost, "/v1/responses/compact", map[string]any{
+		"model": "test-model",
+	})
+	require.Equal(t, http.StatusOK, status)
+
+	var compacted domain.ResponseCompaction
+	mustDecode(t, payload, &compacted)
+	require.NotEmpty(t, compacted.ID)
+	require.Equal(t, "response.compaction", compacted.Object)
+	require.Len(t, compacted.Output, 1)
+	require.Equal(t, "compaction", compacted.Output[0].Type)
+	require.NotEmpty(t, compacted.Output[0].StringField("encrypted_content"))
+}
+
+func TestResponsesCompactOutputCanBeUsedInNextLocalResponse(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	status, payload := rawRequest(t, app, http.MethodPost, "/v1/responses/compact", map[string]any{
+		"model": "test-model",
+		"input": []map[string]any{
+			{
+				"type":    "message",
+				"role":    "user",
+				"content": "You are helping with a launch checklist. The code is 777.",
+			},
+			{
+				"type":    "message",
+				"role":    "assistant",
+				"content": []map[string]any{{"type": "output_text", "text": "Understood. I will keep the launch checklist in mind."}},
+			},
+		},
+	})
+	require.Equal(t, http.StatusOK, status)
+
+	var compacted domain.ResponseCompaction
+	mustDecode(t, payload, &compacted)
+	require.Len(t, compacted.Output, 1)
+
+	next := postResponse(t, app, map[string]any{
+		"model": "test-model",
+		"input": []any{
+			compacted.Output[0].Map(),
+			map[string]any{
+				"type":    "message",
+				"role":    "user",
+				"content": "Reply with just OK.",
+			},
+		},
+	})
+	require.Equal(t, "completed", next.Status)
+	require.NotEmpty(t, next.OutputText)
+}
+
+func TestResponsesCompactPreferUpstreamWhenNoLocalState(t *testing.T) {
+	app := testutil.NewTestAppWithResponsesMode(t, config.ResponsesModePreferUpstream)
+
+	status, payload := rawRequest(t, app, http.MethodPost, "/v1/responses/compact", map[string]any{
+		"model": "test-model",
+		"input": "123456",
+	})
+	require.Equal(t, http.StatusOK, status)
+
+	var compacted domain.ResponseCompaction
+	mustDecode(t, payload, &compacted)
+	require.Equal(t, "response.compaction", compacted.Object)
+	require.True(t, strings.HasPrefix(compacted.ID, "upstream_compact_"))
+	require.Len(t, compacted.Output, 1)
+	require.Equal(t, "upstream-opaque-compaction", compacted.Output[0].StringField("encrypted_content"))
 }
 
 func TestResponsesPreviousResponseID(t *testing.T) {
@@ -50,6 +573,105 @@ func TestResponsesPreviousResponseID(t *testing.T) {
 
 	require.Equal(t, first.ID, second.PreviousResponseID)
 	require.Equal(t, "123", second.OutputText)
+}
+
+func TestResponseInputItemsPagination(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	response := postResponse(t, app, map[string]any{
+		"model": "test-model",
+		"store": true,
+		"input": []map[string]any{
+			{"type": "message", "role": "system", "content": "one"},
+			{"type": "message", "role": "user", "content": "two"},
+			{"type": "message", "role": "user", "content": "three"},
+		},
+	})
+
+	firstPage := getResponseInputItemsWithQuery(t, app, response.ID, "?limit=2&order=asc&include=message.output_text.logprobs")
+	require.Equal(t, "list", firstPage.Object)
+	require.Len(t, firstPage.Data, 2)
+	require.True(t, firstPage.HasMore)
+	require.NotNil(t, firstPage.FirstID)
+	require.NotNil(t, firstPage.LastID)
+
+	secondPage := getResponseInputItemsWithQuery(t, app, response.ID, "?limit=2&order=asc&after="+*firstPage.LastID)
+	require.Len(t, secondPage.Data, 1)
+	require.False(t, secondPage.HasMore)
+	require.NotNil(t, secondPage.FirstID)
+	require.Equal(t, *secondPage.FirstID, *secondPage.LastID)
+}
+
+func TestResponseInputItemsRejectInvalidAfter(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	response := postResponse(t, app, map[string]any{
+		"model": "test-model",
+		"store": true,
+		"input": "Say OK and nothing else",
+	})
+
+	status, payload := rawRequest(t, app, http.MethodGet, "/v1/responses/"+response.ID+"/input_items?after=item_missing", nil)
+	require.Equal(t, http.StatusBadRequest, status)
+	require.Equal(t, "invalid_request_error", payload["error"].(map[string]any)["type"])
+	require.Equal(t, "after", payload["error"].(map[string]any)["param"])
+}
+
+func TestResponseInputItemsIncludeLineageContext(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	first := postResponse(t, app, map[string]any{
+		"model": "test-model",
+		"store": true,
+		"input": "Remember: my code = 123. Reply OK",
+	})
+	second := postResponse(t, app, map[string]any{
+		"model":                "test-model",
+		"store":                true,
+		"previous_response_id": first.ID,
+		"input":                "What was my code? Reply with just the number.",
+	})
+
+	items := getResponseInputItemsWithQuery(t, app, second.ID, "?order=asc")
+	require.Len(t, items.Data, 3)
+	require.Equal(t, "Remember: my code = 123. Reply OK", firstContentText(items.Data[0]))
+	require.Equal(t, "OK", firstContentText(items.Data[1]))
+	require.Equal(t, "What was my code? Reply with just the number.", firstContentText(items.Data[2]))
+}
+
+func TestResponsesPreviousResponseIDStoreFalseRemainsHiddenButUsable(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	first := postResponse(t, app, map[string]any{
+		"model": "test-model",
+		"store": true,
+		"input": "Remember: my code = 123. Reply OK",
+	})
+	second := postResponse(t, app, map[string]any{
+		"model":                "test-model",
+		"store":                false,
+		"previous_response_id": first.ID,
+		"input":                "What was my code? Reply with just the number.",
+	})
+
+	require.Equal(t, first.ID, second.PreviousResponseID)
+	require.False(t, *second.Store)
+	require.Equal(t, "123", second.OutputText)
+
+	status, payload := rawRequest(t, app, http.MethodGet, "/v1/responses/"+second.ID, nil)
+	require.Equal(t, http.StatusNotFound, status)
+	require.Equal(t, "not_found_error", payload["error"].(map[string]any)["type"])
+
+	third := postResponse(t, app, map[string]any{
+		"model":                "test-model",
+		"store":                false,
+		"previous_response_id": second.ID,
+		"input":                "What was my code? Reply with just the number.",
+	})
+
+	require.Equal(t, second.ID, third.PreviousResponseID)
+	require.False(t, *third.Store)
+	require.Equal(t, "123", third.OutputText)
 }
 
 func TestResponsesPreviousResponseIDWithSupportedGenerationFieldsUsesLocalShim(t *testing.T) {
@@ -98,8 +720,89 @@ func TestResponsesConversationMode(t *testing.T) {
 		"input":        "What is the code? Reply with just the number.",
 	})
 
-	require.Equal(t, conversation.ID, response.Conversation)
+	require.Equal(t, conversation.ID, responseConversationID(response))
 	require.Equal(t, "777", response.OutputText)
+}
+
+func TestCreateConversationReturnsOfficialResourceShape(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	status, payload := rawRequest(t, app, http.MethodPost, "/v1/conversations", map[string]any{
+		"metadata": map[string]any{"topic": "demo"},
+		"items": []map[string]any{
+			{"type": "message", "role": "user", "content": "Hello!"},
+		},
+	})
+	require.Equal(t, http.StatusOK, status)
+	_, hasItems := payload["items"]
+	require.False(t, hasItems)
+
+	var conversation conversationResource
+	mustDecode(t, payload, &conversation)
+	require.NotEmpty(t, conversation.ID)
+	require.Equal(t, "conversation", conversation.Object)
+	require.NotZero(t, conversation.CreatedAt)
+	require.Equal(t, map[string]string{"topic": "demo"}, conversation.Metadata)
+}
+
+func TestCreateConversationAllowsEmptyBody(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	status, payload := rawRequest(t, app, http.MethodPost, "/v1/conversations", nil)
+	require.Equal(t, http.StatusOK, status)
+
+	var conversation conversationResource
+	mustDecode(t, payload, &conversation)
+	require.NotEmpty(t, conversation.ID)
+	require.Equal(t, "conversation", conversation.Object)
+	require.NotZero(t, conversation.CreatedAt)
+	require.Empty(t, conversation.Metadata)
+}
+
+func TestCreateConversationRejectsTooManyInitialItems(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	items := make([]map[string]any, 0, 21)
+	for i := 0; i < 21; i++ {
+		items = append(items, map[string]any{
+			"type":    "message",
+			"role":    "user",
+			"content": "hello",
+		})
+	}
+
+	status, payload := rawRequest(t, app, http.MethodPost, "/v1/conversations", map[string]any{
+		"items": items,
+	})
+	require.Equal(t, http.StatusBadRequest, status)
+	require.Equal(t, "invalid_request_error", payload["error"].(map[string]any)["type"])
+	require.Equal(t, "items", payload["error"].(map[string]any)["param"])
+}
+
+func TestGetConversationReturnsOfficialShape(t *testing.T) {
+	app := testutil.NewTestApp(t)
+	conversation := seedConversationWithResponse(t, app)
+
+	status, payload := rawRequest(t, app, http.MethodGet, "/v1/conversations/"+conversation.ID, nil)
+	require.Equal(t, http.StatusOK, status)
+	_, hasItems := payload["items"]
+	require.False(t, hasItems)
+
+	var got conversationResource
+	mustDecode(t, payload, &got)
+	require.Equal(t, conversation.ID, got.ID)
+	require.Equal(t, "conversation", got.Object)
+	require.NotZero(t, got.CreatedAt)
+	require.Empty(t, got.Metadata)
+
+	items := getConversationItems(t, app, conversation.ID, "?order=asc")
+	require.Equal(t, []string{"system", "user", "user", "assistant"}, conversationItemRoles(items))
+	require.Equal(t, []string{
+		"You are a test assistant.",
+		"Remember: code=777. Reply OK.",
+		"What is the code? Reply with just the number.",
+		"777",
+	}, conversationItemTexts(items))
 }
 
 func TestConversationItemsDefaultDesc(t *testing.T) {
@@ -248,6 +951,211 @@ func TestConversationItemsMissingConversationReturns404(t *testing.T) {
 	require.Equal(t, "not_found_error", payload["error"].(map[string]any)["type"])
 }
 
+func TestGetConversationMissingConversationReturns404(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	status, payload := rawRequest(t, app, http.MethodGet, "/v1/conversations/conv_missing", nil)
+	require.Equal(t, http.StatusNotFound, status)
+	require.Equal(t, "not_found_error", payload["error"].(map[string]any)["type"])
+}
+
+func TestCreateConversationItemsAndFollowUpResponse(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	conversation := postConversation(t, app, map[string]any{
+		"metadata": map[string]any{"topic": "append"},
+		"items": []map[string]any{
+			{"type": "message", "role": "system", "content": "You are a test assistant."},
+		},
+	})
+
+	appended := postConversationItems(t, app, conversation.ID, map[string]any{
+		"items": []map[string]any{
+			{
+				"type":    "message",
+				"role":    "user",
+				"content": "Remember: code=777. Reply OK.",
+			},
+			{
+				"type": "message",
+				"role": "user",
+				"content": []map[string]any{
+					{"type": "input_text", "text": "Also remember: city=Paris."},
+				},
+			},
+		},
+	})
+	require.Equal(t, "list", appended.Object)
+	require.Len(t, appended.Data, 2)
+	require.NotNil(t, appended.FirstID)
+	require.NotNil(t, appended.LastID)
+	require.Equal(t, payloadID(appended.Data[0]), *appended.FirstID)
+	require.Equal(t, payloadID(appended.Data[1]), *appended.LastID)
+	require.Equal(t, "message", asStringAny(appended.Data[0]["type"]))
+	require.Equal(t, "user", asStringAny(appended.Data[0]["role"]))
+
+	gotItem := getConversationItem(t, app, conversation.ID, payloadID(appended.Data[0]))
+	require.Equal(t, payloadID(appended.Data[0]), payloadID(gotItem))
+	require.Equal(t, "Remember: code=777. Reply OK.", messageTextFromPayload(gotItem))
+
+	items := getConversationItems(t, app, conversation.ID, "?order=asc")
+	require.Len(t, items.Data, 3)
+	require.Equal(t, []string{
+		"You are a test assistant.",
+		"Remember: code=777. Reply OK.",
+		"Also remember: city=Paris.",
+	}, conversationItemTexts(items))
+
+	response := postResponse(t, app, map[string]any{
+		"model":        "test-model",
+		"store":        true,
+		"conversation": conversation.ID,
+		"input":        "What is the code? Reply with just the number.",
+	})
+	require.Equal(t, "777", response.OutputText)
+}
+
+func TestDeleteConversationItemRemovesItemAndAllowsFurtherAppend(t *testing.T) {
+	app := testutil.NewTestApp(t)
+	conversation := seedConversationWithResponse(t, app)
+
+	items := getConversationItems(t, app, conversation.ID, "?order=asc")
+	require.Len(t, items.Data, 4)
+	deleteID := payloadID(items.Data[0])
+
+	status, payload := rawRequest(t, app, http.MethodDelete, "/v1/conversations/"+conversation.ID+"/items/"+deleteID, nil)
+	require.Equal(t, http.StatusOK, status)
+
+	var got conversationResource
+	mustDecode(t, payload, &got)
+	require.Equal(t, conversation.ID, got.ID)
+	require.Equal(t, "conversation", got.Object)
+	require.NotZero(t, got.CreatedAt)
+
+	status, payload = rawRequest(t, app, http.MethodGet, "/v1/conversations/"+conversation.ID+"/items/"+deleteID, nil)
+	require.Equal(t, http.StatusNotFound, status)
+	require.Equal(t, "not_found_error", payload["error"].(map[string]any)["type"])
+
+	appended := postConversationItems(t, app, conversation.ID, map[string]any{
+		"items": []map[string]any{
+			{
+				"type":    "message",
+				"role":    "user",
+				"content": "Also remember: city=Paris.",
+			},
+		},
+	})
+	require.Len(t, appended.Data, 1)
+
+	remaining := getConversationItems(t, app, conversation.ID, "?order=asc")
+	require.Equal(t, []string{
+		"Remember: code=777. Reply OK.",
+		"What is the code? Reply with just the number.",
+		"777",
+		"Also remember: city=Paris.",
+	}, conversationItemTexts(remaining))
+
+	response := postResponse(t, app, map[string]any{
+		"model":        "test-model",
+		"store":        true,
+		"conversation": conversation.ID,
+		"input":        "What is the code? Reply with just the number.",
+	})
+	require.Equal(t, "777", response.OutputText)
+}
+
+func TestGetConversationItemMissingReturns404(t *testing.T) {
+	app := testutil.NewTestApp(t)
+	conversation := postConversation(t, app, map[string]any{
+		"items": []map[string]any{
+			{"type": "message", "role": "user", "content": "Hello!"},
+		},
+	})
+
+	status, payload := rawRequest(t, app, http.MethodGet, "/v1/conversations/"+conversation.ID+"/items/item_missing", nil)
+	require.Equal(t, http.StatusNotFound, status)
+	require.Equal(t, "not_found_error", payload["error"].(map[string]any)["type"])
+}
+
+func TestDeleteConversationItemMissingReturns404(t *testing.T) {
+	app := testutil.NewTestApp(t)
+	conversation := postConversation(t, app, map[string]any{
+		"items": []map[string]any{
+			{"type": "message", "role": "user", "content": "Hello!"},
+		},
+	})
+
+	status, payload := rawRequest(t, app, http.MethodDelete, "/v1/conversations/"+conversation.ID+"/items/item_missing", nil)
+	require.Equal(t, http.StatusNotFound, status)
+	require.Equal(t, "not_found_error", payload["error"].(map[string]any)["type"])
+}
+
+func TestAppendConversationItemMissingConversationReturns404(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	status, payload := rawRequest(t, app, http.MethodPost, "/v1/conversations/conv_missing/items", map[string]any{
+		"items": []map[string]any{
+			{
+				"type":    "message",
+				"role":    "user",
+				"content": "Hello!",
+			},
+		},
+	})
+	require.Equal(t, http.StatusNotFound, status)
+	require.Equal(t, "not_found_error", payload["error"].(map[string]any)["type"])
+}
+
+func TestDeleteConversationItemMissingConversationReturns404(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	status, payload := rawRequest(t, app, http.MethodDelete, "/v1/conversations/conv_missing/items/item_missing", nil)
+	require.Equal(t, http.StatusNotFound, status)
+	require.Equal(t, "not_found_error", payload["error"].(map[string]any)["type"])
+}
+
+func TestCreateConversationItemsAcceptsSupportedInclude(t *testing.T) {
+	app := testutil.NewTestApp(t)
+	conversation := postConversation(t, app, nil)
+
+	status, payload := rawRequest(t, app, http.MethodPost, "/v1/conversations/"+conversation.ID+"/items?include=web_search_call.action.sources", map[string]any{
+		"items": []map[string]any{
+			{
+				"type":    "message",
+				"role":    "user",
+				"content": "Hello!",
+			},
+		},
+	})
+	require.Equal(t, http.StatusOK, status)
+
+	var items conversationItemsListResponse
+	mustDecode(t, payload, &items)
+	require.Equal(t, "list", items.Object)
+	require.Len(t, items.Data, 1)
+}
+
+func TestCreateConversationItemsRejectsTooManyItems(t *testing.T) {
+	app := testutil.NewTestApp(t)
+	conversation := postConversation(t, app, nil)
+
+	items := make([]map[string]any, 0, 21)
+	for i := 0; i < 21; i++ {
+		items = append(items, map[string]any{
+			"type":    "message",
+			"role":    "user",
+			"content": "hello",
+		})
+	}
+
+	status, payload := rawRequest(t, app, http.MethodPost, "/v1/conversations/"+conversation.ID+"/items", map[string]any{
+		"items": items,
+	})
+	require.Equal(t, http.StatusBadRequest, status)
+	require.Equal(t, "invalid_request_error", payload["error"].(map[string]any)["type"])
+	require.Equal(t, "items", payload["error"].(map[string]any)["param"])
+}
+
 func TestConversationItemsRejectInvalidLimit(t *testing.T) {
 	app := testutil.NewTestApp(t)
 	conversation := seedConversationWithResponse(t, app)
@@ -268,6 +1176,19 @@ func TestConversationItemsRejectInvalidOrder(t *testing.T) {
 	require.Equal(t, "order", payload["error"].(map[string]any)["param"])
 }
 
+func TestConversationItemsAcceptSupportedInclude(t *testing.T) {
+	app := testutil.NewTestApp(t)
+	conversation := seedConversationWithResponse(t, app)
+
+	status, payload := rawRequest(t, app, http.MethodGet, "/v1/conversations/"+conversation.ID+"/items?include=code_interpreter_call.outputs", nil)
+	require.Equal(t, http.StatusOK, status)
+
+	var items conversationItemsListResponse
+	mustDecode(t, payload, &items)
+	require.Equal(t, "list", items.Object)
+	require.NotEmpty(t, items.Data)
+}
+
 func TestConversationItemsRejectUnsupportedInclude(t *testing.T) {
 	app := testutil.NewTestApp(t)
 	conversation := seedConversationWithResponse(t, app)
@@ -276,6 +1197,20 @@ func TestConversationItemsRejectUnsupportedInclude(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, status)
 	require.Equal(t, "invalid_request_error", payload["error"].(map[string]any)["type"])
 	require.Equal(t, "include", payload["error"].(map[string]any)["param"])
+}
+
+func TestGetConversationItemAcceptsSupportedInclude(t *testing.T) {
+	app := testutil.NewTestApp(t)
+	conversation := postConversation(t, app, map[string]any{
+		"items": []map[string]any{
+			{"type": "message", "role": "user", "content": "Hello!"},
+		},
+	})
+
+	items := getConversationItems(t, app, conversation.ID, "?order=asc")
+	status, payload := rawRequest(t, app, http.MethodGet, "/v1/conversations/"+conversation.ID+"/items/"+payloadID(items.Data[0])+"?include=file_search_call.results", nil)
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, payloadID(items.Data[0]), payloadID(payload))
 }
 
 func TestConversationItemsRejectInvalidAfter(t *testing.T) {
@@ -448,6 +1383,106 @@ func TestResponsesStream(t *testing.T) {
 	require.Equal(t, "OK", got.OutputText)
 }
 
+func TestResponsesStreamLocalShimIncludesCoreStreamingEvents(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	reqBody, err := json.Marshal(map[string]any{
+		"model":  "test-model",
+		"store":  true,
+		"stream": true,
+		"input":  "Say OK and nothing else",
+	})
+	require.NoError(t, err)
+
+	req, err := http.NewRequest(http.MethodPost, app.Server.URL+"/v1/responses", bytes.NewReader(reqBody))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Contains(t, resp.Header.Get("Content-Type"), "text/event-stream")
+
+	events := readSSEEvents(t, resp.Body)
+	require.NotEmpty(t, events)
+	require.Equal(t, "response.created", events[0].Event)
+	require.Contains(t, eventTypes(events), "response.in_progress")
+	require.Contains(t, eventTypes(events), "response.output_item.added")
+	require.Contains(t, eventTypes(events), "response.content_part.added")
+	require.Contains(t, eventTypes(events), "response.output_text.delta")
+	require.Contains(t, eventTypes(events), "response.output_text.done")
+	require.Contains(t, eventTypes(events), "response.content_part.done")
+	require.Contains(t, eventTypes(events), "response.output_item.done")
+	require.Contains(t, eventTypes(events), "response.completed")
+	require.Equal(t, "[DONE]", events[len(events)-1].Raw)
+
+	completed := findEvent(t, events, "response.completed").Data
+	responsePayload, ok := completed["response"].(map[string]any)
+	require.True(t, ok)
+	responseID := asStringAny(responsePayload["id"])
+	require.NotEmpty(t, responseID)
+
+	deltaEvents := findEvents(events, "response.output_text.delta")
+	require.NotEmpty(t, deltaEvents)
+	var deltaText strings.Builder
+	for _, event := range deltaEvents {
+		deltaText.WriteString(asStringAny(event.Data["delta"]))
+	}
+	require.Equal(t, "OK", deltaText.String())
+	require.NotEmpty(t, asStringAny(deltaEvents[0].Data["obfuscation"]))
+
+	done := findEvent(t, events, "response.output_text.done").Data
+	require.Equal(t, responseID, asStringAny(done["response_id"]))
+}
+
+func TestResponsesStreamLocalShimCanDisableObfuscation(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	reqBody, err := json.Marshal(map[string]any{
+		"model":  "test-model",
+		"store":  true,
+		"stream": true,
+		"input":  "Say OK and nothing else",
+		"stream_options": map[string]any{
+			"include_obfuscation": false,
+		},
+	})
+	require.NoError(t, err)
+
+	req, err := http.NewRequest(http.MethodPost, app.Server.URL+"/v1/responses", bytes.NewReader(reqBody))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Contains(t, resp.Header.Get("Content-Type"), "text/event-stream")
+
+	events := readSSEEvents(t, resp.Body)
+	delta := findEvent(t, events, "response.output_text.delta").Data
+	_, hasObfuscation := delta["obfuscation"]
+	require.False(t, hasObfuscation)
+	require.Equal(t, "[DONE]", events[len(events)-1].Raw)
+}
+
+func TestResponsesStreamRejectsStreamOptionsWithoutStreaming(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	status, payload := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model": "test-model",
+		"input": "Say OK and nothing else",
+		"stream_options": map[string]any{
+			"include_obfuscation": false,
+		},
+	})
+	require.Equal(t, http.StatusBadRequest, status)
+	require.Equal(t, "stream_options", payload["error"].(map[string]any)["param"])
+}
+
 func TestResponsesStreamNormalizesDeltaOnlyUpstreamFlow(t *testing.T) {
 	app := testutil.NewTestAppWithResponsesMode(t, config.ResponsesModePreferUpstream)
 
@@ -534,13 +1569,13 @@ func TestResponsesWithSupportedGenerationFieldsPreferUpstreamProxyAndShadowStore
 	require.Equal(t, "OK", got.OutputText)
 }
 
-func TestResponsesWithUnsupportedFieldsAreProxiedUpstream(t *testing.T) {
+func TestResponsesWithJSONTextFormatAreHandledLocally(t *testing.T) {
 	app := testutil.NewTestApp(t)
 
 	response := postResponse(t, app, map[string]any{
 		"model": "test-model",
 		"store": true,
-		"input": "Say OK and nothing else",
+		"input": `Reply with JSON object {"ok":true} and nothing else.`,
 		"text": map[string]any{
 			"format": map[string]any{
 				"type": "json_object",
@@ -548,11 +1583,17 @@ func TestResponsesWithUnsupportedFieldsAreProxiedUpstream(t *testing.T) {
 		},
 	})
 
-	require.Equal(t, "upstream_resp_1", response.ID)
-	require.Equal(t, "OK", response.OutputText)
+	require.NotEqual(t, "upstream_resp_1", response.ID)
+	require.JSONEq(t, `{"ok":true}`, response.OutputText)
+	require.JSONEq(t, `{"format":{"type":"json_object"}}`, string(response.Text))
+
+	got := getResponse(t, app, response.ID)
+	require.Equal(t, response.ID, got.ID)
+	require.JSONEq(t, `{"ok":true}`, got.OutputText)
+	require.JSONEq(t, `{"format":{"type":"json_object"}}`, string(got.Text))
 }
 
-func TestResponsesLocalOnlyRejectsUnsupportedFields(t *testing.T) {
+func TestResponsesLocalOnlyRejectsJSONModeWithoutJSONInstruction(t *testing.T) {
 	app := testutil.NewTestAppWithResponsesMode(t, config.ResponsesModeLocalOnly)
 
 	status, payload := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
@@ -569,8 +1610,161 @@ func TestResponsesLocalOnlyRejectsUnsupportedFields(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, status)
 	errorPayload := payload["error"].(map[string]any)
 	require.Equal(t, "invalid_request_error", errorPayload["type"])
-	require.Equal(t, "responses.mode", errorPayload["param"])
-	require.Contains(t, asStringAny(errorPayload["message"]), "responses.mode=local_only")
+	require.Equal(t, "text.format", errorPayload["param"])
+	require.Contains(t, asStringAny(errorPayload["message"]), `"JSON"`)
+}
+
+func TestResponsesWithJSONSchemaAreHandledLocally(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	status, body := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model": "test-model",
+		"input": "Reply with JSON object containing answer and count.",
+		"text": map[string]any{
+			"format": map[string]any{
+				"type":   "json_schema",
+				"strict": true,
+				"schema": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"answer": map[string]any{"type": "string"},
+						"count":  map[string]any{"type": "integer"},
+					},
+					"required":             []string{"answer", "count"},
+					"additionalProperties": false,
+				},
+			},
+		},
+	})
+
+	require.Equal(t, http.StatusOK, status)
+	require.NotEqual(t, "upstream_resp_1", asStringAny(body["id"]))
+	require.JSONEq(t, `{"answer":"OK","count":1}`, asStringAny(body["output_text"]))
+	textPayload, ok := body["text"].(map[string]any)
+	require.True(t, ok)
+	formatPayload, ok := textPayload["format"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "json_schema", formatPayload["type"])
+	require.Equal(t, true, formatPayload["strict"])
+}
+
+func TestResponsesJSONSchemaRejectsUnsupportedSchemaFeatures(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	status, payload := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model": "test-model",
+		"input": `Reply with JSON object {"ok":true} and nothing else.`,
+		"text": map[string]any{
+			"format": map[string]any{
+				"type":   "json_schema",
+				"strict": true,
+				"schema": map[string]any{
+					"type": "object",
+					"oneOf": []map[string]any{
+						{"type": "object"},
+					},
+				},
+			},
+		},
+	})
+
+	require.Equal(t, http.StatusBadRequest, status)
+	errorPayload := payload["error"].(map[string]any)
+	require.Equal(t, "invalid_request_error", errorPayload["type"])
+	require.Equal(t, "text.format.schema", errorPayload["param"])
+	require.Contains(t, asStringAny(errorPayload["message"]), "oneOf")
+}
+
+func TestResponsesStreamJSONTextFormatCompletesWithStructuredTextConfig(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	reqBody, err := json.Marshal(map[string]any{
+		"model":  "test-model",
+		"stream": true,
+		"input":  `Reply with JSON object {"ok":true} and nothing else.`,
+		"text": map[string]any{
+			"format": map[string]any{
+				"type": "json_object",
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	req, err := http.NewRequest(http.MethodPost, app.Server.URL+"/v1/responses", bytes.NewReader(reqBody))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	events := readSSEEvents(t, resp.Body)
+	created := findEvent(t, events, "response.created").Data
+	createdResponse, ok := created["response"].(map[string]any)
+	require.True(t, ok)
+	createdText, ok := createdResponse["text"].(map[string]any)
+	require.True(t, ok)
+	createdFormat, ok := createdText["format"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "json_object", createdFormat["type"])
+	require.Contains(t, eventTypes(events), "response.output_text.done")
+	require.Contains(t, eventTypes(events), "response.output_item.done")
+	require.Contains(t, eventTypes(events), "response.completed")
+
+	done := findEvent(t, events, "response.output_item.done").Data
+	doneItem, ok := done["item"].(map[string]any)
+	require.True(t, ok)
+	content, ok := doneItem["content"].([]any)
+	require.True(t, ok)
+	require.Len(t, content, 1)
+	part, ok := content[0].(map[string]any)
+	require.True(t, ok)
+	require.JSONEq(t, `{"ok":true}`, asStringAny(part["text"]))
+
+	completed := findEvent(t, events, "response.completed").Data
+	responsePayload, ok := completed["response"].(map[string]any)
+	require.True(t, ok)
+	require.JSONEq(t, `{"ok":true}`, asStringAny(responsePayload["output_text"]))
+	textPayload, ok := responsePayload["text"].(map[string]any)
+	require.True(t, ok)
+	formatPayload, ok := textPayload["format"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "json_object", formatPayload["type"])
+}
+
+func TestResponsesStreamJSONModeWithoutJSONInstructionFailsBeforeSSEStarts(t *testing.T) {
+	app := testutil.NewTestAppWithResponsesMode(t, config.ResponsesModeLocalOnly)
+
+	reqBody, err := json.Marshal(map[string]any{
+		"model":  "test-model",
+		"stream": true,
+		"input":  "Say OK and nothing else",
+		"text": map[string]any{
+			"format": map[string]any{
+				"type": "json_object",
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	req, err := http.NewRequest(http.MethodPost, app.Server.URL+"/v1/responses", bytes.NewReader(reqBody))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	require.Contains(t, resp.Header.Get("Content-Type"), "application/json")
+	require.NotContains(t, resp.Header.Get("Content-Type"), "text/event-stream")
+
+	var payload map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&payload))
+	errorPayload := payload["error"].(map[string]any)
+	require.Equal(t, "invalid_request_error", errorPayload["type"])
+	require.Equal(t, "text.format", errorPayload["param"])
+	require.Contains(t, asStringAny(errorPayload["message"]), `"JSON"`)
 }
 
 func TestResponsesPreferLocalHandlesGrammarCustomToolsLocally(t *testing.T) {
@@ -923,12 +2117,12 @@ func TestResponsesEnabledWebSearchToolReturnsValidationError(t *testing.T) {
 	require.Equal(t, "tools", payload["error"].(map[string]any)["param"])
 }
 
-func TestResponsesWithUnsupportedFieldsUseUpstreamResponsesForLocalConversationState(t *testing.T) {
+func TestResponsesWithJSONTextFormatKeepLocalConversationState(t *testing.T) {
 	app := testutil.NewTestApp(t)
 
 	conversation := postConversation(t, app, map[string]any{
 		"items": []map[string]any{
-			{"type": "message", "role": "system", "content": "You are a test assistant."},
+			{"type": "message", "role": "system", "content": "You are a JSON test assistant."},
 			{"type": "message", "role": "user", "content": "Remember: code=777. Reply OK."},
 		},
 	})
@@ -936,15 +2130,16 @@ func TestResponsesWithUnsupportedFieldsUseUpstreamResponsesForLocalConversationS
 	response := postResponse(t, app, map[string]any{
 		"model":        "test-model",
 		"conversation": conversation.ID,
-		"input":        "What is the code? Reply with just the number.",
+		"input":        "What is the code? Reply with JSON object containing code.",
 		"text": map[string]any{
 			"format": map[string]any{
 				"type": "json_object",
 			},
 		},
 	})
-	require.Equal(t, conversation.ID, response.Conversation)
-	require.Equal(t, "777", response.OutputText)
+	require.NotEqual(t, "upstream_resp_1", response.ID)
+	require.Equal(t, conversation.ID, responseConversationID(response))
+	require.JSONEq(t, `{"code":777}`, response.OutputText)
 }
 
 func TestResponsesCustomToolsAreBridged(t *testing.T) {
@@ -1670,7 +2865,7 @@ func TestResponsesCustomToolFollowUpWithPreviousResponseID(t *testing.T) {
 	require.Equal(t, "tool says hi", second.OutputText)
 
 	inputItems := getResponseInputItems(t, app, second.ID)
-	require.Len(t, inputItems.Data, 1)
+	require.Len(t, inputItems.Data, 3)
 	require.Equal(t, "custom_tool_call_output", asStringAny(inputItems.Data[0]["type"]))
 	outputParts, ok := inputItems.Data[0]["output"].([]any)
 	require.True(t, ok)
@@ -1848,7 +3043,7 @@ func TestResponsesPreviousResponseIDWithToolsFallsBackToDirectProxyWhenReplayInp
 	require.Equal(t, "tool says hi", got.OutputText)
 
 	inputItems := getResponseInputItems(t, app, second.ID)
-	require.Len(t, inputItems.Data, 1)
+	require.Len(t, inputItems.Data, 3)
 	require.Equal(t, "function_call_output", asStringAny(inputItems.Data[0]["type"]))
 	require.Equal(t, "tool says hi", asStringAny(inputItems.Data[0]["output"]))
 }
@@ -1942,7 +3137,7 @@ func TestResponsesStreamPreviousResponseIDWithToolsFallsBackToDirectProxyWhenRep
 	require.Equal(t, "tool says hi", got.OutputText)
 
 	inputItems := getResponseInputItems(t, app, responseID)
-	require.Len(t, inputItems.Data, 1)
+	require.Len(t, inputItems.Data, 3)
 	require.Equal(t, "function_call_output", asStringAny(inputItems.Data[0]["type"]))
 	require.Equal(t, "tool says hi", asStringAny(inputItems.Data[0]["output"]))
 }
@@ -2259,9 +3454,13 @@ func getResponse(t *testing.T, app *testutil.TestApp, id string) domain.Response
 }
 
 func getResponseInputItems(t *testing.T, app *testutil.TestApp, id string) conversationItemsListResponse {
+	return getResponseInputItemsWithQuery(t, app, id, "")
+}
+
+func getResponseInputItemsWithQuery(t *testing.T, app *testutil.TestApp, id string, rawQuery string) conversationItemsListResponse {
 	t.Helper()
 
-	req, err := http.NewRequest(http.MethodGet, app.Server.URL+"/v1/responses/"+id+"/input_items", nil)
+	req, err := http.NewRequest(http.MethodGet, app.Server.URL+"/v1/responses/"+id+"/input_items"+rawQuery, nil)
 	require.NoError(t, err)
 
 	resp, err := app.Client().Do(req)
@@ -2274,14 +3473,30 @@ func getResponseInputItems(t *testing.T, app *testutil.TestApp, id string) conve
 	return items
 }
 
-func postConversation(t *testing.T, app *testutil.TestApp, payload map[string]any) domain.Conversation {
+func postConversation(t *testing.T, app *testutil.TestApp, payload map[string]any) conversationResource {
 	t.Helper()
 
 	status, body := rawRequest(t, app, http.MethodPost, "/v1/conversations", payload)
 	require.Equal(t, http.StatusOK, status)
 
-	var conversation domain.Conversation
+	var conversation conversationResource
 	mustDecode(t, body, &conversation)
+	return conversation
+}
+
+func getConversation(t *testing.T, app *testutil.TestApp, conversationID string) conversationResource {
+	t.Helper()
+
+	req, err := http.NewRequest(http.MethodGet, app.Server.URL+"/v1/conversations/"+conversationID, nil)
+	require.NoError(t, err)
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var conversation conversationResource
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&conversation))
 	return conversation
 }
 
@@ -2301,7 +3516,26 @@ func getConversationItems(t *testing.T, app *testutil.TestApp, conversationID, r
 	return items
 }
 
-func seedConversationWithResponse(t *testing.T, app *testutil.TestApp) domain.Conversation {
+func postConversationItems(t *testing.T, app *testutil.TestApp, conversationID string, payload map[string]any) conversationItemsListResponse {
+	t.Helper()
+
+	status, body := rawRequest(t, app, http.MethodPost, "/v1/conversations/"+conversationID+"/items", payload)
+	require.Equal(t, http.StatusOK, status)
+
+	var items conversationItemsListResponse
+	mustDecode(t, body, &items)
+	return items
+}
+
+func getConversationItem(t *testing.T, app *testutil.TestApp, conversationID, itemID string) map[string]any {
+	t.Helper()
+
+	status, body := rawRequest(t, app, http.MethodGet, "/v1/conversations/"+conversationID+"/items/"+itemID, nil)
+	require.Equal(t, http.StatusOK, status)
+	return body
+}
+
+func seedConversationWithResponse(t *testing.T, app *testutil.TestApp) conversationResource {
 	t.Helper()
 
 	conversation := postConversation(t, app, map[string]any{
@@ -2368,6 +3602,20 @@ type conversationItemsListResponse struct {
 	HasMore bool             `json:"has_more"`
 }
 
+type conversationResource struct {
+	ID        string            `json:"id"`
+	Object    string            `json:"object"`
+	CreatedAt int64             `json:"created_at"`
+	Metadata  map[string]string `json:"metadata"`
+}
+
+func responseConversationID(response domain.Response) string {
+	if response.Conversation == nil {
+		return ""
+	}
+	return response.Conversation.ID
+}
+
 func readSSEEvents(t *testing.T, body io.Reader) []sseEvent {
 	t.Helper()
 
@@ -2430,20 +3678,20 @@ func findEvent(t *testing.T, events []sseEvent, eventType string) sseEvent {
 	return sseEvent{}
 }
 
+func findEvents(events []sseEvent, eventType string) []sseEvent {
+	out := make([]sseEvent, 0, len(events))
+	for _, event := range events {
+		if event.Event == eventType {
+			out = append(out, event)
+		}
+	}
+	return out
+}
+
 func conversationItemTexts(items conversationItemsListResponse) []string {
 	out := make([]string, 0, len(items.Data))
 	for _, item := range items.Data {
-		raw, err := json.Marshal(item)
-		if err != nil {
-			out = append(out, "")
-			continue
-		}
-		decoded, err := domain.NewItem(raw)
-		if err != nil {
-			out = append(out, "")
-			continue
-		}
-		out = append(out, domain.MessageText(decoded))
+		out = append(out, messageTextFromPayload(item))
 	}
 	return out
 }
@@ -2454,6 +3702,30 @@ func conversationItemRoles(items conversationItemsListResponse) []string {
 		out = append(out, asStringAny(item["role"]))
 	}
 	return out
+}
+
+func messageTextFromPayload(payload map[string]any) string {
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return ""
+	}
+	decoded, err := domain.NewItem(raw)
+	if err != nil {
+		return ""
+	}
+	return domain.MessageText(decoded)
+}
+
+func firstContentText(payload map[string]any) string {
+	content, ok := payload["content"].([]any)
+	if !ok || len(content) == 0 {
+		return ""
+	}
+	part, ok := content[0].(map[string]any)
+	if !ok {
+		return ""
+	}
+	return asStringAny(part["text"])
 }
 
 func conversationItemTypes(items conversationItemsListResponse) []string {

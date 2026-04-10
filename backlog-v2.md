@@ -1,9 +1,11 @@
 # Backlog / roadmap toward v2
 
-Актуализировано по состоянию на 8 апреля 2026 на основе:
+Актуализировано по состоянию на 10 апреля 2026 на основе:
 
 - текущего состояния репозитория, маршрутов и тестов
 - текущего staged diff
+- локального индекса official docs: `openapi/llms.txt`
+- OpenAI Docs MCP (`developers.openai.com` / `platform.openai.com`)
 - официального OpenAI API surface и docs:
   [Conversation state](https://developers.openai.com/api/docs/guides/conversation-state),
   [Streaming responses](https://developers.openai.com/api/docs/guides/streaming-responses),
@@ -18,34 +20,51 @@
 Сейчас в коде уже есть не “заготовка под future”, а рабочий stateful shim с таким public surface:
 
 - `POST /v1/responses`
+- `POST /v1/responses/input_tokens`
+- `POST /v1/responses/compact`
 - `GET /v1/responses/{id}`
+- `DELETE /v1/responses/{id}`
 - `GET /v1/responses/{id}/input_items`
+- `POST /v1/responses/{id}/cancel`
 - `POST /v1/conversations`
+- `GET /v1/conversations/{id}`
 - `GET /v1/conversations/{id}/items`
+- `POST /v1/conversations/{id}/items`
+- `GET /v1/conversations/{id}/items/{item_id}`
+- `DELETE /v1/conversations/{id}/items/{item_id}`
 - `POST /v1/chat/completions`
 - `POST /v1/responses` with `stream: true` over SSE
+- `GET /v1/responses/{id}?stream=true` with local SSE replay
 - `/healthz`
 - `/readyz` с проверкой SQLite readiness
 - SQLite migrations, `WAL`, default `busy_timeout`
-- hybrid mode: локальная stateful логика + proxy/shadow-store через upstream `responses`
-- локально поддерживаемые generation fields: `reasoning`, `temperature`, `top_p`, penalties, `stop`, `max_output_tokens`
+- local-first `responses.mode=prefer_local` по умолчанию с controlled upstream fallback
+- локально поддерживаемые response-level fields уже включают lifecycle/storage surface, `text.format` subset и stateful `input_items` snapshot
+- retrieve/list handlers уже принимают documented compatibility query params (`include`, `after`, `limit`, `order`, `starting_after`, `include_obfuscation`, `stream`) там, где это реализовано shim-ом
 
 Из этого следуют два практических вывода:
 
-1. `GET /v1/responses/{id}/input_items`, `GET /v1/conversations/{id}/items` и базовый `/readyz` больше не backlog items, а уже текущий baseline.
-2. Следующий шаг для v2 это не “добавить еще один endpoint ради endpoint”, а довести совместимость surface до честного OpenAI-compatible уровня и оформить это нормальной спецификацией.
+1. Основные Responses/Conversations CRUD-paths уже не backlog items, а текущий baseline.
+2. Следующий шаг для v2 это не “добавить еще один endpoint ради endpoint”, а дожимать semantic parity: SSE event flow, `stream_options`, hosted tools, compaction/token counting и stored chat surface.
 
 ## Что сделали в текущей пачке
 
 Последняя пачка уже закрыла несколько старых дыр, которые раньше висели в roadmap:
 
-- добавлен `GET /v1/responses/{id}/input_items`
-- добавлен `GET /v1/conversations/{id}/items` с ordering / pagination coverage в integration tests
+- `/v1/responses` теперь имеет lifecycle surface: `GET`, `DELETE`, `POST /cancel`, `GET /input_items`
+- `Response` object подтянут до docs-shaped lifecycle subset с `created_at`, `status`, `completed_at`, `error`, `usage`, `metadata`, `conversation`, `background`, `store`
+- retrieve stream replay умеет multi-item replay и default obfuscation для `response.output_text.delta`
+- core streaming parity для shim-owned/local replay потоков теперь включает `response.in_progress`, `response.content_part.*`, `[DONE]`, `stream_options.include_obfuscation` и synthetic replay для `message` / `function_call` / `custom_tool_call`
+- `/v1/responses/{id}/input_items` хранит и возвращает effective input snapshot, а не только current-turn input
+- `/v1/responses/input_tokens` и `/v1/responses/compact` заведены: token counting дает детерминированный local estimate для shim-local stateful subset, а compaction возвращает shim-owned opaque item, который можно передать в следующий local `/v1/responses` call как есть
+- Conversations surface теперь включает `GET /{id}`, `POST /{id}/items`, `GET /{id}/items/{item_id}`, `DELETE /{id}/items/{item_id}`
+- `POST /v1/conversations` и `POST /v1/conversations/{id}/items` синхронизированы с official limits/shape (`items`, `metadata`, batch append)
+- `text.format` поддерживает `text`, `json_object` и ограниченный `json_schema` subset
 - `/readyz` теперь реально проверяет SQLite, а не просто отвечает `200`
 - `/v1/chat/completions` очищает provider-specific поля в обычном JSON и SSE потоке
 - усилен bridge для custom tools и `tool_choice`: normalizing, contract tracking, fallback/retry для upstream-ов, которые принимают только `tool_choice=auto`
+- локальные constrained custom tools для supported `grammar` / `regex` subset заведены в local tool loop
 - улучшена canonical error mapping для response/tool-choice ошибок
-- усилена SSE reconstruction / final response persistence для tool-call потоков
 - добавлены тесты на store, middleware, stream proxy, chat sanitization и integration scenarios
 - docs/config cleanup для публичной репы: английские комментарии в конфиге, отдельный русский README, ссылка на него из английского README
 
@@ -53,19 +72,22 @@
 
 - [x] - local-first ownership для `/v1/responses` и Codex tool loop ([детали](#task-local-first-responses))
 - [x] - shim-native constrained custom tools (`grammar`, `regex`) ([детали](#task-constrained-custom-tools))
-- [ ] - true constrained decoder/runtime для `grammar` / `regex` custom tools ([детали](#task-true-constrained-runtime))
 - [x] - OpenAPI spec и docs для текущего surface shim ([детали](#task-openapi-docs))
-- [ ] - `GET /v1/conversations/{id}` и честный read-model разговора ([детали](#task-get-conversation))
-- [ ] - `POST /v1/conversations/{id}/items` и canonical append flow ([детали](#task-conversation-append))
-- [ ] - `GET /v1/conversations/{id}/items/{item_id}` и single-item read path ([детали](#task-conversation-get-item))
-- [ ] - `text.format` / JSON mode subset для Responses API ([детали](#task-structured-outputs))
-- [ ] - response lifecycle parity: metadata, delete/cancel, retention semantics ([детали](#task-response-lifecycle))
-- [ ] - streaming parity и `stream_options` ([детали](#task-streaming-parity))
-- [ ] - compatibility для `/responses/compact` и `/responses/input_tokens` ([детали](#task-compaction-and-token-counting))
+- [x] - `GET /v1/conversations/{id}` и честный read-model разговора ([детали](#task-get-conversation))
+- [x] - `POST /v1/conversations/{id}/items` и canonical append flow ([детали](#task-conversation-append))
+- [x] - `GET /v1/conversations/{id}/items/{item_id}` и single-item read path ([детали](#task-conversation-get-item))
+- [x] - `DELETE /v1/conversations/{id}/items/{item_id}` и delete flow ([детали](#task-conversation-delete-item))
+- [x] - `text.format` / JSON mode subset для Responses API ([детали](#task-structured-outputs))
+- [x] - response lifecycle parity: metadata, delete/cancel, retention semantics ([детали](#task-response-lifecycle))
+- [x] - core streaming parity и `stream_options` ([детали](#task-streaming-parity))
+- [x] - reasoning-specific SSE replay для stored `reasoning` items ([детали](#task-streaming-replay-reasoning))
+- [ ] - hosted/native tool-specific SSE replay beyond core shim item families ([детали](#task-streaming-replay-hosted))
+- [x] - compatibility для `/responses/compact` и `/responses/input_tokens` ([детали](#task-compaction-and-token-counting))
 - [ ] - retrieval-compatible слой: vector stores + `file_search` ([детали](#task-retrieval-layer))
 - [ ] - parity для hosted/native Responses tools (`web_search`, `computer_use`, `code_interpreter`, `image_generation`, `remote MCP`, `tool_search`) ([детали](#task-hosted-tools-parity))
 - [ ] - stored Chat Completions compatibility surface ([детали](#task-chat-stored-surface))
 - [ ] - operational hardening: backend readiness, retention job, local DX ([детали](#task-ops-hardening))
+- [ ] - true constrained decoder/runtime для `grammar` / `regex` custom tools ([детали](#task-true-constrained-runtime))
 
 ## <a id="task-local-first-responses"></a>Local-first ownership для `/v1/responses` и Codex tool loop
 
@@ -121,66 +143,6 @@ Definition of done:
 
 - [Function calling: Custom tools](https://developers.openai.com/api/docs/guides/function-calling#custom-tools)
 - [Function calling: Context-free grammars](https://developers.openai.com/api/docs/guides/function-calling#context-free-grammars)
-
-## <a id="task-true-constrained-runtime"></a>True constrained decoder/runtime для `grammar` / `regex` custom tools
-
-Когда делать:
-
-- после текущего shim-native subset и до заявлений о полной OpenAI-compatible grammar parity
-- только если появится либо backend-native constrained generation hook, либо отдельный локальный runtime с доступом к sampling/decoding
-
-Почему это отдельная задача:
-
-- OpenAI docs для custom tools и CFG описывают настоящий constrained generation/runtime, а не prompt+validate и не retry/repair loop
-- текущий shim умеет локально валидировать и чинить supported subset, но это compatibility layer, а не spec-equivalent decoding
-- без true runtime нельзя честно обещать строгую parity для сложных grammar/regex сценариев
-
-Что входит:
-
-- либо backend-native constrained generation path для `/v1/chat/completions`, либо отдельный local decoder/runtime внутри shim
-- убрать зависимость grammar/regex input generation от repair prompts
-- сделать constraint enforcement частью самого generation path, а не пост-валидации результата
-- зафиксировать в docs/spec, какой путь выбран и какие гарантии он даёт
-
-Варианты реализации:
-
-- backend-native constrained generation
-  shim продолжает владеть `responses` semantics, но для raw `custom_tool_call.input` вызывает upstream `/v1/chat/completions` с backend-specific constrained decoding hook
-  это лучший путь, если backend умеет per-request grammar / regex / schema constraints без изменения общей архитектуры stateless shim
-- embedded decoder/runtime library
-  shim подключает OSS-библиотеку constrained decoding и сам управляет runtime для supported grammars
-  этот путь снимает зависимость от конкретного backend, но требует отдельной интеграции tokenizer/sampling contract и заметно усложняет Go runtime
-- low-level sampler/logits integration
-  shim или новый backend-adapter опускается ниже HTTP-уровня и управляет decoding на уровне inference loop
-  это самый мощный, но и самый дорогой вариант; он уже противоречит текущей идее “unchanged stateless backend”
-
-Куда это нужно встраивать:
-
-- `internal/llama/client.go`
-  здесь нужен либо новый backend request path для constrained generation, либо capability-aware adapter поверх текущего `/v1/chat/completions`
-- `internal/httpapi/local_tool_loop.go`
-  текущий repair loop должен быть заменён на вызов настоящего constrained runtime для `custom_tool_call.input`
-- `internal/httpapi/local_tool_loop_request.go`
-  compiler/validator остаётся как preflight для supported subset и как safety-check, но перестаёт быть primary enforcement path
-- `internal/config/config.go`
-  возможно понадобится capability flag или backend mode, если constrained generation зависит от конкретного upstream
-
-Что проверить до реализации:
-
-- умеет ли выбранный upstream принимать per-request constrained generation для `chat/completions`
-- можно ли смэппить наш supported subset `lark|regex` в backend-native формат без потери semantics
-- не ломает ли выбранный путь streaming, `previous_response_id` replay и `custom_tool_call_input.delta/done` lifecycle
-
-Definition of done:
-
-- constrained custom tool input генерируется через реальный runtime constraint, а не через prompt + validate + repair
-- grammar/regex happy path не требует repair loop для соблюдения constraint
-- docs/spec не вводят в заблуждение и не обещают parity там, где её нет
-
-Полезные reference:
-
-- [Function calling: Context-free grammars](https://developers.openai.com/api/docs/guides/function-calling#context-free-grammars)
-- [Constrain model outputs](https://developers.openai.com/api/docs/guides/latest-model#constraining-outputs)
 
 ## <a id="task-openapi-docs"></a>OpenAPI spec и docs для текущего surface shim
 
@@ -272,7 +234,6 @@ Definition of done:
 - `POST /v1/conversations/{id}/items`
 - canonical normalization для message, `function_call_output`, `custom_tool_call_output` и связанных item types
 - append semantics без дублирования и без рассинхрона с response lineage
-- задел под `DELETE /v1/conversations/{id}/items/{item_id}` как lower-priority follow-up
 
 Definition of done:
 
@@ -285,7 +246,40 @@ Definition of done:
 - [Conversation state](https://developers.openai.com/api/docs/guides/conversation-state)
 - [Function calling](https://developers.openai.com/api/docs/guides/function-calling)
 
+## <a id="task-conversation-delete-item"></a>`DELETE /v1/conversations/{id}/items/{item_id}` и delete flow
+
+Почему это важно:
+
+- официальный Conversations surface включает item-level delete path
+- без delete endpoint conversation state нельзя аккуратно чинить или прореживать без полной пересборки истории
+- delete нужно делать вместе со стабильным append-after-delete sequencing, иначе mid-list удаление ломает детерминированный порядок items
+
+Что входит:
+
+- `DELETE /v1/conversations/{id}/items/{item_id}`
+- возврат top-level conversation resource после удаления
+- `404` для missing conversation/item и `409` при version conflict
+- стабильный `seq` allocation после удаления, чтобы последующий append не конфликтовал с уже занятыми sequence numbers
+
+Definition of done:
+
+- удаленный item больше не виден через single-item get и list-items
+- append после удаления работает детерминированно даже если удаляли элемент из середины истории
+- OpenAPI spec, integration tests и store tests фиксируют delete contract
+
+Полезные reference:
+
+- [Conversation state](https://developers.openai.com/api/docs/guides/conversation-state)
+
 ## <a id="task-structured-outputs"></a>`text.format` / JSON mode subset для Responses API
+
+Статус в репе:
+
+- локально поддерживаются `text.format.type=text`, `json_object` и ограниченный `json_schema` subset
+- `json_object` следует OpenAI JSON mode guardrail и требует строку `JSON` в request context
+- `json_schema` ограничен subset-ом `object|array|string|number|integer|boolean|null` с `properties`, `required`, `additionalProperties`, `items`, `enum`
+- top-level `response.text` возвращается и в sync, и в stream finalization path
+- invalid request config отсекается до запуска локальной генерации
 
 Почему это важно:
 
@@ -328,16 +322,23 @@ Definition of done:
 
 Definition of done:
 
-- response object не выглядит “обрезанным” для common OpenAI clients
-- delete semantics понятны и покрыты тестами
-- retention policy описана в README/OpenAPI и не конфликтует с storage implementation
+- [x] response object не выглядит “обрезанным” для common OpenAI clients
+- [x] delete semantics понятны и покрыты тестами
+- [x] retention policy описана в README/OpenAPI и не конфликтует с storage implementation
+
+Статус:
+
+- локальный `Response` теперь несет `created_at`, `status`, `completed_at`, `error`, `incomplete_details`, `usage`, `metadata`, `background`, `store`
+- добавлены `DELETE /v1/responses/{id}` и `POST /v1/responses/{id}/cancel`
+- shadow-stored upstream responses сохраняют canonical `response_json`, поэтому retrieve/cancel возвращают lifecycle-поля без shim-specific деградации
+- retention semantics для standalone responses и conversation-attached items зафиксированы в OpenAPI
 
 Полезные reference:
 
 - [Conversation state](https://developers.openai.com/api/docs/guides/conversation-state)
 - [`/responses/{response_id}/cancel`](https://developers.openai.com/api/docs/api-reference/responses/cancel)
 
-## <a id="task-streaming-parity"></a>Streaming parity и `stream_options`
+## <a id="task-streaming-parity"></a>Core streaming parity и `stream_options`
 
 Почему это важно:
 
@@ -351,12 +352,19 @@ Definition of done:
 - event flow ближе к official `Responses` streaming API
 - стабильные IDs между streamed и stored representation
 - понятная политика при client disconnect, upstream error и partial tool-call stream
+- docs-shaped replay для shim-supported output item types (`message`, `function_call`, `custom_tool_call`)
 
 Definition of done:
 
 - stream и post-stream `GET /v1/responses/{id}` не расходятся по смыслу
 - tool/function/custom tool events собираются детерминированно
+- retrieve replay не теряет event-level semantics для supported output item types
 - есть отдельные tests на error path, interrupted stream и finalization
+
+Статус:
+
+- закрыто для shim-owned/local replay core flow
+- residual по reasoning/hosted-tool specific SSE вынесен в отдельный backlog item ниже
 
 Полезные reference:
 
@@ -364,7 +372,53 @@ Definition of done:
 - [Function calling: streaming](https://developers.openai.com/api/docs/guides/function-calling#streaming)
 - [Structured outputs: streaming](https://developers.openai.com/api/docs/guides/structured-outputs#streaming)
 
+## <a id="task-streaming-replay-reasoning"></a>Reasoning-specific SSE replay для stored `reasoning` items
+
+Почему это отдельно:
+
+- core text/function/custom replay уже закрыт и не должен больше маскироваться одним большим open-item
+- reasoning artifacts уже реально попадают в stored output, поэтому synthetic replay не должен деградировать их до одних только generic `output_item.*`
+
+Что входит:
+
+- reasoning-specific replay events, если stored response содержит reasoning artifacts
+
+Definition of done:
+
+- retrieve replay отдает `response.reasoning_text.*` для stored `reasoning` items вместо только generic `output_item.*`
+- backlog и OpenAPI не обещают больше, чем реально поддержано
+
+Статус:
+
+- закрыто для shim-stored `reasoning` items с `reasoning_text` content parts
+- hosted/native tool-specific SSE parity вынесен ниже как отдельный open item
+
+## <a id="task-streaming-replay-hosted"></a>Hosted/native tool-specific SSE replay beyond core shim item families
+
+Почему это отдельно:
+
+- для hosted/native tools official docs сейчас явно перечисляют event families, но exact payload schema через docs tooling доступна фрагментарно
+- без source event log легко “додумать” synthetic payload неправильно и начать overclaim-ить совместимость
+
+Что осталось:
+
+- hosted/native tool-specific SSE replay beyond current shim-supported item families
+- максимальное сближение synthetic replay с реальным upstream event log там, где сам stored object не хранит исходные deltas
+
+Definition of done:
+
+- retrieve replay не деградирует hosted/native tool outputs до generic `output_item.*` только потому, что stream synthetic
+- residual event families либо реально воспроизводятся, либо явно исключены из supported shim surface
+
 ## <a id="task-compaction-and-token-counting"></a>Compatibility для `/responses/compact` и `/responses/input_tokens`
+
+Статус на 10 апреля 2026:
+
+- endpoint-ы заведены в public surface
+- локальный subset честно задокументирован в OpenAPI и tests
+- `/responses/input_tokens` локально считает детерминированный estimate по effective local context snapshot
+- `/responses/compact` локально возвращает shim-owned opaque compaction item, который shim умеет развернуть в synthetic summary message на следующем local `/responses` call
+- exact backend-native tokenization и OpenAI-equivalent encrypted compaction state не заявляются как поддержанные в shim-local path
 
 Почему это важно:
 
@@ -513,3 +567,63 @@ Definition of done:
 - conversation append logic должна оставаться централизованной
 - integration tests должны оставаться на deterministic fake backends, а не на реальных моделях
 - spec-first discipline нужна до того, как surface вырастет еще на несколько endpoints
+
+## <a id="task-true-constrained-runtime"></a>True constrained decoder/runtime для `grammar` / `regex` custom tools
+
+Когда делать:
+
+- после текущего shim-native subset и до заявлений о полной OpenAI-compatible grammar parity
+- только если появится либо backend-native constrained generation hook, либо отдельный локальный runtime с доступом к sampling/decoding
+
+Почему это отдельная задача:
+
+- OpenAI docs для custom tools и CFG описывают настоящий constrained generation/runtime, а не prompt+validate и не retry/repair loop
+- текущий shim умеет локально валидировать и чинить supported subset, но это compatibility layer, а не spec-equivalent decoding
+- без true runtime нельзя честно обещать строгую parity для сложных grammar/regex сценариев
+
+Что входит:
+
+- либо backend-native constrained generation path для `/v1/chat/completions`, либо отдельный local decoder/runtime внутри shim
+- убрать зависимость grammar/regex input generation от repair prompts
+- сделать constraint enforcement частью самого generation path, а не пост-валидации результата
+- зафиксировать в docs/spec, какой путь выбран и какие гарантии он даёт
+
+Варианты реализации:
+
+- backend-native constrained generation
+  shim продолжает владеть `responses` semantics, но для raw `custom_tool_call.input` вызывает upstream `/v1/chat/completions` с backend-specific constrained decoding hook
+  это лучший путь, если backend умеет per-request grammar / regex / schema constraints без изменения общей архитектуры stateless shim
+- embedded decoder/runtime library
+  shim подключает OSS-библиотеку constrained decoding и сам управляет runtime для supported grammars
+  этот путь снимает зависимость от конкретного backend, но требует отдельной интеграции tokenizer/sampling contract и заметно усложняет Go runtime
+- low-level sampler/logits integration
+  shim или новый backend-adapter опускается ниже HTTP-уровня и управляет decoding на уровне inference loop
+  это самый мощный, но и самый дорогой вариант; он уже противоречит текущей идее “unchanged stateless backend”
+
+Куда это нужно встраивать:
+
+- `internal/llama/client.go`
+  здесь нужен либо новый backend request path для constrained generation, либо capability-aware adapter поверх текущего `/v1/chat/completions`
+- `internal/httpapi/local_tool_loop.go`
+  текущий repair loop должен быть заменён на вызов настоящего constrained runtime для `custom_tool_call.input`
+- `internal/httpapi/local_tool_loop_request.go`
+  compiler/validator остаётся как preflight для supported subset и как safety-check, но перестаёт быть primary enforcement path
+- `internal/config/config.go`
+  возможно понадобится capability flag или backend mode, если constrained generation зависит от конкретного upstream
+
+Что проверить до реализации:
+
+- умеет ли выбранный upstream принимать per-request constrained generation для `chat/completions`
+- можно ли смэппить наш supported subset `lark|regex` в backend-native формат без потери semantics
+- не ломает ли выбранный путь streaming, `previous_response_id` replay и `custom_tool_call_input.delta/done` lifecycle
+
+Definition of done:
+
+- constrained custom tool input генерируется через реальный runtime constraint, а не через prompt + validate + repair
+- grammar/regex happy path не требует repair loop для соблюдения constraint
+- docs/spec не вводят в заблуждение и не обещают parity там, где её нет
+
+Полезные reference:
+
+- [Function calling: Context-free grammars](https://developers.openai.com/api/docs/guides/function-calling#context-free-grammars)
+- [Constrain model outputs](https://developers.openai.com/api/docs/guides/latest-model#constraining-outputs)

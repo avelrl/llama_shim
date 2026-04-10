@@ -51,6 +51,10 @@ func (noopResponseStore) SaveResponse(context.Context, domain.StoredResponse) er
 	return nil
 }
 
+func (noopResponseStore) DeleteResponse(context.Context, string) error {
+	return nil
+}
+
 type noopConversationStore struct{}
 
 func (noopConversationStore) GetConversation(context.Context, string) (domain.Conversation, []domain.ConversationItem, error) {
@@ -92,7 +96,7 @@ func TestSaveExternalResponseSkipsStatelessPersistenceWhenStoreFalse(t *testing.
 	require.Empty(t, responseStore.saved)
 }
 
-func TestSaveExternalResponseStoresFollowUpEvenWhenStoreFalse(t *testing.T) {
+func TestSaveExternalResponsePersistsHiddenFollowUpWhenStoreFalse(t *testing.T) {
 	t.Parallel()
 
 	responseStore := &recordingResponseStore{}
@@ -124,7 +128,7 @@ func TestSaveExternalResponseStoresFollowUpEvenWhenStoreFalse(t *testing.T) {
 	require.Equal(t, "resp_external_followup", saved.ID)
 	require.Equal(t, "test-model", saved.Model)
 	require.Equal(t, "resp_prev", saved.PreviousResponseID)
-	require.True(t, saved.Store)
+	require.False(t, saved.Store)
 	require.Len(t, saved.NormalizedInputItems, 1)
 	require.NotEmpty(t, saved.NormalizedInputItems[0].ID())
 	require.Len(t, saved.Output, 1)
@@ -146,5 +150,9 @@ func (s *recordingResponseStore) GetResponseLineage(context.Context, string) ([]
 
 func (s *recordingResponseStore) SaveResponse(_ context.Context, response domain.StoredResponse) error {
 	s.saved = append(s.saved, response)
+	return nil
+}
+
+func (s *recordingResponseStore) DeleteResponse(context.Context, string) error {
 	return nil
 }

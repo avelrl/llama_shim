@@ -61,12 +61,29 @@ func NewRouter(deps RouterDeps) http.Handler {
 		}
 		responseHandler.create(w, r)
 	})
-	mux.HandleFunc("/v1/responses/{id}", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
+	mux.HandleFunc("/v1/responses/input_tokens", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
 			WriteError(w, http.StatusMethodNotAllowed, "invalid_request_error", "method not allowed", "")
 			return
 		}
-		responseHandler.get(w, r)
+		responseHandler.inputTokens(w, r)
+	})
+	mux.HandleFunc("/v1/responses/compact", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			WriteError(w, http.StatusMethodNotAllowed, "invalid_request_error", "method not allowed", "")
+			return
+		}
+		responseHandler.compact(w, r)
+	})
+	mux.HandleFunc("/v1/responses/{id}", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodDelete:
+			responseHandler.delete(w, r)
+		case http.MethodGet:
+			responseHandler.get(w, r)
+		default:
+			WriteError(w, http.StatusMethodNotAllowed, "invalid_request_error", "method not allowed", "")
+		}
 	})
 	mux.HandleFunc("/v1/responses/{id}/input_items", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -75,6 +92,13 @@ func NewRouter(deps RouterDeps) http.Handler {
 		}
 		responseHandler.getInputItems(w, r)
 	})
+	mux.HandleFunc("/v1/responses/{id}/cancel", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			WriteError(w, http.StatusMethodNotAllowed, "invalid_request_error", "method not allowed", "")
+			return
+		}
+		responseHandler.cancel(w, r)
+	})
 	mux.HandleFunc("/v1/conversations", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			WriteError(w, http.StatusMethodNotAllowed, "invalid_request_error", "method not allowed", "")
@@ -82,12 +106,32 @@ func NewRouter(deps RouterDeps) http.Handler {
 		}
 		conversationHandler.create(w, r)
 	})
-	mux.HandleFunc("/v1/conversations/{id}/items", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/v1/conversations/{id}", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			WriteError(w, http.StatusMethodNotAllowed, "invalid_request_error", "method not allowed", "")
 			return
 		}
-		conversationHandler.listItems(w, r)
+		conversationHandler.get(w, r)
+	})
+	mux.HandleFunc("/v1/conversations/{id}/items", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			conversationHandler.listItems(w, r)
+		case http.MethodPost:
+			conversationHandler.appendItem(w, r)
+		default:
+			WriteError(w, http.StatusMethodNotAllowed, "invalid_request_error", "method not allowed", "")
+		}
+	})
+	mux.HandleFunc("/v1/conversations/{id}/items/{item_id}", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodDelete:
+			conversationHandler.deleteItem(w, r)
+		case http.MethodGet:
+			conversationHandler.getItem(w, r)
+		default:
+			WriteError(w, http.StatusMethodNotAllowed, "invalid_request_error", "method not allowed", "")
+		}
 	})
 	mux.HandleFunc("/v1/chat/completions", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {

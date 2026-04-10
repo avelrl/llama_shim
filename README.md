@@ -129,6 +129,12 @@ Supported environment overrides:
 - `RESPONSES_CODEX_ENABLE_COMPATIBILITY` overrides `responses.codex.enable_compatibility`; when disabled, the shim stops injecting Codex-specific instructions/context and skips Codex-specific response normalization
 - `RESPONSES_CODEX_FORCE_TOOL_CHOICE_REQUIRED` overrides `responses.codex.force_tool_choice_required`; when enabled, Codex-like requests with `tool_choice: "auto"` are rewritten to `required`
 
+Response retention notes:
+
+- standalone `/v1/responses` objects follow the outward `store` contract returned on the response object
+- conversation-attached items follow the conversation lifecycle instead of standalone response retention
+- the shim may keep hidden response rows needed for local `previous_response_id` replay even when the outward response reports `store=false`
+
 ## curl examples
 
 ### POST `/v1/responses`

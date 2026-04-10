@@ -84,16 +84,44 @@ paths:
         - core fields such as `model`, `input`, `store`, `stream`,
           `previous_response_id`, `conversation`, and `instructions` are owned
           by the shim
+        - `metadata` is validated and preserved on shim-local responses
+        - shim-local structured outputs support `text.format.type=text`,
+          `json_object`, and a documented `json_schema` subset
+        - `background` is passed through to upstream `/v1/responses`; the shim
+          does not execute background responses locally
         - a supported local subset is executed entirely inside the shim
         - unsupported fields may be proxied to upstream `/v1/responses` when
           `responses.mode` allows it
 
-        When `stream=true`, the response is emitted as SSE with events such as:
-        `response.created`, `response.output_item.added`,
+        Notes for the local structured-output subset:
+        - `text.format.type=json_object` follows the OpenAI JSON mode guardrail
+          and requires the string `JSON` to appear somewhere in the request
+          context
+        - `text.format.type=json_schema` supports a limited schema subset:
+          `object|array|string|number|integer|boolean|null` plus
+          `properties`, `required`, `additionalProperties`, `items`, and `enum`
+
+        Retention semantics:
+        - standalone responses follow the outward `store` contract returned on
+          the response object
+        - conversation-attached items follow the conversation lifecycle and are
+          not subject to standalone response retention
+        - the shim may persist hidden response rows needed for local
+          `previous_response_id` replay even when the outward response reports
+          `store=false`
+
+        When `stream=true`, the response is emitted as SSE with docs-shaped core
+        events such as: `response.created`, `response.in_progress`,
+        `response.output_item.added`, `response.content_part.added`,
         `response.output_text.delta`, `response.output_text.done`,
-        `response.output_item.done`, `response.completed`,
-        `response.custom_tool_call_input.delta`,
-        `response.custom_tool_call_input.done`.
+        `response.content_part.done`, `response.output_item.done`,
+        `response.completed`, plus supported tool-input events like
+        `response.function_call_arguments.*` and
+        `response.custom_tool_call_input.*`.
+
+        Supported `stream_options` subset:
+        - `stream_options.include_obfuscation` controls the synthetic
+          `obfuscation` field on shim-owned text/tool delta events
       requestBody:
         required: true
         content:
@@ -121,6 +149,41 @@ paths:
                   store: true
                   conversation: conv_123
                   input: What is the code? Reply with just the number.
+              json_mode:
+                summary: Local JSON mode subset
+                value:
+                  model: test-model
+                  input: Reply with a JSON object {"ok":true} and nothing else. JSON only.
+                  text:
+                    format:
+                      type: json_object
+              json_schema:
+                summary: Local JSON schema subset
+                value:
+                  model: test-model
+                  input: Reply with a JSON object containing answer and count.
+                  text:
+                    format:
+                      type: json_schema
+                      strict: true
+                      schema:
+                        type: object
+                        properties:
+                          answer:
+                            type: string
+                          count:
+                            type: integer
+                        required: [answer, count]
+                        additionalProperties: false
+              streaming:
+                summary: Local streaming request with stream options
+                value:
+                  model: test-model
+                  store: true
+                  stream: true
+                  stream_options:
+                    include_obfuscation: false
+                  input: Say OK and nothing else
       responses:
         "200":
           description: JSON response or SSE stream
@@ -134,7 +197,19 @@ paths:
                   value:
                     id: resp_123
                     object: response
+                    created_at: 1741900000
+                    status: completed
+                    completed_at: 1741900000
+                    error: null
+                    incomplete_details: null
                     model: test-model
+                    background: false
+                    store: true
+                    text:
+                      format:
+                        type: text
+                    usage: null
+                    metadata: {}
                     output_text: OK
                     output:
                       - id: msg_123
@@ -148,7 +223,19 @@ paths:
                   value:
                     id: resp_456
                     object: response
+                    created_at: 1741900000
+                    status: completed
+                    completed_at: 1741900000
+                    error: null
+                    incomplete_details: null
                     model: test-model
+                    background: false
+                    store: true
+                    text:
+                      format:
+                        type: text
+                    usage: null
+                    metadata: {}
                     output_text: ""
                     output:
                       - id: item_456
@@ -162,21 +249,158 @@ paths:
                 type: string
               example: |
                 event: response.created
-                data: {"type":"response.created","response":{"id":"resp_123","object":"response","model":"test-model"}}
+                data: {"type":"response.created","response":{"id":"resp_123","object":"response","created_at":1741900000,"status":"in_progress","completed_at":null,"error":null,"incomplete_details":null,"model":"test-model","background":false,"store":true,"text":{"format":{"type":"text"}},"usage":null,"metadata":{},"output_text":"","output":[]}}
+
+                event: response.in_progress
+                data: {"type":"response.in_progress","response":{"id":"resp_123","object":"response","created_at":1741900000,"status":"in_progress","completed_at":null,"error":null,"incomplete_details":null,"model":"test-model","background":false,"store":true,"text":{"format":{"type":"text"}},"usage":null,"metadata":{},"output_text":"","output":[]}}
+
+                event: response.output_item.added
+                data: {"type":"response.output_item.added","output_index":0,"item":{"id":"msg_123","type":"message","role":"assistant","status":"in_progress","content":[]}}
+
+                event: response.content_part.added
+                data: {"type":"response.content_part.added","item_id":"msg_123","output_index":0,"content_index":0,"part":{"type":"output_text","text":"","annotations":[]}}
 
                 event: response.output_text.delta
-                data: {"type":"response.output_text.delta","delta":"OK"}
+                data: {"type":"response.output_text.delta","response_id":"resp_123","item_id":"msg_123","output_index":0,"content_index":0,"delta":"OK","obfuscation":"xx"}
 
                 event: response.output_text.done
-                data: {"type":"response.output_text.done","text":"OK"}
+                data: {"type":"response.output_text.done","response_id":"resp_123","item_id":"msg_123","output_index":0,"content_index":0,"text":"OK"}
+
+                event: response.content_part.done
+                data: {"type":"response.content_part.done","item_id":"msg_123","output_index":0,"content_index":0,"part":{"type":"output_text","text":"OK","annotations":[]}}
+
+                event: response.output_item.done
+                data: {"type":"response.output_item.done","output_index":0,"item":{"id":"msg_123","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"OK","annotations":[]}]}}
 
                 event: response.completed
-                data: {"type":"response.completed","response":{"id":"resp_123","object":"response","model":"test-model","output_text":"OK","output":[{"id":"msg_123","type":"message","role":"assistant","content":[{"type":"output_text","text":"OK"}]}]}}
+                data: {"type":"response.completed","response":{"id":"resp_123","object":"response","created_at":1741900000,"status":"completed","completed_at":1741900000,"error":null,"incomplete_details":null,"model":"test-model","background":false,"store":true,"text":{"format":{"type":"text"}},"usage":null,"metadata":{},"output_text":"OK","output":[{"id":"msg_123","type":"message","role":"assistant","content":[{"type":"output_text","text":"OK"}]}]}}
+
+                data: [DONE]
         "400":
           $ref: "#/components/responses/ErrorResponse"
         "404":
           $ref: "#/components/responses/ErrorResponse"
         "409":
+          $ref: "#/components/responses/ErrorResponse"
+        "502":
+          $ref: "#/components/responses/ErrorResponse"
+        "504":
+          $ref: "#/components/responses/ErrorResponse"
+  /v1/responses/input_tokens:
+    post:
+      tags: [responses]
+      summary: Count input tokens for a response request
+      x-shim-status: partial
+      description: |
+        Returns `object: "response.input_tokens"` with an `input_tokens` count.
+
+        Shim behavior:
+        - for shim-local stateful requests, the shim expands local
+          `previous_response_id`, `conversation`, and synthetic compaction items
+          into the effective local context snapshot and returns a deterministic
+          token estimate for that rendered snapshot
+        - this local count is a compatibility estimate, not backend-native
+          tokenization
+        - requests that do not depend on shim-local state may be proxied
+          upstream unchanged for exact provider-native counting
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResponseInputTokensRequest"
+            examples:
+              minimal:
+                value:
+                  model: test-model
+                  input: Count this request
+              previous_response:
+                value:
+                  model: test-model
+                  previous_response_id: resp_prev_123
+                  input: What was my code?
+      responses:
+        "200":
+          description: Token count result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResponseInputTokensResource"
+              example:
+                object: response.input_tokens
+                input_tokens: 11
+        "400":
+          $ref: "#/components/responses/ErrorResponse"
+        "404":
+          $ref: "#/components/responses/ErrorResponse"
+        "502":
+          $ref: "#/components/responses/ErrorResponse"
+        "504":
+          $ref: "#/components/responses/ErrorResponse"
+  /v1/responses/compact:
+    post:
+      tags: [responses]
+      summary: Compact a response context window
+      x-shim-status: partial
+      description: |
+        Returns a `response.compaction` resource.
+
+        Shim behavior:
+        - local compaction returns a shim-owned opaque `compaction` item whose
+          `encrypted_content` can be passed into the next local `/v1/responses`
+          request as-is
+        - on the next local request, the shim expands that opaque blob into a
+          synthetic summary message before generation
+        - this is not byte-for-byte equivalent to OpenAI encrypted compaction
+          state; it is a compatible local continuation mechanism for the
+          shim-supported subset
+        - requests that do not depend on shim-local state may be proxied
+          upstream unchanged
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResponseCompactionRequest"
+            examples:
+              minimal:
+                value:
+                  model: test-model
+                  input:
+                    - type: message
+                      role: user
+                      content: Remember that the launch code is 777.
+                    - type: message
+                      role: assistant
+                      content:
+                        - type: output_text
+                          text: I will remember the launch code.
+      responses:
+        "200":
+          description: Shim-owned compaction resource
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResponseCompactionResource"
+              example:
+                id: resp_123
+                object: response.compaction
+                created_at: 1741900000
+                output:
+                  - id: cmp_123
+                    type: compaction
+                    encrypted_content: llama_shim.compaction.v1:ZXhhbXBsZQ
+                usage:
+                  input_tokens: 42
+                  input_tokens_details:
+                    cached_tokens: 0
+                  output_tokens: 20
+                  output_tokens_details:
+                    reasoning_tokens: 0
+                  total_tokens: 62
+        "400":
+          $ref: "#/components/responses/ErrorResponse"
+        "404":
           $ref: "#/components/responses/ErrorResponse"
         "502":
           $ref: "#/components/responses/ErrorResponse"
@@ -191,8 +415,27 @@ paths:
         Returns a locally stored response when present. If the response is not
         found in shim storage, the request is forwarded to upstream
         `/v1/responses/{id}`.
+
+        Supported shim-owned retrieve query surface for locally stored
+        responses:
+        - `include` is accepted as a compatibility no-op
+        - streamed replay includes a synthetic `obfuscation` field on replayed
+          `response.output_text.delta` events by default; set
+          `include_obfuscation=false` to disable it
+        - `starting_after` skips replayed SSE events up to the given sequence
+          number
+        - `stream=true` replays the stored response as SSE instead of returning
+          a JSON object
+        - stored `reasoning` items with `reasoning_text` content parts replay
+          specialized `response.reasoning_text.*` events; hosted/native tool
+          item families outside `function_call` and `custom_tool_call` may
+          still fall back to generic `response.output_item.*` replay
       parameters:
         - $ref: "#/components/parameters/ResponseID"
+        - $ref: "#/components/parameters/ResponseInclude"
+        - $ref: "#/components/parameters/ResponseIncludeObfuscation"
+        - $ref: "#/components/parameters/ResponseStartingAfter"
+        - $ref: "#/components/parameters/ResponseStream"
       responses:
         "200":
           description: Response object
@@ -200,6 +443,87 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Response"
+            text/event-stream:
+              schema:
+                type: string
+              example: |
+                event: response.created
+                data: {"type":"response.created","sequence_number":1,"response":{"id":"resp_123","object":"response","created_at":1741900000,"status":"in_progress","completed_at":null,"instructions":"Be terse.","max_output_tokens":null,"max_tool_calls":null,"error":null,"incomplete_details":null,"model":"test-model","output":[],"parallel_tool_calls":true,"previous_response_id":"","prompt":null,"prompt_cache_key":null,"prompt_cache_retention":null,"reasoning":{"effort":null,"summary":null},"safety_identifier":null,"service_tier":null,"conversation":null,"background":false,"store":true,"temperature":1.0,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[],"top_logprobs":null,"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{},"output_text":""}}
+
+                event: response.in_progress
+                data: {"type":"response.in_progress","sequence_number":2,"response":{"id":"resp_123","object":"response","created_at":1741900000,"status":"in_progress","completed_at":null,"instructions":"Be terse.","max_output_tokens":null,"max_tool_calls":null,"error":null,"incomplete_details":null,"model":"test-model","output":[],"parallel_tool_calls":true,"previous_response_id":"","prompt":null,"prompt_cache_key":null,"prompt_cache_retention":null,"reasoning":{"effort":null,"summary":null},"safety_identifier":null,"service_tier":null,"conversation":null,"background":false,"store":true,"temperature":1.0,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[],"top_logprobs":null,"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{},"output_text":""}}
+
+                event: response.content_part.added
+                data: {"type":"response.content_part.added","sequence_number":4,"item_id":"msg_123","output_index":0,"content_index":0,"part":{"type":"output_text","text":"","annotations":[]}}
+
+                event: response.output_text.delta
+                data: {"type":"response.output_text.delta","sequence_number":5,"response_id":"resp_123","item_id":"msg_123","output_index":0,"content_index":0,"delta":"OK","obfuscation":"xx"}
+
+                event: response.content_part.done
+                data: {"type":"response.content_part.done","sequence_number":7,"item_id":"msg_123","output_index":0,"content_index":0,"part":{"type":"output_text","text":"OK","annotations":[]}}
+
+                event: response.completed
+                data: {"type":"response.completed","sequence_number":8,"response":{"id":"resp_123","object":"response","created_at":1741900000,"status":"completed","completed_at":1741900000,"instructions":"Be terse.","max_output_tokens":null,"max_tool_calls":null,"error":null,"incomplete_details":null,"model":"test-model","output":[{"id":"msg_123","type":"message","role":"assistant","content":[{"type":"output_text","text":"OK"}]}],"parallel_tool_calls":true,"previous_response_id":"","prompt":null,"prompt_cache_key":null,"prompt_cache_retention":null,"reasoning":{"effort":null,"summary":null},"safety_identifier":null,"service_tier":null,"conversation":null,"background":false,"store":true,"temperature":1.0,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[],"top_logprobs":null,"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{},"output_text":"OK"}}
+
+                data: [DONE]
+        "404":
+          $ref: "#/components/responses/ErrorResponse"
+        "502":
+          $ref: "#/components/responses/ErrorResponse"
+        "504":
+          $ref: "#/components/responses/ErrorResponse"
+    delete:
+      tags: [responses]
+      summary: Delete a stored response
+      x-shim-status: partial
+      description: |
+        Deletes a locally stored response when present. If the response is not
+        found in shim storage, the request is forwarded to upstream
+        `/v1/responses/{id}`.
+      parameters:
+        - $ref: "#/components/parameters/ResponseID"
+      responses:
+        "200":
+          description: Delete confirmation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResponseDeletion"
+              example:
+                id: resp_123
+                object: response
+                deleted: true
+        "404":
+          $ref: "#/components/responses/ErrorResponse"
+        "502":
+          $ref: "#/components/responses/ErrorResponse"
+        "504":
+          $ref: "#/components/responses/ErrorResponse"
+  /v1/responses/{id}/cancel:
+    post:
+      tags: [responses]
+      summary: Cancel a background response
+      x-shim-status: partial
+      description: |
+        Cancels a background response.
+
+        Behavior:
+        - locally stored non-background responses are rejected with
+          `invalid_request_error`
+        - locally stored background responses are proxied upstream and the local
+          shadow copy is refreshed from the upstream response object
+        - missing local ids are forwarded to upstream `/v1/responses/{id}/cancel`
+      parameters:
+        - $ref: "#/components/parameters/ResponseID"
+      responses:
+        "200":
+          description: Updated response object after cancellation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Response"
+        "400":
+          $ref: "#/components/responses/ErrorResponse"
         "404":
           $ref: "#/components/responses/ErrorResponse"
         "502":
@@ -209,13 +533,29 @@ paths:
   /v1/responses/{id}/input_items:
     get:
       tags: [responses]
-      summary: List normalized input items for a stored response
-      x-shim-status: implemented
+      summary: List input items for a stored response
+      x-shim-status: partial
+      description: |
+        Returns the locally stored snapshot of input items used to generate the
+        response when present. For shim-owned previous-response and
+        conversation-backed turns, this includes the effective stateful context
+        assembled for generation, not just the current turn's raw input. If the
+        response is not found in shim storage, the request is forwarded to
+        upstream `/v1/responses/{id}/input_items`.
+
+        Supported shim-owned query surface for locally stored responses:
+        - `after`, `limit`, and `order` paginate the locally stored normalized
+          input-item snapshot
+        - `include` is accepted as a compatibility no-op
       parameters:
         - $ref: "#/components/parameters/ResponseID"
+        - $ref: "#/components/parameters/ListAfter"
+        - $ref: "#/components/parameters/ListLimit"
+        - $ref: "#/components/parameters/ListOrder"
+        - $ref: "#/components/parameters/ResponseInclude"
       responses:
         "200":
-          description: Normalized input items stored for the response
+          description: Input items stored for the response generation snapshot
           content:
             application/json:
               schema:
@@ -229,8 +569,20 @@ paths:
                     content:
                       - type: input_text
                         text: Remember code 123
+                  - id: msg_assistant_1
+                    type: message
+                    role: assistant
+                    content:
+                      - type: output_text
+                        text: OK
+                  - id: msg_user_2
+                    type: message
+                    role: user
+                    content:
+                      - type: input_text
+                        text: Tell me more
                 first_id: msg_user_1
-                last_id: msg_user_1
+                last_id: msg_user_2
                 has_more: false
         "404":
           $ref: "#/components/responses/ErrorResponse"
@@ -243,17 +595,20 @@ paths:
         Creates a shim-owned conversation from initial items.
 
         Compared with the official OpenAI Conversations API surface:
-        - the shim currently owns only the `items`-based create flow
-        - extra request fields are not part of the shim contract
-        - the returned conversation object is a shim-specific compact shape with
-          inline normalized `items`
+        - empty-body create is supported
+        - the shim supports the documented `items` seed flow and lightweight
+          string `metadata`
+        - the returned conversation resource matches the official top-level
+          shape more closely
+        - conversation items are accessed through the dedicated item endpoints
       requestBody:
-        required: true
         content:
           application/json:
             schema:
               $ref: "#/components/schemas/CreateConversationRequest"
             example:
+              metadata:
+                topic: demo
               items:
                 - type: message
                   role: system
@@ -271,24 +626,121 @@ paths:
               example:
                 id: conv_123
                 object: conversation
-                items:
-                  - id: item_1
-                    type: message
-                    role: system
-                    content:
-                      - type: input_text
-                        text: You are a test assistant.
-                  - id: item_2
-                    type: message
-                    role: user
-                    content:
-                      - type: input_text
-                        text: Remember code 777. Reply OK.
+                created_at: 1741900000
+                metadata:
+                  topic: demo
         "400":
           $ref: "#/components/responses/ErrorResponse"
         "409":
           $ref: "#/components/responses/ErrorResponse"
+  /v1/conversations/{id}:
+    get:
+      tags: [conversations]
+      summary: Get a conversation
+      x-shim-status: partial
+      description: |
+        Returns the conversation resource for the given id.
+
+        Compared with the official OpenAI Conversations API surface:
+        - the resource shape follows the official top-level conversation object
+        - conversation items are read through the dedicated item endpoints
+      parameters:
+        - $ref: "#/components/parameters/ConversationID"
+      responses:
+        "200":
+          description: Conversation resource
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Conversation"
+              example:
+                id: conv_123
+                object: conversation
+                created_at: 1741900000
+                metadata:
+                  topic: demo
+        "404":
+          $ref: "#/components/responses/ErrorResponse"
   /v1/conversations/{id}/items:
+    post:
+      tags: [conversations]
+      summary: Create items
+      x-shim-status: partial
+      description: |
+        Create items in a conversation with the given id.
+
+        The shim accepts the official `items` batch shape and returns the added
+        items as a list object. As a compatibility extension, legacy single-item
+        bodies are also accepted, but they are normalized into the same list
+        response contract.
+      parameters:
+        - $ref: "#/components/parameters/ConversationID"
+        - name: include
+          in: query
+          description: |
+            Additional item fields to include in the response. The shim validates
+            the documented include values and accepts them as a compatibility
+            no-op because stored item payloads are already returned in full.
+          schema:
+            type: array
+            items:
+              type: string
+              enum:
+                - computer_call_output.output.image_url
+                - code_interpreter_call.outputs
+                - file_search_call.results
+                - web_search_call.action.sources
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateConversationItemsRequest"
+            example:
+              items:
+                - type: message
+                  role: user
+                  content:
+                    - type: input_text
+                      text: Hello!
+                - type: message
+                  role: user
+                  content:
+                    - type: input_text
+                      text: How are you?
+      responses:
+        "200":
+          description: Added conversation items
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ItemListResponse"
+              example:
+                object: list
+                data:
+                  - id: msg_abc
+                    type: message
+                    status: completed
+                    role: user
+                    content:
+                      - type: input_text
+                        text: Hello!
+                  - id: msg_def
+                    type: message
+                    status: completed
+                    role: user
+                    content:
+                      - type: input_text
+                        text: How are you?
+                first_id: msg_abc
+                last_id: msg_def
+                has_more: false
+        "400":
+          $ref: "#/components/responses/ErrorResponse"
+        "404":
+          $ref: "#/components/responses/ErrorResponse"
+        "409":
+          $ref: "#/components/responses/ErrorResponse"
     get:
       tags: [conversations]
       summary: List conversation items
@@ -317,9 +769,19 @@ paths:
             default: desc
         - name: include
           in: query
-          description: Currently unsupported. Any value returns 400.
+          description: |
+            Additional item fields to include in the response. The shim validates
+            the documented include values and accepts them as a compatibility
+            no-op because stored item payloads are already returned in full.
           schema:
-            type: string
+            type: array
+            items:
+              type: string
+              enum:
+                - computer_call_output.output.image_url
+                - code_interpreter_call.outputs
+                - file_search_call.results
+                - web_search_call.action.sources
       responses:
         "200":
           description: Paginated conversation items
@@ -342,6 +804,72 @@ paths:
         "400":
           $ref: "#/components/responses/ErrorResponse"
         "404":
+          $ref: "#/components/responses/ErrorResponse"
+  /v1/conversations/{id}/items/{item_id}:
+    get:
+      tags: [conversations]
+      summary: Get a conversation item
+      x-shim-status: partial
+      parameters:
+        - $ref: "#/components/parameters/ConversationID"
+        - $ref: "#/components/parameters/ConversationItemID"
+        - name: include
+          in: query
+          description: |
+            Additional item fields to include in the response. The shim validates
+            the documented include values and accepts them as a compatibility
+            no-op because stored item payloads are already returned in full.
+          schema:
+            type: array
+            items:
+              type: string
+              enum:
+                - computer_call_output.output.image_url
+                - code_interpreter_call.outputs
+                - file_search_call.results
+                - web_search_call.action.sources
+      responses:
+        "200":
+          description: Conversation item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Item"
+              example:
+                id: item_3
+                type: message
+                role: user
+                content:
+                  - type: input_text
+                    text: Remember city=Paris. Reply OK.
+        "400":
+          $ref: "#/components/responses/ErrorResponse"
+        "404":
+          $ref: "#/components/responses/ErrorResponse"
+    delete:
+      tags: [conversations]
+      summary: Delete a conversation item
+      x-shim-status: partial
+      description: Delete an item from the conversation and return the conversation resource.
+      parameters:
+        - $ref: "#/components/parameters/ConversationID"
+        - $ref: "#/components/parameters/ConversationItemID"
+      responses:
+        "200":
+          description: Conversation resource
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Conversation"
+              example:
+                id: conv_123
+                object: conversation
+                created_at: 1741900000
+                metadata:
+                  topic: demo
+        "404":
+          $ref: "#/components/responses/ErrorResponse"
+        "409":
           $ref: "#/components/responses/ErrorResponse"
   /v1/chat/completions:
     post:
@@ -396,6 +924,76 @@ components:
       schema:
         type: string
       description: Conversation identifier
+    ConversationItemID:
+      name: item_id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Conversation item identifier
+    ResponseInclude:
+      name: include
+      in: query
+      required: false
+      schema:
+        oneOf:
+          - type: string
+          - type: array
+            items:
+              type: string
+      description: |
+        OpenAI-compatible include selector list. The shim accepts include
+        values for compatibility; locally stored response retrieval currently
+        treats them as a no-op.
+    ResponseIncludeObfuscation:
+      name: include_obfuscation
+      in: query
+      required: false
+      schema:
+        type: boolean
+      description: |
+        Controls whether streamed local response replay includes a synthetic
+        `obfuscation` string on replayed `response.output_text.delta` events.
+        Defaults to `true`; set `false` to disable it.
+    ResponseStartingAfter:
+      name: starting_after
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 0
+      description: Replay only SSE events with a sequence number greater than this value.
+    ResponseStream:
+      name: stream
+      in: query
+      required: false
+      schema:
+        type: boolean
+      description: When `true`, replay a locally stored response as SSE.
+    ListAfter:
+      name: after
+      in: query
+      required: false
+      schema:
+        type: string
+      description: Cursor item id after which the next page begins.
+    ListLimit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+      description: Number of items to return per page.
+    ListOrder:
+      name: order
+      in: query
+      required: false
+      schema:
+        type: string
+        enum: [asc, desc]
+      description: Sort order for list pagination.
   responses:
     ErrorResponse:
       description: Canonical OpenAI-shaped error envelope
@@ -447,20 +1045,135 @@ components:
           type: string
         input:
           $ref: "#/components/schemas/InputField"
+        text:
+          $ref: "#/components/schemas/ResponseTextConfig"
+        metadata:
+          type: object
+          maxProperties: 16
+          propertyNames:
+            type: string
+            maxLength: 64
+          additionalProperties:
+            type: string
+            maxLength: 512
         store:
           type: boolean
         stream:
           type: boolean
+        stream_options:
+          $ref: "#/components/schemas/ResponseStreamOptions"
+        background:
+          type: boolean
         previous_response_id:
           type: string
         conversation:
-          type: string
+          $ref: "#/components/schemas/ConversationInputReference"
         instructions:
           type: string
       description: |
         Partial Responses-compatible request body. The shim guarantees only the
         documented core fields; other fields may be handled locally, proxied
         upstream, or rejected depending on `responses.mode`.
+
+        Supported shim-local structured-output subset:
+        - `text.format.type=text`
+        - `text.format.type=json_object`
+        - `text.format.type=json_schema` with a limited schema subset
+        - `metadata` follows the documented OpenAI string key/value limits
+        - `stream_options.include_obfuscation` for shim-owned SSE and replay
+
+        `background` is forwarded upstream for long-running responses and is not
+        executed locally by the shim.
+    ResponseInputTokensRequest:
+      type: object
+      additionalProperties: true
+      description: |
+        Partial token-count request body.
+
+        Shim-local token counting supports:
+        - `model`
+        - `input`
+        - `previous_response_id`
+        - `conversation`
+        - `instructions`
+
+        `text` and `metadata` are accepted as compatibility no-ops in the
+        shim-local path. Requests with other fields may still be proxied
+        upstream when they do not depend on shim-local state.
+      properties:
+        model:
+          type: string
+        input:
+          $ref: "#/components/schemas/InputField"
+        text:
+          $ref: "#/components/schemas/ResponseTextConfig"
+        metadata:
+          type: object
+          maxProperties: 16
+          propertyNames:
+            type: string
+            maxLength: 64
+          additionalProperties:
+            type: string
+            maxLength: 512
+        previous_response_id:
+          type: string
+        conversation:
+          $ref: "#/components/schemas/ConversationInputReference"
+        instructions:
+          type: string
+    ResponseCompactionRequest:
+      type: object
+      required: [model]
+      additionalProperties: true
+      description: |
+        Partial standalone-compaction request body.
+
+        Shim-local compaction supports:
+        - `model`
+        - `input`
+        - `previous_response_id`
+        - `conversation`
+        - `instructions`
+
+        `text` and `metadata` are accepted as compatibility no-ops in the
+        shim-local path. Requests with other fields may still be proxied
+        upstream when they do not depend on shim-local state.
+      properties:
+        model:
+          type: string
+        input:
+          $ref: "#/components/schemas/InputField"
+        text:
+          $ref: "#/components/schemas/ResponseTextConfig"
+        metadata:
+          type: object
+          maxProperties: 16
+          propertyNames:
+            type: string
+            maxLength: 64
+          additionalProperties:
+            type: string
+            maxLength: 512
+        previous_response_id:
+          type: string
+        conversation:
+          $ref: "#/components/schemas/ConversationInputReference"
+        instructions:
+          type: string
+    ResponseStreamOptions:
+      type: object
+      additionalProperties: false
+      properties:
+        include_obfuscation:
+          type: boolean
+      description: |
+        Shim-supported subset of OpenAI `stream_options`.
+
+        Only valid when `stream=true`. The shim currently supports:
+        - `include_obfuscation`: include or suppress the synthetic
+          `obfuscation` field on shim-owned streamed delta events. Defaults to
+          `true`.
     InputField:
       description: String input or typed item payload accepted by the shim
       oneOf:
@@ -469,68 +1182,259 @@ components:
         - type: array
           items:
             $ref: "#/components/schemas/Item"
+    AnyJSON:
+      description: Arbitrary JSON value preserved from request or upstream response state.
+      oneOf:
+        - type: object
+          additionalProperties: true
+        - type: array
+          items: {}
+        - type: string
+        - type: number
+        - type: boolean
+        - type: "null"
     Response:
       type: object
       description: |
-        Compact shim-owned subset of the OpenAI `response` object.
-
-        Unlike the full OpenAI Response resource documented in the official API
-        reference, the shim does not currently guarantee fields such as
-        `created_at`, `status`, `error`, `usage`, `reasoning`, `tools`,
-        `tool_choice`, `text`, or `metadata` in this route contract.
-      required: [id, object, model, output_text, output]
+        Shim-owned response resource aligned with the documented OpenAI
+        Responses object fields used by create, retrieve, cancel, and local
+        replay flows.
+      required: [id, object, created_at, status, model, background, store, text, usage, metadata, output_text, output]
       properties:
         id:
           type: string
         object:
           type: string
           const: response
+        created_at:
+          type: integer
+          format: int64
+        status:
+          type: string
+        completed_at:
+          type:
+            - integer
+            - "null"
+          format: int64
+        error:
+          type:
+            - object
+            - "null"
+          additionalProperties: true
+        incomplete_details:
+          type:
+            - object
+            - "null"
+          additionalProperties: true
+        instructions:
+          $ref: "#/components/schemas/AnyJSON"
+        max_output_tokens:
+          $ref: "#/components/schemas/AnyJSON"
+        max_tool_calls:
+          $ref: "#/components/schemas/AnyJSON"
         model:
-          type: string
-        previous_response_id:
-          type: string
-        conversation:
-          type: string
-        output_text:
           type: string
         output:
           type: array
           items:
             $ref: "#/components/schemas/Item"
+        parallel_tool_calls:
+          type:
+            - boolean
+            - "null"
+        previous_response_id:
+          type: string
+        prompt:
+          $ref: "#/components/schemas/AnyJSON"
+        prompt_cache_key:
+          $ref: "#/components/schemas/AnyJSON"
+        prompt_cache_retention:
+          $ref: "#/components/schemas/AnyJSON"
+        reasoning:
+          $ref: "#/components/schemas/AnyJSON"
+        safety_identifier:
+          $ref: "#/components/schemas/AnyJSON"
+        service_tier:
+          $ref: "#/components/schemas/AnyJSON"
+        conversation:
+          $ref: "#/components/schemas/ConversationReference"
+        background:
+          type:
+            - boolean
+            - "null"
+        store:
+          type:
+            - boolean
+            - "null"
+        temperature:
+          $ref: "#/components/schemas/AnyJSON"
+        text:
+          $ref: "#/components/schemas/ResponseTextConfig"
+        tool_choice:
+          $ref: "#/components/schemas/AnyJSON"
+        tools:
+          $ref: "#/components/schemas/AnyJSON"
+        top_logprobs:
+          $ref: "#/components/schemas/AnyJSON"
+        top_p:
+          $ref: "#/components/schemas/AnyJSON"
+        truncation:
+          $ref: "#/components/schemas/AnyJSON"
+        usage:
+          type:
+            - object
+            - "null"
+          additionalProperties: true
+        user:
+          $ref: "#/components/schemas/AnyJSON"
+        metadata:
+          type: object
+          maxProperties: 16
+          propertyNames:
+            type: string
+            maxLength: 64
+          additionalProperties:
+            type: string
+            maxLength: 512
+        output_text:
+          type: string
+    ResponseDeletion:
+      type: object
+      required: [id, object, deleted]
+      properties:
+        id:
+          type: string
+        object:
+          type: string
+          const: response
+        deleted:
+          type: boolean
+    ResponseInputTokensResource:
+      type: object
+      required: [object, input_tokens]
+      properties:
+        object:
+          type: string
+          const: response.input_tokens
+        input_tokens:
+          type: integer
+    ResponseCompactionResource:
+      type: object
+      required: [id, object, created_at, output, usage]
+      properties:
+        id:
+          type: string
+        object:
+          type: string
+          const: response.compaction
+        created_at:
+          type: integer
+          format: int64
+        output:
+          type: array
+          items:
+            $ref: "#/components/schemas/Item"
+        usage:
+          type: object
+          additionalProperties: true
+    ConversationReference:
+      type: object
+      required: [id]
+      properties:
+        id:
+          type: string
+    ConversationInputReference:
+      description: String conversation id or object with `id`
+      oneOf:
+        - type: string
+        - $ref: "#/components/schemas/ConversationReference"
+    ResponseTextConfig:
+      type: object
+      required: [format]
+      additionalProperties: false
+      description: |
+        Shim-local subset of `response.text`.
+
+        Supported formats:
+        - `text`
+        - `json_object`
+        - `json_schema` with a limited schema subset
+      properties:
+        format:
+          $ref: "#/components/schemas/ResponseTextFormat"
+    ResponseTextFormat:
+      type: object
+      required: [type]
+      additionalProperties: false
+      description: |
+        Structured-output format supported by the shim.
+
+        For `json_object`, the request context must contain the string `JSON`.
+        For `json_schema`, only a documented subset of JSON Schema is supported
+        locally.
+      properties:
+        type:
+          type: string
+          enum: [text, json_object, json_schema]
+        strict:
+          type: boolean
+        schema:
+          type: object
+          additionalProperties: true
     CreateConversationRequest:
       type: object
-      required: [items]
       additionalProperties: true
       description: |
         Shim create-conversation request.
 
-        The shim currently owns only the `items` field. Additional request
-        fields are outside the current shim contract and should not be relied on
-        for compatibility with the official OpenAI Conversations API.
+        The request body is optional. When provided, `items` may contain at most
+        20 initial items and `metadata` follows the documented OpenAI limits for
+        string key/value pairs.
+      properties:
+        metadata:
+          type: object
+          maxProperties: 16
+          propertyNames:
+            type: string
+            maxLength: 64
+          additionalProperties:
+            type: string
+            maxLength: 512
+        items:
+          type: array
+          maxItems: 20
+          items:
+            $ref: "#/components/schemas/Item"
+    CreateConversationItemsRequest:
+      type: object
+      required: [items]
+      additionalProperties: false
       properties:
         items:
           type: array
+          minItems: 1
+          maxItems: 20
           items:
             $ref: "#/components/schemas/Item"
     Conversation:
       type: object
       description: |
-        Shim conversation resource.
-
-        This differs from the official OpenAI conversation resource: the shim
-        returns inline normalized `items`, while fields like `created_at` and
-        `metadata` are not part of the current shim contract.
-      required: [id, object, items]
+        Shim conversation resource aligned with the official top-level
+        conversation object shape.
+      required: [id, object, created_at, metadata]
       properties:
         id:
           type: string
         object:
           type: string
           const: conversation
-        items:
-          type: array
-          items:
-            $ref: "#/components/schemas/Item"
+        created_at:
+          type: integer
+          format: int64
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
     ItemListResponse:
       type: object
       required: [object, data, has_more]

@@ -8,6 +8,7 @@ const (
 type ListConversationItemsQuery struct {
 	ConversationID string
 	After          string
+	Include        []string
 	Limit          int
 	Order          string
 }

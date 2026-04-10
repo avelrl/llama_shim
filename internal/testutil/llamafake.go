@@ -37,6 +37,42 @@ func NewFakeLlamaServer(t *testing.T) *httptest.Server {
 
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/responses/input_tokens":
+			var request map[string]any
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
+			w.Header().Set("Content-Type", "application/json")
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+				"object":       "response.input_tokens",
+				"input_tokens": fakeInputTokenCount(request),
+			}))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/responses/compact":
+			var request map[string]any
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
+
+			mu.Lock()
+			nextID++
+			id := "upstream_compact_" + strconv.Itoa(nextID)
+			compactionID := "upstream_cmp_" + strconv.Itoa(nextID)
+			mu.Unlock()
+
+			w.Header().Set("Content-Type", "application/json")
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+				"id":         id,
+				"object":     "response.compaction",
+				"created_at": time.Now().Unix(),
+				"output": []map[string]any{
+					{
+						"id":                compactionID,
+						"type":              "compaction",
+						"encrypted_content": "upstream-opaque-compaction",
+					},
+				},
+				"usage": map[string]any{
+					"input_tokens":  fakeInputTokenCount(request),
+					"output_tokens": 4,
+					"total_tokens":  fakeInputTokenCount(request) + 4,
+				},
+			}))
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/responses":
 			var request map[string]any
 			require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
@@ -91,7 +127,7 @@ func NewFakeLlamaServer(t *testing.T) *httptest.Server {
 			}
 
 			output := fakeResponseOutput(request["input"])
-			response := buildFakeResponse(id, model, output)
+			response := buildFakeResponse(id, model, output, request)
 
 			mu.Lock()
 			responses[id] = response
@@ -107,6 +143,55 @@ func NewFakeLlamaServer(t *testing.T) *httptest.Server {
 			}
 
 			w.Header().Set("Content-Type", "application/json")
+			require.NoError(t, json.NewEncoder(w).Encode(response))
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/v1/responses/") && !strings.HasSuffix(r.URL.Path, "/cancel") && !strings.HasSuffix(r.URL.Path, "/input_items"):
+			id := strings.TrimPrefix(r.URL.Path, "/v1/responses/")
+			w.Header().Set("Content-Type", "application/json")
+
+			mu.Lock()
+			_, ok := responses[id]
+			if ok {
+				delete(responses, id)
+			}
+			mu.Unlock()
+			if !ok {
+				w.WriteHeader(http.StatusNotFound)
+				require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+					"error": map[string]any{
+						"type":    "not_found_error",
+						"message": "response not found",
+					},
+				}))
+				return
+			}
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+				"id":      id,
+				"object":  "response",
+				"deleted": true,
+			}))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/cancel") && strings.HasPrefix(r.URL.Path, "/v1/responses/"):
+			id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/responses/"), "/cancel")
+			w.Header().Set("Content-Type", "application/json")
+
+			mu.Lock()
+			response, ok := responses[id]
+			if ok {
+				response = cloneMap(response)
+				response["status"] = "cancelled"
+				response["completed_at"] = nil
+				responses[id] = response
+			}
+			mu.Unlock()
+			if !ok {
+				w.WriteHeader(http.StatusNotFound)
+				require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+					"error": map[string]any{
+						"type":    "not_found_error",
+						"message": "response not found",
+					},
+				}))
+				return
+			}
 			require.NoError(t, json.NewEncoder(w).Encode(response))
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/responses/"):
 			id := strings.TrimPrefix(r.URL.Path, "/v1/responses/")
@@ -178,6 +263,18 @@ func NewFakeLlamaServer(t *testing.T) *httptest.Server {
 			http.NotFound(w, r)
 		}
 	}))
+}
+
+func fakeInputTokenCount(request map[string]any) int {
+	raw, err := json.Marshal(request["input"])
+	if err != nil {
+		return 0
+	}
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" {
+		return 0
+	}
+	return max(1, len([]rune(trimmed))/4+1)
 }
 
 func buildFakeChatCompletionToolResponse(request map[string]any) (map[string]any, bool) {
@@ -286,6 +383,9 @@ func fakeLlamaOutputFromChatMessages(messages []map[string]any) string {
 
 	last := strings.ToLower(chatMessageContent(messages[len(messages)-1]))
 	joined := strings.ToLower(joinChatMessageContent(messages))
+	if output, ok := fakeStructuredJSONOutput(last, joined); ok {
+		return output
+	}
 
 	switch {
 	case strings.Contains(last, "what was my code") && strings.Contains(joined, "my code = 123"):
@@ -309,6 +409,23 @@ func joinChatMessageContent(messages []map[string]any) string {
 		}
 	}
 	return strings.Join(parts, "\n")
+}
+
+func fakeStructuredJSONOutput(last, joined string) (string, bool) {
+	switch {
+	case strings.Contains(last, `json object {"ok":true}`) || strings.Contains(last, `json object {\"ok\":true}`):
+		return `{"ok":true}`, true
+	case strings.Contains(last, "json object containing ok=true"):
+		return `{"ok":true}`, true
+	case strings.Contains(last, "json object containing answer and count"):
+		return `{"answer":"OK","count":1}`, true
+	case strings.Contains(last, "json object containing code") && strings.Contains(joined, "code=777"):
+		return `{"code":777}`, true
+	case strings.Contains(last, "json object containing code") && strings.Contains(joined, "my code = 123"):
+		return `{"code":123}`, true
+	default:
+		return "", false
+	}
 }
 
 func chatMessageContent(message map[string]any) string {
@@ -351,6 +468,9 @@ func fakeLlamaOutput(messages []fakeLlamaMessage) string {
 
 	last := strings.ToLower(messages[len(messages)-1].Content)
 	joined := strings.ToLower(joinMessageContent(messages))
+	if output, ok := fakeStructuredJSONOutput(last, joined); ok {
+		return output
+	}
 
 	switch {
 	case strings.Contains(last, "what was my code") && strings.Contains(joined, "my code = 123"):
@@ -377,15 +497,22 @@ func joinMessageContent(messages []fakeLlamaMessage) string {
 func fakeResponseOutput(input any) string {
 	switch value := input.(type) {
 	case string:
-		if strings.Contains(strings.ToLower(value), "delta only stream") {
+		lower := strings.ToLower(value)
+		if output, ok := fakeStructuredJSONOutput(lower, lower); ok {
+			return output
+		}
+		if strings.Contains(lower, "delta only stream") {
 			return "DELTA_ONLY_STREAM_OK"
 		}
-		if strings.Contains(strings.ToLower(value), "say ok") {
+		if strings.Contains(lower, "say ok") {
 			return "OK"
 		}
 		return "UPSTREAM"
 	case []any:
 		joined := strings.ToLower(marshalAny(value))
+		if output, ok := fakeStructuredJSONOutput(joined, joined); ok {
+			return output
+		}
 		switch {
 		case strings.Contains(joined, "reply with exactly hello"):
 			return "HELLO"
@@ -406,12 +533,44 @@ func marshalAny(value any) string {
 	return string(body)
 }
 
-func buildFakeResponse(id, model, output string) map[string]any {
-	return map[string]any{
-		"id":          id,
-		"object":      "response",
-		"model":       model,
-		"output_text": output,
+func buildFakeResponse(id, model, output string, request map[string]any) map[string]any {
+	text := request["text"]
+	if text == nil {
+		text = map[string]any{
+			"format": map[string]any{
+				"type": "text",
+			},
+		}
+	}
+	createdAt := time.Now().UTC().Unix()
+	store := true
+	if value, ok := request["store"].(bool); ok {
+		store = value
+	}
+	background := false
+	if value, ok := request["background"].(bool); ok {
+		background = value
+	}
+	metadata := map[string]any{}
+	if value, ok := request["metadata"].(map[string]any); ok {
+		metadata = value
+	}
+
+	response := map[string]any{
+		"id":                 id,
+		"object":             "response",
+		"created_at":         createdAt,
+		"status":             "completed",
+		"completed_at":       createdAt,
+		"error":              nil,
+		"incomplete_details": nil,
+		"model":              model,
+		"background":         background,
+		"store":              store,
+		"text":               text,
+		"usage":              nil,
+		"metadata":           metadata,
+		"output_text":        output,
 		"output": []map[string]any{
 			{
 				"type": "message",
@@ -422,6 +581,13 @@ func buildFakeResponse(id, model, output string) map[string]any {
 			},
 		},
 	}
+	if background {
+		response["status"] = "in_progress"
+		response["completed_at"] = nil
+		response["output_text"] = ""
+		response["output"] = []any{}
+	}
+	return response
 }
 
 func buildFakeWrappedValidationErrorResponse(request map[string]any) (map[string]any, int, bool) {
@@ -462,7 +628,7 @@ func buildFakeResponseForTools(id, model string, request map[string]any) (map[st
 		}, http.StatusBadRequest, "", true
 	}
 	if requestHasToolOutput(request["input"]) {
-		return buildFakeResponse(id, model, fakeToolOutputReply(request["input"])), http.StatusOK, "message", true
+		return buildFakeResponse(id, model, fakeToolOutputReply(request["input"]), request), http.StatusOK, "message", true
 	}
 
 	joinedInput := strings.ToLower(marshalAny(request["input"]))
@@ -475,7 +641,7 @@ func buildFakeResponseForTools(id, model string, request map[string]any) (map[st
 		}, http.StatusNotImplemented, "", true
 	}
 	if strings.Contains(joinedInput, "auto-only tool_choice backend returns text") && isAutoToolChoice(request["tool_choice"]) {
-		return buildFakeResponse(id, model, "AUTO_FALLBACK_TEXT"), http.StatusOK, "message", true
+		return buildFakeResponse(id, model, "AUTO_FALLBACK_TEXT", request), http.StatusOK, "message", true
 	}
 
 	tools, ok := request["tools"].([]any)
@@ -728,16 +894,15 @@ func writeFakeResponsesStream(t *testing.T, w http.ResponseWriter, response map[
 	flusher, ok := w.(http.Flusher)
 	require.True(t, ok)
 
+	created := cloneMap(response)
+	created["status"] = "in_progress"
+	created["completed_at"] = nil
+	created["output_text"] = ""
+	created["output"] = nil
 	require.NoError(t, writeNamedSSEData(w, "response.created", map[string]any{
 		"type":            "response.created",
 		"sequence_number": 1,
-		"response": map[string]any{
-			"id":          response["id"],
-			"object":      "response",
-			"model":       response["model"],
-			"output_text": "",
-			"output":      nil,
-		},
+		"response":        created,
 	}))
 	flusher.Flush()
 

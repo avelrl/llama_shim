@@ -1,11 +1,13 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"llama_shim/internal/domain"
 	"llama_shim/internal/llama"
@@ -21,6 +23,7 @@ type ResponseStore interface {
 	GetResponse(ctx context.Context, id string) (domain.StoredResponse, error)
 	GetResponseLineage(ctx context.Context, id string) ([]domain.StoredResponse, error)
 	SaveResponse(ctx context.Context, response domain.StoredResponse) error
+	DeleteResponse(ctx context.Context, id string) error
 }
 
 type ConversationStore interface {
@@ -31,8 +34,11 @@ type ConversationStore interface {
 type CreateResponseInput struct {
 	Model              string
 	Input              json.RawMessage
+	TextConfig         json.RawMessage
+	Metadata           json.RawMessage
 	Store              *bool
 	Stream             *bool
+	Background         *bool
 	PreviousResponseID string
 	ConversationID     string
 	Instructions       string
@@ -42,6 +48,7 @@ type CreateResponseInput struct {
 
 type PreparedResponseContext struct {
 	NormalizedInput []domain.Item
+	EffectiveInput  []domain.Item
 	ContextItems    []domain.Item
 	Conversation    domain.Conversation
 	ToolCallRefs    map[string]domain.ToolCallReference
@@ -74,6 +81,9 @@ func (s *ResponseService) Create(ctx context.Context, input CreateResponseInput)
 	if err := domain.ValidateLocalShimItems(prepared.ContextItems); err != nil {
 		return domain.Response{}, err
 	}
+	if _, err := s.PrepareLocalResponseText(input, prepared.ContextItems); err != nil {
+		return domain.Response{}, err
+	}
 
 	outputText, err := s.generator.Generate(ctx, input.Model, prepared.ContextItems, input.GenerationOptions)
 	if err != nil {
@@ -84,16 +94,81 @@ func (s *ResponseService) Create(ctx context.Context, input CreateResponseInput)
 }
 
 func (s *ResponseService) PrepareCreateContext(ctx context.Context, input CreateResponseInput) (PreparedResponseContext, error) {
-	if input.Model == "" {
+	return s.prepareResponseContext(ctx, input, true, true)
+}
+
+func (s *ResponseService) CountInputTokens(ctx context.Context, input CreateResponseInput) (domain.ResponseInputTokens, error) {
+	prepared, err := s.prepareResponseContext(ctx, input, false, false)
+	if err != nil {
+		return domain.ResponseInputTokens{}, err
+	}
+	count, err := domain.EstimateSyntheticTokenCount(prepared.ContextItems)
+	if err != nil {
+		return domain.ResponseInputTokens{}, err
+	}
+	return domain.ResponseInputTokens{
+		Object:      "response.input_tokens",
+		InputTokens: count,
+	}, nil
+}
+
+func (s *ResponseService) Compact(ctx context.Context, input CreateResponseInput) (domain.ResponseCompaction, error) {
+	prepared, err := s.prepareResponseContext(ctx, input, true, false)
+	if err != nil {
+		return domain.ResponseCompaction{}, err
+	}
+
+	summary := domain.BuildSyntheticCompactionSummary(prepared.ContextItems)
+	compactionItem, err := domain.NewSyntheticCompactionItem(summary, len(prepared.ContextItems))
+	if err != nil {
+		return domain.ResponseCompaction{}, err
+	}
+	output := []domain.Item{compactionItem}
+
+	inputTokens, err := domain.EstimateSyntheticTokenCount(prepared.ContextItems)
+	if err != nil {
+		return domain.ResponseCompaction{}, err
+	}
+	outputTokens, err := domain.EstimateSyntheticTokenCount(output)
+	if err != nil {
+		return domain.ResponseCompaction{}, err
+	}
+	id, err := domain.NewPrefixedID("resp")
+	if err != nil {
+		return domain.ResponseCompaction{}, fmt.Errorf("generate compaction response id: %w", err)
+	}
+
+	return domain.ResponseCompaction{
+		ID:        id,
+		Object:    "response.compaction",
+		CreatedAt: domain.NowUTC().Unix(),
+		Output:    output,
+		Usage:     domain.BuildSyntheticUsage(inputTokens, outputTokens),
+	}, nil
+}
+
+func (s *ResponseService) prepareResponseContext(ctx context.Context, input CreateResponseInput, requireModel bool, requireInput bool) (PreparedResponseContext, error) {
+	if requireModel && input.Model == "" {
 		return PreparedResponseContext{}, domain.NewValidationError("model", "model is required")
 	}
 	if input.PreviousResponseID != "" && input.ConversationID != "" {
 		return PreparedResponseContext{}, domain.NewValidationError("previous_response_id", "previous_response_id and conversation are mutually exclusive")
 	}
-
-	normalizedInput, err := domain.NormalizeInput(input.Input)
-	if err != nil {
+	if _, err := domain.NormalizeResponseMetadata(input.Metadata); err != nil {
 		return PreparedResponseContext{}, err
+	}
+
+	normalizedInput := make([]domain.Item, 0)
+	if requireInput || hasRequestInput(input.Input) {
+		items, err := domain.NormalizeInput(input.Input)
+		if err != nil {
+			return PreparedResponseContext{}, err
+		}
+		items, err = domain.ExpandSyntheticCompactionItems(items)
+		if err != nil {
+			return PreparedResponseContext{}, err
+		}
+		normalizedInput = items
 	}
 
 	var (
@@ -101,6 +176,7 @@ func (s *ResponseService) PrepareCreateContext(ctx context.Context, input Create
 		contextItems []domain.Item
 		conversation domain.Conversation
 		toolCallRefs map[string]domain.ToolCallReference
+		err          error
 	)
 
 	switch {
@@ -123,19 +199,32 @@ func (s *ResponseService) PrepareCreateContext(ctx context.Context, input Create
 	default:
 		baseItems = nil
 	}
+	baseItems, err = domain.ExpandSyntheticCompactionItems(baseItems)
+	if err != nil {
+		return PreparedResponseContext{}, err
+	}
 	toolCallRefs = domain.CollectToolCallReferences(baseItems)
 	normalizedInput, err = domain.CanonicalizeToolOutputs(normalizedInput, toolCallRefs)
 	if err != nil {
 		return PreparedResponseContext{}, err
 	}
 	contextItems = domain.AppendCurrentRequestContext(baseItems, input.Instructions, normalizedInput)
+	effectiveInput := make([]domain.Item, 0, len(baseItems)+len(normalizedInput))
+	effectiveInput = append(effectiveInput, baseItems...)
+	effectiveInput = append(effectiveInput, normalizedInput...)
 
 	return PreparedResponseContext{
 		NormalizedInput: normalizedInput,
+		EffectiveInput:  effectiveInput,
 		ContextItems:    contextItems,
 		Conversation:    conversation,
 		ToolCallRefs:    toolCallRefs,
 	}, nil
+}
+
+func hasRequestInput(raw json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(raw)
+	return len(trimmed) > 0 && !bytes.Equal(trimmed, []byte("null"))
 }
 
 func (s *ResponseService) SaveExternalResponse(ctx context.Context, prepared PreparedResponseContext, input CreateResponseInput, response domain.Response) (domain.Response, error) {
@@ -146,38 +235,86 @@ func (s *ResponseService) SaveExternalResponse(ctx context.Context, prepared Pre
 	if response.PreviousResponseID == "" && input.PreviousResponseID != "" {
 		response.PreviousResponseID = input.PreviousResponseID
 	}
-	if response.Conversation == "" && input.ConversationID != "" {
-		response.Conversation = input.ConversationID
+	if response.Conversation == nil && input.ConversationID != "" {
+		response.Conversation = domain.NewConversationReference(input.ConversationID)
+	}
+	if len(bytes.TrimSpace(response.Text)) == 0 || bytes.Equal(bytes.TrimSpace(response.Text), []byte("null")) {
+		response.Text = domain.InferResponseTextConfigFromRequestJSON(input.RequestJSON)
+	}
+	if response.Store == nil {
+		response.Store = domain.BoolPtr(input.Store == nil || *input.Store)
+	}
+	if response.Background == nil {
+		response.Background = domain.BoolPtr(input.Background != nil && *input.Background)
+	}
+	if response.Metadata == nil {
+		metadata, err := domain.NormalizeResponseMetadata(input.Metadata)
+		if err != nil {
+			return domain.Response{}, err
+		}
+		response.Metadata = metadata
+	}
+	response = domain.HydrateResponseRequestSurface(response, input.RequestJSON)
+
+	now := domain.NowUTC()
+	if response.CreatedAt == 0 {
+		response.CreatedAt = now.Unix()
+	}
+	if response.Status == "" {
+		switch {
+		case strings.TrimSpace(response.OutputText) != "", len(response.Output) > 0:
+			response.Status = "completed"
+		default:
+			response.Status = "in_progress"
+		}
+	}
+	if !strings.EqualFold(response.Status, "completed") {
+		response.CompletedAt = nil
+	}
+	if response.CompletedAt == nil && strings.EqualFold(response.Status, "completed") {
+		response.CompletedAt = domain.Int64Ptr(now.Unix())
 	}
 	if strings.TrimSpace(response.OutputText) != "" && len(response.Output) == 0 {
 		response.Output = []domain.Item{domain.NewOutputTextMessage(response.OutputText)}
 	}
-	if len(response.Output) == 0 {
+	if responseRequiresOutput(response) && len(response.Output) == 0 {
 		return domain.Response{}, domain.NewValidationError("output", "assistant output is required")
 	}
 	normalizedInput, err := domain.EnsureItemIDs(prepared.NormalizedInput)
 	if err != nil {
 		return domain.Response{}, err
 	}
-	response.Output, err = domain.EnsureItemIDs(response.Output)
+	effectiveInput, err := buildStoredEffectiveInputItems(prepared.EffectiveInput, normalizedInput)
 	if err != nil {
 		return domain.Response{}, err
 	}
+	if len(response.Output) > 0 {
+		response.Output, err = domain.EnsureItemIDs(response.Output)
+		if err != nil {
+			return domain.Response{}, err
+		}
+	}
 
-	now := domain.FormatTime(domain.NowUTC())
-	shouldStore := input.PreviousResponseID != "" || input.ConversationID != "" || input.Store == nil || *input.Store
+	publicStore := input.Store == nil || *input.Store
+	persistShadow := input.PreviousResponseID != "" || input.ConversationID != "" || publicStore
+	responseJSON, err := marshalResponseJSON(response)
+	if err != nil {
+		return domain.Response{}, err
+	}
 	stored := domain.StoredResponse{
 		ID:                   response.ID,
 		Model:                response.Model,
 		RequestJSON:          input.RequestJSON,
+		ResponseJSON:         responseJSON,
 		NormalizedInputItems: normalizedInput,
+		EffectiveInputItems:  effectiveInput,
 		Output:               response.Output,
 		OutputText:           response.OutputText,
 		PreviousResponseID:   response.PreviousResponseID,
-		ConversationID:       response.Conversation,
-		Store:                shouldStore,
-		CreatedAt:            now,
-		CompletedAt:          now,
+		ConversationID:       domain.ConversationReferenceID(response.Conversation),
+		Store:                publicStore,
+		CreatedAt:            formatUnixTime(response.CreatedAt),
+		CompletedAt:          formatResponseCompletedAt(response),
 	}
 
 	switch {
@@ -185,7 +322,7 @@ func (s *ResponseService) SaveExternalResponse(ctx context.Context, prepared Pre
 		if err := s.conversations.SaveResponseAndAppendConversation(ctx, prepared.Conversation, stored, normalizedInput, response.Output); err != nil {
 			return domain.Response{}, err
 		}
-	case shouldStore:
+	case persistShadow:
 		if err := s.responses.SaveResponse(ctx, stored); err != nil {
 			return domain.Response{}, err
 		}
@@ -202,16 +339,31 @@ func (s *ResponseService) CreateStream(ctx context.Context, input CreateResponse
 	if err := domain.ValidateLocalShimItems(prepared.ContextItems); err != nil {
 		return domain.Response{}, err
 	}
+	textConfig, err := s.PrepareLocalResponseText(input, prepared.ContextItems)
+	if err != nil {
+		return domain.Response{}, err
+	}
+	metadata, err := domain.NormalizeResponseMetadata(input.Metadata)
+	if err != nil {
+		return domain.Response{}, err
+	}
 
 	created := domain.Response{
 		ID:                 prepared.ResponseID,
 		Object:             "response",
+		CreatedAt:          prepared.CreatedAt.Unix(),
+		Status:             "in_progress",
 		Model:              input.Model,
 		PreviousResponseID: input.PreviousResponseID,
-		Conversation:       input.ConversationID,
+		Conversation:       domain.NewConversationReference(input.ConversationID),
+		Background:         domain.BoolPtr(input.Background != nil && *input.Background),
+		Store:              domain.BoolPtr(input.Store == nil || *input.Store),
+		Text:               domain.MarshalResponseTextConfig(textConfig),
+		Metadata:           metadata,
 		OutputText:         "",
-		Output:             nil,
+		Output:             []domain.Item{},
 	}
+	created = domain.HydrateResponseRequestSurface(created, input.RequestJSON)
 	if hooks.OnCreated != nil {
 		if err := hooks.OnCreated(created); err != nil {
 			return domain.Response{}, err
@@ -255,15 +407,33 @@ func (s *ResponseService) prepareCreate(ctx context.Context, input CreateRespons
 	return preparedResponse{
 		ResponseID:      responseID,
 		NormalizedInput: preparedContext.NormalizedInput,
+		EffectiveInput:  preparedContext.EffectiveInput,
 		ContextItems:    preparedContext.ContextItems,
 		Conversation:    preparedContext.Conversation,
+		CreatedAt:       domain.NowUTC(),
 	}, nil
 }
 
 func (s *ResponseService) completeCreate(ctx context.Context, prepared preparedResponse, input CreateResponseInput, outputText string) (domain.Response, error) {
-	response := domain.NewResponse(prepared.ResponseID, input.Model, outputText, input.PreviousResponseID, input.ConversationID)
+	response := domain.NewResponse(prepared.ResponseID, input.Model, outputText, input.PreviousResponseID, input.ConversationID, prepared.CreatedAt.Unix())
 	var err error
+	response, err = s.FinalizeLocalResponse(input, prepared.ContextItems, response)
+	if err != nil {
+		return domain.Response{}, err
+	}
+	metadata, err := domain.NormalizeResponseMetadata(input.Metadata)
+	if err != nil {
+		return domain.Response{}, err
+	}
+	response.Metadata = metadata
+	response.Store = domain.BoolPtr(input.Store == nil || *input.Store)
+	response.Background = domain.BoolPtr(input.Background != nil && *input.Background)
+	response = domain.HydrateResponseRequestSurface(response, input.RequestJSON)
 	prepared.NormalizedInput, err = domain.EnsureItemIDs(prepared.NormalizedInput)
+	if err != nil {
+		return domain.Response{}, err
+	}
+	prepared.EffectiveInput, err = buildStoredEffectiveInputItems(prepared.EffectiveInput, prepared.NormalizedInput)
 	if err != nil {
 		return domain.Response{}, err
 	}
@@ -271,35 +441,35 @@ func (s *ResponseService) completeCreate(ctx context.Context, prepared preparedR
 	if err != nil {
 		return domain.Response{}, err
 	}
-	now := domain.FormatTime(domain.NowUTC())
+	responseJSON, err := marshalResponseJSON(response)
+	if err != nil {
+		return domain.Response{}, err
+	}
 	stored := domain.StoredResponse{
 		ID:                   response.ID,
 		Model:                response.Model,
 		RequestJSON:          input.RequestJSON,
+		ResponseJSON:         responseJSON,
 		NormalizedInputItems: prepared.NormalizedInput,
+		EffectiveInputItems:  prepared.EffectiveInput,
 		Output:               response.Output,
 		OutputText:           response.OutputText,
 		PreviousResponseID:   response.PreviousResponseID,
-		ConversationID:       response.Conversation,
+		ConversationID:       domain.ConversationReferenceID(response.Conversation),
 		Store:                input.Store == nil || *input.Store,
-		CreatedAt:            now,
-		CompletedAt:          now,
+		CreatedAt:            formatUnixTime(response.CreatedAt),
+		CompletedAt:          formatResponseCompletedAt(response),
 	}
+	persistShadow := input.PreviousResponseID != "" || input.ConversationID != "" || stored.Store
 
 	switch {
 	case input.ConversationID != "":
 		if err := s.conversations.SaveResponseAndAppendConversation(ctx, prepared.Conversation, stored, prepared.NormalizedInput, response.Output); err != nil {
 			return domain.Response{}, err
 		}
-	case input.PreviousResponseID != "":
+	case persistShadow:
 		if err := s.responses.SaveResponse(ctx, stored); err != nil {
 			return domain.Response{}, err
-		}
-	default:
-		if stored.Store {
-			if err := s.responses.SaveResponse(ctx, stored); err != nil {
-				return domain.Response{}, err
-			}
 		}
 	}
 
@@ -309,8 +479,10 @@ func (s *ResponseService) completeCreate(ctx context.Context, prepared preparedR
 type preparedResponse struct {
 	ResponseID      string
 	NormalizedInput []domain.Item
+	EffectiveInput  []domain.Item
 	ContextItems    []domain.Item
 	Conversation    domain.Conversation
+	CreatedAt       time.Time
 }
 
 func (s *ResponseService) Get(ctx context.Context, id string) (domain.Response, error) {
@@ -322,7 +494,21 @@ func (s *ResponseService) Get(ctx context.Context, id string) (domain.Response, 
 	if err != nil {
 		return domain.Response{}, err
 	}
+	if !stored.Store {
+		return domain.Response{}, ErrNotFound
+	}
 	return domain.ResponseFromStored(stored), nil
+}
+
+func (s *ResponseService) HasPreviousResponse(ctx context.Context, id string) (bool, error) {
+	if id == "" {
+		return false, domain.NewValidationError("id", "response id is required")
+	}
+
+	if _, err := s.responses.GetResponse(ctx, id); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (s *ResponseService) GetInputItems(ctx context.Context, id string) ([]domain.Item, error) {
@@ -334,7 +520,82 @@ func (s *ResponseService) GetInputItems(ctx context.Context, id string) ([]domai
 	if err != nil {
 		return nil, err
 	}
-	return stored.NormalizedInputItems, nil
+	if !stored.Store {
+		return nil, ErrNotFound
+	}
+	if len(stored.EffectiveInputItems) > 0 {
+		return stored.EffectiveInputItems, nil
+	}
+	return s.reconstructStoredInputItems(ctx, stored)
+}
+
+func (s *ResponseService) Delete(ctx context.Context, id string) (domain.ResponseDeletion, error) {
+	if id == "" {
+		return domain.ResponseDeletion{}, domain.NewValidationError("id", "response id is required")
+	}
+	stored, err := s.responses.GetResponse(ctx, id)
+	if err != nil {
+		return domain.ResponseDeletion{}, err
+	}
+	if !stored.Store {
+		return domain.ResponseDeletion{}, ErrNotFound
+	}
+	if err := s.responses.DeleteResponse(ctx, id); err != nil {
+		return domain.ResponseDeletion{}, err
+	}
+	return domain.ResponseDeletion{
+		ID:      id,
+		Object:  "response",
+		Deleted: true,
+	}, nil
+}
+
+func (s *ResponseService) Refresh(ctx context.Context, response domain.Response) (domain.Response, error) {
+	if response.ID == "" {
+		return domain.Response{}, domain.NewValidationError("id", "response id is required")
+	}
+
+	stored, err := s.responses.GetResponse(ctx, response.ID)
+	if err != nil {
+		return domain.Response{}, err
+	}
+	current := domain.ResponseFromStored(stored)
+	response = mergeStoredResponseLifecycle(response, current)
+
+	if strings.TrimSpace(response.OutputText) != "" && len(response.Output) == 0 {
+		response.Output = []domain.Item{domain.NewOutputTextMessage(response.OutputText)}
+	}
+	if responseRequiresOutput(response) && len(response.Output) == 0 {
+		return domain.Response{}, domain.NewValidationError("output", "assistant output is required")
+	}
+	if len(response.Output) > 0 {
+		response.Output, err = domain.EnsureItemIDs(response.Output)
+		if err != nil {
+			return domain.Response{}, err
+		}
+	}
+
+	responseJSON, err := marshalResponseJSON(response)
+	if err != nil {
+		return domain.Response{}, err
+	}
+
+	stored.Model = response.Model
+	stored.ResponseJSON = responseJSON
+	stored.Output = response.Output
+	stored.OutputText = response.OutputText
+	stored.PreviousResponseID = response.PreviousResponseID
+	stored.ConversationID = domain.ConversationReferenceID(response.Conversation)
+	if response.CreatedAt != 0 {
+		stored.CreatedAt = formatUnixTime(response.CreatedAt)
+	}
+	stored.CompletedAt = formatResponseCompletedAt(response)
+
+	if err := s.responses.SaveResponse(ctx, stored); err != nil {
+		return domain.Response{}, err
+	}
+
+	return response, nil
 }
 
 func MapStorageError(err error) error {
@@ -358,6 +619,86 @@ func domainItemsFromConversation(items []domain.ConversationItem) []domain.Item 
 	return out
 }
 
+func buildStoredEffectiveInputItems(effectiveInput, normalizedInput []domain.Item) ([]domain.Item, error) {
+	if len(effectiveInput) == 0 {
+		return domain.EnsureItemIDs(normalizedInput)
+	}
+
+	out := append([]domain.Item(nil), effectiveInput...)
+	if len(normalizedInput) > 0 && len(out) >= len(normalizedInput) {
+		copy(out[len(out)-len(normalizedInput):], normalizedInput)
+	}
+	return domain.EnsureItemIDs(out)
+}
+
+func (s *ResponseService) reconstructStoredInputItems(ctx context.Context, stored domain.StoredResponse) ([]domain.Item, error) {
+	if stored.PreviousResponseID != "" {
+		lineage, err := s.responses.GetResponseLineage(ctx, stored.PreviousResponseID)
+		if err == nil {
+			items := make([]domain.Item, 0, len(stored.NormalizedInputItems)+(len(lineage)*2))
+			for _, response := range lineage {
+				items = append(items, response.NormalizedInputItems...)
+				items = append(items, response.Output...)
+			}
+			items = append(items, stored.NormalizedInputItems...)
+			return domain.EnsureItemIDs(items)
+		}
+	}
+
+	if stored.ConversationID != "" {
+		_, conversationItems, err := s.conversations.GetConversation(ctx, stored.ConversationID)
+		if err == nil {
+			if items, ok := conversationInputItemsPrefix(conversationItems, stored); ok {
+				return domain.EnsureItemIDs(items)
+			}
+		}
+	}
+
+	return domain.EnsureItemIDs(stored.NormalizedInputItems)
+}
+
+func conversationInputItemsPrefix(items []domain.ConversationItem, stored domain.StoredResponse) ([]domain.Item, bool) {
+	if len(items) == 0 {
+		return nil, false
+	}
+
+	inputIDs := make(map[string]struct{}, len(stored.NormalizedInputItems))
+	for _, item := range stored.NormalizedInputItems {
+		id := strings.TrimSpace(item.ID())
+		if id != "" {
+			inputIDs[id] = struct{}{}
+		}
+	}
+	lastInputIndex := -1
+	if len(inputIDs) > 0 {
+		for idx, item := range items {
+			if _, ok := inputIDs[item.ID]; ok {
+				lastInputIndex = idx
+			}
+		}
+	}
+	if lastInputIndex >= 0 {
+		return domainItemsFromConversation(items[:lastInputIndex+1]), true
+	}
+
+	outputIDs := make(map[string]struct{}, len(stored.Output))
+	for _, item := range stored.Output {
+		id := strings.TrimSpace(item.ID())
+		if id != "" {
+			outputIDs[id] = struct{}{}
+		}
+	}
+	if len(outputIDs) > 0 {
+		for idx, item := range items {
+			if _, ok := outputIDs[item.ID]; ok {
+				return domainItemsFromConversation(items[:idx]), true
+			}
+		}
+	}
+
+	return nil, false
+}
+
 func MapGeneratorError(err error) error {
 	if err == nil {
 		return nil
@@ -375,4 +716,140 @@ func MapGeneratorError(err error) error {
 	default:
 		return err
 	}
+}
+
+func responseRequiresOutput(response domain.Response) bool {
+	return response.Status == "" || strings.EqualFold(strings.TrimSpace(response.Status), "completed")
+}
+
+func marshalResponseJSON(response domain.Response) (string, error) {
+	raw, err := json.Marshal(response)
+	if err != nil {
+		return "", fmt.Errorf("marshal response json: %w", err)
+	}
+	return string(raw), nil
+}
+
+func formatUnixTime(unixSeconds int64) string {
+	return domain.FormatTime(time.Unix(unixSeconds, 0).UTC())
+}
+
+func formatResponseCompletedAt(response domain.Response) string {
+	if response.CompletedAt == nil {
+		return ""
+	}
+	return formatUnixTime(*response.CompletedAt)
+}
+
+func mergeStoredResponseLifecycle(next domain.Response, current domain.Response) domain.Response {
+	if next.ID == "" {
+		next.ID = current.ID
+	}
+	if next.Object == "" {
+		next.Object = "response"
+	}
+	if next.CreatedAt == 0 {
+		next.CreatedAt = current.CreatedAt
+	}
+	if next.Status == "" {
+		next.Status = current.Status
+	}
+	if next.CompletedAt == nil {
+		next.CompletedAt = current.CompletedAt
+	}
+	if rawMessageEmpty(next.Error) {
+		next.Error = current.Error
+	}
+	if rawMessageEmpty(next.IncompleteDetails) {
+		next.IncompleteDetails = current.IncompleteDetails
+	}
+	if next.Model == "" {
+		next.Model = current.Model
+	}
+	if len(next.Output) == 0 {
+		next.Output = current.Output
+	}
+	if next.PreviousResponseID == "" {
+		next.PreviousResponseID = current.PreviousResponseID
+	}
+	if next.Conversation == nil {
+		next.Conversation = current.Conversation
+	}
+	if next.Background == nil {
+		next.Background = current.Background
+	}
+	if next.Store == nil {
+		next.Store = current.Store
+	}
+	if len(bytes.TrimSpace(next.Text)) == 0 || bytes.Equal(bytes.TrimSpace(next.Text), []byte("null")) {
+		next.Text = current.Text
+	}
+	if rawMessageEmpty(next.Usage) {
+		next.Usage = current.Usage
+	}
+	if rawMessageEmpty(next.Instructions) {
+		next.Instructions = current.Instructions
+	}
+	if rawMessageEmpty(next.MaxOutputTokens) {
+		next.MaxOutputTokens = current.MaxOutputTokens
+	}
+	if rawMessageEmpty(next.MaxToolCalls) {
+		next.MaxToolCalls = current.MaxToolCalls
+	}
+	if rawMessageEmpty(next.ParallelToolCalls) {
+		next.ParallelToolCalls = current.ParallelToolCalls
+	}
+	if rawMessageEmpty(next.Prompt) {
+		next.Prompt = current.Prompt
+	}
+	if rawMessageEmpty(next.PromptCacheKey) {
+		next.PromptCacheKey = current.PromptCacheKey
+	}
+	if rawMessageEmpty(next.PromptCacheRetention) {
+		next.PromptCacheRetention = current.PromptCacheRetention
+	}
+	if rawMessageEmpty(next.Reasoning) {
+		next.Reasoning = current.Reasoning
+	}
+	if rawMessageEmpty(next.SafetyIdentifier) {
+		next.SafetyIdentifier = current.SafetyIdentifier
+	}
+	if rawMessageEmpty(next.ServiceTier) {
+		next.ServiceTier = current.ServiceTier
+	}
+	if rawMessageEmpty(next.Temperature) {
+		next.Temperature = current.Temperature
+	}
+	if rawMessageEmpty(next.ToolChoice) {
+		next.ToolChoice = current.ToolChoice
+	}
+	if rawMessageEmpty(next.Tools) {
+		next.Tools = current.Tools
+	}
+	if rawMessageEmpty(next.TopLogprobs) {
+		next.TopLogprobs = current.TopLogprobs
+	}
+	if rawMessageEmpty(next.TopP) {
+		next.TopP = current.TopP
+	}
+	if rawMessageEmpty(next.Truncation) {
+		next.Truncation = current.Truncation
+	}
+	if rawMessageEmpty(next.User) {
+		next.User = current.User
+	}
+	if next.Metadata == nil {
+		next.Metadata = current.Metadata
+	}
+	if next.Metadata == nil {
+		next.Metadata = map[string]string{}
+	}
+	if next.OutputText == "" {
+		next.OutputText = current.OutputText
+	}
+	return next
+}
+
+func rawMessageEmpty(raw json.RawMessage) bool {
+	return len(bytes.TrimSpace(raw)) == 0
 }
