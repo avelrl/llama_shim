@@ -84,6 +84,7 @@
 - [x] - docs-backed hosted-tool replay safety subset для stored Responses items ([детали](#task-streaming-replay-hosted-safety))
 - [x] - trace-backed `web_search_call` tool-specific SSE replay for stored Responses items ([детали](#task-streaming-replay-web-search))
 - [x] - trace-backed `file_search_call` tool-specific SSE replay for stored Responses items ([детали](#task-streaming-replay-file-search))
+- [x] - trace-backed `code_interpreter_call` tool-specific SSE replay for stored Responses items ([детали](#task-streaming-replay-code-interpreter))
 - [ ] - hosted/native tool-specific SSE replay beyond core shim item families ([детали](#task-streaming-replay-hosted))
 - [x] - compatibility для `/responses/compact` и `/responses/input_tokens` ([детали](#task-compaction-and-token-counting))
 - [ ] - retrieval-compatible слой: vector stores + `file_search` ([детали](#task-retrieval-layer))
@@ -527,6 +528,58 @@ Definition of done:
 - backlog/OpenAPI wording не overclaim-ят parity для remaining hosted/native
   tool families
 
+## <a id="task-streaming-replay-code-interpreter"></a>Trace-backed `code_interpreter_call` tool-specific SSE replay for stored Responses items
+
+Почему это отдельно:
+
+- official docs подтверждают `code_interpreter_call` как output item family и
+  container-backed hosted tool, но exact SSE payload order через docs tooling
+  отдельно не расписан
+- real upstream traces нужны не только для event names, но и для того, чтобы
+  не протечь финальными `code` / `outputs` раньше `response.output_item.done`
+
+Что входит:
+
+- stored retrieve replay для `code_interpreter_call` с canonical `code` field
+- stored retrieve replay для `code_interpreter_call` с `outputs: null`
+  и с `include=["code_interpreter_call.outputs"]` trace, где `outputs`
+  приходят как список
+- completed-only upstream normalization для тех же случаев
+- порядок synthetic events, совпадающий с captured upstream flow:
+  `response.output_item.added` ->
+  `response.code_interpreter_call.in_progress` ->
+  `response.code_interpreter_call_code.delta` ->
+  `response.code_interpreter_call_code.done` ->
+  `response.code_interpreter_call.interpreting` ->
+  `response.code_interpreter_call.completed` ->
+  `response.output_item.done`
+- `response.output_item.added` держит `code` пустым и оставляет только
+  placeholder для `outputs` (`[]` или `null`) до terminal event
+
+Статус на 11 апреля 2026:
+
+- закрыто для stored `code_interpreter_call`:
+  retrieve replay и completed-only normalization теперь отдают
+  `response.code_interpreter_call.in_progress`,
+  `response.code_interpreter_call_code.delta`,
+  `response.code_interpreter_call_code.done`,
+  `response.code_interpreter_call.interpreting`,
+  `response.code_interpreter_call.completed`
+- live upstream traces лежат в
+  `internal/httpapi/testdata/upstream/code_interpreter_call*.raw.sse` и
+  parsed fixtures рядом
+- coverage есть и на stored retrieve replay, и на completed-only proxy branch,
+  включая оба trace-backed варианта `outputs`: список и `null`
+
+Definition of done:
+
+- stored `code_interpreter_call` replay не деградирует до pure generic
+  `response.output_item.*`
+- replay sequence совпадает с реально снятым upstream order в пределах
+  synthetic retrieve constraints
+- backlog/OpenAPI wording не overclaim-ят parity для remaining hosted/native
+  tool families
+
 ## <a id="task-streaming-replay-hosted"></a>Hosted/native tool-specific SSE replay beyond core shim item families
 
 Почему это отдельно:
@@ -540,16 +593,14 @@ Definition of done:
   item выше
 - trace-backed replay для stored `web_search_call` и `file_search_call`
   вынесен в закрытые item выше
-- для `code_interpreter_call` replay все еще деградирует до generic
-  `response.output_item.*`, то есть remaining true tool-specific SSE parity
-  пока не достигнута
+- trace-backed replay для stored `code_interpreter_call` вынесен в закрытый
+  item выше
 - для computer-use item families и `mcp_approval_request` replay все еще
   может деградировать до generic `response.output_item.*`
 
 Что осталось:
 
-- tool-specific retrieve replay для `code_interpreter_call`,
-  computer-use item families и, возможно,
+- tool-specific retrieve replay для computer-use item families и, возможно,
   `mcp_approval_request`, если docs-backed contract для него удастся
   подтвердить без догадок
 - максимальное сближение synthetic replay с реальным upstream event log там,

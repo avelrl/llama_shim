@@ -49,6 +49,19 @@ and
 They require `OPENAI_VECTOR_STORE_ID` to point at a vector store that already
 contains at least one indexed file.
 
+## Suggested request shape for `code_interpreter_call`
+
+The repository also includes ready-to-run templates at
+[code_interpreter_call.request.json](/Users/avel/Projects/llama_shim/internal/httpapi/testdata/upstream/code_interpreter_call.request.json)
+and
+[code_interpreter_call_include_outputs.request.json](/Users/avel/Projects/llama_shim/internal/httpapi/testdata/upstream/code_interpreter_call_include_outputs.request.json).
+
+These use `container: {"type":"auto"}`, so they do not require any setup
+beyond `OPENAI_API_KEY`. The prompt asks the model to use the "python tool"
+explicitly, matching the wording in the official Code Interpreter guide.
+The `include=["code_interpreter_call.outputs"]` variant is intended to verify
+the live upstream behavior for outputs retrieval before we claim parity.
+
 ## Why this exists
 
 Official docs currently confirm hosted output item families such as

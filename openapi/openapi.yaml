@@ -445,9 +445,14 @@ paths:
           `response.output_item.added` still omits final `queries`,
           `results`, and `search_results` until
           `response.output_item.done`
-        - stored `code_interpreter_call` items currently replay through
-          generic `response.output_item.*`; synthetic
-          `response.output_item.added` omits final `outputs` until
+        - stored `code_interpreter_call` items replay
+          `response.code_interpreter_call.in_progress`,
+          `response.code_interpreter_call_code.delta`,
+          `response.code_interpreter_call_code.done`,
+          `response.code_interpreter_call.interpreting`, and
+          `response.code_interpreter_call.completed`; synthetic
+          `response.output_item.added` keeps `code` blank and preserves only
+          an empty or `null` `outputs` placeholder until
           `response.output_item.done`
         - other hosted/native tool item families may still fall back to
           generic `response.output_item.*` replay

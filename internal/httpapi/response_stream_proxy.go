@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"unicode/utf8"
 
 	"llama_shim/internal/domain"
 	"llama_shim/internal/service"
@@ -872,6 +873,17 @@ func (p *responseStreamEventProxy) normalizeCompletedToolCallEvent(eventType str
 				p.toolDoneItemIDs[itemID] = struct{}{}
 			}
 		}
+		if replaySpecs := codeInterpreterReplayEventSpecs(item, itemID, outputIndex, false); len(replaySpecs) > 0 {
+			if _, seen := p.toolDoneItemIDs[itemID]; !seen {
+				for _, replaySpec := range replaySpecs {
+					before = append(before, pendingSSEEvent{
+						eventType: replaySpec.eventType,
+						payload:   replaySpec.payload,
+					})
+				}
+				p.toolDoneItemIDs[itemID] = struct{}{}
+			}
+		}
 		if hostedEventTypes := hostedToolReplayEventTypes(itemType, item); len(hostedEventTypes) > 0 {
 			if _, seen := p.toolDoneItemIDs[itemID]; !seen {
 				for _, hostedEventType := range hostedEventTypes {
@@ -995,7 +1007,7 @@ func (p *responseStreamEventProxy) observeTextStreamEvent(eventType string, payl
 				p.outputText.WriteString(strings.TrimSpace(asString(responsePayload["output_text"])))
 			}
 		}
-	case "response.web_search_call.completed", "response.file_search_call.completed":
+	case "response.web_search_call.completed", "response.file_search_call.completed", "response.code_interpreter_call.completed":
 		itemID := strings.TrimSpace(asString(payload["item_id"]))
 		if itemID != "" {
 			p.toolDoneItemIDs[itemID] = struct{}{}
@@ -1143,6 +1155,11 @@ func (p *responseStreamEventProxy) logEventSummary(eventType string, payload map
 		"response.file_search_call.in_progress",
 		"response.file_search_call.searching",
 		"response.file_search_call.completed",
+		"response.code_interpreter_call.in_progress",
+		"response.code_interpreter_call_code.delta",
+		"response.code_interpreter_call_code.done",
+		"response.code_interpreter_call.interpreting",
+		"response.code_interpreter_call.completed",
 		"response.function_call_arguments.delta",
 		"response.function_call_arguments.done",
 		"response.custom_tool_call_input.delta",
@@ -1190,6 +1207,21 @@ func (p *responseStreamEventProxy) logEventSummary(eventType string, payload map
 		"response.file_search_call.searching",
 		"response.file_search_call.completed":
 		attrs = append(attrs, "item_id", strings.TrimSpace(asString(payload["item_id"])))
+	case "response.code_interpreter_call.in_progress",
+		"response.code_interpreter_call.interpreting",
+		"response.code_interpreter_call.completed":
+		attrs = append(attrs, "item_id", strings.TrimSpace(asString(payload["item_id"])))
+	case "response.code_interpreter_call_code.delta":
+		attrs = append(attrs,
+			"item_id", strings.TrimSpace(asString(payload["item_id"])),
+			"delta_len", len(asString(payload["delta"])),
+		)
+	case "response.code_interpreter_call_code.done":
+		attrs = append(attrs,
+			"item_id", strings.TrimSpace(asString(payload["item_id"])),
+			"code_len", len(asString(payload["code"])),
+			"code_preview", truncateForLog(asString(payload["code"]), 256),
+		)
 	case "response.function_call_arguments.delta", "response.custom_tool_call_input.delta", "response.mcp_call_arguments.delta":
 		attrs = append(attrs,
 			"item_id", strings.TrimSpace(asString(payload["item_id"])),
@@ -1430,8 +1462,13 @@ func inProgressOutputItemSnapshot(item map[string]any) map[string]any {
 		delete(cloned, "results")
 		delete(cloned, "search_results")
 	case "code_interpreter_call":
+		if _, ok := cloned["code"]; ok {
+			cloned["code"] = ""
+		}
+		if outputs, ok := cloned["outputs"]; ok {
+			cloned["outputs"] = emptyHostedSlicePlaceholder(outputs)
+		}
 		delete(cloned, "output")
-		delete(cloned, "outputs")
 	}
 	if isMCPToolStreamItemType(strings.TrimSpace(asString(cloned["type"]))) {
 		delete(cloned, "output")
@@ -1515,6 +1552,66 @@ func hostedToolReplayEventTypes(itemType string, item map[string]any) []string {
 	return nil
 }
 
+type hostedToolReplayEventSpec struct {
+	eventType string
+	payload   map[string]any
+}
+
+func codeInterpreterReplayEventSpecs(item map[string]any, itemID string, outputIndex int, includeObfuscation bool) []hostedToolReplayEventSpec {
+	if strings.TrimSpace(asString(item["type"])) != "code_interpreter_call" || isFailedToolStreamItem(item) {
+		return nil
+	}
+
+	events := []hostedToolReplayEventSpec{
+		{
+			eventType: "response.code_interpreter_call.in_progress",
+			payload:   hostedToolReplayEventPayload("response.code_interpreter_call.in_progress", itemID, outputIndex),
+		},
+	}
+
+	if _, ok := item["code"]; ok {
+		code := asString(item["code"])
+		if code != "" {
+			deltaPayload := map[string]any{
+				"type":         "response.code_interpreter_call_code.delta",
+				"item_id":      itemID,
+				"output_index": outputIndex,
+				"delta":        code,
+			}
+			if includeObfuscation {
+				deltaPayload["obfuscation"] = strings.Repeat("x", utf8.RuneCountInString(code))
+			}
+			events = append(events, hostedToolReplayEventSpec{
+				eventType: "response.code_interpreter_call_code.delta",
+				payload:   deltaPayload,
+			})
+		}
+
+		events = append(events, hostedToolReplayEventSpec{
+			eventType: "response.code_interpreter_call_code.done",
+			payload: map[string]any{
+				"type":         "response.code_interpreter_call_code.done",
+				"item_id":      itemID,
+				"output_index": outputIndex,
+				"code":         code,
+			},
+		})
+	}
+
+	events = append(events,
+		hostedToolReplayEventSpec{
+			eventType: "response.code_interpreter_call.interpreting",
+			payload:   hostedToolReplayEventPayload("response.code_interpreter_call.interpreting", itemID, outputIndex),
+		},
+		hostedToolReplayEventSpec{
+			eventType: "response.code_interpreter_call.completed",
+			payload:   hostedToolReplayEventPayload("response.code_interpreter_call.completed", itemID, outputIndex),
+		},
+	)
+
+	return events
+}
+
 func hostedToolReplayEventPayload(eventType, itemID string, outputIndex int) map[string]any {
 	return map[string]any{
 		"type":         eventType,
@@ -1538,6 +1635,21 @@ func isFailedToolStreamItem(item map[string]any) bool {
 		return len(errMap) > 0
 	}
 	return true
+}
+
+func emptyHostedSlicePlaceholder(value any) any {
+	switch value.(type) {
+	case nil:
+		return nil
+	case []any:
+		return []any{}
+	case []map[string]any:
+		return []map[string]any{}
+	case []string:
+		return []string{}
+	default:
+		return value
+	}
 }
 
 func ensureCompletedToolItemID(item map[string]any, responseID string, outputIndex int) string {

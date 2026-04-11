@@ -509,10 +509,11 @@ func TestNormalizeCompletedToolCallEventSynthesizesHostedCodeInterpreterAddedDon
 					"type":         "code_interpreter_call",
 					"status":       "completed",
 					"container_id": "cntr_123",
+					"code":         "print(\"result=2.0\")",
 					"outputs": []any{
 						map[string]any{
 							"type": "logs",
-							"logs": "done",
+							"logs": "result=2.0\n",
 						},
 					},
 				},
@@ -522,23 +523,39 @@ func TestNormalizeCompletedToolCallEventSynthesizesHostedCodeInterpreterAddedDon
 	})
 
 	require.Equal(t, "response.completed", eventType)
-	require.Len(t, before, 3)
+	require.Len(t, before, 8)
 	require.Equal(t, "response.created", before[0].eventType)
 	require.Equal(t, "response.output_item.added", before[1].eventType)
-	require.Equal(t, "response.output_item.done", before[2].eventType)
+	require.Equal(t, "response.code_interpreter_call.in_progress", before[2].eventType)
+	require.Equal(t, "response.code_interpreter_call_code.delta", before[3].eventType)
+	require.Equal(t, "response.code_interpreter_call_code.done", before[4].eventType)
+	require.Equal(t, "response.code_interpreter_call.interpreting", before[5].eventType)
+	require.Equal(t, "response.code_interpreter_call.completed", before[6].eventType)
+	require.Equal(t, "response.output_item.done", before[7].eventType)
 
 	addedItem, ok := before[1].payload["item"].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, "code_interpreter_call", addedItem["type"])
 	require.Equal(t, "cntr_123", asString(addedItem["container_id"]))
 	require.Equal(t, "in_progress", asString(addedItem["status"]))
-	_, hasOutput := addedItem["output"]
-	require.False(t, hasOutput)
-	_, hasOutputs := addedItem["outputs"]
-	require.False(t, hasOutputs)
-
-	doneItem, ok := before[2].payload["item"].(map[string]any)
+	require.Equal(t, "", asString(addedItem["code"]))
+	addedOutputs, ok := addedItem["outputs"].([]any)
 	require.True(t, ok)
+	require.Empty(t, addedOutputs)
+
+	deltaPayload := before[3].payload
+	require.Equal(t, "ci_test", asString(deltaPayload["item_id"]))
+	require.Equal(t, "print(\"result=2.0\")", asString(deltaPayload["delta"]))
+	_, hasObfuscation := deltaPayload["obfuscation"]
+	require.False(t, hasObfuscation)
+
+	doneCodePayload := before[4].payload
+	require.Equal(t, "ci_test", asString(doneCodePayload["item_id"]))
+	require.Equal(t, "print(\"result=2.0\")", asString(doneCodePayload["code"]))
+
+	doneItem, ok := before[7].payload["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "print(\"result=2.0\")", asString(doneItem["code"]))
 	outputs, ok := doneItem["outputs"].([]any)
 	require.True(t, ok)
 	require.Len(t, outputs, 1)
@@ -551,4 +568,61 @@ func TestNormalizeCompletedToolCallEventSynthesizesHostedCodeInterpreterAddedDon
 	finalItem, ok := output[0].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, "ci_test", asString(finalItem["id"]))
+}
+
+func TestNormalizeCompletedToolCallEventSynthesizesHostedCodeInterpreterNilOutputsReplay(t *testing.T) {
+	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, nil)
+
+	before, eventType, payload := proxy.normalizeCompletedToolCallEvent("response.completed", map[string]any{
+		"type": "response.completed",
+		"response": map[string]any{
+			"id":     "resp_proxy_code_interpreter_nil_outputs",
+			"object": "response",
+			"model":  "test-model",
+			"output": []any{
+				map[string]any{
+					"id":           "ci_nil_outputs_test",
+					"type":         "code_interpreter_call",
+					"status":       "completed",
+					"container_id": "cntr_456",
+					"code":         "print(\"result=2.0\")",
+					"outputs":      nil,
+				},
+			},
+			"output_text": "",
+		},
+	})
+
+	require.Equal(t, "response.completed", eventType)
+	require.Len(t, before, 8)
+	require.Equal(t, "response.output_item.added", before[1].eventType)
+	require.Equal(t, "response.code_interpreter_call.in_progress", before[2].eventType)
+	require.Equal(t, "response.code_interpreter_call_code.delta", before[3].eventType)
+	require.Equal(t, "response.code_interpreter_call_code.done", before[4].eventType)
+	require.Equal(t, "response.code_interpreter_call.interpreting", before[5].eventType)
+	require.Equal(t, "response.code_interpreter_call.completed", before[6].eventType)
+	require.Equal(t, "response.output_item.done", before[7].eventType)
+
+	addedItem, ok := before[1].payload["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "", asString(addedItem["code"]))
+	outputs, hasOutputs := addedItem["outputs"]
+	require.True(t, hasOutputs)
+	require.Nil(t, outputs)
+
+	doneItem, ok := before[7].payload["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "print(\"result=2.0\")", asString(doneItem["code"]))
+	outputs, hasOutputs = doneItem["outputs"]
+	require.True(t, hasOutputs)
+	require.Nil(t, outputs)
+
+	completedResponse, ok := payload["response"].(map[string]any)
+	require.True(t, ok)
+	output, ok := completedResponse["output"].([]any)
+	require.True(t, ok)
+	require.Len(t, output, 1)
+	finalItem, ok := output[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "ci_nil_outputs_test", asString(finalItem["id"]))
 }

@@ -17,6 +17,11 @@ Ready request files:
 - `file_search_call.request.json` for a basic `file_search_call` trace
 - `file_search_call_include_results.request.json` for a `file_search_call`
   trace with `include=["file_search_call.results"]`
+- `code_interpreter_call.request.json` for a basic `code_interpreter_call`
+  trace using an auto-created container
+- `code_interpreter_call_include_outputs.request.json` for a
+  `code_interpreter_call` trace with
+  `include=["code_interpreter_call.outputs"]`
 
 Use the capture helper:
 
@@ -37,6 +42,9 @@ Guidelines:
 - `file_search_call*.request.json` templates require
   `OPENAI_VECTOR_STORE_ID` to be set; the capture helper expands `${VAR}`
   placeholders before sending the request.
+- `code_interpreter_call*.request.json` templates use
+  `container: {"type":"auto"}`, so they do not require any extra setup
+  beyond `OPENAI_API_KEY`.
 - Prefer short, deterministic prompts when capturing traces for tests.
 - Treat the raw `.sse` file as the source of truth if the parsed fixture ever
   looks suspicious.

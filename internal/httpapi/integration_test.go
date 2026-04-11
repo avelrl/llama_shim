@@ -719,14 +719,14 @@ func TestResponsesGetStreamReplaysFileSearchCallWithoutLeakingSearchResultsInAdd
 func TestResponsesGetStreamReplaysCodeInterpreterCallWithoutLeakingOutputsInAdded(t *testing.T) {
 	app := testutil.NewTestApp(t)
 
-	codeInterpreterCall, err := domain.NewItem([]byte(`{"id":"ci_test","type":"code_interpreter_call","status":"completed","container_id":"cntr_123","outputs":[{"type":"logs","logs":"done"}]}`))
+	codeInterpreterCall, err := domain.NewItem([]byte(`{"id":"ci_test","type":"code_interpreter_call","status":"completed","container_id":"cntr_123","code":"print(\"result=2.0\")","outputs":[{"type":"logs","logs":"result=2.0\n"}]}`))
 	require.NoError(t, err)
 
 	stored := domain.StoredResponse{
 		ID:                   "resp_code_interpreter",
 		Model:                "test-model",
 		RequestJSON:          `{"model":"test-model","store":true,"input":"run some Python"}`,
-		ResponseJSON:         `{"id":"resp_code_interpreter","object":"response","created_at":1712059200,"status":"completed","completed_at":1712059200,"error":null,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"model":"test-model","output":[{"id":"ci_test","type":"code_interpreter_call","status":"completed","container_id":"cntr_123","outputs":[{"type":"logs","logs":"done"}]}],"parallel_tool_calls":true,"previous_response_id":null,"reasoning":{"effort":null,"summary":null},"store":true,"temperature":1.0,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[],"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{},"output_text":""}`,
+		ResponseJSON:         `{"id":"resp_code_interpreter","object":"response","created_at":1712059200,"status":"completed","completed_at":1712059200,"error":null,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"model":"test-model","output":[{"id":"ci_test","type":"code_interpreter_call","status":"completed","container_id":"cntr_123","code":"print(\"result=2.0\")","outputs":[{"type":"logs","logs":"result=2.0\n"}]}],"parallel_tool_calls":true,"previous_response_id":null,"reasoning":{"effort":null,"summary":null},"store":true,"temperature":1.0,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[],"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{},"output_text":""}`,
 		NormalizedInputItems: []domain.Item{domain.NewInputTextMessage("user", "run some Python")},
 		EffectiveInputItems:  []domain.Item{domain.NewInputTextMessage("user", "run some Python")},
 		Output:               []domain.Item{codeInterpreterCall},
@@ -745,20 +745,84 @@ func TestResponsesGetStreamReplaysCodeInterpreterCallWithoutLeakingOutputsInAdde
 	defer resp.Body.Close()
 
 	events := readSSEEvents(t, resp.Body)
+	require.Contains(t, eventTypes(events), "response.code_interpreter_call.in_progress")
+	require.Contains(t, eventTypes(events), "response.code_interpreter_call_code.delta")
+	require.Contains(t, eventTypes(events), "response.code_interpreter_call_code.done")
+	require.Contains(t, eventTypes(events), "response.code_interpreter_call.interpreting")
+	require.Contains(t, eventTypes(events), "response.code_interpreter_call.completed")
 
 	added := findEvent(t, events, "response.output_item.added").Data
 	addedItem, ok := added["item"].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, "cntr_123", asStringAny(addedItem["container_id"]))
-	_, hasOutputs := addedItem["outputs"]
-	require.False(t, hasOutputs)
+	require.Equal(t, "", asStringAny(addedItem["code"]))
+	addedOutputs, ok := addedItem["outputs"].([]any)
+	require.True(t, ok)
+	require.Empty(t, addedOutputs)
+
+	codeDelta := findEvent(t, events, "response.code_interpreter_call_code.delta").Data
+	require.Equal(t, "ci_test", asStringAny(codeDelta["item_id"]))
+	require.Equal(t, "print(\"result=2.0\")", asStringAny(codeDelta["delta"]))
 
 	outputDone := findEvent(t, events, "response.output_item.done").Data
 	outputDoneItem, ok := outputDone["item"].(map[string]any)
 	require.True(t, ok)
+	require.Equal(t, "print(\"result=2.0\")", asStringAny(outputDoneItem["code"]))
 	outputs, ok := outputDoneItem["outputs"].([]any)
 	require.True(t, ok)
 	require.Len(t, outputs, 1)
+}
+
+func TestResponsesGetStreamReplaysCodeInterpreterCallWithNilOutputsPlaceholder(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	codeInterpreterCall, err := domain.NewItem([]byte(`{"id":"ci_nil_outputs_test","type":"code_interpreter_call","status":"completed","container_id":"cntr_456","code":"print(\"result=2.0\")","outputs":null}`))
+	require.NoError(t, err)
+
+	stored := domain.StoredResponse{
+		ID:                   "resp_code_interpreter_nil_outputs",
+		Model:                "test-model",
+		RequestJSON:          `{"model":"test-model","store":true,"input":"run some Python"}`,
+		ResponseJSON:         `{"id":"resp_code_interpreter_nil_outputs","object":"response","created_at":1712059200,"status":"completed","completed_at":1712059200,"error":null,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"model":"test-model","output":[{"id":"ci_nil_outputs_test","type":"code_interpreter_call","status":"completed","container_id":"cntr_456","code":"print(\"result=2.0\")","outputs":null}],"parallel_tool_calls":true,"previous_response_id":null,"reasoning":{"effort":null,"summary":null},"store":true,"temperature":1.0,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[],"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{},"output_text":""}`,
+		NormalizedInputItems: []domain.Item{domain.NewInputTextMessage("user", "run some Python")},
+		EffectiveInputItems:  []domain.Item{domain.NewInputTextMessage("user", "run some Python")},
+		Output:               []domain.Item{codeInterpreterCall},
+		OutputText:           "",
+		Store:                true,
+		CreatedAt:            "2026-04-10T10:00:00Z",
+		CompletedAt:          "2026-04-10T10:00:01Z",
+	}
+	require.NoError(t, app.Store.SaveResponse(context.Background(), stored))
+
+	req, err := http.NewRequest(http.MethodGet, app.Server.URL+"/v1/responses/resp_code_interpreter_nil_outputs?stream=true", nil)
+	require.NoError(t, err)
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	events := readSSEEvents(t, resp.Body)
+	require.Contains(t, eventTypes(events), "response.code_interpreter_call.in_progress")
+	require.Contains(t, eventTypes(events), "response.code_interpreter_call_code.delta")
+	require.Contains(t, eventTypes(events), "response.code_interpreter_call_code.done")
+	require.Contains(t, eventTypes(events), "response.code_interpreter_call.interpreting")
+	require.Contains(t, eventTypes(events), "response.code_interpreter_call.completed")
+
+	added := findEvent(t, events, "response.output_item.added").Data
+	addedItem, ok := added["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "", asStringAny(addedItem["code"]))
+	outputs, hasOutputs := addedItem["outputs"]
+	require.True(t, hasOutputs)
+	require.Nil(t, outputs)
+
+	outputDone := findEvent(t, events, "response.output_item.done").Data
+	outputDoneItem, ok := outputDone["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "print(\"result=2.0\")", asStringAny(outputDoneItem["code"]))
+	outputs, hasOutputs = outputDoneItem["outputs"]
+	require.True(t, hasOutputs)
+	require.Nil(t, outputs)
 }
 
 func TestResponsesGetStreamSupportsStartingAfter(t *testing.T) {

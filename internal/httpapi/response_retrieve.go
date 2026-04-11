@@ -471,6 +471,15 @@ func buildResponseReplayOutputItemEvents(responseID string, outputIndex int, ite
 		}
 	}
 
+	if replaySpecs := codeInterpreterReplayEventSpecs(replayItemPayload(item), itemID, outputIndex, includeObfuscation); len(replaySpecs) > 0 {
+		for _, replaySpec := range replaySpecs {
+			events = append(events, responseReplayEvent{
+				eventType: replaySpec.eventType,
+				payload:   replaySpec.payload,
+			})
+		}
+	}
+
 	if hostedEventTypes := hostedToolReplayEventTypes(itemType, replayItemPayload(item)); len(hostedEventTypes) > 0 {
 		for _, hostedEventType := range hostedEventTypes {
 			events = append(events, responseReplayEvent{

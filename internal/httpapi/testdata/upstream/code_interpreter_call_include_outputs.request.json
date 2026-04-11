@@ -1,0 +1,18 @@
+{
+  "model": "gpt-5",
+  "stream": true,
+  "store": true,
+  "include": [
+    "code_interpreter_call.outputs"
+  ],
+  "tool_choice": "required",
+  "tools": [
+    {
+      "type": "code_interpreter",
+      "container": {
+        "type": "auto"
+      }
+    }
+  ],
+  "input": "Use the python tool. Print exactly one line to stdout: result=2.0 . Then answer in one short sentence."
+}
