@@ -1,0 +1,17 @@
+{
+  "model": "gpt-5",
+  "stream": true,
+  "store": true,
+  "include": [
+    "file_search_call.results"
+  ],
+  "tools": [
+    {
+      "type": "file_search",
+      "vector_store_ids": [
+        "${OPENAI_VECTOR_STORE_ID}"
+      ]
+    }
+  ],
+  "input": "What is deep research by OpenAI?"
+}

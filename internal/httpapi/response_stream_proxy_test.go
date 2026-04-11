@@ -378,9 +378,10 @@ func TestNormalizeCompletedToolCallEventSynthesizesHostedFileSearchAddedDoneRepl
 			"model":  "test-model",
 			"output": []any{
 				map[string]any{
-					"id":     "fs_test",
-					"type":   "file_search_call",
-					"status": "completed",
+					"id":      "fs_test",
+					"type":    "file_search_call",
+					"status":  "completed",
+					"queries": []any{"find onboarding handbook"},
 					"search_results": []any{
 						map[string]any{
 							"file_id":  "file_123",
@@ -395,22 +396,31 @@ func TestNormalizeCompletedToolCallEventSynthesizesHostedFileSearchAddedDoneRepl
 	})
 
 	require.Equal(t, "response.completed", eventType)
-	require.Len(t, before, 3)
+	require.Len(t, before, 6)
 	require.Equal(t, "response.created", before[0].eventType)
 	require.Equal(t, "response.output_item.added", before[1].eventType)
-	require.Equal(t, "response.output_item.done", before[2].eventType)
+	require.Equal(t, "response.file_search_call.in_progress", before[2].eventType)
+	require.Equal(t, "response.file_search_call.searching", before[3].eventType)
+	require.Equal(t, "response.file_search_call.completed", before[4].eventType)
+	require.Equal(t, "response.output_item.done", before[5].eventType)
 
 	addedItem, ok := before[1].payload["item"].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, "file_search_call", addedItem["type"])
 	require.Equal(t, "in_progress", asString(addedItem["status"]))
+	queries, ok := addedItem["queries"].([]any)
+	require.True(t, ok)
+	require.Empty(t, queries)
 	_, hasResults := addedItem["results"]
 	require.False(t, hasResults)
 	_, hasSearchResults := addedItem["search_results"]
 	require.False(t, hasSearchResults)
 
-	doneItem, ok := before[2].payload["item"].(map[string]any)
+	doneItem, ok := before[5].payload["item"].(map[string]any)
 	require.True(t, ok)
+	doneQueries, ok := doneItem["queries"].([]any)
+	require.True(t, ok)
+	require.Len(t, doneQueries, 1)
 	searchResults, ok := doneItem["search_results"].([]any)
 	require.True(t, ok)
 	require.Len(t, searchResults, 1)

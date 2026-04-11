@@ -14,6 +14,9 @@ Ready request files:
 - `web_search_call.request.json` for a basic `search` action trace
 - `web_search_call_open_page.request.json` for an `open_page`-leaning trace
 - `web_search_call_find_in_page.request.json` for a `find_in_page`-leaning trace
+- `file_search_call.request.json` for a basic `file_search_call` trace
+- `file_search_call_include_results.request.json` for a `file_search_call`
+  trace with `include=["file_search_call.results"]`
 
 Use the capture helper:
 
@@ -31,6 +34,9 @@ Guidelines:
 - The generated fixture JSON keeps only a sanitized subset of response headers;
   if you captured traces before that change, scrub cookies, project IDs, org IDs,
   and request IDs before committing.
+- `file_search_call*.request.json` templates require
+  `OPENAI_VECTOR_STORE_ID` to be set; the capture helper expands `${VAR}`
+  placeholders before sending the request.
 - Prefer short, deterministic prompts when capturing traces for tests.
 - Treat the raw `.sse` file as the source of truth if the parsed fixture ever
   looks suspicious.

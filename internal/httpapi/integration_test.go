@@ -613,14 +613,14 @@ func TestResponsesGetStreamReplaysWebSearchFindInPageCallWithoutLeakingFinalActi
 func TestResponsesGetStreamReplaysFileSearchCallWithoutLeakingResultsInAdded(t *testing.T) {
 	app := testutil.NewTestApp(t)
 
-	fileSearchCall, err := domain.NewItem([]byte(`{"id":"fs_test","type":"file_search_call","status":"completed","results":[{"file_id":"file_123","filename":"notes.txt","score":0.91}]}`))
+	fileSearchCall, err := domain.NewItem([]byte(`{"id":"fs_test","type":"file_search_call","status":"completed","queries":["find notes about onboarding"],"results":[{"file_id":"file_123","filename":"notes.txt","score":0.91}]}`))
 	require.NoError(t, err)
 
 	stored := domain.StoredResponse{
 		ID:                   "resp_file_search",
 		Model:                "test-model",
 		RequestJSON:          `{"model":"test-model","store":true,"input":"find notes about onboarding"}`,
-		ResponseJSON:         `{"id":"resp_file_search","object":"response","created_at":1712059200,"status":"completed","completed_at":1712059200,"error":null,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"model":"test-model","output":[{"id":"fs_test","type":"file_search_call","status":"completed","results":[{"file_id":"file_123","filename":"notes.txt","score":0.91}]}],"parallel_tool_calls":true,"previous_response_id":null,"reasoning":{"effort":null,"summary":null},"store":true,"temperature":1.0,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[],"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{},"output_text":""}`,
+		ResponseJSON:         `{"id":"resp_file_search","object":"response","created_at":1712059200,"status":"completed","completed_at":1712059200,"error":null,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"model":"test-model","output":[{"id":"fs_test","type":"file_search_call","status":"completed","queries":["find notes about onboarding"],"results":[{"file_id":"file_123","filename":"notes.txt","score":0.91}]}],"parallel_tool_calls":true,"previous_response_id":null,"reasoning":{"effort":null,"summary":null},"store":true,"temperature":1.0,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[],"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{},"output_text":""}`,
 		NormalizedInputItems: []domain.Item{domain.NewInputTextMessage("user", "find notes about onboarding")},
 		EffectiveInputItems:  []domain.Item{domain.NewInputTextMessage("user", "find notes about onboarding")},
 		Output:               []domain.Item{fileSearchCall},
@@ -639,16 +639,25 @@ func TestResponsesGetStreamReplaysFileSearchCallWithoutLeakingResultsInAdded(t *
 	defer resp.Body.Close()
 
 	events := readSSEEvents(t, resp.Body)
+	require.Contains(t, eventTypes(events), "response.file_search_call.in_progress")
+	require.Contains(t, eventTypes(events), "response.file_search_call.searching")
+	require.Contains(t, eventTypes(events), "response.file_search_call.completed")
 
 	added := findEvent(t, events, "response.output_item.added").Data
 	addedItem, ok := added["item"].(map[string]any)
 	require.True(t, ok)
+	queries, ok := addedItem["queries"].([]any)
+	require.True(t, ok)
+	require.Empty(t, queries)
 	_, hasResults := addedItem["results"]
 	require.False(t, hasResults)
 
 	outputDone := findEvent(t, events, "response.output_item.done").Data
 	outputDoneItem, ok := outputDone["item"].(map[string]any)
 	require.True(t, ok)
+	doneQueries, ok := outputDoneItem["queries"].([]any)
+	require.True(t, ok)
+	require.Len(t, doneQueries, 1)
 	results, ok := outputDoneItem["results"].([]any)
 	require.True(t, ok)
 	require.Len(t, results, 1)
@@ -657,14 +666,14 @@ func TestResponsesGetStreamReplaysFileSearchCallWithoutLeakingResultsInAdded(t *
 func TestResponsesGetStreamReplaysFileSearchCallWithoutLeakingSearchResultsInAdded(t *testing.T) {
 	app := testutil.NewTestApp(t)
 
-	fileSearchCall, err := domain.NewItem([]byte(`{"id":"fs_search_results_test","type":"file_search_call","status":"completed","search_results":[{"file_id":"file_456","filename":"handbook.txt","score":0.88}]}`))
+	fileSearchCall, err := domain.NewItem([]byte(`{"id":"fs_search_results_test","type":"file_search_call","status":"completed","queries":["find onboarding handbook"],"search_results":[{"file_id":"file_456","filename":"handbook.txt","score":0.88}]}`))
 	require.NoError(t, err)
 
 	stored := domain.StoredResponse{
 		ID:                   "resp_file_search_search_results",
 		Model:                "test-model",
 		RequestJSON:          `{"model":"test-model","store":true,"input":"find onboarding handbook"}`,
-		ResponseJSON:         `{"id":"resp_file_search_search_results","object":"response","created_at":1712059200,"status":"completed","completed_at":1712059200,"error":null,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"model":"test-model","output":[{"id":"fs_search_results_test","type":"file_search_call","status":"completed","search_results":[{"file_id":"file_456","filename":"handbook.txt","score":0.88}]}],"parallel_tool_calls":true,"previous_response_id":null,"reasoning":{"effort":null,"summary":null},"store":true,"temperature":1.0,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[],"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{},"output_text":""}`,
+		ResponseJSON:         `{"id":"resp_file_search_search_results","object":"response","created_at":1712059200,"status":"completed","completed_at":1712059200,"error":null,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"model":"test-model","output":[{"id":"fs_search_results_test","type":"file_search_call","status":"completed","queries":["find onboarding handbook"],"search_results":[{"file_id":"file_456","filename":"handbook.txt","score":0.88}]}],"parallel_tool_calls":true,"previous_response_id":null,"reasoning":{"effort":null,"summary":null},"store":true,"temperature":1.0,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[],"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{},"output_text":""}`,
 		NormalizedInputItems: []domain.Item{domain.NewInputTextMessage("user", "find onboarding handbook")},
 		EffectiveInputItems:  []domain.Item{domain.NewInputTextMessage("user", "find onboarding handbook")},
 		Output:               []domain.Item{fileSearchCall},
@@ -683,16 +692,25 @@ func TestResponsesGetStreamReplaysFileSearchCallWithoutLeakingSearchResultsInAdd
 	defer resp.Body.Close()
 
 	events := readSSEEvents(t, resp.Body)
+	require.Contains(t, eventTypes(events), "response.file_search_call.in_progress")
+	require.Contains(t, eventTypes(events), "response.file_search_call.searching")
+	require.Contains(t, eventTypes(events), "response.file_search_call.completed")
 
 	added := findEvent(t, events, "response.output_item.added").Data
 	addedItem, ok := added["item"].(map[string]any)
 	require.True(t, ok)
+	queries, ok := addedItem["queries"].([]any)
+	require.True(t, ok)
+	require.Empty(t, queries)
 	_, hasSearchResults := addedItem["search_results"]
 	require.False(t, hasSearchResults)
 
 	outputDone := findEvent(t, events, "response.output_item.done").Data
 	outputDoneItem, ok := outputDone["item"].(map[string]any)
 	require.True(t, ok)
+	doneQueries, ok := outputDoneItem["queries"].([]any)
+	require.True(t, ok)
+	require.Len(t, doneQueries, 1)
 	searchResults, ok := outputDoneItem["search_results"].([]any)
 	require.True(t, ok)
 	require.Len(t, searchResults, 1)

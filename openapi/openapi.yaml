@@ -438,10 +438,17 @@ paths:
           `response.web_search_call.completed`; synthetic
           `response.output_item.added` still omits the final `action` until
           `response.output_item.done`
-        - stored `file_search_call` and `code_interpreter_call` items
-          currently replay through generic `response.output_item.*`;
-          synthetic `response.output_item.added` omits final `results` or
-          `search_results`, and `outputs` until `response.output_item.done`
+        - stored `file_search_call` items replay
+          `response.file_search_call.in_progress`,
+          `response.file_search_call.searching`, and
+          `response.file_search_call.completed`; synthetic
+          `response.output_item.added` still omits final `queries`,
+          `results`, and `search_results` until
+          `response.output_item.done`
+        - stored `code_interpreter_call` items currently replay through
+          generic `response.output_item.*`; synthetic
+          `response.output_item.added` omits final `outputs` until
+          `response.output_item.done`
         - other hosted/native tool item families may still fall back to
           generic `response.output_item.*` replay
       parameters:

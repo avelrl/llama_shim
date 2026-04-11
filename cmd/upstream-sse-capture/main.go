@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -51,6 +52,10 @@ func main() {
 	requestBody, err := loadRequestBody(*requestFile)
 	if err != nil {
 		exitf("load request body: %v", err)
+	}
+	requestBody, err = expandTemplateEnv(requestBody)
+	if err != nil {
+		exitf("expand request body env placeholders: %v", err)
 	}
 	if requestBody == nil && strings.EqualFold(strings.TrimSpace(*method), http.MethodPost) {
 		exitf("-request-file is required for POST captures")
@@ -168,6 +173,38 @@ func decodeJSONOrString(body []byte) any {
 		return decoded
 	}
 	return string(trimmed)
+}
+
+var templateEnvPattern = regexp.MustCompile(`\$\{([A-Z0-9_]+)\}`)
+
+func expandTemplateEnv(body []byte) ([]byte, error) {
+	if len(body) == 0 {
+		return body, nil
+	}
+
+	matches := templateEnvPattern.FindAllSubmatch(body, -1)
+	if len(matches) == 0 {
+		return body, nil
+	}
+
+	missing := make([]string, 0)
+	expanded := templateEnvPattern.ReplaceAllFunc(body, func(match []byte) []byte {
+		submatches := templateEnvPattern.FindSubmatch(match)
+		if len(submatches) != 2 {
+			return match
+		}
+		key := string(submatches[1])
+		value, ok := os.LookupEnv(key)
+		if !ok {
+			missing = append(missing, key)
+			return match
+		}
+		return []byte(value)
+	})
+	if len(missing) > 0 {
+		return nil, fmt.Errorf("missing environment variable(s): %s", strings.Join(missing, ", "))
+	}
+	return expanded, nil
 }
 
 func cloneHeaders(header http.Header) map[string][]string {

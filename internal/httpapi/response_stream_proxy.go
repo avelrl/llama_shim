@@ -995,7 +995,7 @@ func (p *responseStreamEventProxy) observeTextStreamEvent(eventType string, payl
 				p.outputText.WriteString(strings.TrimSpace(asString(responsePayload["output_text"])))
 			}
 		}
-	case "response.web_search_call.completed":
+	case "response.web_search_call.completed", "response.file_search_call.completed":
 		itemID := strings.TrimSpace(asString(payload["item_id"]))
 		if itemID != "" {
 			p.toolDoneItemIDs[itemID] = struct{}{}
@@ -1140,6 +1140,9 @@ func (p *responseStreamEventProxy) logEventSummary(eventType string, payload map
 		"response.web_search_call.in_progress",
 		"response.web_search_call.searching",
 		"response.web_search_call.completed",
+		"response.file_search_call.in_progress",
+		"response.file_search_call.searching",
+		"response.file_search_call.completed",
 		"response.function_call_arguments.delta",
 		"response.function_call_arguments.done",
 		"response.custom_tool_call_input.delta",
@@ -1182,6 +1185,10 @@ func (p *responseStreamEventProxy) logEventSummary(eventType string, payload map
 	case "response.web_search_call.in_progress",
 		"response.web_search_call.searching",
 		"response.web_search_call.completed":
+		attrs = append(attrs, "item_id", strings.TrimSpace(asString(payload["item_id"])))
+	case "response.file_search_call.in_progress",
+		"response.file_search_call.searching",
+		"response.file_search_call.completed":
 		attrs = append(attrs, "item_id", strings.TrimSpace(asString(payload["item_id"])))
 	case "response.function_call_arguments.delta", "response.custom_tool_call_input.delta", "response.mcp_call_arguments.delta":
 		attrs = append(attrs,
@@ -1417,6 +1424,9 @@ func inProgressOutputItemSnapshot(item map[string]any) map[string]any {
 	case "web_search_call":
 		delete(cloned, "action")
 	case "file_search_call":
+		if _, ok := cloned["queries"]; ok {
+			cloned["queries"] = []any{}
+		}
 		delete(cloned, "results")
 		delete(cloned, "search_results")
 	case "code_interpreter_call":
@@ -1491,6 +1501,14 @@ func hostedToolReplayEventTypes(itemType string, item map[string]any) []string {
 				"response.web_search_call.in_progress",
 				"response.web_search_call.searching",
 				"response.web_search_call.completed",
+			}
+		}
+	case "file_search_call":
+		if !isFailedToolStreamItem(item) {
+			return []string{
+				"response.file_search_call.in_progress",
+				"response.file_search_call.searching",
+				"response.file_search_call.completed",
 			}
 		}
 	}

@@ -26,3 +26,18 @@ func TestCloneHeadersRedactsSensitiveHeaders(t *testing.T) {
 	require.NotContains(t, cloned, "Openai-Organization")
 	require.NotContains(t, cloned, "X-Request-Id")
 }
+
+func TestExpandTemplateEnvReplacesPresentVariables(t *testing.T) {
+	t.Setenv("OPENAI_VECTOR_STORE_ID", "vs_123")
+
+	expanded, err := expandTemplateEnv([]byte(`{"vector_store_ids":["${OPENAI_VECTOR_STORE_ID}"]}`))
+	require.NoError(t, err)
+	require.JSONEq(t, `{"vector_store_ids":["vs_123"]}`, string(expanded))
+}
+
+func TestExpandTemplateEnvReturnsErrorForMissingVariables(t *testing.T) {
+	expanded, err := expandTemplateEnv([]byte(`{"vector_store_ids":["${OPENAI_VECTOR_STORE_ID_MISSING_FOR_TEST}"]}`))
+	require.Error(t, err)
+	require.Nil(t, expanded)
+	require.Contains(t, err.Error(), "OPENAI_VECTOR_STORE_ID_MISSING_FOR_TEST")
+}
