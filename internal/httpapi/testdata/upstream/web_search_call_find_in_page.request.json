@@ -1,0 +1,11 @@
+{
+  "model": "gpt-5",
+  "stream": true,
+  "store": true,
+  "tools": [
+    {
+      "type": "web_search"
+    }
+  ],
+  "input": "Find the official OpenAI Web search guide, open the docs page, then within that page find the exact phrase \"Supported in reasoning models\" and tell me which web_search_call.action values it refers to."
+}

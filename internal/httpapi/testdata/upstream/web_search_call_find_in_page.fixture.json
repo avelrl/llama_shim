@@ -1,0 +1,1019 @@
+{
+  "captured_at": "2026-04-11T12:43:38Z",
+  "label": "web_search_call_find_in_page",
+  "method": "POST",
+  "url": "https://api.openai.com/v1/responses",
+  "status_code": 200,
+  "content_type": "text/event-stream; charset=utf-8",
+  "request": {
+    "input": "Find the official OpenAI Web search guide, open the docs page, then within that page find the exact phrase \"Supported in reasoning models\" and tell me which web_search_call.action values it refers to.",
+    "model": "gpt-5",
+    "store": true,
+    "stream": true,
+    "tools": [
+      {
+        "type": "web_search"
+      }
+    ]
+  },
+  "response_headers": {
+    "Alt-Svc": [
+      "h3=\":443\"; ma=86400"
+    ],
+    "Cf-Cache-Status": [
+      "DYNAMIC"
+    ],
+    "Content-Type": [
+      "text/event-stream; charset=utf-8"
+    ],
+    "Date": [
+      "Sat, 11 Apr 2026 12:43:23 GMT"
+    ],
+    "Openai-Processing-Ms": [
+      "508"
+    ],
+    "Openai-Version": [
+      "2020-10-01"
+    ],
+    "Server": [
+      "cloudflare"
+    ],
+    "X-Content-Type-Options": [
+      "nosniff"
+    ],
+    "X-Ratelimit-Limit-Requests": [
+      "500"
+    ],
+    "X-Ratelimit-Limit-Tokens": [
+      "500000"
+    ],
+    "X-Ratelimit-Remaining-Requests": [
+      "499"
+    ],
+    "X-Ratelimit-Remaining-Tokens": [
+      "495107"
+    ],
+    "X-Ratelimit-Reset-Requests": [
+      "120ms"
+    ],
+    "X-Ratelimit-Reset-Tokens": [
+      "587ms"
+    ]
+  },
+  "stream": {
+    "event_count": 48,
+    "done": false,
+    "events": [
+      {
+        "event": "response.created",
+        "data": "{\"type\":\"response.created\",\"response\":{\"id\":\"resp_07c7a3b110ce31f60069da41eaebf08194a11e3c0a5dde0cf3\",\"object\":\"response\",\"created_at\":1775911403,\"status\":\"in_progress\",\"background\":false,\"completed_at\":null,\"error\":null,\"frequency_penalty\":0.0,\"incomplete_details\":null,\"instructions\":null,\"max_output_tokens\":null,\"max_tool_calls\":null,\"model\":\"gpt-5-2025-08-07\",\"output\":[],\"parallel_tool_calls\":true,\"presence_penalty\":0.0,\"previous_response_id\":null,\"prompt_cache_key\":null,\"prompt_cache_retention\":null,\"reasoning\":{\"effort\":\"medium\",\"summary\":null},\"safety_identifier\":null,\"service_tier\":\"auto\",\"store\":true,\"temperature\":1.0,\"text\":{\"format\":{\"type\":\"text\"},\"verbosity\":\"medium\"},\"tool_choice\":\"auto\",\"tools\":[{\"type\":\"web_search\",\"search_context_size\":\"medium\",\"user_location\":{\"type\":\"approximate\",\"city\":null,\"country\":\"US\",\"region\":null,\"timezone\":null}}],\"top_logprobs\":0,\"top_p\":1.0,\"truncation\":\"disabled\",\"usage\":null,\"user\":null,\"metadata\":{}},\"sequence_number\":0}",
+        "json": {
+          "response": {
+            "background": false,
+            "completed_at": null,
+            "created_at": 1775911403,
+            "error": null,
+            "frequency_penalty": 0,
+            "id": "resp_07c7a3b110ce31f60069da41eaebf08194a11e3c0a5dde0cf3",
+            "incomplete_details": null,
+            "instructions": null,
+            "max_output_tokens": null,
+            "max_tool_calls": null,
+            "metadata": {},
+            "model": "gpt-5-2025-08-07",
+            "object": "response",
+            "output": [],
+            "parallel_tool_calls": true,
+            "presence_penalty": 0,
+            "previous_response_id": null,
+            "prompt_cache_key": null,
+            "prompt_cache_retention": null,
+            "reasoning": {
+              "effort": "medium",
+              "summary": null
+            },
+            "safety_identifier": null,
+            "service_tier": "auto",
+            "status": "in_progress",
+            "store": true,
+            "temperature": 1,
+            "text": {
+              "format": {
+                "type": "text"
+              },
+              "verbosity": "medium"
+            },
+            "tool_choice": "auto",
+            "tools": [
+              {
+                "search_context_size": "medium",
+                "type": "web_search",
+                "user_location": {
+                  "city": null,
+                  "country": "US",
+                  "region": null,
+                  "timezone": null,
+                  "type": "approximate"
+                }
+              }
+            ],
+            "top_logprobs": 0,
+            "top_p": 1,
+            "truncation": "disabled",
+            "usage": null,
+            "user": null
+          },
+          "sequence_number": 0,
+          "type": "response.created"
+        }
+      },
+      {
+        "event": "response.in_progress",
+        "data": "{\"type\":\"response.in_progress\",\"response\":{\"id\":\"resp_07c7a3b110ce31f60069da41eaebf08194a11e3c0a5dde0cf3\",\"object\":\"response\",\"created_at\":1775911403,\"status\":\"in_progress\",\"background\":false,\"completed_at\":null,\"error\":null,\"frequency_penalty\":0.0,\"incomplete_details\":null,\"instructions\":null,\"max_output_tokens\":null,\"max_tool_calls\":null,\"model\":\"gpt-5-2025-08-07\",\"output\":[],\"parallel_tool_calls\":true,\"presence_penalty\":0.0,\"previous_response_id\":null,\"prompt_cache_key\":null,\"prompt_cache_retention\":null,\"reasoning\":{\"effort\":\"medium\",\"summary\":null},\"safety_identifier\":null,\"service_tier\":\"auto\",\"store\":true,\"temperature\":1.0,\"text\":{\"format\":{\"type\":\"text\"},\"verbosity\":\"medium\"},\"tool_choice\":\"auto\",\"tools\":[{\"type\":\"web_search\",\"search_context_size\":\"medium\",\"user_location\":{\"type\":\"approximate\",\"city\":null,\"country\":\"US\",\"region\":null,\"timezone\":null}}],\"top_logprobs\":0,\"top_p\":1.0,\"truncation\":\"disabled\",\"usage\":null,\"user\":null,\"metadata\":{}},\"sequence_number\":1}",
+        "json": {
+          "response": {
+            "background": false,
+            "completed_at": null,
+            "created_at": 1775911403,
+            "error": null,
+            "frequency_penalty": 0,
+            "id": "resp_07c7a3b110ce31f60069da41eaebf08194a11e3c0a5dde0cf3",
+            "incomplete_details": null,
+            "instructions": null,
+            "max_output_tokens": null,
+            "max_tool_calls": null,
+            "metadata": {},
+            "model": "gpt-5-2025-08-07",
+            "object": "response",
+            "output": [],
+            "parallel_tool_calls": true,
+            "presence_penalty": 0,
+            "previous_response_id": null,
+            "prompt_cache_key": null,
+            "prompt_cache_retention": null,
+            "reasoning": {
+              "effort": "medium",
+              "summary": null
+            },
+            "safety_identifier": null,
+            "service_tier": "auto",
+            "status": "in_progress",
+            "store": true,
+            "temperature": 1,
+            "text": {
+              "format": {
+                "type": "text"
+              },
+              "verbosity": "medium"
+            },
+            "tool_choice": "auto",
+            "tools": [
+              {
+                "search_context_size": "medium",
+                "type": "web_search",
+                "user_location": {
+                  "city": null,
+                  "country": "US",
+                  "region": null,
+                  "timezone": null,
+                  "type": "approximate"
+                }
+              }
+            ],
+            "top_logprobs": 0,
+            "top_p": 1,
+            "truncation": "disabled",
+            "usage": null,
+            "user": null
+          },
+          "sequence_number": 1,
+          "type": "response.in_progress"
+        }
+      },
+      {
+        "event": "response.output_item.added",
+        "data": "{\"type\":\"response.output_item.added\",\"item\":{\"id\":\"rs_07c7a3b110ce31f60069da41eb9c8481949d491aabff7ae5ae\",\"type\":\"reasoning\",\"summary\":[]},\"output_index\":0,\"sequence_number\":2}",
+        "json": {
+          "item": {
+            "id": "rs_07c7a3b110ce31f60069da41eb9c8481949d491aabff7ae5ae",
+            "summary": [],
+            "type": "reasoning"
+          },
+          "output_index": 0,
+          "sequence_number": 2,
+          "type": "response.output_item.added"
+        }
+      },
+      {
+        "event": "response.output_item.done",
+        "data": "{\"type\":\"response.output_item.done\",\"item\":{\"id\":\"rs_07c7a3b110ce31f60069da41eb9c8481949d491aabff7ae5ae\",\"type\":\"reasoning\",\"summary\":[]},\"output_index\":0,\"sequence_number\":3}",
+        "json": {
+          "item": {
+            "id": "rs_07c7a3b110ce31f60069da41eb9c8481949d491aabff7ae5ae",
+            "summary": [],
+            "type": "reasoning"
+          },
+          "output_index": 0,
+          "sequence_number": 3,
+          "type": "response.output_item.done"
+        }
+      },
+      {
+        "event": "response.output_item.added",
+        "data": "{\"type\":\"response.output_item.added\",\"item\":{\"id\":\"ws_07c7a3b110ce31f60069da41eed0cc819499195705a07764b6\",\"type\":\"web_search_call\",\"status\":\"in_progress\"},\"output_index\":1,\"sequence_number\":4}",
+        "json": {
+          "item": {
+            "id": "ws_07c7a3b110ce31f60069da41eed0cc819499195705a07764b6",
+            "status": "in_progress",
+            "type": "web_search_call"
+          },
+          "output_index": 1,
+          "sequence_number": 4,
+          "type": "response.output_item.added"
+        }
+      },
+      {
+        "event": "response.web_search_call.in_progress",
+        "data": "{\"type\":\"response.web_search_call.in_progress\",\"item_id\":\"ws_07c7a3b110ce31f60069da41eed0cc819499195705a07764b6\",\"output_index\":1,\"sequence_number\":5}",
+        "json": {
+          "item_id": "ws_07c7a3b110ce31f60069da41eed0cc819499195705a07764b6",
+          "output_index": 1,
+          "sequence_number": 5,
+          "type": "response.web_search_call.in_progress"
+        }
+      },
+      {
+        "event": "response.web_search_call.searching",
+        "data": "{\"type\":\"response.web_search_call.searching\",\"item_id\":\"ws_07c7a3b110ce31f60069da41eed0cc819499195705a07764b6\",\"output_index\":1,\"sequence_number\":6}",
+        "json": {
+          "item_id": "ws_07c7a3b110ce31f60069da41eed0cc819499195705a07764b6",
+          "output_index": 1,
+          "sequence_number": 6,
+          "type": "response.web_search_call.searching"
+        }
+      },
+      {
+        "event": "response.web_search_call.completed",
+        "data": "{\"type\":\"response.web_search_call.completed\",\"item_id\":\"ws_07c7a3b110ce31f60069da41eed0cc819499195705a07764b6\",\"output_index\":1,\"sequence_number\":7}",
+        "json": {
+          "item_id": "ws_07c7a3b110ce31f60069da41eed0cc819499195705a07764b6",
+          "output_index": 1,
+          "sequence_number": 7,
+          "type": "response.web_search_call.completed"
+        }
+      },
+      {
+        "event": "response.output_item.done",
+        "data": "{\"type\":\"response.output_item.done\",\"item\":{\"id\":\"ws_07c7a3b110ce31f60069da41eed0cc819499195705a07764b6\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"queries\":[\"OpenAI Web search guide\",\"site:platform.openai.com docs web search guide\",\"OpenAI web_search_call.action Supported in reasoning models site:openai.com\",\"OpenAI web search docs web_search_call action values\"],\"query\":\"OpenAI Web search guide\"}},\"output_index\":1,\"sequence_number\":8}",
+        "json": {
+          "item": {
+            "action": {
+              "queries": [
+                "OpenAI Web search guide",
+                "site:platform.openai.com docs web search guide",
+                "OpenAI web_search_call.action Supported in reasoning models site:openai.com",
+                "OpenAI web search docs web_search_call action values"
+              ],
+              "query": "OpenAI Web search guide",
+              "type": "search"
+            },
+            "id": "ws_07c7a3b110ce31f60069da41eed0cc819499195705a07764b6",
+            "status": "completed",
+            "type": "web_search_call"
+          },
+          "output_index": 1,
+          "sequence_number": 8,
+          "type": "response.output_item.done"
+        }
+      },
+      {
+        "event": "response.output_item.added",
+        "data": "{\"type\":\"response.output_item.added\",\"item\":{\"id\":\"rs_07c7a3b110ce31f60069da41f0d0d081949794a07aac3f4c52\",\"type\":\"reasoning\",\"summary\":[]},\"output_index\":2,\"sequence_number\":9}",
+        "json": {
+          "item": {
+            "id": "rs_07c7a3b110ce31f60069da41f0d0d081949794a07aac3f4c52",
+            "summary": [],
+            "type": "reasoning"
+          },
+          "output_index": 2,
+          "sequence_number": 9,
+          "type": "response.output_item.added"
+        }
+      },
+      {
+        "event": "response.output_item.done",
+        "data": "{\"type\":\"response.output_item.done\",\"item\":{\"id\":\"rs_07c7a3b110ce31f60069da41f0d0d081949794a07aac3f4c52\",\"type\":\"reasoning\",\"summary\":[]},\"output_index\":2,\"sequence_number\":10}",
+        "json": {
+          "item": {
+            "id": "rs_07c7a3b110ce31f60069da41f0d0d081949794a07aac3f4c52",
+            "summary": [],
+            "type": "reasoning"
+          },
+          "output_index": 2,
+          "sequence_number": 10,
+          "type": "response.output_item.done"
+        }
+      },
+      {
+        "event": "response.output_item.added",
+        "data": "{\"type\":\"response.output_item.added\",\"item\":{\"id\":\"ws_07c7a3b110ce31f60069da41f0eaec8194b1f189423266c919\",\"type\":\"web_search_call\",\"status\":\"in_progress\"},\"output_index\":3,\"sequence_number\":11}",
+        "json": {
+          "item": {
+            "id": "ws_07c7a3b110ce31f60069da41f0eaec8194b1f189423266c919",
+            "status": "in_progress",
+            "type": "web_search_call"
+          },
+          "output_index": 3,
+          "sequence_number": 11,
+          "type": "response.output_item.added"
+        }
+      },
+      {
+        "event": "response.web_search_call.in_progress",
+        "data": "{\"type\":\"response.web_search_call.in_progress\",\"item_id\":\"ws_07c7a3b110ce31f60069da41f0eaec8194b1f189423266c919\",\"output_index\":3,\"sequence_number\":12}",
+        "json": {
+          "item_id": "ws_07c7a3b110ce31f60069da41f0eaec8194b1f189423266c919",
+          "output_index": 3,
+          "sequence_number": 12,
+          "type": "response.web_search_call.in_progress"
+        }
+      },
+      {
+        "event": "response.web_search_call.searching",
+        "data": "{\"type\":\"response.web_search_call.searching\",\"item_id\":\"ws_07c7a3b110ce31f60069da41f0eaec8194b1f189423266c919\",\"output_index\":3,\"sequence_number\":13}",
+        "json": {
+          "item_id": "ws_07c7a3b110ce31f60069da41f0eaec8194b1f189423266c919",
+          "output_index": 3,
+          "sequence_number": 13,
+          "type": "response.web_search_call.searching"
+        }
+      },
+      {
+        "event": "response.web_search_call.completed",
+        "data": "{\"type\":\"response.web_search_call.completed\",\"item_id\":\"ws_07c7a3b110ce31f60069da41f0eaec8194b1f189423266c919\",\"output_index\":3,\"sequence_number\":14}",
+        "json": {
+          "item_id": "ws_07c7a3b110ce31f60069da41f0eaec8194b1f189423266c919",
+          "output_index": 3,
+          "sequence_number": 14,
+          "type": "response.web_search_call.completed"
+        }
+      },
+      {
+        "event": "response.output_item.done",
+        "data": "{\"type\":\"response.output_item.done\",\"item\":{\"id\":\"ws_07c7a3b110ce31f60069da41f0eaec8194b1f189423266c919\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"queries\":[\"web search guide site:platform.openai.com/docs\",\"site:platform.openai.com \\\"Web search\\\" guide\",\"site:platform.openai.com web_search_call.action\",\"site:platform.openai.com \\\"Supported in reasoning models\\\"\"],\"query\":\"web search guide site:platform.openai.com/docs\"}},\"output_index\":3,\"sequence_number\":15}",
+        "json": {
+          "item": {
+            "action": {
+              "queries": [
+                "web search guide site:platform.openai.com/docs",
+                "site:platform.openai.com \"Web search\" guide",
+                "site:platform.openai.com web_search_call.action",
+                "site:platform.openai.com \"Supported in reasoning models\""
+              ],
+              "query": "web search guide site:platform.openai.com/docs",
+              "type": "search"
+            },
+            "id": "ws_07c7a3b110ce31f60069da41f0eaec8194b1f189423266c919",
+            "status": "completed",
+            "type": "web_search_call"
+          },
+          "output_index": 3,
+          "sequence_number": 15,
+          "type": "response.output_item.done"
+        }
+      },
+      {
+        "event": "response.output_item.added",
+        "data": "{\"type\":\"response.output_item.added\",\"item\":{\"id\":\"rs_07c7a3b110ce31f60069da41f23d10819482b1b6a4ce0e21b3\",\"type\":\"reasoning\",\"summary\":[]},\"output_index\":4,\"sequence_number\":16}",
+        "json": {
+          "item": {
+            "id": "rs_07c7a3b110ce31f60069da41f23d10819482b1b6a4ce0e21b3",
+            "summary": [],
+            "type": "reasoning"
+          },
+          "output_index": 4,
+          "sequence_number": 16,
+          "type": "response.output_item.added"
+        }
+      },
+      {
+        "event": "response.output_item.done",
+        "data": "{\"type\":\"response.output_item.done\",\"item\":{\"id\":\"rs_07c7a3b110ce31f60069da41f23d10819482b1b6a4ce0e21b3\",\"type\":\"reasoning\",\"summary\":[]},\"output_index\":4,\"sequence_number\":17}",
+        "json": {
+          "item": {
+            "id": "rs_07c7a3b110ce31f60069da41f23d10819482b1b6a4ce0e21b3",
+            "summary": [],
+            "type": "reasoning"
+          },
+          "output_index": 4,
+          "sequence_number": 17,
+          "type": "response.output_item.done"
+        }
+      },
+      {
+        "event": "response.output_item.added",
+        "data": "{\"type\":\"response.output_item.added\",\"item\":{\"id\":\"ws_07c7a3b110ce31f60069da41f29e2c819496c4f0d82109e499\",\"type\":\"web_search_call\",\"status\":\"in_progress\"},\"output_index\":5,\"sequence_number\":18}",
+        "json": {
+          "item": {
+            "id": "ws_07c7a3b110ce31f60069da41f29e2c819496c4f0d82109e499",
+            "status": "in_progress",
+            "type": "web_search_call"
+          },
+          "output_index": 5,
+          "sequence_number": 18,
+          "type": "response.output_item.added"
+        }
+      },
+      {
+        "event": "response.web_search_call.in_progress",
+        "data": "{\"type\":\"response.web_search_call.in_progress\",\"item_id\":\"ws_07c7a3b110ce31f60069da41f29e2c819496c4f0d82109e499\",\"output_index\":5,\"sequence_number\":19}",
+        "json": {
+          "item_id": "ws_07c7a3b110ce31f60069da41f29e2c819496c4f0d82109e499",
+          "output_index": 5,
+          "sequence_number": 19,
+          "type": "response.web_search_call.in_progress"
+        }
+      },
+      {
+        "event": "response.web_search_call.searching",
+        "data": "{\"type\":\"response.web_search_call.searching\",\"item_id\":\"ws_07c7a3b110ce31f60069da41f29e2c819496c4f0d82109e499\",\"output_index\":5,\"sequence_number\":20}",
+        "json": {
+          "item_id": "ws_07c7a3b110ce31f60069da41f29e2c819496c4f0d82109e499",
+          "output_index": 5,
+          "sequence_number": 20,
+          "type": "response.web_search_call.searching"
+        }
+      },
+      {
+        "event": "response.web_search_call.completed",
+        "data": "{\"type\":\"response.web_search_call.completed\",\"item_id\":\"ws_07c7a3b110ce31f60069da41f29e2c819496c4f0d82109e499\",\"output_index\":5,\"sequence_number\":21}",
+        "json": {
+          "item_id": "ws_07c7a3b110ce31f60069da41f29e2c819496c4f0d82109e499",
+          "output_index": 5,
+          "sequence_number": 21,
+          "type": "response.web_search_call.completed"
+        }
+      },
+      {
+        "event": "response.output_item.done",
+        "data": "{\"type\":\"response.output_item.done\",\"item\":{\"id\":\"ws_07c7a3b110ce31f60069da41f29e2c819496c4f0d82109e499\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"open_page\",\"url\":\"https://platform.openai.com/docs/api-reference/conversations/create-item\"}},\"output_index\":5,\"sequence_number\":22}",
+        "json": {
+          "item": {
+            "action": {
+              "type": "open_page",
+              "url": "https://platform.openai.com/docs/api-reference/conversations/create-item"
+            },
+            "id": "ws_07c7a3b110ce31f60069da41f29e2c819496c4f0d82109e499",
+            "status": "completed",
+            "type": "web_search_call"
+          },
+          "output_index": 5,
+          "sequence_number": 22,
+          "type": "response.output_item.done"
+        }
+      },
+      {
+        "event": "response.output_item.added",
+        "data": "{\"type\":\"response.output_item.added\",\"item\":{\"id\":\"rs_07c7a3b110ce31f60069da41f3509081948f2215375866cac8\",\"type\":\"reasoning\",\"summary\":[]},\"output_index\":6,\"sequence_number\":23}",
+        "json": {
+          "item": {
+            "id": "rs_07c7a3b110ce31f60069da41f3509081948f2215375866cac8",
+            "summary": [],
+            "type": "reasoning"
+          },
+          "output_index": 6,
+          "sequence_number": 23,
+          "type": "response.output_item.added"
+        }
+      },
+      {
+        "event": "response.output_item.done",
+        "data": "{\"type\":\"response.output_item.done\",\"item\":{\"id\":\"rs_07c7a3b110ce31f60069da41f3509081948f2215375866cac8\",\"type\":\"reasoning\",\"summary\":[]},\"output_index\":6,\"sequence_number\":24}",
+        "json": {
+          "item": {
+            "id": "rs_07c7a3b110ce31f60069da41f3509081948f2215375866cac8",
+            "summary": [],
+            "type": "reasoning"
+          },
+          "output_index": 6,
+          "sequence_number": 24,
+          "type": "response.output_item.done"
+        }
+      },
+      {
+        "event": "response.output_item.added",
+        "data": "{\"type\":\"response.output_item.added\",\"item\":{\"id\":\"ws_07c7a3b110ce31f60069da41f3b9d48194a0cfcf5956a23e0a\",\"type\":\"web_search_call\",\"status\":\"in_progress\"},\"output_index\":7,\"sequence_number\":25}",
+        "json": {
+          "item": {
+            "id": "ws_07c7a3b110ce31f60069da41f3b9d48194a0cfcf5956a23e0a",
+            "status": "in_progress",
+            "type": "web_search_call"
+          },
+          "output_index": 7,
+          "sequence_number": 25,
+          "type": "response.output_item.added"
+        }
+      },
+      {
+        "event": "response.web_search_call.in_progress",
+        "data": "{\"type\":\"response.web_search_call.in_progress\",\"item_id\":\"ws_07c7a3b110ce31f60069da41f3b9d48194a0cfcf5956a23e0a\",\"output_index\":7,\"sequence_number\":26}",
+        "json": {
+          "item_id": "ws_07c7a3b110ce31f60069da41f3b9d48194a0cfcf5956a23e0a",
+          "output_index": 7,
+          "sequence_number": 26,
+          "type": "response.web_search_call.in_progress"
+        }
+      },
+      {
+        "event": "response.web_search_call.searching",
+        "data": "{\"type\":\"response.web_search_call.searching\",\"item_id\":\"ws_07c7a3b110ce31f60069da41f3b9d48194a0cfcf5956a23e0a\",\"output_index\":7,\"sequence_number\":27}",
+        "json": {
+          "item_id": "ws_07c7a3b110ce31f60069da41f3b9d48194a0cfcf5956a23e0a",
+          "output_index": 7,
+          "sequence_number": 27,
+          "type": "response.web_search_call.searching"
+        }
+      },
+      {
+        "event": "response.web_search_call.completed",
+        "data": "{\"type\":\"response.web_search_call.completed\",\"item_id\":\"ws_07c7a3b110ce31f60069da41f3b9d48194a0cfcf5956a23e0a\",\"output_index\":7,\"sequence_number\":28}",
+        "json": {
+          "item_id": "ws_07c7a3b110ce31f60069da41f3b9d48194a0cfcf5956a23e0a",
+          "output_index": 7,
+          "sequence_number": 28,
+          "type": "response.web_search_call.completed"
+        }
+      },
+      {
+        "event": "response.output_item.done",
+        "data": "{\"type\":\"response.output_item.done\",\"item\":{\"id\":\"ws_07c7a3b110ce31f60069da41f3b9d48194a0cfcf5956a23e0a\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"open_page\",\"url\":\"https://developers.openai.com/api/docs/guides/tools-web-search\"}},\"output_index\":7,\"sequence_number\":29}",
+        "json": {
+          "item": {
+            "action": {
+              "type": "open_page",
+              "url": "https://developers.openai.com/api/docs/guides/tools-web-search"
+            },
+            "id": "ws_07c7a3b110ce31f60069da41f3b9d48194a0cfcf5956a23e0a",
+            "status": "completed",
+            "type": "web_search_call"
+          },
+          "output_index": 7,
+          "sequence_number": 29,
+          "type": "response.output_item.done"
+        }
+      },
+      {
+        "event": "response.output_item.added",
+        "data": "{\"type\":\"response.output_item.added\",\"item\":{\"id\":\"rs_07c7a3b110ce31f60069da41f4f3408194bf833d951d85b17c\",\"type\":\"reasoning\",\"summary\":[]},\"output_index\":8,\"sequence_number\":30}",
+        "json": {
+          "item": {
+            "id": "rs_07c7a3b110ce31f60069da41f4f3408194bf833d951d85b17c",
+            "summary": [],
+            "type": "reasoning"
+          },
+          "output_index": 8,
+          "sequence_number": 30,
+          "type": "response.output_item.added"
+        }
+      },
+      {
+        "event": "response.output_item.done",
+        "data": "{\"type\":\"response.output_item.done\",\"item\":{\"id\":\"rs_07c7a3b110ce31f60069da41f4f3408194bf833d951d85b17c\",\"type\":\"reasoning\",\"summary\":[]},\"output_index\":8,\"sequence_number\":31}",
+        "json": {
+          "item": {
+            "id": "rs_07c7a3b110ce31f60069da41f4f3408194bf833d951d85b17c",
+            "summary": [],
+            "type": "reasoning"
+          },
+          "output_index": 8,
+          "sequence_number": 31,
+          "type": "response.output_item.done"
+        }
+      },
+      {
+        "event": "response.output_item.added",
+        "data": "{\"type\":\"response.output_item.added\",\"item\":{\"id\":\"ws_07c7a3b110ce31f60069da41f54b048194bf390bb78292ec5f\",\"type\":\"web_search_call\",\"status\":\"in_progress\"},\"output_index\":9,\"sequence_number\":32}",
+        "json": {
+          "item": {
+            "id": "ws_07c7a3b110ce31f60069da41f54b048194bf390bb78292ec5f",
+            "status": "in_progress",
+            "type": "web_search_call"
+          },
+          "output_index": 9,
+          "sequence_number": 32,
+          "type": "response.output_item.added"
+        }
+      },
+      {
+        "event": "response.web_search_call.in_progress",
+        "data": "{\"type\":\"response.web_search_call.in_progress\",\"item_id\":\"ws_07c7a3b110ce31f60069da41f54b048194bf390bb78292ec5f\",\"output_index\":9,\"sequence_number\":33}",
+        "json": {
+          "item_id": "ws_07c7a3b110ce31f60069da41f54b048194bf390bb78292ec5f",
+          "output_index": 9,
+          "sequence_number": 33,
+          "type": "response.web_search_call.in_progress"
+        }
+      },
+      {
+        "event": "response.web_search_call.searching",
+        "data": "{\"type\":\"response.web_search_call.searching\",\"item_id\":\"ws_07c7a3b110ce31f60069da41f54b048194bf390bb78292ec5f\",\"output_index\":9,\"sequence_number\":34}",
+        "json": {
+          "item_id": "ws_07c7a3b110ce31f60069da41f54b048194bf390bb78292ec5f",
+          "output_index": 9,
+          "sequence_number": 34,
+          "type": "response.web_search_call.searching"
+        }
+      },
+      {
+        "event": "response.web_search_call.completed",
+        "data": "{\"type\":\"response.web_search_call.completed\",\"item_id\":\"ws_07c7a3b110ce31f60069da41f54b048194bf390bb78292ec5f\",\"output_index\":9,\"sequence_number\":35}",
+        "json": {
+          "item_id": "ws_07c7a3b110ce31f60069da41f54b048194bf390bb78292ec5f",
+          "output_index": 9,
+          "sequence_number": 35,
+          "type": "response.web_search_call.completed"
+        }
+      },
+      {
+        "event": "response.output_item.done",
+        "data": "{\"type\":\"response.output_item.done\",\"item\":{\"id\":\"ws_07c7a3b110ce31f60069da41f54b048194bf390bb78292ec5f\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"find_in_page\",\"pattern\":\"Supported in reasoning models\",\"url\":\"https://developers.openai.com/api/docs/guides/tools-web-search\"}},\"output_index\":9,\"sequence_number\":36}",
+        "json": {
+          "item": {
+            "action": {
+              "pattern": "Supported in reasoning models",
+              "type": "find_in_page",
+              "url": "https://developers.openai.com/api/docs/guides/tools-web-search"
+            },
+            "id": "ws_07c7a3b110ce31f60069da41f54b048194bf390bb78292ec5f",
+            "status": "completed",
+            "type": "web_search_call"
+          },
+          "output_index": 9,
+          "sequence_number": 36,
+          "type": "response.output_item.done"
+        }
+      },
+      {
+        "event": "response.output_item.added",
+        "data": "{\"type\":\"response.output_item.added\",\"item\":{\"id\":\"rs_07c7a3b110ce31f60069da41f66d5881948e66af6bae897afe\",\"type\":\"reasoning\",\"summary\":[]},\"output_index\":10,\"sequence_number\":37}",
+        "json": {
+          "item": {
+            "id": "rs_07c7a3b110ce31f60069da41f66d5881948e66af6bae897afe",
+            "summary": [],
+            "type": "reasoning"
+          },
+          "output_index": 10,
+          "sequence_number": 37,
+          "type": "response.output_item.added"
+        }
+      },
+      {
+        "event": "response.output_item.done",
+        "data": "{\"type\":\"response.output_item.done\",\"item\":{\"id\":\"rs_07c7a3b110ce31f60069da41f66d5881948e66af6bae897afe\",\"type\":\"reasoning\",\"summary\":[]},\"output_index\":10,\"sequence_number\":38}",
+        "json": {
+          "item": {
+            "id": "rs_07c7a3b110ce31f60069da41f66d5881948e66af6bae897afe",
+            "summary": [],
+            "type": "reasoning"
+          },
+          "output_index": 10,
+          "sequence_number": 38,
+          "type": "response.output_item.done"
+        }
+      },
+      {
+        "event": "response.output_item.added",
+        "data": "{\"type\":\"response.output_item.added\",\"item\":{\"id\":\"msg_07c7a3b110ce31f60069da41fa4b788194882632fc71d89833\",\"type\":\"message\",\"status\":\"in_progress\",\"content\":[],\"role\":\"assistant\"},\"output_index\":11,\"sequence_number\":39}",
+        "json": {
+          "item": {
+            "content": [],
+            "id": "msg_07c7a3b110ce31f60069da41fa4b788194882632fc71d89833",
+            "role": "assistant",
+            "status": "in_progress",
+            "type": "message"
+          },
+          "output_index": 11,
+          "sequence_number": 39,
+          "type": "response.output_item.added"
+        }
+      },
+      {
+        "event": "response.content_part.added",
+        "data": "{\"type\":\"response.content_part.added\",\"content_index\":0,\"item_id\":\"msg_07c7a3b110ce31f60069da41fa4b788194882632fc71d89833\",\"output_index\":11,\"part\":{\"type\":\"output_text\",\"annotations\":[],\"logprobs\":[],\"text\":\"\"},\"sequence_number\":40}",
+        "json": {
+          "content_index": 0,
+          "item_id": "msg_07c7a3b110ce31f60069da41fa4b788194882632fc71d89833",
+          "output_index": 11,
+          "part": {
+            "annotations": [],
+            "logprobs": [],
+            "text": "",
+            "type": "output_text"
+          },
+          "sequence_number": 40,
+          "type": "response.content_part.added"
+        }
+      },
+      {
+        "event": "response.output_text.delta",
+        "data": "{\"type\":\"response.output_text.delta\",\"content_index\":0,\"delta\":\"open_page and find_in_page. \",\"item_id\":\"msg_07c7a3b110ce31f60069da41fa4b788194882632fc71d89833\",\"logprobs\":[],\"obfuscation\":\"hPmc\",\"output_index\":11,\"sequence_number\":41}",
+        "json": {
+          "content_index": 0,
+          "delta": "open_page and find_in_page. ",
+          "item_id": "msg_07c7a3b110ce31f60069da41fa4b788194882632fc71d89833",
+          "logprobs": [],
+          "obfuscation": "hPmc",
+          "output_index": 11,
+          "sequence_number": 41,
+          "type": "response.output_text.delta"
+        }
+      },
+      {
+        "event": "response.output_text.delta",
+        "data": "{\"type\":\"response.output_text.delta\",\"content_index\":0,\"delta\":\"([developers.openai.com](https://developers.openai.com/api/docs/guides/tools-web-search))\",\"item_id\":\"msg_07c7a3b110ce31f60069da41fa4b788194882632fc71d89833\",\"logprobs\":[],\"obfuscation\":\"5qH6dkL\",\"output_index\":11,\"sequence_number\":42}",
+        "json": {
+          "content_index": 0,
+          "delta": "([developers.openai.com](https://developers.openai.com/api/docs/guides/tools-web-search))",
+          "item_id": "msg_07c7a3b110ce31f60069da41fa4b788194882632fc71d89833",
+          "logprobs": [],
+          "obfuscation": "5qH6dkL",
+          "output_index": 11,
+          "sequence_number": 42,
+          "type": "response.output_text.delta"
+        }
+      },
+      {
+        "event": "response.output_text.annotation.added",
+        "data": "{\"type\":\"response.output_text.annotation.added\",\"annotation\":{\"type\":\"url_citation\",\"end_index\":117,\"start_index\":28,\"title\":\"Web search | OpenAI API\",\"url\":\"https://developers.openai.com/api/docs/guides/tools-web-search\"},\"annotation_index\":0,\"content_index\":0,\"item_id\":\"msg_07c7a3b110ce31f60069da41fa4b788194882632fc71d89833\",\"output_index\":11,\"sequence_number\":43}",
+        "json": {
+          "annotation": {
+            "end_index": 117,
+            "start_index": 28,
+            "title": "Web search | OpenAI API",
+            "type": "url_citation",
+            "url": "https://developers.openai.com/api/docs/guides/tools-web-search"
+          },
+          "annotation_index": 0,
+          "content_index": 0,
+          "item_id": "msg_07c7a3b110ce31f60069da41fa4b788194882632fc71d89833",
+          "output_index": 11,
+          "sequence_number": 43,
+          "type": "response.output_text.annotation.added"
+        }
+      },
+      {
+        "event": "response.output_text.done",
+        "data": "{\"type\":\"response.output_text.done\",\"content_index\":0,\"item_id\":\"msg_07c7a3b110ce31f60069da41fa4b788194882632fc71d89833\",\"logprobs\":[],\"output_index\":11,\"sequence_number\":44,\"text\":\"open_page and find_in_page. ([developers.openai.com](https://developers.openai.com/api/docs/guides/tools-web-search))\"}",
+        "json": {
+          "content_index": 0,
+          "item_id": "msg_07c7a3b110ce31f60069da41fa4b788194882632fc71d89833",
+          "logprobs": [],
+          "output_index": 11,
+          "sequence_number": 44,
+          "text": "open_page and find_in_page. ([developers.openai.com](https://developers.openai.com/api/docs/guides/tools-web-search))",
+          "type": "response.output_text.done"
+        }
+      },
+      {
+        "event": "response.content_part.done",
+        "data": "{\"type\":\"response.content_part.done\",\"content_index\":0,\"item_id\":\"msg_07c7a3b110ce31f60069da41fa4b788194882632fc71d89833\",\"output_index\":11,\"part\":{\"type\":\"output_text\",\"annotations\":[{\"type\":\"url_citation\",\"end_index\":117,\"start_index\":28,\"title\":\"Web search | OpenAI API\",\"url\":\"https://developers.openai.com/api/docs/guides/tools-web-search\"}],\"logprobs\":[],\"text\":\"open_page and find_in_page. ([developers.openai.com](https://developers.openai.com/api/docs/guides/tools-web-search))\"},\"sequence_number\":45}",
+        "json": {
+          "content_index": 0,
+          "item_id": "msg_07c7a3b110ce31f60069da41fa4b788194882632fc71d89833",
+          "output_index": 11,
+          "part": {
+            "annotations": [
+              {
+                "end_index": 117,
+                "start_index": 28,
+                "title": "Web search | OpenAI API",
+                "type": "url_citation",
+                "url": "https://developers.openai.com/api/docs/guides/tools-web-search"
+              }
+            ],
+            "logprobs": [],
+            "text": "open_page and find_in_page. ([developers.openai.com](https://developers.openai.com/api/docs/guides/tools-web-search))",
+            "type": "output_text"
+          },
+          "sequence_number": 45,
+          "type": "response.content_part.done"
+        }
+      },
+      {
+        "event": "response.output_item.done",
+        "data": "{\"type\":\"response.output_item.done\",\"item\":{\"id\":\"msg_07c7a3b110ce31f60069da41fa4b788194882632fc71d89833\",\"type\":\"message\",\"status\":\"completed\",\"content\":[{\"type\":\"output_text\",\"annotations\":[{\"type\":\"url_citation\",\"end_index\":117,\"start_index\":28,\"title\":\"Web search | OpenAI API\",\"url\":\"https://developers.openai.com/api/docs/guides/tools-web-search\"}],\"logprobs\":[],\"text\":\"open_page and find_in_page. ([developers.openai.com](https://developers.openai.com/api/docs/guides/tools-web-search))\"}],\"role\":\"assistant\"},\"output_index\":11,\"sequence_number\":46}",
+        "json": {
+          "item": {
+            "content": [
+              {
+                "annotations": [
+                  {
+                    "end_index": 117,
+                    "start_index": 28,
+                    "title": "Web search | OpenAI API",
+                    "type": "url_citation",
+                    "url": "https://developers.openai.com/api/docs/guides/tools-web-search"
+                  }
+                ],
+                "logprobs": [],
+                "text": "open_page and find_in_page. ([developers.openai.com](https://developers.openai.com/api/docs/guides/tools-web-search))",
+                "type": "output_text"
+              }
+            ],
+            "id": "msg_07c7a3b110ce31f60069da41fa4b788194882632fc71d89833",
+            "role": "assistant",
+            "status": "completed",
+            "type": "message"
+          },
+          "output_index": 11,
+          "sequence_number": 46,
+          "type": "response.output_item.done"
+        }
+      },
+      {
+        "event": "response.completed",
+        "data": "{\"type\":\"response.completed\",\"response\":{\"id\":\"resp_07c7a3b110ce31f60069da41eaebf08194a11e3c0a5dde0cf3\",\"object\":\"response\",\"created_at\":1775911403,\"status\":\"completed\",\"background\":false,\"completed_at\":1775911418,\"error\":null,\"frequency_penalty\":0.0,\"incomplete_details\":null,\"instructions\":null,\"max_output_tokens\":null,\"max_tool_calls\":null,\"model\":\"gpt-5-2025-08-07\",\"output\":[{\"id\":\"rs_07c7a3b110ce31f60069da41eb9c8481949d491aabff7ae5ae\",\"type\":\"reasoning\",\"summary\":[]},{\"id\":\"ws_07c7a3b110ce31f60069da41eed0cc819499195705a07764b6\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"queries\":[\"OpenAI Web search guide\",\"site:platform.openai.com docs web search guide\",\"OpenAI web_search_call.action Supported in reasoning models site:openai.com\",\"OpenAI web search docs web_search_call action values\"],\"query\":\"OpenAI Web search guide\"}},{\"id\":\"rs_07c7a3b110ce31f60069da41f0d0d081949794a07aac3f4c52\",\"type\":\"reasoning\",\"summary\":[]},{\"id\":\"ws_07c7a3b110ce31f60069da41f0eaec8194b1f189423266c919\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"queries\":[\"web search guide site:platform.openai.com/docs\",\"site:platform.openai.com \\\"Web search\\\" guide\",\"site:platform.openai.com web_search_call.action\",\"site:platform.openai.com \\\"Supported in reasoning models\\\"\"],\"query\":\"web search guide site:platform.openai.com/docs\"}},{\"id\":\"rs_07c7a3b110ce31f60069da41f23d10819482b1b6a4ce0e21b3\",\"type\":\"reasoning\",\"summary\":[]},{\"id\":\"ws_07c7a3b110ce31f60069da41f29e2c819496c4f0d82109e499\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"open_page\",\"url\":\"https://platform.openai.com/docs/api-reference/conversations/create-item\"}},{\"id\":\"rs_07c7a3b110ce31f60069da41f3509081948f2215375866cac8\",\"type\":\"reasoning\",\"summary\":[]},{\"id\":\"ws_07c7a3b110ce31f60069da41f3b9d48194a0cfcf5956a23e0a\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"open_page\",\"url\":\"https://developers.openai.com/api/docs/guides/tools-web-search\"}},{\"id\":\"rs_07c7a3b110ce31f60069da41f4f3408194bf833d951d85b17c\",\"type\":\"reasoning\",\"summary\":[]},{\"id\":\"ws_07c7a3b110ce31f60069da41f54b048194bf390bb78292ec5f\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"find_in_page\",\"pattern\":\"Supported in reasoning models\",\"url\":\"https://developers.openai.com/api/docs/guides/tools-web-search\"}},{\"id\":\"rs_07c7a3b110ce31f60069da41f66d5881948e66af6bae897afe\",\"type\":\"reasoning\",\"summary\":[]},{\"id\":\"msg_07c7a3b110ce31f60069da41fa4b788194882632fc71d89833\",\"type\":\"message\",\"status\":\"completed\",\"content\":[{\"type\":\"output_text\",\"annotations\":[{\"type\":\"url_citation\",\"end_index\":117,\"start_index\":28,\"title\":\"Web search | OpenAI API\",\"url\":\"https://developers.openai.com/api/docs/guides/tools-web-search\"}],\"logprobs\":[],\"text\":\"open_page and find_in_page. ([developers.openai.com](https://developers.openai.com/api/docs/guides/tools-web-search))\"}],\"role\":\"assistant\"}],\"parallel_tool_calls\":true,\"presence_penalty\":0.0,\"previous_response_id\":null,\"prompt_cache_key\":null,\"prompt_cache_retention\":null,\"reasoning\":{\"effort\":\"medium\",\"summary\":null},\"safety_identifier\":null,\"service_tier\":\"default\",\"store\":true,\"temperature\":1.0,\"text\":{\"format\":{\"type\":\"text\"},\"verbosity\":\"medium\"},\"tool_choice\":\"auto\",\"tools\":[{\"type\":\"web_search\",\"search_context_size\":\"medium\",\"user_location\":{\"type\":\"approximate\",\"city\":null,\"country\":\"US\",\"region\":null,\"timezone\":null}}],\"top_logprobs\":0,\"top_p\":1.0,\"truncation\":\"disabled\",\"usage\":{\"input_tokens\":25032,\"input_tokens_details\":{\"cached_tokens\":4352},\"output_tokens\":980,\"output_tokens_details\":{\"reasoning_tokens\":704},\"total_tokens\":26012},\"user\":null,\"metadata\":{}},\"sequence_number\":47}",
+        "json": {
+          "response": {
+            "background": false,
+            "completed_at": 1775911418,
+            "created_at": 1775911403,
+            "error": null,
+            "frequency_penalty": 0,
+            "id": "resp_07c7a3b110ce31f60069da41eaebf08194a11e3c0a5dde0cf3",
+            "incomplete_details": null,
+            "instructions": null,
+            "max_output_tokens": null,
+            "max_tool_calls": null,
+            "metadata": {},
+            "model": "gpt-5-2025-08-07",
+            "object": "response",
+            "output": [
+              {
+                "id": "rs_07c7a3b110ce31f60069da41eb9c8481949d491aabff7ae5ae",
+                "summary": [],
+                "type": "reasoning"
+              },
+              {
+                "action": {
+                  "queries": [
+                    "OpenAI Web search guide",
+                    "site:platform.openai.com docs web search guide",
+                    "OpenAI web_search_call.action Supported in reasoning models site:openai.com",
+                    "OpenAI web search docs web_search_call action values"
+                  ],
+                  "query": "OpenAI Web search guide",
+                  "type": "search"
+                },
+                "id": "ws_07c7a3b110ce31f60069da41eed0cc819499195705a07764b6",
+                "status": "completed",
+                "type": "web_search_call"
+              },
+              {
+                "id": "rs_07c7a3b110ce31f60069da41f0d0d081949794a07aac3f4c52",
+                "summary": [],
+                "type": "reasoning"
+              },
+              {
+                "action": {
+                  "queries": [
+                    "web search guide site:platform.openai.com/docs",
+                    "site:platform.openai.com \"Web search\" guide",
+                    "site:platform.openai.com web_search_call.action",
+                    "site:platform.openai.com \"Supported in reasoning models\""
+                  ],
+                  "query": "web search guide site:platform.openai.com/docs",
+                  "type": "search"
+                },
+                "id": "ws_07c7a3b110ce31f60069da41f0eaec8194b1f189423266c919",
+                "status": "completed",
+                "type": "web_search_call"
+              },
+              {
+                "id": "rs_07c7a3b110ce31f60069da41f23d10819482b1b6a4ce0e21b3",
+                "summary": [],
+                "type": "reasoning"
+              },
+              {
+                "action": {
+                  "type": "open_page",
+                  "url": "https://platform.openai.com/docs/api-reference/conversations/create-item"
+                },
+                "id": "ws_07c7a3b110ce31f60069da41f29e2c819496c4f0d82109e499",
+                "status": "completed",
+                "type": "web_search_call"
+              },
+              {
+                "id": "rs_07c7a3b110ce31f60069da41f3509081948f2215375866cac8",
+                "summary": [],
+                "type": "reasoning"
+              },
+              {
+                "action": {
+                  "type": "open_page",
+                  "url": "https://developers.openai.com/api/docs/guides/tools-web-search"
+                },
+                "id": "ws_07c7a3b110ce31f60069da41f3b9d48194a0cfcf5956a23e0a",
+                "status": "completed",
+                "type": "web_search_call"
+              },
+              {
+                "id": "rs_07c7a3b110ce31f60069da41f4f3408194bf833d951d85b17c",
+                "summary": [],
+                "type": "reasoning"
+              },
+              {
+                "action": {
+                  "pattern": "Supported in reasoning models",
+                  "type": "find_in_page",
+                  "url": "https://developers.openai.com/api/docs/guides/tools-web-search"
+                },
+                "id": "ws_07c7a3b110ce31f60069da41f54b048194bf390bb78292ec5f",
+                "status": "completed",
+                "type": "web_search_call"
+              },
+              {
+                "id": "rs_07c7a3b110ce31f60069da41f66d5881948e66af6bae897afe",
+                "summary": [],
+                "type": "reasoning"
+              },
+              {
+                "content": [
+                  {
+                    "annotations": [
+                      {
+                        "end_index": 117,
+                        "start_index": 28,
+                        "title": "Web search | OpenAI API",
+                        "type": "url_citation",
+                        "url": "https://developers.openai.com/api/docs/guides/tools-web-search"
+                      }
+                    ],
+                    "logprobs": [],
+                    "text": "open_page and find_in_page. ([developers.openai.com](https://developers.openai.com/api/docs/guides/tools-web-search))",
+                    "type": "output_text"
+                  }
+                ],
+                "id": "msg_07c7a3b110ce31f60069da41fa4b788194882632fc71d89833",
+                "role": "assistant",
+                "status": "completed",
+                "type": "message"
+              }
+            ],
+            "parallel_tool_calls": true,
+            "presence_penalty": 0,
+            "previous_response_id": null,
+            "prompt_cache_key": null,
+            "prompt_cache_retention": null,
+            "reasoning": {
+              "effort": "medium",
+              "summary": null
+            },
+            "safety_identifier": null,
+            "service_tier": "default",
+            "status": "completed",
+            "store": true,
+            "temperature": 1,
+            "text": {
+              "format": {
+                "type": "text"
+              },
+              "verbosity": "medium"
+            },
+            "tool_choice": "auto",
+            "tools": [
+              {
+                "search_context_size": "medium",
+                "type": "web_search",
+                "user_location": {
+                  "city": null,
+                  "country": "US",
+                  "region": null,
+                  "timezone": null,
+                  "type": "approximate"
+                }
+              }
+            ],
+            "top_logprobs": 0,
+            "top_p": 1,
+            "truncation": "disabled",
+            "usage": {
+              "input_tokens": 25032,
+              "input_tokens_details": {
+                "cached_tokens": 4352
+              },
+              "output_tokens": 980,
+              "output_tokens_details": {
+                "reasoning_tokens": 704
+              },
+              "total_tokens": 26012
+            },
+            "user": null
+          },
+          "sequence_number": 47,
+          "type": "response.completed"
+        }
+      }
+    ]
+  }
+}

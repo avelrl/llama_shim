@@ -1,0 +1,11 @@
+{
+  "model": "gpt-5",
+  "stream": true,
+  "store": true,
+  "tools": [
+    {
+      "type": "web_search"
+    }
+  ],
+  "input": "Find one recent positive news story and cite the source."
+}

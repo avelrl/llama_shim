@@ -81,6 +81,8 @@
 - [x] - response lifecycle parity: metadata, delete/cancel, retention semantics ([детали](#task-response-lifecycle))
 - [x] - core streaming parity и `stream_options` ([детали](#task-streaming-parity))
 - [x] - reasoning-specific SSE replay для stored `reasoning` items ([детали](#task-streaming-replay-reasoning))
+- [x] - docs-backed hosted-tool replay safety subset для stored Responses items ([детали](#task-streaming-replay-hosted-safety))
+- [x] - trace-backed `web_search_call` tool-specific SSE replay for stored Responses items ([детали](#task-streaming-replay-web-search))
 - [ ] - hosted/native tool-specific SSE replay beyond core shim item families ([детали](#task-streaming-replay-hosted))
 - [x] - compatibility для `/responses/compact` и `/responses/input_tokens` ([детали](#task-compaction-and-token-counting))
 - [ ] - retrieval-compatible слой: vector stores + `file_search` ([детали](#task-retrieval-layer))
@@ -391,7 +393,94 @@ Definition of done:
 Статус:
 
 - закрыто для shim-stored `reasoning` items с `reasoning_text` content parts
-- hosted/native tool-specific SSE parity вынесен ниже как отдельный open item
+- docs-backed hosted-tool replay safety subset закрыт отдельно
+- residual hosted/native tool-specific SSE parity вынесен ниже как
+  отдельный open item
+
+## <a id="task-streaming-replay-hosted-safety"></a>Docs-backed hosted-tool replay safety subset для stored Responses items
+
+Почему это отдельно:
+
+- это уже не тот же самый scope, что true tool-specific SSE parity
+- по docs можно уверенно подтвердить hosted/native output item families, но
+  не всегда их отдельные replay event families
+- backlog должен показывать уже закрытый safety/proxy scope отдельно от
+  оставшегося parity scope
+
+Что входит:
+
+- stored `mcp_call` и legacy stored `mcp_tool_call` retrieve replay с
+  docs-backed `response.mcp_call_arguments.*`
+- terminal `response.mcp_call.in_progress` и `response.mcp_call.failed` для
+  stored MCP items
+- conservative synthetic replay для stored `web_search_call`,
+  `file_search_call`, `code_interpreter_call`, чтобы
+  `response.output_item.added` не светил финальные `action`, `results` /
+  `search_results` и `outputs` до `response.output_item.done`
+- тот же non-leaking behavior для completed-only upstream normalization
+
+Definition of done:
+
+- stored replay и completed-only normalization не светят финальный hosted tool
+  payload раньше terminal event-а
+- MCP subset воспроизводится через docs-backed event names без догадок
+- OpenAPI, tests и backlog wording не overclaim-ят true hosted tool-specific
+  SSE parity
+
+Статус на 10 апреля 2026:
+
+- закрыто для stored `mcp_call` и legacy stored `mcp_tool_call` items:
+  retrieve replay отдает `response.mcp_call_arguments.*`,
+  `response.mcp_call.in_progress`, а для failed items еще и
+  `response.mcp_call.failed`
+- закрыто для stored `web_search_call`, `file_search_call`,
+  `code_interpreter_call` safety subset: synthetic
+  `response.output_item.added` больше не светит финальные `action`,
+  `results` / `search_results` и `outputs` до `response.output_item.done`
+
+## <a id="task-streaming-replay-web-search"></a>Trace-backed `web_search_call` tool-specific SSE replay for stored Responses items
+
+Почему это отдельно:
+
+- это уже больше, чем safety subset, но еще не весь hosted/native parity item
+- для `search`, `open_page` и `find_in_page` теперь есть реальные upstream
+  SSE traces, так что event family можно воспроизводить без догадок
+
+Что входит:
+
+- stored retrieve replay для `web_search_call` с final
+  `action.type == search`, `open_page`, `find_in_page`
+- completed-only upstream normalization для тех же случаев
+- порядок synthetic events, совпадающий с captured upstream flow:
+  `response.output_item.added` ->
+  `response.web_search_call.in_progress` ->
+  `response.web_search_call.searching` ->
+  `response.web_search_call.completed` ->
+  `response.output_item.done`
+- `response.output_item.added` по-прежнему не светит финальный `action`
+  раньше terminal events
+
+Статус на 11 апреля 2026:
+
+- закрыто для stored `web_search_call` с `action.type == search`,
+  `open_page`, `find_in_page`:
+  retrieve replay и completed-only normalization теперь отдают
+  `response.web_search_call.in_progress`,
+  `response.web_search_call.searching`,
+  `response.web_search_call.completed`
+- реализация завязана на live upstream trace в
+  `internal/httpapi/testdata/upstream/web_search_call*.raw.sse` и parsed
+  fixtures рядом
+- coverage есть и на stored retrieve replay, и на completed-only proxy branch
+
+Definition of done:
+
+- stored `web_search_call` replay не деградирует до pure generic
+  `response.output_item.*`
+- replay sequence совпадает с реально снятым upstream order в пределах
+  synthetic retrieve constraints
+- backlog/OpenAPI wording не overclaim-ят parity для других hosted/native
+  tool families
 
 ## <a id="task-streaming-replay-hosted"></a>Hosted/native tool-specific SSE replay beyond core shim item families
 
@@ -400,15 +489,34 @@ Definition of done:
 - для hosted/native tools official docs сейчас явно перечисляют event families, но exact payload schema через docs tooling доступна фрагментарно
 - без source event log легко “додумать” synthetic payload неправильно и начать overclaim-ить совместимость
 
+Статус на 11 апреля 2026:
+
+- docs-backed MCP replay и hosted replay safety subset вынесены в закрытый
+  item выше
+- trace-backed replay для stored `web_search_call` вынесен в закрытый
+  item выше
+- для `file_search_call`,
+  `code_interpreter_call` replay все еще деградирует до generic
+  `response.output_item.*`, то есть remaining true tool-specific SSE parity
+  пока не достигнута
+- для computer-use item families и `mcp_approval_request` replay все еще
+  может деградировать до generic `response.output_item.*`
+
 Что осталось:
 
-- hosted/native tool-specific SSE replay beyond current shim-supported item families
-- максимальное сближение synthetic replay с реальным upstream event log там, где сам stored object не хранит исходные deltas
+- tool-specific retrieve replay для `file_search_call`,
+  `code_interpreter_call`, computer-use item families и, возможно,
+  `mcp_approval_request`, если docs-backed contract для него удастся
+  подтвердить без догадок
+- максимальное сближение synthetic replay с реальным upstream event log там,
+  где сам stored object не хранит исходные deltas
 
 Definition of done:
 
-- retrieve replay не деградирует hosted/native tool outputs до generic `output_item.*` только потому, что stream synthetic
-- residual event families либо реально воспроизводятся, либо явно исключены из supported shim surface
+- retrieve replay не деградирует remaining hosted/native tool outputs до
+  generic `output_item.*` только потому, что stream synthetic
+- residual event families либо реально воспроизводятся, либо явно исключены
+  из supported shim surface
 
 ## <a id="task-compaction-and-token-counting"></a>Compatibility для `/responses/compact` и `/responses/input_tokens`
 

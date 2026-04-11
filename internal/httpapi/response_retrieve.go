@@ -290,11 +290,15 @@ func buildResponseReplayOutputItemEvents(responseID string, outputIndex int, ite
 	switch itemType {
 	case "message":
 		addedItem["content"] = []any{}
-	case "function_call", "custom_tool_call":
-		ensureCompletedToolItemID(addedItem, responseID, outputIndex)
-		addedItem = inProgressToolStreamItem(addedItem)
+	default:
+		if isSyntheticReplayOutputItemType(itemType) {
+			if isToolStreamItemType(itemType) {
+				ensureCompletedToolItemID(addedItem, responseID, outputIndex)
+			}
+			addedItem = inProgressOutputItemSnapshot(addedItem)
+		}
 	}
-	if itemType == "message" || itemType == "function_call" || itemType == "custom_tool_call" || strings.TrimSpace(item.Status()) != "" {
+	if itemType == "message" || isSyntheticReplayOutputItemType(itemType) || strings.TrimSpace(item.Status()) != "" {
 		addedItem["status"] = "in_progress"
 	}
 
@@ -308,6 +312,7 @@ func buildResponseReplayOutputItemEvents(responseID string, outputIndex int, ite
 			},
 		},
 	}
+	itemID := strings.TrimSpace(asStringValue(addedItem["id"]))
 
 	switch itemType {
 	case "message":
@@ -407,9 +412,10 @@ func buildResponseReplayOutputItemEvents(responseID string, outputIndex int, ite
 				},
 			)
 		}
-	case "function_call", "custom_tool_call":
-		itemID := strings.TrimSpace(asStringValue(addedItem["id"]))
+	case "function_call", "custom_tool_call", "mcp_call", "mcp_tool_call":
 		deltaEvent, doneEvent, valueKey := toolStreamEventShape(itemType)
+		progressEvent := toolStreamProgressEventType(itemType)
+		failedEvent := toolStreamFailureEventType(itemType)
 		doneItem := replayItemPayload(item)
 		ensureCompletedToolItemID(doneItem, responseID, outputIndex)
 		value := strings.TrimSpace(asStringValue(doneItem[valueKey]))
@@ -437,10 +443,45 @@ func buildResponseReplayOutputItemEvents(responseID string, outputIndex int, ite
 			eventType: doneEvent,
 			payload:   donePayload,
 		})
+		if progressEvent != "" {
+			events = append(events, responseReplayEvent{
+				eventType: progressEvent,
+				payload: map[string]any{
+					"type":         progressEvent,
+					"response_id":  responseID,
+					"item_id":      itemID,
+					"output_index": outputIndex,
+				},
+			})
+		}
+		if failedEvent != "" && isFailedToolStreamItem(doneItem) {
+			failedPayload := map[string]any{
+				"type":         failedEvent,
+				"response_id":  responseID,
+				"item_id":      itemID,
+				"output_index": outputIndex,
+			}
+			if errPayload, ok := doneItem["error"]; ok && errPayload != nil {
+				failedPayload["error"] = errPayload
+			}
+			events = append(events, responseReplayEvent{
+				eventType: failedEvent,
+				payload:   failedPayload,
+			})
+		}
+	}
+
+	if hostedEventTypes := hostedToolReplayEventTypes(itemType, replayItemPayload(item)); len(hostedEventTypes) > 0 {
+		for _, hostedEventType := range hostedEventTypes {
+			events = append(events, responseReplayEvent{
+				eventType: hostedEventType,
+				payload:   hostedToolReplayEventPayload(hostedEventType, itemID, outputIndex),
+			})
+		}
 	}
 
 	doneItemPayload := replayItemPayload(item)
-	if itemType == "function_call" || itemType == "custom_tool_call" {
+	if isToolStreamItemType(itemType) {
 		ensureCompletedToolItemID(doneItemPayload, responseID, outputIndex)
 	}
 

@@ -259,6 +259,490 @@ func TestResponsesGetStreamReplaysReasoningTextEvents(t *testing.T) {
 	require.Equal(t, "Need to inspect the files before replying.", asStringAny(done["text"]))
 }
 
+func TestResponsesGetStreamReplaysMCPCallEvents(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	mcpCall, err := domain.NewItem([]byte(`{"id":"mcp_test","type":"mcp_call","name":"lookup_orders","server_label":"shopify","arguments":"{\"status\":\"open\"}","output":"{\"count\":3}","status":"completed"}`))
+	require.NoError(t, err)
+
+	stored := domain.StoredResponse{
+		ID:                   "resp_mcp",
+		Model:                "test-model",
+		RequestJSON:          `{"model":"test-model","store":true,"input":"lookup open orders"}`,
+		ResponseJSON:         `{"id":"resp_mcp","object":"response","created_at":1712059200,"status":"completed","completed_at":1712059200,"error":null,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"model":"test-model","output":[{"id":"mcp_test","type":"mcp_call","name":"lookup_orders","server_label":"shopify","arguments":"{\"status\":\"open\"}","output":"{\"count\":3}","status":"completed"}],"parallel_tool_calls":true,"previous_response_id":null,"reasoning":{"effort":null,"summary":null},"store":true,"temperature":1.0,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[],"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{},"output_text":""}`,
+		NormalizedInputItems: []domain.Item{domain.NewInputTextMessage("user", "lookup open orders")},
+		EffectiveInputItems:  []domain.Item{domain.NewInputTextMessage("user", "lookup open orders")},
+		Output:               []domain.Item{mcpCall},
+		OutputText:           "",
+		Store:                true,
+		CreatedAt:            "2026-04-10T10:00:00Z",
+		CompletedAt:          "2026-04-10T10:00:01Z",
+	}
+	require.NoError(t, app.Store.SaveResponse(context.Background(), stored))
+
+	req, err := http.NewRequest(http.MethodGet, app.Server.URL+"/v1/responses/resp_mcp?stream=true", nil)
+	require.NoError(t, err)
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Contains(t, resp.Header.Get("Content-Type"), "text/event-stream")
+
+	events := readSSEEvents(t, resp.Body)
+	require.Contains(t, eventTypes(events), "response.mcp_call_arguments.delta")
+	require.Contains(t, eventTypes(events), "response.mcp_call_arguments.done")
+	require.Contains(t, eventTypes(events), "response.mcp_call.in_progress")
+	require.NotContains(t, eventTypes(events), "response.mcp_call.failed")
+	require.NotContains(t, eventTypes(events), "response.output_text.done")
+
+	added := findEvent(t, events, "response.output_item.added").Data
+	addedItem, ok := added["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "mcp_call", addedItem["type"])
+	require.Equal(t, "mcp_test", asStringAny(addedItem["id"]))
+	require.Equal(t, "", asStringAny(addedItem["arguments"]))
+	require.Equal(t, "in_progress", asStringAny(addedItem["status"]))
+	_, hasOutput := addedItem["output"]
+	require.False(t, hasOutput)
+
+	done := findEvent(t, events, "response.mcp_call_arguments.done").Data
+	doneItem, ok := done["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "mcp_test", asStringAny(done["item_id"]))
+	require.Equal(t, float64(0), done["output_index"])
+	require.Equal(t, `{"status":"open"}`, asStringAny(done["arguments"]))
+	require.Equal(t, "mcp_call", doneItem["type"])
+	require.Equal(t, `{"count":3}`, asStringAny(doneItem["output"]))
+
+	inProgress := findEvent(t, events, "response.mcp_call.in_progress").Data
+	require.Equal(t, "mcp_test", asStringAny(inProgress["item_id"]))
+	require.Equal(t, float64(0), inProgress["output_index"])
+
+	outputDone := findEvent(t, events, "response.output_item.done").Data
+	outputDoneItem, ok := outputDone["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "mcp_call", outputDoneItem["type"])
+	require.Equal(t, "mcp_test", asStringAny(outputDoneItem["id"]))
+	require.Equal(t, `{"count":3}`, asStringAny(outputDoneItem["output"]))
+
+	require.Less(t, eventIndex(t, events, "response.output_item.added"), eventIndex(t, events, "response.mcp_call_arguments.delta"))
+	require.Less(t, eventIndex(t, events, "response.mcp_call_arguments.delta"), eventIndex(t, events, "response.mcp_call_arguments.done"))
+	require.Less(t, eventIndex(t, events, "response.mcp_call_arguments.done"), eventIndex(t, events, "response.mcp_call.in_progress"))
+	require.Less(t, eventIndex(t, events, "response.mcp_call.in_progress"), eventIndex(t, events, "response.output_item.done"))
+}
+
+func TestResponsesGetStreamReplaysLegacyMCPToolCallEvents(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	mcpCall, err := domain.NewItem([]byte(`{"type":"mcp_tool_call","call_id":"mcp_call_legacy","name":"lookup_contacts","server_label":"crm","arguments":"{\"segment\":\"vip\"}","output":{"count":2},"status":"completed"}`))
+	require.NoError(t, err)
+
+	stored := domain.StoredResponse{
+		ID:                   "resp_mcp_legacy",
+		Model:                "test-model",
+		RequestJSON:          `{"model":"test-model","store":true,"input":"lookup vip contacts"}`,
+		ResponseJSON:         `{"id":"resp_mcp_legacy","object":"response","created_at":1712059200,"status":"completed","completed_at":1712059200,"error":null,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"model":"test-model","output":[{"type":"mcp_tool_call","call_id":"mcp_call_legacy","name":"lookup_contacts","server_label":"crm","arguments":"{\"segment\":\"vip\"}","output":{"count":2},"status":"completed"}],"parallel_tool_calls":true,"previous_response_id":null,"reasoning":{"effort":null,"summary":null},"store":true,"temperature":1.0,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[],"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{},"output_text":""}`,
+		NormalizedInputItems: []domain.Item{domain.NewInputTextMessage("user", "lookup vip contacts")},
+		EffectiveInputItems:  []domain.Item{domain.NewInputTextMessage("user", "lookup vip contacts")},
+		Output:               []domain.Item{mcpCall},
+		OutputText:           "",
+		Store:                true,
+		CreatedAt:            "2026-04-10T10:00:00Z",
+		CompletedAt:          "2026-04-10T10:00:01Z",
+	}
+	require.NoError(t, app.Store.SaveResponse(context.Background(), stored))
+
+	req, err := http.NewRequest(http.MethodGet, app.Server.URL+"/v1/responses/resp_mcp_legacy?stream=true", nil)
+	require.NoError(t, err)
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	events := readSSEEvents(t, resp.Body)
+	require.Contains(t, eventTypes(events), "response.mcp_call_arguments.delta")
+	require.Contains(t, eventTypes(events), "response.mcp_call_arguments.done")
+	require.Contains(t, eventTypes(events), "response.mcp_call.in_progress")
+
+	added := findEvent(t, events, "response.output_item.added").Data
+	addedItem, ok := added["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "mcp_tool_call", addedItem["type"])
+	require.Equal(t, "mcp_call_legacy", asStringAny(addedItem["id"]))
+	require.Equal(t, "", asStringAny(addedItem["arguments"]))
+
+	done := findEvent(t, events, "response.mcp_call_arguments.done").Data
+	doneItem, ok := done["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "mcp_call_legacy", asStringAny(done["item_id"]))
+	require.Equal(t, "mcp_tool_call", doneItem["type"])
+	require.Equal(t, "mcp_call_legacy", asStringAny(doneItem["id"]))
+
+	outputDone := findEvent(t, events, "response.output_item.done").Data
+	outputDoneItem, ok := outputDone["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "mcp_tool_call", outputDoneItem["type"])
+	require.Equal(t, "mcp_call_legacy", asStringAny(outputDoneItem["id"]))
+}
+
+func TestResponsesGetStreamReplaysFailedMCPCallEvents(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	mcpCall, err := domain.NewItem([]byte(`{"id":"mcp_failed","type":"mcp_call","name":"lookup_orders","server_label":"shopify","arguments":"{\"status\":\"open\"}","error":{"type":"tool_execution_error","message":"remote MCP unavailable"},"status":"failed"}`))
+	require.NoError(t, err)
+
+	stored := domain.StoredResponse{
+		ID:                   "resp_mcp_failed",
+		Model:                "test-model",
+		RequestJSON:          `{"model":"test-model","store":true,"input":"lookup open orders"}`,
+		ResponseJSON:         `{"id":"resp_mcp_failed","object":"response","created_at":1712059200,"status":"completed","completed_at":1712059200,"error":null,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"model":"test-model","output":[{"id":"mcp_failed","type":"mcp_call","name":"lookup_orders","server_label":"shopify","arguments":"{\"status\":\"open\"}","error":{"type":"tool_execution_error","message":"remote MCP unavailable"},"status":"failed"}],"parallel_tool_calls":true,"previous_response_id":null,"reasoning":{"effort":null,"summary":null},"store":true,"temperature":1.0,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[],"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{},"output_text":""}`,
+		NormalizedInputItems: []domain.Item{domain.NewInputTextMessage("user", "lookup open orders")},
+		EffectiveInputItems:  []domain.Item{domain.NewInputTextMessage("user", "lookup open orders")},
+		Output:               []domain.Item{mcpCall},
+		OutputText:           "",
+		Store:                true,
+		CreatedAt:            "2026-04-10T10:00:00Z",
+		CompletedAt:          "2026-04-10T10:00:01Z",
+	}
+	require.NoError(t, app.Store.SaveResponse(context.Background(), stored))
+
+	req, err := http.NewRequest(http.MethodGet, app.Server.URL+"/v1/responses/resp_mcp_failed?stream=true", nil)
+	require.NoError(t, err)
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	events := readSSEEvents(t, resp.Body)
+	require.Contains(t, eventTypes(events), "response.mcp_call_arguments.done")
+	require.Contains(t, eventTypes(events), "response.mcp_call.in_progress")
+	require.Contains(t, eventTypes(events), "response.mcp_call.failed")
+
+	added := findEvent(t, events, "response.output_item.added").Data
+	addedItem, ok := added["item"].(map[string]any)
+	require.True(t, ok)
+	_, hasError := addedItem["error"]
+	require.False(t, hasError)
+
+	failed := findEvent(t, events, "response.mcp_call.failed").Data
+	require.Equal(t, "mcp_failed", asStringAny(failed["item_id"]))
+	require.Equal(t, float64(0), failed["output_index"])
+	errorPayload, ok := failed["error"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "tool_execution_error", asStringAny(errorPayload["type"]))
+	require.Equal(t, "remote MCP unavailable", asStringAny(errorPayload["message"]))
+
+	outputDone := findEvent(t, events, "response.output_item.done").Data
+	outputDoneItem, ok := outputDone["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "failed", asStringAny(outputDoneItem["status"]))
+	doneError, ok := outputDoneItem["error"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "tool_execution_error", asStringAny(doneError["type"]))
+
+	require.Less(t, eventIndex(t, events, "response.mcp_call_arguments.done"), eventIndex(t, events, "response.mcp_call.in_progress"))
+	require.Less(t, eventIndex(t, events, "response.mcp_call.in_progress"), eventIndex(t, events, "response.mcp_call.failed"))
+	require.Less(t, eventIndex(t, events, "response.mcp_call.failed"), eventIndex(t, events, "response.output_item.done"))
+}
+
+func TestResponsesGetStreamReplaysWebSearchCallWithoutLeakingFinalActionInAdded(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	webSearchCall, err := domain.NewItem([]byte(`{"id":"ws_test","type":"web_search_call","status":"completed","action":{"type":"search","query":"latest weather in Paris","sources":[{"type":"url","url":"https://example.com/weather"}]}}`))
+	require.NoError(t, err)
+
+	stored := domain.StoredResponse{
+		ID:                   "resp_web_search",
+		Model:                "test-model",
+		RequestJSON:          `{"model":"test-model","store":true,"input":"latest weather in Paris"}`,
+		ResponseJSON:         `{"id":"resp_web_search","object":"response","created_at":1712059200,"status":"completed","completed_at":1712059200,"error":null,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"model":"test-model","output":[{"id":"ws_test","type":"web_search_call","status":"completed","action":{"type":"search","query":"latest weather in Paris","sources":[{"type":"url","url":"https://example.com/weather"}]}}],"parallel_tool_calls":true,"previous_response_id":null,"reasoning":{"effort":null,"summary":null},"store":true,"temperature":1.0,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[],"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{},"output_text":""}`,
+		NormalizedInputItems: []domain.Item{domain.NewInputTextMessage("user", "latest weather in Paris")},
+		EffectiveInputItems:  []domain.Item{domain.NewInputTextMessage("user", "latest weather in Paris")},
+		Output:               []domain.Item{webSearchCall},
+		OutputText:           "",
+		Store:                true,
+		CreatedAt:            "2026-04-10T10:00:00Z",
+		CompletedAt:          "2026-04-10T10:00:01Z",
+	}
+	require.NoError(t, app.Store.SaveResponse(context.Background(), stored))
+
+	req, err := http.NewRequest(http.MethodGet, app.Server.URL+"/v1/responses/resp_web_search?stream=true", nil)
+	require.NoError(t, err)
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	events := readSSEEvents(t, resp.Body)
+	require.Contains(t, eventTypes(events), "response.output_item.added")
+	require.Contains(t, eventTypes(events), "response.web_search_call.in_progress")
+	require.Contains(t, eventTypes(events), "response.web_search_call.searching")
+	require.Contains(t, eventTypes(events), "response.web_search_call.completed")
+	require.Contains(t, eventTypes(events), "response.output_item.done")
+	require.NotContains(t, eventTypes(events), "response.function_call_arguments.done")
+	require.NotContains(t, eventTypes(events), "response.mcp_call_arguments.done")
+	require.Less(t, eventIndex(t, events, "response.output_item.added"), eventIndex(t, events, "response.output_item.done"))
+	require.Less(t, eventIndex(t, events, "response.output_item.added"), eventIndex(t, events, "response.web_search_call.in_progress"))
+	require.Less(t, eventIndex(t, events, "response.web_search_call.in_progress"), eventIndex(t, events, "response.web_search_call.searching"))
+	require.Less(t, eventIndex(t, events, "response.web_search_call.searching"), eventIndex(t, events, "response.web_search_call.completed"))
+	require.Less(t, eventIndex(t, events, "response.web_search_call.completed"), eventIndex(t, events, "response.output_item.done"))
+
+	added := findEvent(t, events, "response.output_item.added").Data
+	addedItem, ok := added["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "web_search_call", addedItem["type"])
+	require.Equal(t, "ws_test", asStringAny(addedItem["id"]))
+	require.Equal(t, "in_progress", asStringAny(addedItem["status"]))
+	_, hasAction := addedItem["action"]
+	require.False(t, hasAction)
+
+	searching := findEvent(t, events, "response.web_search_call.searching").Data
+	require.Equal(t, "ws_test", asStringAny(searching["item_id"]))
+
+	completed := findEvent(t, events, "response.web_search_call.completed").Data
+	require.Equal(t, "ws_test", asStringAny(completed["item_id"]))
+
+	outputDone := findEvent(t, events, "response.output_item.done").Data
+	outputDoneItem, ok := outputDone["item"].(map[string]any)
+	require.True(t, ok)
+	action, ok := outputDoneItem["action"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "search", asStringAny(action["type"]))
+	require.Equal(t, "latest weather in Paris", asStringAny(action["query"]))
+}
+
+func TestResponsesGetStreamReplaysWebSearchOpenPageCallWithoutLeakingFinalActionInAdded(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	webSearchCall, err := domain.NewItem([]byte(`{"id":"ws_open_page_test","type":"web_search_call","status":"completed","action":{"type":"open_page","url":"https://developers.openai.com/api/docs/guides/tools-web-search"}}`))
+	require.NoError(t, err)
+
+	stored := domain.StoredResponse{
+		ID:                   "resp_web_search_open_page",
+		Model:                "test-model",
+		RequestJSON:          `{"model":"test-model","store":true,"input":"open the OpenAI Web search guide"}`,
+		ResponseJSON:         `{"id":"resp_web_search_open_page","object":"response","created_at":1712059200,"status":"completed","completed_at":1712059200,"error":null,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"model":"test-model","output":[{"id":"ws_open_page_test","type":"web_search_call","status":"completed","action":{"type":"open_page","url":"https://developers.openai.com/api/docs/guides/tools-web-search"}}],"parallel_tool_calls":true,"previous_response_id":null,"reasoning":{"effort":null,"summary":null},"store":true,"temperature":1.0,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[],"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{},"output_text":""}`,
+		NormalizedInputItems: []domain.Item{domain.NewInputTextMessage("user", "open the OpenAI Web search guide")},
+		EffectiveInputItems:  []domain.Item{domain.NewInputTextMessage("user", "open the OpenAI Web search guide")},
+		Output:               []domain.Item{webSearchCall},
+		OutputText:           "",
+		Store:                true,
+		CreatedAt:            "2026-04-11T12:40:00Z",
+		CompletedAt:          "2026-04-11T12:40:01Z",
+	}
+	require.NoError(t, app.Store.SaveResponse(context.Background(), stored))
+
+	req, err := http.NewRequest(http.MethodGet, app.Server.URL+"/v1/responses/resp_web_search_open_page?stream=true", nil)
+	require.NoError(t, err)
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	events := readSSEEvents(t, resp.Body)
+	require.Contains(t, eventTypes(events), "response.web_search_call.in_progress")
+	require.Contains(t, eventTypes(events), "response.web_search_call.searching")
+	require.Contains(t, eventTypes(events), "response.web_search_call.completed")
+
+	added := findEvent(t, events, "response.output_item.added").Data
+	addedItem, ok := added["item"].(map[string]any)
+	require.True(t, ok)
+	_, hasAction := addedItem["action"]
+	require.False(t, hasAction)
+
+	outputDone := findEvent(t, events, "response.output_item.done").Data
+	outputDoneItem, ok := outputDone["item"].(map[string]any)
+	require.True(t, ok)
+	action, ok := outputDoneItem["action"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "open_page", asStringAny(action["type"]))
+	require.Equal(t, "https://developers.openai.com/api/docs/guides/tools-web-search", asStringAny(action["url"]))
+}
+
+func TestResponsesGetStreamReplaysWebSearchFindInPageCallWithoutLeakingFinalActionInAdded(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	webSearchCall, err := domain.NewItem([]byte(`{"id":"ws_find_in_page_test","type":"web_search_call","status":"completed","action":{"type":"find_in_page","url":"https://developers.openai.com/api/docs/guides/tools-web-search","pattern":"Supported in reasoning models"}}`))
+	require.NoError(t, err)
+
+	stored := domain.StoredResponse{
+		ID:                   "resp_web_search_find_in_page",
+		Model:                "test-model",
+		RequestJSON:          `{"model":"test-model","store":true,"input":"find the phrase Supported in reasoning models in the OpenAI Web search guide"}`,
+		ResponseJSON:         `{"id":"resp_web_search_find_in_page","object":"response","created_at":1712059200,"status":"completed","completed_at":1712059200,"error":null,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"model":"test-model","output":[{"id":"ws_find_in_page_test","type":"web_search_call","status":"completed","action":{"type":"find_in_page","url":"https://developers.openai.com/api/docs/guides/tools-web-search","pattern":"Supported in reasoning models"}}],"parallel_tool_calls":true,"previous_response_id":null,"reasoning":{"effort":null,"summary":null},"store":true,"temperature":1.0,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[],"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{},"output_text":""}`,
+		NormalizedInputItems: []domain.Item{domain.NewInputTextMessage("user", "find the phrase Supported in reasoning models in the OpenAI Web search guide")},
+		EffectiveInputItems:  []domain.Item{domain.NewInputTextMessage("user", "find the phrase Supported in reasoning models in the OpenAI Web search guide")},
+		Output:               []domain.Item{webSearchCall},
+		OutputText:           "",
+		Store:                true,
+		CreatedAt:            "2026-04-11T12:41:00Z",
+		CompletedAt:          "2026-04-11T12:41:01Z",
+	}
+	require.NoError(t, app.Store.SaveResponse(context.Background(), stored))
+
+	req, err := http.NewRequest(http.MethodGet, app.Server.URL+"/v1/responses/resp_web_search_find_in_page?stream=true", nil)
+	require.NoError(t, err)
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	events := readSSEEvents(t, resp.Body)
+	require.Contains(t, eventTypes(events), "response.web_search_call.in_progress")
+	require.Contains(t, eventTypes(events), "response.web_search_call.searching")
+	require.Contains(t, eventTypes(events), "response.web_search_call.completed")
+
+	added := findEvent(t, events, "response.output_item.added").Data
+	addedItem, ok := added["item"].(map[string]any)
+	require.True(t, ok)
+	_, hasAction := addedItem["action"]
+	require.False(t, hasAction)
+
+	outputDone := findEvent(t, events, "response.output_item.done").Data
+	outputDoneItem, ok := outputDone["item"].(map[string]any)
+	require.True(t, ok)
+	action, ok := outputDoneItem["action"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "find_in_page", asStringAny(action["type"]))
+	require.Equal(t, "https://developers.openai.com/api/docs/guides/tools-web-search", asStringAny(action["url"]))
+	require.Equal(t, "Supported in reasoning models", asStringAny(action["pattern"]))
+}
+
+func TestResponsesGetStreamReplaysFileSearchCallWithoutLeakingResultsInAdded(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	fileSearchCall, err := domain.NewItem([]byte(`{"id":"fs_test","type":"file_search_call","status":"completed","results":[{"file_id":"file_123","filename":"notes.txt","score":0.91}]}`))
+	require.NoError(t, err)
+
+	stored := domain.StoredResponse{
+		ID:                   "resp_file_search",
+		Model:                "test-model",
+		RequestJSON:          `{"model":"test-model","store":true,"input":"find notes about onboarding"}`,
+		ResponseJSON:         `{"id":"resp_file_search","object":"response","created_at":1712059200,"status":"completed","completed_at":1712059200,"error":null,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"model":"test-model","output":[{"id":"fs_test","type":"file_search_call","status":"completed","results":[{"file_id":"file_123","filename":"notes.txt","score":0.91}]}],"parallel_tool_calls":true,"previous_response_id":null,"reasoning":{"effort":null,"summary":null},"store":true,"temperature":1.0,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[],"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{},"output_text":""}`,
+		NormalizedInputItems: []domain.Item{domain.NewInputTextMessage("user", "find notes about onboarding")},
+		EffectiveInputItems:  []domain.Item{domain.NewInputTextMessage("user", "find notes about onboarding")},
+		Output:               []domain.Item{fileSearchCall},
+		OutputText:           "",
+		Store:                true,
+		CreatedAt:            "2026-04-10T10:00:00Z",
+		CompletedAt:          "2026-04-10T10:00:01Z",
+	}
+	require.NoError(t, app.Store.SaveResponse(context.Background(), stored))
+
+	req, err := http.NewRequest(http.MethodGet, app.Server.URL+"/v1/responses/resp_file_search?stream=true", nil)
+	require.NoError(t, err)
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	events := readSSEEvents(t, resp.Body)
+
+	added := findEvent(t, events, "response.output_item.added").Data
+	addedItem, ok := added["item"].(map[string]any)
+	require.True(t, ok)
+	_, hasResults := addedItem["results"]
+	require.False(t, hasResults)
+
+	outputDone := findEvent(t, events, "response.output_item.done").Data
+	outputDoneItem, ok := outputDone["item"].(map[string]any)
+	require.True(t, ok)
+	results, ok := outputDoneItem["results"].([]any)
+	require.True(t, ok)
+	require.Len(t, results, 1)
+}
+
+func TestResponsesGetStreamReplaysFileSearchCallWithoutLeakingSearchResultsInAdded(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	fileSearchCall, err := domain.NewItem([]byte(`{"id":"fs_search_results_test","type":"file_search_call","status":"completed","search_results":[{"file_id":"file_456","filename":"handbook.txt","score":0.88}]}`))
+	require.NoError(t, err)
+
+	stored := domain.StoredResponse{
+		ID:                   "resp_file_search_search_results",
+		Model:                "test-model",
+		RequestJSON:          `{"model":"test-model","store":true,"input":"find onboarding handbook"}`,
+		ResponseJSON:         `{"id":"resp_file_search_search_results","object":"response","created_at":1712059200,"status":"completed","completed_at":1712059200,"error":null,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"model":"test-model","output":[{"id":"fs_search_results_test","type":"file_search_call","status":"completed","search_results":[{"file_id":"file_456","filename":"handbook.txt","score":0.88}]}],"parallel_tool_calls":true,"previous_response_id":null,"reasoning":{"effort":null,"summary":null},"store":true,"temperature":1.0,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[],"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{},"output_text":""}`,
+		NormalizedInputItems: []domain.Item{domain.NewInputTextMessage("user", "find onboarding handbook")},
+		EffectiveInputItems:  []domain.Item{domain.NewInputTextMessage("user", "find onboarding handbook")},
+		Output:               []domain.Item{fileSearchCall},
+		OutputText:           "",
+		Store:                true,
+		CreatedAt:            "2026-04-10T10:00:00Z",
+		CompletedAt:          "2026-04-10T10:00:01Z",
+	}
+	require.NoError(t, app.Store.SaveResponse(context.Background(), stored))
+
+	req, err := http.NewRequest(http.MethodGet, app.Server.URL+"/v1/responses/resp_file_search_search_results?stream=true", nil)
+	require.NoError(t, err)
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	events := readSSEEvents(t, resp.Body)
+
+	added := findEvent(t, events, "response.output_item.added").Data
+	addedItem, ok := added["item"].(map[string]any)
+	require.True(t, ok)
+	_, hasSearchResults := addedItem["search_results"]
+	require.False(t, hasSearchResults)
+
+	outputDone := findEvent(t, events, "response.output_item.done").Data
+	outputDoneItem, ok := outputDone["item"].(map[string]any)
+	require.True(t, ok)
+	searchResults, ok := outputDoneItem["search_results"].([]any)
+	require.True(t, ok)
+	require.Len(t, searchResults, 1)
+}
+
+func TestResponsesGetStreamReplaysCodeInterpreterCallWithoutLeakingOutputsInAdded(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	codeInterpreterCall, err := domain.NewItem([]byte(`{"id":"ci_test","type":"code_interpreter_call","status":"completed","container_id":"cntr_123","outputs":[{"type":"logs","logs":"done"}]}`))
+	require.NoError(t, err)
+
+	stored := domain.StoredResponse{
+		ID:                   "resp_code_interpreter",
+		Model:                "test-model",
+		RequestJSON:          `{"model":"test-model","store":true,"input":"run some Python"}`,
+		ResponseJSON:         `{"id":"resp_code_interpreter","object":"response","created_at":1712059200,"status":"completed","completed_at":1712059200,"error":null,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"model":"test-model","output":[{"id":"ci_test","type":"code_interpreter_call","status":"completed","container_id":"cntr_123","outputs":[{"type":"logs","logs":"done"}]}],"parallel_tool_calls":true,"previous_response_id":null,"reasoning":{"effort":null,"summary":null},"store":true,"temperature":1.0,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[],"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{},"output_text":""}`,
+		NormalizedInputItems: []domain.Item{domain.NewInputTextMessage("user", "run some Python")},
+		EffectiveInputItems:  []domain.Item{domain.NewInputTextMessage("user", "run some Python")},
+		Output:               []domain.Item{codeInterpreterCall},
+		OutputText:           "",
+		Store:                true,
+		CreatedAt:            "2026-04-10T10:00:00Z",
+		CompletedAt:          "2026-04-10T10:00:01Z",
+	}
+	require.NoError(t, app.Store.SaveResponse(context.Background(), stored))
+
+	req, err := http.NewRequest(http.MethodGet, app.Server.URL+"/v1/responses/resp_code_interpreter?stream=true", nil)
+	require.NoError(t, err)
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	events := readSSEEvents(t, resp.Body)
+
+	added := findEvent(t, events, "response.output_item.added").Data
+	addedItem, ok := added["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "cntr_123", asStringAny(addedItem["container_id"]))
+	_, hasOutputs := addedItem["outputs"]
+	require.False(t, hasOutputs)
+
+	outputDone := findEvent(t, events, "response.output_item.done").Data
+	outputDoneItem, ok := outputDone["item"].(map[string]any)
+	require.True(t, ok)
+	outputs, ok := outputDoneItem["outputs"].([]any)
+	require.True(t, ok)
+	require.Len(t, outputs, 1)
+}
+
 func TestResponsesGetStreamSupportsStartingAfter(t *testing.T) {
 	app := testutil.NewTestApp(t)
 
@@ -3686,6 +4170,18 @@ func findEvents(events []sseEvent, eventType string) []sseEvent {
 		}
 	}
 	return out
+}
+
+func eventIndex(t *testing.T, events []sseEvent, eventType string) int {
+	t.Helper()
+
+	for idx, event := range events {
+		if event.Event == eventType {
+			return idx
+		}
+	}
+	t.Fatalf("event %q not found", eventType)
+	return -1
 }
 
 func conversationItemTexts(items conversationItemsListResponse) []string {

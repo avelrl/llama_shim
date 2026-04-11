@@ -427,9 +427,23 @@ paths:
         - `stream=true` replays the stored response as SSE instead of returning
           a JSON object
         - stored `reasoning` items with `reasoning_text` content parts replay
-          specialized `response.reasoning_text.*` events; hosted/native tool
-          item families outside `function_call` and `custom_tool_call` may
-          still fall back to generic `response.output_item.*` replay
+          specialized `response.reasoning_text.*` events
+        - stored `mcp_call` items and legacy stored `mcp_tool_call` items
+          replay `response.mcp_call_arguments.*` plus terminal
+          `response.mcp_call.in_progress`; failed stored MCP items also replay
+          `response.mcp_call.failed`
+        - stored `web_search_call` items replay
+          `response.web_search_call.in_progress`,
+          `response.web_search_call.searching`, and
+          `response.web_search_call.completed`; synthetic
+          `response.output_item.added` still omits the final `action` until
+          `response.output_item.done`
+        - stored `file_search_call` and `code_interpreter_call` items
+          currently replay through generic `response.output_item.*`;
+          synthetic `response.output_item.added` omits final `results` or
+          `search_results`, and `outputs` until `response.output_item.done`
+        - other hosted/native tool item families may still fall back to
+          generic `response.output_item.*` replay
       parameters:
         - $ref: "#/components/parameters/ResponseID"
         - $ref: "#/components/parameters/ResponseInclude"

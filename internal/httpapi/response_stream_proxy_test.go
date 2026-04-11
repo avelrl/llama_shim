@@ -147,3 +147,398 @@ func TestShouldIgnoreStreamProxyError(t *testing.T) {
 	require.False(t, shouldIgnoreStreamProxyError(io.EOF))
 	require.False(t, shouldIgnoreStreamProxyError(nil))
 }
+
+func TestNormalizeCompletedToolCallEventSynthesizesMCPReplayEvents(t *testing.T) {
+	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, nil)
+
+	before, eventType, payload := proxy.normalizeCompletedToolCallEvent("response.completed", map[string]any{
+		"type": "response.completed",
+		"response": map[string]any{
+			"id":     "resp_proxy_mcp",
+			"object": "response",
+			"model":  "test-model",
+			"output": []any{
+				map[string]any{
+					"type":         "mcp_call",
+					"name":         "lookup_orders",
+					"server_label": "shopify",
+					"arguments":    `{"status":"open"}`,
+					"output":       `{"count":3}`,
+					"status":       "completed",
+				},
+			},
+			"output_text": "",
+		},
+	})
+
+	require.Equal(t, "response.completed", eventType)
+	require.Len(t, before, 6)
+	require.Equal(t, "response.created", before[0].eventType)
+	require.Equal(t, "response.output_item.added", before[1].eventType)
+	require.Equal(t, "response.mcp_call_arguments.delta", before[2].eventType)
+	require.Equal(t, "response.mcp_call_arguments.done", before[3].eventType)
+	require.Equal(t, "response.mcp_call.in_progress", before[4].eventType)
+	require.Equal(t, "response.output_item.done", before[5].eventType)
+
+	addedItem, ok := before[1].payload["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "mcp_call", addedItem["type"])
+	require.Equal(t, "", asString(addedItem["arguments"]))
+	_, hasOutput := addedItem["output"]
+	require.False(t, hasOutput)
+
+	doneItem, ok := before[3].payload["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, `{"count":3}`, asString(doneItem["output"]))
+	require.Equal(t, "item_proxy_mcp_0", asString(doneItem["id"]))
+
+	inProgress := before[4].payload
+	require.Equal(t, "item_proxy_mcp_0", asString(inProgress["item_id"]))
+	require.Equal(t, "resp_proxy_mcp", asString(inProgress["response_id"]))
+
+	completedResponse, ok := payload["response"].(map[string]any)
+	require.True(t, ok)
+	output, ok := completedResponse["output"].([]any)
+	require.True(t, ok)
+	require.Len(t, output, 1)
+	finalItem, ok := output[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "item_proxy_mcp_0", asString(finalItem["id"]))
+}
+
+func TestNormalizeCompletedToolCallEventSynthesizesFailedMCPReplayEvents(t *testing.T) {
+	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, nil)
+
+	before, _, _ := proxy.normalizeCompletedToolCallEvent("response.completed", map[string]any{
+		"type": "response.completed",
+		"response": map[string]any{
+			"id":     "resp_proxy_mcp_failed",
+			"object": "response",
+			"model":  "test-model",
+			"output": []any{
+				map[string]any{
+					"id":           "mcp_failed",
+					"type":         "mcp_call",
+					"name":         "lookup_orders",
+					"server_label": "shopify",
+					"arguments":    `{"status":"open"}`,
+					"error": map[string]any{
+						"type":    "tool_execution_error",
+						"message": "remote MCP unavailable",
+					},
+					"status": "failed",
+				},
+			},
+			"output_text": "",
+		},
+	})
+
+	require.Len(t, before, 7)
+	require.Equal(t, "response.mcp_call.failed", before[5].eventType)
+	require.Equal(t, "response.output_item.done", before[6].eventType)
+
+	failed := before[5].payload
+	require.Equal(t, "mcp_failed", asString(failed["item_id"]))
+	errPayload, ok := failed["error"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "tool_execution_error", asString(errPayload["type"]))
+	require.Equal(t, "remote MCP unavailable", asString(errPayload["message"]))
+}
+
+func TestNormalizeCompletedToolCallEventSynthesizesHostedAddedDoneReplay(t *testing.T) {
+	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, nil)
+
+	before, eventType, payload := proxy.normalizeCompletedToolCallEvent("response.completed", map[string]any{
+		"type": "response.completed",
+		"response": map[string]any{
+			"id":     "resp_proxy_web_search",
+			"object": "response",
+			"model":  "test-model",
+			"output": []any{
+				map[string]any{
+					"id":     "ws_test",
+					"type":   "web_search_call",
+					"status": "completed",
+					"action": map[string]any{
+						"type":  "search",
+						"query": "latest weather in Paris",
+					},
+				},
+			},
+			"output_text": "",
+		},
+	})
+
+	require.Equal(t, "response.completed", eventType)
+	require.Len(t, before, 6)
+	require.Equal(t, "response.created", before[0].eventType)
+	require.Equal(t, "response.output_item.added", before[1].eventType)
+	require.Equal(t, "response.web_search_call.in_progress", before[2].eventType)
+	require.Equal(t, "response.web_search_call.searching", before[3].eventType)
+	require.Equal(t, "response.web_search_call.completed", before[4].eventType)
+	require.Equal(t, "response.output_item.done", before[5].eventType)
+
+	addedItem, ok := before[1].payload["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "web_search_call", addedItem["type"])
+	require.Equal(t, "in_progress", asString(addedItem["status"]))
+	_, hasAction := addedItem["action"]
+	require.False(t, hasAction)
+
+	inProgress := before[2].payload
+	require.Equal(t, "ws_test", asString(inProgress["item_id"]))
+
+	searching := before[3].payload
+	require.Equal(t, "ws_test", asString(searching["item_id"]))
+
+	completed := before[4].payload
+	require.Equal(t, "ws_test", asString(completed["item_id"]))
+
+	doneItem, ok := before[5].payload["item"].(map[string]any)
+	require.True(t, ok)
+	action, ok := doneItem["action"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "search", asString(action["type"]))
+
+	completedResponse, ok := payload["response"].(map[string]any)
+	require.True(t, ok)
+	output, ok := completedResponse["output"].([]any)
+	require.True(t, ok)
+	require.Len(t, output, 1)
+	finalItem, ok := output[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "ws_test", asString(finalItem["id"]))
+}
+
+func TestNormalizeCompletedToolCallEventSynthesizesHostedOpenPageReplay(t *testing.T) {
+	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, nil)
+
+	before, eventType, payload := proxy.normalizeCompletedToolCallEvent("response.completed", map[string]any{
+		"type": "response.completed",
+		"response": map[string]any{
+			"id":     "resp_proxy_web_search_open_page",
+			"object": "response",
+			"model":  "test-model",
+			"output": []any{
+				map[string]any{
+					"id":     "ws_open_page_test",
+					"type":   "web_search_call",
+					"status": "completed",
+					"action": map[string]any{
+						"type": "open_page",
+						"url":  "https://example.com/story",
+					},
+				},
+			},
+			"output_text": "",
+		},
+	})
+
+	require.Equal(t, "response.completed", eventType)
+	require.Len(t, before, 6)
+	require.Equal(t, "response.created", before[0].eventType)
+	require.Equal(t, "response.output_item.added", before[1].eventType)
+	require.Equal(t, "response.web_search_call.in_progress", before[2].eventType)
+	require.Equal(t, "response.web_search_call.searching", before[3].eventType)
+	require.Equal(t, "response.web_search_call.completed", before[4].eventType)
+	require.Equal(t, "response.output_item.done", before[5].eventType)
+
+	addedItem, ok := before[1].payload["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "web_search_call", addedItem["type"])
+	require.Equal(t, "in_progress", asString(addedItem["status"]))
+	_, hasAction := addedItem["action"]
+	require.False(t, hasAction)
+
+	doneItem, ok := before[5].payload["item"].(map[string]any)
+	require.True(t, ok)
+	action, ok := doneItem["action"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "open_page", asString(action["type"]))
+	require.Equal(t, "https://example.com/story", asString(action["url"]))
+
+	completedResponse, ok := payload["response"].(map[string]any)
+	require.True(t, ok)
+	output, ok := completedResponse["output"].([]any)
+	require.True(t, ok)
+	require.Len(t, output, 1)
+	finalItem, ok := output[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "ws_open_page_test", asString(finalItem["id"]))
+}
+
+func TestNormalizeCompletedToolCallEventSynthesizesHostedFileSearchAddedDoneReplay(t *testing.T) {
+	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, nil)
+
+	before, eventType, payload := proxy.normalizeCompletedToolCallEvent("response.completed", map[string]any{
+		"type": "response.completed",
+		"response": map[string]any{
+			"id":     "resp_proxy_file_search",
+			"object": "response",
+			"model":  "test-model",
+			"output": []any{
+				map[string]any{
+					"id":     "fs_test",
+					"type":   "file_search_call",
+					"status": "completed",
+					"search_results": []any{
+						map[string]any{
+							"file_id":  "file_123",
+							"filename": "notes.txt",
+							"score":    0.91,
+						},
+					},
+				},
+			},
+			"output_text": "",
+		},
+	})
+
+	require.Equal(t, "response.completed", eventType)
+	require.Len(t, before, 3)
+	require.Equal(t, "response.created", before[0].eventType)
+	require.Equal(t, "response.output_item.added", before[1].eventType)
+	require.Equal(t, "response.output_item.done", before[2].eventType)
+
+	addedItem, ok := before[1].payload["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "file_search_call", addedItem["type"])
+	require.Equal(t, "in_progress", asString(addedItem["status"]))
+	_, hasResults := addedItem["results"]
+	require.False(t, hasResults)
+	_, hasSearchResults := addedItem["search_results"]
+	require.False(t, hasSearchResults)
+
+	doneItem, ok := before[2].payload["item"].(map[string]any)
+	require.True(t, ok)
+	searchResults, ok := doneItem["search_results"].([]any)
+	require.True(t, ok)
+	require.Len(t, searchResults, 1)
+
+	completedResponse, ok := payload["response"].(map[string]any)
+	require.True(t, ok)
+	output, ok := completedResponse["output"].([]any)
+	require.True(t, ok)
+	require.Len(t, output, 1)
+	finalItem, ok := output[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "fs_test", asString(finalItem["id"]))
+}
+
+func TestNormalizeCompletedToolCallEventSynthesizesHostedFindInPageReplay(t *testing.T) {
+	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, nil)
+
+	before, eventType, payload := proxy.normalizeCompletedToolCallEvent("response.completed", map[string]any{
+		"type": "response.completed",
+		"response": map[string]any{
+			"id":     "resp_proxy_web_search_find_in_page",
+			"object": "response",
+			"model":  "test-model",
+			"output": []any{
+				map[string]any{
+					"id":     "ws_find_in_page_test",
+					"type":   "web_search_call",
+					"status": "completed",
+					"action": map[string]any{
+						"type":    "find_in_page",
+						"url":     "https://example.com/story",
+						"pattern": "Supported in reasoning models",
+					},
+				},
+			},
+			"output_text": "",
+		},
+	})
+
+	require.Equal(t, "response.completed", eventType)
+	require.Len(t, before, 6)
+	require.Equal(t, "response.created", before[0].eventType)
+	require.Equal(t, "response.output_item.added", before[1].eventType)
+	require.Equal(t, "response.web_search_call.in_progress", before[2].eventType)
+	require.Equal(t, "response.web_search_call.searching", before[3].eventType)
+	require.Equal(t, "response.web_search_call.completed", before[4].eventType)
+	require.Equal(t, "response.output_item.done", before[5].eventType)
+
+	addedItem, ok := before[1].payload["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "web_search_call", addedItem["type"])
+	require.Equal(t, "in_progress", asString(addedItem["status"]))
+	_, hasAction := addedItem["action"]
+	require.False(t, hasAction)
+
+	doneItem, ok := before[5].payload["item"].(map[string]any)
+	require.True(t, ok)
+	action, ok := doneItem["action"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "find_in_page", asString(action["type"]))
+	require.Equal(t, "https://example.com/story", asString(action["url"]))
+	require.Equal(t, "Supported in reasoning models", asString(action["pattern"]))
+
+	completedResponse, ok := payload["response"].(map[string]any)
+	require.True(t, ok)
+	output, ok := completedResponse["output"].([]any)
+	require.True(t, ok)
+	require.Len(t, output, 1)
+	finalItem, ok := output[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "ws_find_in_page_test", asString(finalItem["id"]))
+}
+
+func TestNormalizeCompletedToolCallEventSynthesizesHostedCodeInterpreterAddedDoneReplay(t *testing.T) {
+	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, nil)
+
+	before, eventType, payload := proxy.normalizeCompletedToolCallEvent("response.completed", map[string]any{
+		"type": "response.completed",
+		"response": map[string]any{
+			"id":     "resp_proxy_code_interpreter",
+			"object": "response",
+			"model":  "test-model",
+			"output": []any{
+				map[string]any{
+					"id":           "ci_test",
+					"type":         "code_interpreter_call",
+					"status":       "completed",
+					"container_id": "cntr_123",
+					"outputs": []any{
+						map[string]any{
+							"type": "logs",
+							"logs": "done",
+						},
+					},
+				},
+			},
+			"output_text": "",
+		},
+	})
+
+	require.Equal(t, "response.completed", eventType)
+	require.Len(t, before, 3)
+	require.Equal(t, "response.created", before[0].eventType)
+	require.Equal(t, "response.output_item.added", before[1].eventType)
+	require.Equal(t, "response.output_item.done", before[2].eventType)
+
+	addedItem, ok := before[1].payload["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "code_interpreter_call", addedItem["type"])
+	require.Equal(t, "cntr_123", asString(addedItem["container_id"]))
+	require.Equal(t, "in_progress", asString(addedItem["status"]))
+	_, hasOutput := addedItem["output"]
+	require.False(t, hasOutput)
+	_, hasOutputs := addedItem["outputs"]
+	require.False(t, hasOutputs)
+
+	doneItem, ok := before[2].payload["item"].(map[string]any)
+	require.True(t, ok)
+	outputs, ok := doneItem["outputs"].([]any)
+	require.True(t, ok)
+	require.Len(t, outputs, 1)
+
+	completedResponse, ok := payload["response"].(map[string]any)
+	require.True(t, ok)
+	output, ok := completedResponse["output"].([]any)
+	require.True(t, ok)
+	require.Len(t, output, 1)
+	finalItem, ok := output[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "ci_test", asString(finalItem["id"]))
+}

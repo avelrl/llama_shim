@@ -1,0 +1,11 @@
+{
+  "model": "gpt-5",
+  "stream": true,
+  "store": true,
+  "tools": [
+    {
+      "type": "web_search"
+    }
+  ],
+  "input": "Find the official OpenAI Web search guide, open the docs page itself, and tell me which action types are listed under web_search_call.action. Use the opened page, not just the search snippet."
+}

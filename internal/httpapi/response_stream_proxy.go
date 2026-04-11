@@ -760,7 +760,7 @@ func (p *responseStreamEventProxy) normalizeCompletedToolCallEvent(eventType str
 	// Some backends jump straight to a completed response without emitting the
 	// per-item add/delta/done events. Synthesize that sequence here so clients
 	// receive a stable Responses-style stream.
-	before := make([]pendingSSEEvent, 0, len(output)*4+1)
+	before := make([]pendingSSEEvent, 0, len(output)*6+1)
 	if !p.sawCreated {
 		before = append(before, pendingSSEEvent{
 			eventType: "response.created",
@@ -785,13 +785,14 @@ func (p *responseStreamEventProxy) normalizeCompletedToolCallEvent(eventType str
 		}
 
 		itemType := strings.TrimSpace(asString(item["type"]))
-		switch itemType {
-		case "function_call", "custom_tool_call":
-		default:
+		if !isSyntheticReplayOutputItemType(itemType) {
 			continue
 		}
 
-		itemID := ensureCompletedToolItemID(item, strings.TrimSpace(asString(responsePayload["id"])), outputIndex)
+		itemID := strings.TrimSpace(asString(item["id"]))
+		if isToolStreamItemType(itemType) {
+			itemID = ensureCompletedToolItemID(item, strings.TrimSpace(asString(responsePayload["id"])), outputIndex)
+		}
 		if itemID == "" {
 			continue
 		}
@@ -802,44 +803,85 @@ func (p *responseStreamEventProxy) normalizeCompletedToolCallEvent(eventType str
 				payload: map[string]any{
 					"type":         "response.output_item.added",
 					"output_index": outputIndex,
-					"item":         inProgressToolStreamItem(item),
+					"item":         inProgressOutputItemSnapshot(item),
 				},
 			})
 			p.addedItemIDs[itemID] = struct{}{}
 			p.sawItemAdded = true
 		}
 
-		if _, seen := p.toolDoneItemIDs[itemID]; !seen {
-			deltaEvent, doneEvent, valueKey := toolStreamEventShape(itemType)
-			value := strings.TrimSpace(asString(item[valueKey]))
-			if value != "" {
+		if isToolStreamItemType(itemType) {
+			if _, seen := p.toolDoneItemIDs[itemID]; !seen {
+				deltaEvent, doneEvent, valueKey := toolStreamEventShape(itemType)
+				progressEvent := toolStreamProgressEventType(itemType)
+				failedEvent := toolStreamFailureEventType(itemType)
+				value := strings.TrimSpace(asString(item[valueKey]))
+				if value != "" {
+					before = append(before, pendingSSEEvent{
+						eventType: deltaEvent,
+						payload: map[string]any{
+							"type":         deltaEvent,
+							"response_id":  responsePayload["id"],
+							"item_id":      itemID,
+							"output_index": outputIndex,
+							"delta":        value,
+						},
+					})
+				}
+
+				donePayload := map[string]any{
+					"type":         doneEvent,
+					"response_id":  responsePayload["id"],
+					"item_id":      itemID,
+					"output_index": outputIndex,
+					"item":         item,
+				}
+				if value != "" {
+					donePayload[valueKey] = value
+				}
 				before = append(before, pendingSSEEvent{
-					eventType: deltaEvent,
-					payload: map[string]any{
-						"type":         deltaEvent,
+					eventType: doneEvent,
+					payload:   donePayload,
+				})
+				if progressEvent != "" {
+					before = append(before, pendingSSEEvent{
+						eventType: progressEvent,
+						payload: map[string]any{
+							"type":         progressEvent,
+							"response_id":  responsePayload["id"],
+							"item_id":      itemID,
+							"output_index": outputIndex,
+						},
+					})
+				}
+				if failedEvent != "" && isFailedToolStreamItem(item) {
+					failedPayload := map[string]any{
+						"type":         failedEvent,
 						"response_id":  responsePayload["id"],
 						"item_id":      itemID,
 						"output_index": outputIndex,
-						"delta":        value,
-					},
-				})
+					}
+					if errPayload, ok := item["error"]; ok && errPayload != nil {
+						failedPayload["error"] = errPayload
+					}
+					before = append(before, pendingSSEEvent{
+						eventType: failedEvent,
+						payload:   failedPayload,
+					})
+				}
+				p.toolDoneItemIDs[itemID] = struct{}{}
 			}
-
-			donePayload := map[string]any{
-				"type":         doneEvent,
-				"response_id":  responsePayload["id"],
-				"item_id":      itemID,
-				"output_index": outputIndex,
-				"item":         item,
+		}
+		if hostedEventTypes := hostedToolReplayEventTypes(itemType, item); len(hostedEventTypes) > 0 {
+			if _, seen := p.toolDoneItemIDs[itemID]; !seen {
+				for _, hostedEventType := range hostedEventTypes {
+					before = append(before, pendingSSEEvent{
+						eventType: hostedEventType,
+						payload:   hostedToolReplayEventPayload(hostedEventType, itemID, outputIndex),
+					})
+				}
+				p.toolDoneItemIDs[itemID] = struct{}{}
 			}
-			if value != "" {
-				donePayload[valueKey] = value
-			}
-			before = append(before, pendingSSEEvent{
-				eventType: doneEvent,
-				payload:   donePayload,
-			})
-			p.toolDoneItemIDs[itemID] = struct{}{}
 		}
 
 		if _, seen := p.doneItemIDs[itemID]; !seen {
@@ -953,7 +995,12 @@ func (p *responseStreamEventProxy) observeTextStreamEvent(eventType string, payl
 				p.outputText.WriteString(strings.TrimSpace(asString(responsePayload["output_text"])))
 			}
 		}
-	case "response.function_call_arguments.done", "response.custom_tool_call_input.done":
+	case "response.web_search_call.completed":
+		itemID := strings.TrimSpace(asString(payload["item_id"]))
+		if itemID != "" {
+			p.toolDoneItemIDs[itemID] = struct{}{}
+		}
+	case "response.function_call_arguments.done", "response.custom_tool_call_input.done", "response.mcp_call_arguments.done":
 		itemID := strings.TrimSpace(asString(payload["item_id"]))
 		if itemID == "" {
 			if item, ok := payload["item"].(map[string]any); ok {
@@ -1090,10 +1137,17 @@ func (p *responseStreamEventProxy) logEventSummary(eventType string, payload map
 		"response.output_item.added",
 		"response.output_text.done",
 		"response.output_item.done",
+		"response.web_search_call.in_progress",
+		"response.web_search_call.searching",
+		"response.web_search_call.completed",
 		"response.function_call_arguments.delta",
 		"response.function_call_arguments.done",
 		"response.custom_tool_call_input.delta",
 		"response.custom_tool_call_input.done",
+		"response.mcp_call_arguments.delta",
+		"response.mcp_call_arguments.done",
+		"response.mcp_call.in_progress",
+		"response.mcp_call.failed",
 		"response.completed",
 		"response.failed",
 		"error":
@@ -1125,7 +1179,11 @@ func (p *responseStreamEventProxy) logEventSummary(eventType string, payload map
 		if item, ok := payload["item"].(map[string]any); ok {
 			attrs = append(attrs, summarizeOutputItemForLog(item)...)
 		}
-	case "response.function_call_arguments.delta", "response.custom_tool_call_input.delta":
+	case "response.web_search_call.in_progress",
+		"response.web_search_call.searching",
+		"response.web_search_call.completed":
+		attrs = append(attrs, "item_id", strings.TrimSpace(asString(payload["item_id"])))
+	case "response.function_call_arguments.delta", "response.custom_tool_call_input.delta", "response.mcp_call_arguments.delta":
 		attrs = append(attrs,
 			"item_id", strings.TrimSpace(asString(payload["item_id"])),
 			"delta_len", len(asString(payload["delta"])),
@@ -1147,6 +1205,25 @@ func (p *responseStreamEventProxy) logEventSummary(eventType string, payload map
 		)
 		if item, ok := payload["item"].(map[string]any); ok {
 			attrs = append(attrs, summarizeOutputItemForLog(item)...)
+		}
+	case "response.mcp_call_arguments.done":
+		attrs = append(attrs,
+			"item_id", strings.TrimSpace(asString(payload["item_id"])),
+			"arguments_len", len(asString(payload["arguments"])),
+			"arguments_preview", truncateForLog(asString(payload["arguments"]), 256),
+		)
+		if item, ok := payload["item"].(map[string]any); ok {
+			attrs = append(attrs, summarizeOutputItemForLog(item)...)
+		}
+	case "response.mcp_call.in_progress":
+		attrs = append(attrs, "item_id", strings.TrimSpace(asString(payload["item_id"])))
+	case "response.mcp_call.failed":
+		attrs = append(attrs, "item_id", strings.TrimSpace(asString(payload["item_id"])))
+		if errPayload, ok := payload["error"].(map[string]any); ok {
+			attrs = append(attrs,
+				"error_type", strings.TrimSpace(asString(errPayload["type"])),
+				"error_message", truncateForLog(asString(errPayload["message"]), 256),
+			)
 		}
 	case "response.completed", "response.failed":
 		if responsePayload, ok := payload["response"].(map[string]any); ok {
@@ -1264,7 +1341,7 @@ func summarizeResponseEnvelopeForLog(responsePayload map[string]any) []any {
 				continue
 			}
 			switch strings.TrimSpace(asString(item["type"])) {
-			case "function_call", "custom_tool_call":
+			case "function_call", "custom_tool_call", "mcp_call", "mcp_tool_call", "web_search_call", "file_search_call", "code_interpreter_call":
 				toolCount++
 			case "message":
 				messageCount++
@@ -1330,25 +1407,119 @@ func remapStreamOutputItem(item map[string]any, bridge customToolBridge) (map[st
 	return rewritten, descriptor, true
 }
 
-func inProgressToolStreamItem(item map[string]any) map[string]any {
+func inProgressOutputItemSnapshot(item map[string]any) map[string]any {
 	cloned := cloneAnyMap(item)
 	switch strings.TrimSpace(asString(cloned["type"])) {
-	case "function_call":
+	case "function_call", "mcp_call", "mcp_tool_call":
 		cloned["arguments"] = ""
 	case "custom_tool_call":
 		cloned["input"] = ""
+	case "web_search_call":
+		delete(cloned, "action")
+	case "file_search_call":
+		delete(cloned, "results")
+		delete(cloned, "search_results")
+	case "code_interpreter_call":
+		delete(cloned, "output")
+		delete(cloned, "outputs")
 	}
+	if isMCPToolStreamItemType(strings.TrimSpace(asString(cloned["type"]))) {
+		delete(cloned, "output")
+	}
+	delete(cloned, "error")
 	cloned["status"] = "in_progress"
 	return cloned
+}
+
+func isSyntheticReplayOutputItemType(itemType string) bool {
+	switch strings.TrimSpace(itemType) {
+	case "function_call", "custom_tool_call", "mcp_call", "mcp_tool_call", "web_search_call", "file_search_call", "code_interpreter_call":
+		return true
+	default:
+		return false
+	}
+}
+
+func isToolStreamItemType(itemType string) bool {
+	switch strings.TrimSpace(itemType) {
+	case "function_call", "custom_tool_call", "mcp_call", "mcp_tool_call":
+		return true
+	default:
+		return false
+	}
+}
+
+func isMCPToolStreamItemType(itemType string) bool {
+	switch strings.TrimSpace(itemType) {
+	case "mcp_call", "mcp_tool_call":
+		return true
+	default:
+		return false
+	}
 }
 
 func toolStreamEventShape(itemType string) (deltaEvent string, doneEvent string, valueKey string) {
 	switch strings.TrimSpace(itemType) {
 	case "custom_tool_call":
 		return "response.custom_tool_call_input.delta", "response.custom_tool_call_input.done", "input"
+	case "mcp_call", "mcp_tool_call":
+		return "response.mcp_call_arguments.delta", "response.mcp_call_arguments.done", "arguments"
 	default:
 		return "response.function_call_arguments.delta", "response.function_call_arguments.done", "arguments"
 	}
+}
+
+func toolStreamProgressEventType(itemType string) string {
+	if isMCPToolStreamItemType(itemType) {
+		return "response.mcp_call.in_progress"
+	}
+	return ""
+}
+
+func toolStreamFailureEventType(itemType string) string {
+	if isMCPToolStreamItemType(itemType) {
+		return "response.mcp_call.failed"
+	}
+	return ""
+}
+
+func hostedToolReplayEventTypes(itemType string, item map[string]any) []string {
+	switch strings.TrimSpace(itemType) {
+	case "web_search_call":
+		if !isFailedToolStreamItem(item) {
+			return []string{
+				"response.web_search_call.in_progress",
+				"response.web_search_call.searching",
+				"response.web_search_call.completed",
+			}
+		}
+	}
+	return nil
+}
+
+func hostedToolReplayEventPayload(eventType, itemID string, outputIndex int) map[string]any {
+	return map[string]any{
+		"type":         eventType,
+		"item_id":      itemID,
+		"output_index": outputIndex,
+	}
+}
+
+func isFailedToolStreamItem(item map[string]any) bool {
+	if item == nil {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(asString(item["status"])), "failed") {
+		return true
+	}
+	rawError, ok := item["error"]
+	if !ok || rawError == nil {
+		return false
+	}
+	if errMap, ok := rawError.(map[string]any); ok {
+		return len(errMap) > 0
+	}
+	return true
 }
 
 func ensureCompletedToolItemID(item map[string]any, responseID string, outputIndex int) string {
