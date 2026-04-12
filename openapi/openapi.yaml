@@ -122,13 +122,15 @@ paths:
 
         Notes for the local `code_interpreter` subset:
         - the shim executes one `code_interpreter` tool locally only when
-          `responses.code_interpreter.enable_unsafe_host_executor=true`
+          `responses.code_interpreter.backend` is set to `docker` or
+          `unsafe_host`
         - the supported local subset requires `container.type=auto`,
           accepts `tool_choice=auto|required`,
           accepts `include=["code_interpreter_call.outputs"]`,
           and returns stored/streaming `code_interpreter_call` items
-        - execution uses an explicitly unsafe host Python subprocess and is
-          intended for development, not hosted Code Interpreter parity
+        - `backend=docker` uses a hardened one-shot container boundary;
+          `backend=unsafe_host` remains a development fallback and legacy
+          compatibility path
         - the local subset does not support `container.file_ids`, generated
           file/image artifacts, or hosted sandbox/container lifecycle parity
 
@@ -229,7 +231,7 @@ paths:
                     - file_search_call.results
                   input: Say OK and nothing else
               code_interpreter_local:
-                summary: Dev-only local code_interpreter over unsafe host Python
+                summary: Dev-only local code_interpreter over shim-managed sandbox backend
                 value:
                   model: test-model
                   store: true
@@ -1738,10 +1740,13 @@ components:
         reranking, or `file_citation` annotation parity.
 
         The local `code_interpreter` subset is guarded by
-        `responses.code_interpreter.enable_unsafe_host_executor` and runs an
-        explicitly unsafe host Python subprocess. It does not claim hosted
-        sandbox/container parity and does not support `container.file_ids` or
-        generated artifacts.
+        `responses.code_interpreter.backend`. `backend=docker` uses a hardened
+        one-shot container with no network, read-only rootfs, tmpfs workspace,
+        non-root user, dropped capabilities, and memory/cpu/pids limits.
+        `backend=unsafe_host` remains an explicitly unsafe fallback. The shim
+        does not yet claim hosted sandbox/container parity and does not support
+        `container.file_ids`, generated artifacts, or persistent
+        `container_id` reuse.
 
         `background` is forwarded upstream for long-running responses and is not
         executed locally by the shim.

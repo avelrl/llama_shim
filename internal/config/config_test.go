@@ -36,8 +36,14 @@ responses:
     enable_compatibility: true
     force_tool_choice_required: true
   code_interpreter:
-    enable_unsafe_host_executor: true
+    backend: docker
     python_binary: /opt/homebrew/bin/python3
+    docker:
+      binary: /usr/local/bin/docker
+      image: ghcr.io/acme/llama-shim-code-interpreter:latest
+      memory_limit: 512m
+      cpu_limit: "1.5"
+      pids_limit: 96
     execution_timeout: 45s
 `)
 
@@ -56,8 +62,13 @@ responses:
 	require.Equal(t, "bridge", cfg.ResponsesCustomToolsMode)
 	require.True(t, cfg.ResponsesCodexEnableCompatibility)
 	require.True(t, cfg.ResponsesCodexForceToolChoiceRequired)
-	require.True(t, cfg.ResponsesCodeInterpreterEnableUnsafe)
+	require.Equal(t, config.ResponsesCodeInterpreterBackendDocker, cfg.ResponsesCodeInterpreterBackend)
 	require.Equal(t, "/opt/homebrew/bin/python3", cfg.ResponsesCodeInterpreterPythonBinary)
+	require.Equal(t, "/usr/local/bin/docker", cfg.ResponsesCodeInterpreterDockerBinary)
+	require.Equal(t, "ghcr.io/acme/llama-shim-code-interpreter:latest", cfg.ResponsesCodeInterpreterDockerImage)
+	require.Equal(t, "512m", cfg.ResponsesCodeInterpreterDockerMemory)
+	require.Equal(t, "1.5", cfg.ResponsesCodeInterpreterDockerCPU)
+	require.Equal(t, 96, cfg.ResponsesCodeInterpreterDockerPids)
 	require.Equal(t, 45*time.Second, cfg.ResponsesCodeInterpreterTimeout)
 	require.Equal(t, configPath, cfg.ConfigFile)
 }
@@ -77,8 +88,14 @@ responses:
     enable_compatibility: false
     force_tool_choice_required: false
   code_interpreter:
-    enable_unsafe_host_executor: false
+    backend: disabled
     python_binary: python3
+    docker:
+      binary: docker
+      image: python:3.12-slim
+      memory_limit: 256m
+      cpu_limit: "0.5"
+      pids_limit: 64
     execution_timeout: 20s
 `)
 
@@ -89,8 +106,13 @@ responses:
 	t.Setenv("RESPONSES_MODE", "local_only")
 	t.Setenv("RESPONSES_CODEX_ENABLE_COMPATIBILITY", "true")
 	t.Setenv("RESPONSES_CODEX_FORCE_TOOL_CHOICE_REQUIRED", "true")
-	t.Setenv("RESPONSES_CODE_INTERPRETER_ENABLE_UNSAFE_HOST_EXECUTOR", "true")
+	t.Setenv("RESPONSES_CODE_INTERPRETER_BACKEND", "unsafe_host")
 	t.Setenv("RESPONSES_CODE_INTERPRETER_PYTHON_BINARY", "/usr/bin/python3")
+	t.Setenv("RESPONSES_CODE_INTERPRETER_DOCKER_BINARY", "/usr/bin/docker")
+	t.Setenv("RESPONSES_CODE_INTERPRETER_DOCKER_IMAGE", "python:3.12-alpine")
+	t.Setenv("RESPONSES_CODE_INTERPRETER_DOCKER_MEMORY_LIMIT", "768m")
+	t.Setenv("RESPONSES_CODE_INTERPRETER_DOCKER_CPU_LIMIT", "2")
+	t.Setenv("RESPONSES_CODE_INTERPRETER_DOCKER_PIDS_LIMIT", "128")
 	t.Setenv("RESPONSES_CODE_INTERPRETER_EXECUTION_TIMEOUT", "33s")
 
 	cfg, err := config.Load(configPath)
@@ -102,8 +124,13 @@ responses:
 	require.Equal(t, config.ResponsesModeLocalOnly, cfg.ResponsesMode)
 	require.True(t, cfg.ResponsesCodexEnableCompatibility)
 	require.True(t, cfg.ResponsesCodexForceToolChoiceRequired)
-	require.True(t, cfg.ResponsesCodeInterpreterEnableUnsafe)
+	require.Equal(t, config.ResponsesCodeInterpreterBackendUnsafeHost, cfg.ResponsesCodeInterpreterBackend)
 	require.Equal(t, "/usr/bin/python3", cfg.ResponsesCodeInterpreterPythonBinary)
+	require.Equal(t, "/usr/bin/docker", cfg.ResponsesCodeInterpreterDockerBinary)
+	require.Equal(t, "python:3.12-alpine", cfg.ResponsesCodeInterpreterDockerImage)
+	require.Equal(t, "768m", cfg.ResponsesCodeInterpreterDockerMemory)
+	require.Equal(t, "2", cfg.ResponsesCodeInterpreterDockerCPU)
+	require.Equal(t, 128, cfg.ResponsesCodeInterpreterDockerPids)
 	require.Equal(t, 33*time.Second, cfg.ResponsesCodeInterpreterTimeout)
 }
 
@@ -122,7 +149,25 @@ func TestLoadUsesCodexSafeDefaults(t *testing.T) {
 	require.Equal(t, "auto", cfg.ResponsesCustomToolsMode)
 	require.True(t, cfg.ResponsesCodexEnableCompatibility)
 	require.True(t, cfg.ResponsesCodexForceToolChoiceRequired)
-	require.False(t, cfg.ResponsesCodeInterpreterEnableUnsafe)
+	require.Equal(t, config.ResponsesCodeInterpreterBackendDisabled, cfg.ResponsesCodeInterpreterBackend)
 	require.Equal(t, "python3", cfg.ResponsesCodeInterpreterPythonBinary)
+	require.Equal(t, "docker", cfg.ResponsesCodeInterpreterDockerBinary)
+	require.Equal(t, "python:3.12-slim", cfg.ResponsesCodeInterpreterDockerImage)
+	require.Equal(t, "256m", cfg.ResponsesCodeInterpreterDockerMemory)
+	require.Equal(t, "0.5", cfg.ResponsesCodeInterpreterDockerCPU)
+	require.Equal(t, 64, cfg.ResponsesCodeInterpreterDockerPids)
 	require.Equal(t, 20*time.Second, cfg.ResponsesCodeInterpreterTimeout)
+}
+
+func TestLoadSupportsLegacyUnsafeHostAlias(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	writeFile(t, configPath, `
+responses:
+  code_interpreter:
+    enable_unsafe_host_executor: true
+`)
+
+	cfg, err := config.Load(configPath)
+	require.NoError(t, err)
+	require.Equal(t, config.ResponsesCodeInterpreterBackendUnsafeHost, cfg.ResponsesCodeInterpreterBackend)
 }

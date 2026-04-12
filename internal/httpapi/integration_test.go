@@ -4766,7 +4766,7 @@ func TestResponsesCreatePlainFollowUpAfterLocalFileSearchStoredOutput(t *testing
 
 func TestResponsesCreateExecutesLocalCodeInterpreter(t *testing.T) {
 	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
-		EnableUnsafeCodeInterpreter: true,
+		CodeInterpreterBackend: testutil.FakeSandboxBackend{KindValue: "docker"},
 	})
 
 	response := postResponse(t, app, map[string]any{
@@ -4803,7 +4803,7 @@ func TestResponsesCreateExecutesLocalCodeInterpreter(t *testing.T) {
 
 func TestResponsesCreateLocalCodeInterpreterStreamReplaysToolEvents(t *testing.T) {
 	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
-		EnableUnsafeCodeInterpreter: true,
+		CodeInterpreterBackend: testutil.FakeSandboxBackend{KindValue: "docker"},
 	})
 
 	req, err := http.NewRequest(http.MethodPost, app.Server.URL+"/v1/responses", bytes.NewReader(mustJSON(t, map[string]any{
@@ -4865,7 +4865,7 @@ func TestResponsesCreateLocalCodeInterpreterStreamReplaysToolEvents(t *testing.T
 
 func TestResponsesCreateLocalCodeInterpreterWorksAfterStoredFollowUp(t *testing.T) {
 	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
-		EnableUnsafeCodeInterpreter: true,
+		CodeInterpreterBackend: testutil.FakeSandboxBackend{KindValue: "docker"},
 	})
 
 	first := postResponse(t, app, map[string]any{
@@ -4918,7 +4918,7 @@ func TestResponsesCreateLocalCodeInterpreterLocalOnlyRequiresUnsafeExecutor(t *t
 	errorPayload, ok := payload["error"].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, "invalid_request_error", asStringAny(errorPayload["type"]))
-	require.Contains(t, asStringAny(errorPayload["message"]), "enable responses.code_interpreter.enable_unsafe_host_executor")
+	require.Contains(t, asStringAny(errorPayload["message"]), "responses.code_interpreter.backend")
 }
 
 func TestResponsesCreateLocalCodeInterpreterStreamLocalOnlyRequiresUnsafeExecutor(t *testing.T) {
@@ -4954,7 +4954,7 @@ func TestResponsesCreateLocalCodeInterpreterStreamLocalOnlyRequiresUnsafeExecuto
 	errorPayload, ok := payload["error"].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, "invalid_request_error", asStringAny(errorPayload["type"]))
-	require.Contains(t, asStringAny(errorPayload["message"]), "enable responses.code_interpreter.enable_unsafe_host_executor")
+	require.Contains(t, asStringAny(errorPayload["message"]), "responses.code_interpreter.backend")
 }
 
 func postResponse(t *testing.T, app *testutil.TestApp, payload map[string]any) domain.Response {

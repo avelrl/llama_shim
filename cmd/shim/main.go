@@ -13,6 +13,7 @@ import (
 	"llama_shim/internal/config"
 	"llama_shim/internal/httpapi"
 	"llama_shim/internal/llama"
+	"llama_shim/internal/sandbox"
 	"llama_shim/internal/service"
 	"llama_shim/internal/storage/sqlite"
 )
@@ -51,6 +52,11 @@ func main() {
 	llamaClient := llama.NewClient(cfg.LlamaBaseURL, cfg.LlamaTimeout)
 	responseService := service.NewResponseService(store, store, llamaClient)
 	conversationService := service.NewConversationService(store)
+	localCodeInterpreter, err := buildLocalCodeInterpreterRuntimeConfig(cfg)
+	if err != nil {
+		logger.Error("build code interpreter runtime", "err", err)
+		os.Exit(1)
+	}
 
 	server := &http.Server{
 		Addr: cfg.Addr,
@@ -63,12 +69,8 @@ func main() {
 			ResponsesCustomToolsMode:              cfg.ResponsesCustomToolsMode,
 			ResponsesCodexEnableCompatibility:     cfg.ResponsesCodexEnableCompatibility,
 			ResponsesCodexForceToolChoiceRequired: cfg.ResponsesCodexForceToolChoiceRequired,
-			LocalCodeInterpreter: httpapi.LocalCodeInterpreterRuntimeConfig{
-				Enabled:      cfg.ResponsesCodeInterpreterEnableUnsafe,
-				PythonBinary: cfg.ResponsesCodeInterpreterPythonBinary,
-				ExecTimeout:  cfg.ResponsesCodeInterpreterTimeout,
-			},
-			Store: store,
+			LocalCodeInterpreter:                  localCodeInterpreter,
+			Store:                                 store,
 		}),
 		ReadTimeout:  cfg.ReadTimeout,
 		WriteTimeout: cfg.WriteTimeout,
@@ -86,13 +88,45 @@ func main() {
 		"responses_custom_tools_mode", cfg.ResponsesCustomToolsMode,
 		"responses_codex_enable_compatibility", cfg.ResponsesCodexEnableCompatibility,
 		"responses_codex_force_tool_choice_required", cfg.ResponsesCodexForceToolChoiceRequired,
-		"responses_code_interpreter_enable_unsafe_host_executor", cfg.ResponsesCodeInterpreterEnableUnsafe,
+		"responses_code_interpreter_backend", cfg.ResponsesCodeInterpreterBackend,
 		"responses_code_interpreter_python_binary", cfg.ResponsesCodeInterpreterPythonBinary,
+		"responses_code_interpreter_docker_binary", cfg.ResponsesCodeInterpreterDockerBinary,
+		"responses_code_interpreter_docker_image", cfg.ResponsesCodeInterpreterDockerImage,
+		"responses_code_interpreter_docker_memory_limit", cfg.ResponsesCodeInterpreterDockerMemory,
+		"responses_code_interpreter_docker_cpu_limit", cfg.ResponsesCodeInterpreterDockerCPU,
+		"responses_code_interpreter_docker_pids_limit", cfg.ResponsesCodeInterpreterDockerPids,
 		"responses_code_interpreter_execution_timeout", cfg.ResponsesCodeInterpreterTimeout,
 	)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		logger.Error("server stopped", "err", err)
 		os.Exit(1)
+	}
+}
+
+func buildLocalCodeInterpreterRuntimeConfig(cfg config.Config) (httpapi.LocalCodeInterpreterRuntimeConfig, error) {
+	switch cfg.ResponsesCodeInterpreterBackend {
+	case config.ResponsesCodeInterpreterBackendDisabled:
+		return httpapi.LocalCodeInterpreterRuntimeConfig{}, nil
+	case config.ResponsesCodeInterpreterBackendUnsafeHost:
+		return httpapi.LocalCodeInterpreterRuntimeConfig{
+			Backend: sandbox.UnsafeHostBackend{
+				PythonBinary: cfg.ResponsesCodeInterpreterPythonBinary,
+				Timeout:      cfg.ResponsesCodeInterpreterTimeout,
+			},
+		}, nil
+	case config.ResponsesCodeInterpreterBackendDocker:
+		return httpapi.LocalCodeInterpreterRuntimeConfig{
+			Backend: sandbox.DockerBackend{
+				DockerBinary: cfg.ResponsesCodeInterpreterDockerBinary,
+				Image:        cfg.ResponsesCodeInterpreterDockerImage,
+				Timeout:      cfg.ResponsesCodeInterpreterTimeout,
+				MemoryLimit:  cfg.ResponsesCodeInterpreterDockerMemory,
+				CPULimit:     cfg.ResponsesCodeInterpreterDockerCPU,
+				PidsLimit:    cfg.ResponsesCodeInterpreterDockerPids,
+			},
+		}, nil
+	default:
+		return httpapi.LocalCodeInterpreterRuntimeConfig{}, fmt.Errorf("unsupported code interpreter backend %q", cfg.ResponsesCodeInterpreterBackend)
 	}
 }
 

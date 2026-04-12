@@ -4,22 +4,18 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
-	"os"
-	"os/exec"
 	"strings"
-	"sync"
-	"time"
 
 	"llama_shim/internal/domain"
 	"llama_shim/internal/llama"
+	"llama_shim/internal/sandbox"
 	"llama_shim/internal/service"
 )
 
 const (
 	defaultLocalCodeInterpreterPlannedCodeLimit = 16 << 10
-	defaultLocalCodeInterpreterOutputLimit      = 64 << 10
 )
 
 var shimLocalCodeInterpreterFields = map[string]struct{}{
@@ -56,9 +52,11 @@ var localCodeInterpreterForbiddenFragments = []string{
 }
 
 type LocalCodeInterpreterRuntimeConfig struct {
-	Enabled      bool
-	PythonBinary string
-	ExecTimeout  time.Duration
+	Backend sandbox.Backend
+}
+
+func (c LocalCodeInterpreterRuntimeConfig) Enabled() bool {
+	return c.Backend != nil
 }
 
 type localCodeInterpreterConfig struct {
@@ -76,8 +74,8 @@ func isLocalCodeInterpreterToolRequest(rawFields map[string]json.RawMessage) boo
 	return len(tools) == 1 && strings.EqualFold(strings.TrimSpace(asString(tools[0]["type"])), "code_interpreter")
 }
 
-func supportsLocalCodeInterpreter(rawFields map[string]json.RawMessage, enabled bool) bool {
-	if !enabled {
+func supportsLocalCodeInterpreter(rawFields map[string]json.RawMessage, runtime LocalCodeInterpreterRuntimeConfig) bool {
+	if !runtime.Enabled() {
 		return false
 	}
 	for key := range rawFields {
@@ -355,7 +353,7 @@ func buildLocalCodeInterpreterPlanningPrompt() string {
 		"Return JSON only with keys use_code_interpreter and code.",
 		"If Python is not needed, return {\"use_code_interpreter\":false,\"code\":\"\"}.",
 		"If Python is needed, return {\"use_code_interpreter\":true,\"code\":\"...\"}.",
-		"The code must be pure Python for a dev-only unsafe host executor.",
+		"The code must be pure Python for the shim-local code interpreter backend.",
 		"Do not access files, the network, subprocesses, environment variables, or interactive input.",
 		"Prefer concise code that prints the useful result to stdout.",
 	}, " ")
@@ -399,50 +397,17 @@ func validateLocalCodeInterpreterPlanCode(code string) error {
 }
 
 func (h *responseHandler) executeLocalCodeInterpreter(ctx context.Context, code string) (string, error) {
-	if !h.localCodeInterpreter.Enabled {
+	if !h.localCodeInterpreter.Enabled() {
 		return "", localCodeInterpreterDisabledError()
 	}
-	pythonBinary := strings.TrimSpace(h.localCodeInterpreter.PythonBinary)
-	if pythonBinary == "" {
-		return "", localCodeInterpreterDisabledError()
-	}
-
-	execTimeout := h.localCodeInterpreter.ExecTimeout
-	if execTimeout <= 0 {
-		execTimeout = 20 * time.Second
-	}
-	execCtx, cancel := context.WithTimeout(ctx, execTimeout)
-	defer cancel()
-
-	tempDir, err := os.MkdirTemp("", "llama-shim-code-interpreter-*")
+	result, err := h.localCodeInterpreter.Backend.ExecutePython(ctx, sandbox.ExecuteRequest{Code: code})
 	if err != nil {
-		return "", fmt.Errorf("create code interpreter temp dir: %w", err)
-	}
-	defer os.RemoveAll(tempDir)
-
-	cmd := exec.CommandContext(execCtx, pythonBinary, "-I", "-S", "-B", "-c", code)
-	cmd.Dir = tempDir
-	cmd.Env = []string{
-		"LC_ALL=C.UTF-8",
-		"LANG=C.UTF-8",
-		"PYTHONDONTWRITEBYTECODE=1",
-		"PYTHONHASHSEED=0",
-		"PYTHONNOUSERSITE=1",
-	}
-
-	var logs limitedOutputBuffer
-	logs.limit = defaultLocalCodeInterpreterOutputLimit
-	cmd.Stdout = &logs
-	cmd.Stderr = &logs
-
-	if err := cmd.Run(); err != nil {
-		if execCtx.Err() == context.DeadlineExceeded {
-			return logs.String(), domain.NewValidationError("tools", "shim-local code_interpreter execution timed out")
+		if errors.Is(err, sandbox.ErrDisabled) {
+			return "", localCodeInterpreterDisabledError()
 		}
-		return logs.String(), fmt.Errorf("execute shim-local code_interpreter: %w", err)
+		return result.Logs, fmt.Errorf("execute shim-local code_interpreter via %s backend: %w", h.localCodeInterpreter.Backend.Kind(), err)
 	}
-
-	return logs.String(), nil
+	return result.Logs, nil
 }
 
 func buildLocalCodeInterpreterExecutionContext(prepared service.PreparedResponseContext, code string, logs string) ([]domain.Item, error) {
@@ -526,43 +491,5 @@ func cloneGenerationOptions(options map[string]json.RawMessage) map[string]json.
 }
 
 func localCodeInterpreterDisabledError() error {
-	return domain.NewValidationError("tools", "shim-local code_interpreter execution is disabled; enable responses.code_interpreter.enable_unsafe_host_executor to run it on the host")
-}
-
-type limitedOutputBuffer struct {
-	mu        sync.Mutex
-	builder   strings.Builder
-	limit     int
-	truncated bool
-}
-
-func (b *limitedOutputBuffer) Write(p []byte) (int, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	written := len(p)
-	if b.limit <= 0 {
-		return written, nil
-	}
-	remaining := b.limit - b.builder.Len()
-	if remaining <= 0 {
-		b.truncated = true
-		return written, nil
-	}
-	if len(p) > remaining {
-		p = p[:remaining]
-		b.truncated = true
-	}
-	_, _ = io.WriteString(&b.builder, string(p))
-	return written, nil
-}
-
-func (b *limitedOutputBuffer) String() string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	if !b.truncated {
-		return b.builder.String()
-	}
-	return b.builder.String() + "\n...[truncated]\n"
+	return domain.NewValidationError("tools", "shim-local code_interpreter execution is disabled; set responses.code_interpreter.backend to unsafe_host or docker")
 }

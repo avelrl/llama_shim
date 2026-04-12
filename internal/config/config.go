@@ -26,16 +26,24 @@ type Config struct {
 	ResponsesCustomToolsMode              string
 	ResponsesCodexEnableCompatibility     bool
 	ResponsesCodexForceToolChoiceRequired bool
-	ResponsesCodeInterpreterEnableUnsafe  bool
+	ResponsesCodeInterpreterBackend       string
 	ResponsesCodeInterpreterPythonBinary  string
+	ResponsesCodeInterpreterDockerBinary  string
+	ResponsesCodeInterpreterDockerImage   string
+	ResponsesCodeInterpreterDockerMemory  string
+	ResponsesCodeInterpreterDockerCPU     string
+	ResponsesCodeInterpreterDockerPids    int
 	ResponsesCodeInterpreterTimeout       time.Duration
 	ConfigFile                            string
 }
 
 const (
-	ResponsesModePreferLocal    = "prefer_local"
-	ResponsesModePreferUpstream = "prefer_upstream"
-	ResponsesModeLocalOnly      = "local_only"
+	ResponsesModePreferLocal                  = "prefer_local"
+	ResponsesModePreferUpstream               = "prefer_upstream"
+	ResponsesModeLocalOnly                    = "local_only"
+	ResponsesCodeInterpreterBackendDisabled   = "disabled"
+	ResponsesCodeInterpreterBackendUnsafeHost = "unsafe_host"
+	ResponsesCodeInterpreterBackendDocker     = "docker"
 )
 
 func Load(configPath string) (Config, error) {
@@ -60,8 +68,19 @@ func Load(configPath string) (Config, error) {
 		ResponsesCustomToolsMode:              strings.ToLower(strings.TrimSpace(v.GetString("responses.custom_tools.mode"))),
 		ResponsesCodexEnableCompatibility:     v.GetBool("responses.codex.enable_compatibility"),
 		ResponsesCodexForceToolChoiceRequired: v.GetBool("responses.codex.force_tool_choice_required"),
-		ResponsesCodeInterpreterEnableUnsafe:  v.GetBool("responses.code_interpreter.enable_unsafe_host_executor"),
+		ResponsesCodeInterpreterBackend:       strings.ToLower(strings.TrimSpace(v.GetString("responses.code_interpreter.backend"))),
 		ResponsesCodeInterpreterPythonBinary:  strings.TrimSpace(v.GetString("responses.code_interpreter.python_binary")),
+		ResponsesCodeInterpreterDockerBinary:  strings.TrimSpace(v.GetString("responses.code_interpreter.docker.binary")),
+		ResponsesCodeInterpreterDockerImage:   strings.TrimSpace(v.GetString("responses.code_interpreter.docker.image")),
+		ResponsesCodeInterpreterDockerMemory:  strings.TrimSpace(v.GetString("responses.code_interpreter.docker.memory_limit")),
+		ResponsesCodeInterpreterDockerCPU:     strings.TrimSpace(v.GetString("responses.code_interpreter.docker.cpu_limit")),
+	}
+	if cfg.ResponsesCodeInterpreterBackend == "" {
+		if v.GetBool("responses.code_interpreter.enable_unsafe_host_executor") {
+			cfg.ResponsesCodeInterpreterBackend = ResponsesCodeInterpreterBackendUnsafeHost
+		} else {
+			cfg.ResponsesCodeInterpreterBackend = ResponsesCodeInterpreterBackendDisabled
+		}
 	}
 
 	if err := parseDuration(v.GetString("llama.timeout"), &cfg.LlamaTimeout); err != nil {
@@ -85,11 +104,31 @@ func Load(configPath string) (Config, error) {
 	if err := parseCustomToolsMode(cfg.ResponsesCustomToolsMode); err != nil {
 		return Config{}, fmt.Errorf("parse responses.custom_tools.mode: %w", err)
 	}
+	if err := parseCodeInterpreterBackend(cfg.ResponsesCodeInterpreterBackend); err != nil {
+		return Config{}, fmt.Errorf("parse responses.code_interpreter.backend: %w", err)
+	}
 	if err := parseDuration(v.GetString("responses.code_interpreter.execution_timeout"), &cfg.ResponsesCodeInterpreterTimeout); err != nil {
 		return Config{}, fmt.Errorf("parse responses.code_interpreter.execution_timeout: %w", err)
 	}
+	pidsLimit, err := parsePositiveInt(v.GetString("responses.code_interpreter.docker.pids_limit"))
+	if err != nil {
+		return Config{}, fmt.Errorf("parse responses.code_interpreter.docker.pids_limit: %w", err)
+	}
+	cfg.ResponsesCodeInterpreterDockerPids = pidsLimit
 	if cfg.ResponsesCodeInterpreterPythonBinary == "" {
 		return Config{}, fmt.Errorf("parse responses.code_interpreter.python_binary: %w", strconv.ErrSyntax)
+	}
+	if cfg.ResponsesCodeInterpreterDockerBinary == "" {
+		return Config{}, fmt.Errorf("parse responses.code_interpreter.docker.binary: %w", strconv.ErrSyntax)
+	}
+	if cfg.ResponsesCodeInterpreterDockerImage == "" {
+		return Config{}, fmt.Errorf("parse responses.code_interpreter.docker.image: %w", strconv.ErrSyntax)
+	}
+	if cfg.ResponsesCodeInterpreterDockerMemory == "" {
+		return Config{}, fmt.Errorf("parse responses.code_interpreter.docker.memory_limit: %w", strconv.ErrSyntax)
+	}
+	if cfg.ResponsesCodeInterpreterDockerCPU == "" {
+		return Config{}, fmt.Errorf("parse responses.code_interpreter.docker.cpu_limit: %w", strconv.ErrSyntax)
 	}
 
 	return cfg, nil
@@ -109,9 +148,15 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("responses.custom_tools.mode", "auto")
 	v.SetDefault("responses.codex.enable_compatibility", true)
 	v.SetDefault("responses.codex.force_tool_choice_required", true)
+	v.SetDefault("responses.code_interpreter.backend", "")
 	v.SetDefault("responses.code_interpreter.enable_unsafe_host_executor", false)
 	v.SetDefault("responses.code_interpreter.python_binary", "python3")
 	v.SetDefault("responses.code_interpreter.execution_timeout", "20s")
+	v.SetDefault("responses.code_interpreter.docker.binary", "docker")
+	v.SetDefault("responses.code_interpreter.docker.image", "python:3.12-slim")
+	v.SetDefault("responses.code_interpreter.docker.memory_limit", "256m")
+	v.SetDefault("responses.code_interpreter.docker.cpu_limit", "0.5")
+	v.SetDefault("responses.code_interpreter.docker.pids_limit", "64")
 }
 
 func resolveConfigPath(configPath string) string {
@@ -188,4 +233,24 @@ func parseResponsesMode(value string) error {
 	default:
 		return strconv.ErrSyntax
 	}
+}
+
+func parseCodeInterpreterBackend(value string) error {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case ResponsesCodeInterpreterBackendDisabled, ResponsesCodeInterpreterBackendUnsafeHost, ResponsesCodeInterpreterBackendDocker:
+		return nil
+	default:
+		return strconv.ErrSyntax
+	}
+}
+
+func parsePositiveInt(value string) (int, error) {
+	parsed, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil {
+		return 0, err
+	}
+	if parsed <= 0 {
+		return 0, strconv.ErrSyntax
+	}
+	return parsed, nil
 }

@@ -100,7 +100,8 @@
 - local `/v1/responses` теперь умеет dev-only shim-local `code_interpreter`
   execution в pragmatic subset:
   один `code_interpreter` tool с `container.type=auto`,
-  explicit opt-in unsafe host Python executor, non-streaming/streaming create,
+  backend-gated local executor (`disabled|unsafe_host|docker`) with hardened
+  Docker as the primary boundary, non-streaming/streaming create,
   optional `include=["code_interpreter_call.outputs"]`, stored
   `code_interpreter_call` output item и follow-up turns не ломаются из-за
   stored tool items в локальном generation context
@@ -1040,34 +1041,44 @@ Definition of done:
 
 - local `/v1/responses` path теперь умеет ровно один `tools[]` entry с
   `type=code_interpreter` и `container.type=auto`
-- local execution включается только через explicit config gate
-  `responses.code_interpreter.enable_unsafe_host_executor`
+- local execution теперь включается через explicit backend gate
+  `responses.code_interpreter.backend=unsafe_host|docker`
+- legacy `responses.code_interpreter.enable_unsafe_host_executor=true`
+  остаётся compatibility alias для `backend=unsafe_host`, чтобы не ломать
+  существующие dev-конфиги
 - при включенном gate shim делает двухшаговый flow:
-  planner JSON -> unsafe host Python execution -> final assistant answer
+  planner JSON -> local sandbox/backend execution -> final assistant answer
 - non-streaming и streaming local create возвращают stored
   `code_interpreter_call` item и используют уже существующий trace-backed SSE
   replay family
 - поддержан `include=["code_interpreter_call.outputs"]` для logs output
 - follow-up local turns по `previous_response_id` после stored
   `code_interpreter_call` не ломаются из-за tool items в generation context
+- для `backend=docker` execution больше не идет напрямую на host:
+  shim запускает одноразовый жестко ограниченный container
+  (`network=none`, `read_only`, tmpfs workspace, non-root,
+  `cap_drop=ALL`, `no-new-privileges`, memory/cpu/pids limits)
 
 Что осталось открытым:
 
-- это не hosted Code Interpreter parity, а dev-only unsafe subset; по умолчанию
-  он выключен
+- это не hosted Code Interpreter parity; по умолчанию backend выключен
+- `unsafe_host` остаётся явно небезопасным fallback/dev path и не должен
+  считаться production-grade boundary
 - нет container/file/artifact surface parity:
   не поддержаны `container.file_ids`, generated files, image outputs и richer
   hosted container lifecycle
-- нет настоящей sandbox/container isolation; execution идет на host через
-  explicitly unsafe Python subprocess
+- docker backend пока одноразовый per request: нет persistent `container_id`
+  session reuse между turn-ами и нет real sandbox session store
 - нет hosted failure/artifact semantics parity beyond minimal logs subset
+- stronger isolation backends (`gVisor`, microVM) не заведены; текущий
+  production-minded шаг это hardened Docker, а не VM parity
 
 Definition of done:
 
 - local shim может реально исполнить базовый `code_interpreter` request внутри
   `/v1/responses` без upstream hosted runtime
 - config/OpenAPI/backlog явно фиксируют security boundary:
-  opt-in unsafe host executor, disabled by default
+  explicit backend selection, hardened Docker subset, disabled by default
 - stored replay, integration tests и follow-up semantics не расходятся с новым
   runtime path
 

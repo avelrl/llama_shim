@@ -93,7 +93,7 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 	localToolLoop := supportsLocalToolLoop(rawFields)
 	localFileSearch := supportsLocalFileSearch(rawFields)
 	localCodeInterpreterRequested := isLocalCodeInterpreterToolRequest(rawFields)
-	localCodeInterpreter := supportsLocalCodeInterpreter(rawFields, h.localCodeInterpreter.Enabled)
+	localCodeInterpreter := supportsLocalCodeInterpreter(rawFields, h.localCodeInterpreter)
 	localSupported := supportsLocalShimState(rawFields)
 	generationOptions := buildGenerationOptions(rawFields)
 	if request.Stream != nil && *request.Stream {
