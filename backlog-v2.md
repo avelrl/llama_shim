@@ -1070,6 +1070,11 @@ Definition of done:
   перед execution файлы stage-ятся в текущий session workspace под
   sanitized filenames, planner видит доступные filenames и может читать их
   через guarded workspace-relative `open()`
+- current-turn `input_file` model content parts теперь автоматически
+  stage-ятся в local sandbox workspace для pragmatic subset:
+  поддержаны `input_file.file_id` и inline `input_file.file_data`
+  (`filename` required), так что shim-local `code_interpreter` может читать
+  model-uploaded files без отдельного `container.file_ids`
 - generated file artifacts теперь сохраняются как bounded shim-owned
   `/v1/files` и попадают в local `code_interpreter_call.outputs` как
   shim-local `type=file` descriptors с `file_id`, `filename`, `bytes`;
@@ -1085,8 +1090,11 @@ Definition of done:
 - `unsafe_host` остаётся явно небезопасным fallback/dev path и не должен
   считаться production-grade boundary
 - нет container/file/artifact surface parity:
-  не поддержаны automatic upload of `input_file` model content parts,
-  image outputs и richer hosted container lifecycle
+  `input_file.file_url`, image outputs и richer hosted container lifecycle
+- historical auto-upload parity не полная:
+  current-turn `input_file` parts stage-ятся автоматически, но если reused
+  runtime потерян и shim создает новый session/container, historical
+  auto-uploaded files из lineage пока не restage-ятся автоматически
 - нет hosted annotation streaming parity:
   local stored/streaming responses несут final
   `container_file_citation` annotations в assistant message payload, но shim

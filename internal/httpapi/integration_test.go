@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"mime/multipart"
@@ -4868,6 +4869,187 @@ func TestResponsesCreateLocalCodeInterpreterStagesContainerFileIDs(t *testing.T)
 	require.Equal(t, "777", response.OutputText)
 	require.Equal(t, "code_interpreter_call", response.Output[0].Type)
 	require.NotEmpty(t, asStringAny(response.Output[0].Map()["container_id"]))
+}
+
+func TestResponsesCreateLocalCodeInterpreterAutoUploadsInputFileID(t *testing.T) {
+	var (
+		mu             sync.Mutex
+		activeSessions = map[string]map[string][]byte{}
+	)
+
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		CodeInterpreterBackend: testutil.FakeSandboxBackend{
+			KindValue: "docker",
+			CreateSessionFunc: func(_ context.Context, sessionID string) error {
+				mu.Lock()
+				defer mu.Unlock()
+				activeSessions[sessionID] = map[string][]byte{}
+				return nil
+			},
+			UploadFileFunc: func(_ context.Context, sessionID string, file sandbox.SessionFile) error {
+				mu.Lock()
+				defer mu.Unlock()
+				session, ok := activeSessions[sessionID]
+				if !ok {
+					return sandbox.ErrSessionNotFound
+				}
+				session[file.Name] = append([]byte(nil), file.Content...)
+				return nil
+			},
+			ExecuteFunc: func(_ context.Context, req sandbox.ExecuteRequest) (sandbox.ExecuteResult, error) {
+				mu.Lock()
+				defer mu.Unlock()
+				session, ok := activeSessions[req.SessionID]
+				if !ok {
+					return sandbox.ExecuteResult{}, sandbox.ErrSessionNotFound
+				}
+				require.Contains(t, req.Code, `open("codes.txt"`)
+				content, ok := session["codes.txt"]
+				require.True(t, ok)
+				return sandbox.ExecuteResult{Logs: string(content)}, nil
+			},
+		},
+	})
+
+	status, uploaded := uploadFile(t, app, "codes.txt", "user_data", []byte("Remember: code=777. Reply OK."), nil)
+	require.Equal(t, http.StatusOK, status)
+	fileID := asStringAny(uploaded["id"])
+
+	response := postResponse(t, app, map[string]any{
+		"model": "test-model",
+		"store": true,
+		"input": []map[string]any{
+			{
+				"role": "user",
+				"content": []map[string]any{
+					{"type": "input_text", "text": "What is the code in the uploaded file? Return only the number."},
+					{"type": "input_file", "file_id": fileID},
+				},
+			},
+		},
+		"tools": []map[string]any{
+			{
+				"type": "code_interpreter",
+				"container": map[string]any{
+					"type": "auto",
+				},
+			},
+		},
+		"tool_choice": "required",
+	})
+
+	require.Equal(t, "completed", response.Status)
+	require.Equal(t, "777", response.OutputText)
+	require.Len(t, response.Output, 2)
+	require.Equal(t, "code_interpreter_call", response.Output[0].Type)
+	require.NotEmpty(t, asStringAny(response.Output[0].Map()["container_id"]))
+}
+
+func TestResponsesCreateLocalCodeInterpreterAutoUploadsInlineInputFileData(t *testing.T) {
+	var (
+		mu             sync.Mutex
+		activeSessions = map[string]map[string][]byte{}
+	)
+
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		CodeInterpreterBackend: testutil.FakeSandboxBackend{
+			KindValue: "docker",
+			CreateSessionFunc: func(_ context.Context, sessionID string) error {
+				mu.Lock()
+				defer mu.Unlock()
+				activeSessions[sessionID] = map[string][]byte{}
+				return nil
+			},
+			UploadFileFunc: func(_ context.Context, sessionID string, file sandbox.SessionFile) error {
+				mu.Lock()
+				defer mu.Unlock()
+				session, ok := activeSessions[sessionID]
+				if !ok {
+					return sandbox.ErrSessionNotFound
+				}
+				session[file.Name] = append([]byte(nil), file.Content...)
+				return nil
+			},
+			ExecuteFunc: func(_ context.Context, req sandbox.ExecuteRequest) (sandbox.ExecuteResult, error) {
+				mu.Lock()
+				defer mu.Unlock()
+				session, ok := activeSessions[req.SessionID]
+				if !ok {
+					return sandbox.ExecuteResult{}, sandbox.ErrSessionNotFound
+				}
+				require.Contains(t, req.Code, `open("codes.txt"`)
+				content, ok := session["codes.txt"]
+				require.True(t, ok)
+				return sandbox.ExecuteResult{Logs: string(content)}, nil
+			},
+		},
+	})
+
+	inlineData := base64.StdEncoding.EncodeToString([]byte("Remember: code=777. Reply OK."))
+
+	response := postResponse(t, app, map[string]any{
+		"model": "test-model",
+		"store": true,
+		"input": []map[string]any{
+			{
+				"role": "user",
+				"content": []map[string]any{
+					{"type": "input_text", "text": "Read the uploaded file and return only the code."},
+					{"type": "input_file", "filename": "codes.txt", "file_data": inlineData},
+				},
+			},
+		},
+		"tools": []map[string]any{
+			{
+				"type": "code_interpreter",
+				"container": map[string]any{
+					"type": "auto",
+				},
+			},
+		},
+		"tool_choice": "required",
+	})
+
+	require.Equal(t, "completed", response.Status)
+	require.Equal(t, "777", response.OutputText)
+	require.Len(t, response.Output, 2)
+	require.Equal(t, "code_interpreter_call", response.Output[0].Type)
+	require.NotEmpty(t, asStringAny(response.Output[0].Map()["container_id"]))
+}
+
+func TestResponsesCreateLocalCodeInterpreterRejectsInputFileURL(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		CodeInterpreterBackend: testutil.FakeSandboxBackend{KindValue: "docker"},
+	})
+
+	status, payload := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model": "test-model",
+		"input": []map[string]any{
+			{
+				"role": "user",
+				"content": []map[string]any{
+					{"type": "input_text", "text": "Read the uploaded file and return the code."},
+					{"type": "input_file", "file_url": "https://example.com/codes.txt"},
+				},
+			},
+		},
+		"tools": []map[string]any{
+			{
+				"type": "code_interpreter",
+				"container": map[string]any{
+					"type": "auto",
+				},
+			},
+		},
+		"tool_choice": "required",
+	})
+
+	require.Equal(t, http.StatusBadRequest, status)
+	errorPayload, ok := payload["error"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "invalid_request_error", asStringAny(errorPayload["type"]))
+	require.Contains(t, asStringAny(errorPayload["message"]), "input_file.file_url")
+	require.Equal(t, "input", asStringAny(errorPayload["param"]))
 }
 
 func TestResponsesCreateLocalCodeInterpreterPersistsGeneratedArtifacts(t *testing.T) {
