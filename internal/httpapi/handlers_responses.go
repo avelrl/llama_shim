@@ -39,9 +39,10 @@ type responseHandler struct {
 	codexCompatibilityEnabled    bool
 	forceCodexToolChoiceRequired bool
 	localCodeInterpreter         LocalCodeInterpreterRuntimeConfig
+	localCodeInterpreterSessions LocalCodeInterpreterSessionStore
 }
 
-func newResponseHandler(logger *slog.Logger, service *service.ResponseService, proxy *proxyHandler, responsesMode string, customToolsMode string, codexCompatibilityEnabled bool, forceCodexToolChoiceRequired bool, localCodeInterpreter LocalCodeInterpreterRuntimeConfig) *responseHandler {
+func newResponseHandler(logger *slog.Logger, service *service.ResponseService, proxy *proxyHandler, responsesMode string, customToolsMode string, codexCompatibilityEnabled bool, forceCodexToolChoiceRequired bool, localCodeInterpreter LocalCodeInterpreterRuntimeConfig, localCodeInterpreterSessions LocalCodeInterpreterSessionStore) *responseHandler {
 	return &responseHandler{
 		logger:                       logger,
 		service:                      service,
@@ -51,6 +52,7 @@ func newResponseHandler(logger *slog.Logger, service *service.ResponseService, p
 		codexCompatibilityEnabled:    codexCompatibilityEnabled,
 		forceCodexToolChoiceRequired: forceCodexToolChoiceRequired,
 		localCodeInterpreter:         localCodeInterpreter,
+		localCodeInterpreterSessions: localCodeInterpreterSessions,
 	}
 }
 

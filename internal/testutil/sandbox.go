@@ -9,8 +9,10 @@ import (
 )
 
 type FakeSandboxBackend struct {
-	KindValue   string
-	ExecuteFunc func(context.Context, sandbox.ExecuteRequest) (sandbox.ExecuteResult, error)
+	CreateSessionFunc  func(context.Context, string) error
+	DestroySessionFunc func(context.Context, string) error
+	KindValue          string
+	ExecuteFunc        func(context.Context, sandbox.ExecuteRequest) (sandbox.ExecuteResult, error)
 }
 
 func (b FakeSandboxBackend) Kind() string {
@@ -18,6 +20,13 @@ func (b FakeSandboxBackend) Kind() string {
 		return b.KindValue
 	}
 	return "fake"
+}
+
+func (b FakeSandboxBackend) CreateSession(ctx context.Context, sessionID string) error {
+	if b.CreateSessionFunc != nil {
+		return b.CreateSessionFunc(ctx, sessionID)
+	}
+	return nil
 }
 
 func (b FakeSandboxBackend) ExecutePython(ctx context.Context, req sandbox.ExecuteRequest) (sandbox.ExecuteResult, error) {
@@ -33,4 +42,11 @@ func (b FakeSandboxBackend) ExecutePython(ctx context.Context, req sandbox.Execu
 	default:
 		return sandbox.ExecuteResult{}, fmt.Errorf("unexpected fake sandbox code: %s", req.Code)
 	}
+}
+
+func (b FakeSandboxBackend) DestroySession(ctx context.Context, sessionID string) error {
+	if b.DestroySessionFunc != nil {
+		return b.DestroySessionFunc(ctx, sessionID)
+	}
+	return nil
 }

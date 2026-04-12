@@ -101,7 +101,8 @@
   execution в pragmatic subset:
   один `code_interpreter` tool с `container.type=auto`,
   backend-gated local executor (`disabled|unsafe_host|docker`) with hardened
-  Docker as the primary boundary, non-streaming/streaming create,
+  Docker as the primary boundary, non-streaming/streaming create, shim-owned
+  `container_id` session reuse across stored `previous_response_id` lineage,
   optional `include=["code_interpreter_call.outputs"]`, stored
   `code_interpreter_call` output item и follow-up turns не ломаются из-за
   stored tool items в локальном generation context
@@ -1055,9 +1056,12 @@ Definition of done:
 - follow-up local turns по `previous_response_id` после stored
   `code_interpreter_call` не ломаются из-за tool items в generation context
 - для `backend=docker` execution больше не идет напрямую на host:
-  shim запускает одноразовый жестко ограниченный container
+  shim запускает и переиспользует жестко ограниченный session container
   (`network=none`, `read_only`, tmpfs workspace, non-root,
   `cap_drop=ALL`, `no-new-privileges`, memory/cpu/pids limits)
+- `container.type=auto` теперь reuse-ит активный shim-owned session из
+  последнего stored `code_interpreter_call` в lineage того же backend; если
+  runtime потерян, shim создает новый `cntr_*` и продолжает без hard failure
 
 Что осталось открытым:
 
@@ -1067,11 +1071,14 @@ Definition of done:
 - нет container/file/artifact surface parity:
   не поддержаны `container.file_ids`, generated files, image outputs и richer
   hosted container lifecycle
-- docker backend пока одноразовый per request: нет persistent `container_id`
-  session reuse между turn-ами и нет real sandbox session store
+- нет explicit container mode parity:
+  local subset не принимает `tools[].container = "cntr_..."` и не реализует
+  `/v1/containers` surface
 - нет hosted failure/artifact semantics parity beyond minimal logs subset
 - stronger isolation backends (`gVisor`, microVM) не заведены; текущий
   production-minded шаг это hardened Docker, а не VM parity
+- нет TTL/cleanup policy для session rows и runtime leftovers; это остаётся
+  ops/runtime follow-up, а не часть текущего subset
 
 Definition of done:
 

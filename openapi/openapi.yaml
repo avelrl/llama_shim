@@ -128,7 +128,11 @@ paths:
           accepts `tool_choice=auto|required`,
           accepts `include=["code_interpreter_call.outputs"]`,
           and returns stored/streaming `code_interpreter_call` items
-        - `backend=docker` uses a hardened one-shot container boundary;
+        - `container.type=auto` reuses the last active shim-owned
+          `code_interpreter_call.container_id` in stored lineage for the same
+          backend, or creates a new `cntr_*` session if no active runtime is
+          available
+        - `backend=docker` uses a hardened reusable session-container boundary;
           `backend=unsafe_host` remains a development fallback and legacy
           compatibility path
         - the local subset does not support `container.file_ids`, generated
@@ -1741,12 +1745,12 @@ components:
 
         The local `code_interpreter` subset is guarded by
         `responses.code_interpreter.backend`. `backend=docker` uses a hardened
-        one-shot container with no network, read-only rootfs, tmpfs workspace,
+        reusable container with no network, read-only rootfs, tmpfs workspace,
         non-root user, dropped capabilities, and memory/cpu/pids limits.
         `backend=unsafe_host` remains an explicitly unsafe fallback. The shim
         does not yet claim hosted sandbox/container parity and does not support
-        `container.file_ids`, generated artifacts, or persistent
-        `container_id` reuse.
+        `container.file_ids`, generated artifacts, explicit `/v1/containers`
+        parity, or user-specified `tools[].container = "cntr_..."` mode.
 
         `background` is forwarded upstream for long-running responses and is not
         executed locally by the shim.

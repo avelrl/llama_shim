@@ -37,6 +37,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 		deps.ResponsesCodexEnableCompatibility,
 		deps.ResponsesCodexForceToolChoiceRequired,
 		deps.LocalCodeInterpreter,
+		deps.Store,
 	)
 	conversationHandler := newConversationHandler(deps.Logger, deps.ConversationService)
 	retrievalHandler := newRetrievalHandler(deps.Logger, deps.Store)

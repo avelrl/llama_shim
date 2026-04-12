@@ -185,6 +185,34 @@ func TestStoreSaveResponseUpsertsLifecyclePayload(t *testing.T) {
 	require.Equal(t, updated.CompletedAt, got.CompletedAt)
 }
 
+func TestStoreSaveCodeInterpreterSessionRoundTripAndTouch(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store := openTestStore(t, ctx)
+
+	session := domain.CodeInterpreterSession{
+		ID:           "cntr_test",
+		Backend:      "docker",
+		CreatedAt:    "2026-04-12T10:00:00Z",
+		LastActiveAt: "2026-04-12T10:00:00Z",
+	}
+	require.NoError(t, store.SaveCodeInterpreterSession(ctx, session))
+
+	got, err := store.GetCodeInterpreterSession(ctx, session.ID)
+	require.NoError(t, err)
+	require.Equal(t, session, got)
+
+	require.NoError(t, store.TouchCodeInterpreterSession(ctx, session.ID, "2026-04-12T10:05:00Z"))
+	got, err = store.GetCodeInterpreterSession(ctx, session.ID)
+	require.NoError(t, err)
+	require.Equal(t, "2026-04-12T10:05:00Z", got.LastActiveAt)
+
+	require.NoError(t, store.DeleteCodeInterpreterSession(ctx, session.ID))
+	_, err = store.GetCodeInterpreterSession(ctx, session.ID)
+	require.ErrorIs(t, err, sqlite.ErrNotFound)
+}
+
 func TestStoreCreateConversationAppendAndPaginateItems(t *testing.T) {
 	t.Parallel()
 

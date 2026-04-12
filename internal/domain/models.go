@@ -59,6 +59,13 @@ type StoredResponse struct {
 	CompletedAt          string
 }
 
+type CodeInterpreterSession struct {
+	ID           string
+	Backend      string
+	CreatedAt    string
+	LastActiveAt string
+}
+
 type ResponseDeletion struct {
 	ID      string `json:"id"`
 	Object  string `json:"object"`

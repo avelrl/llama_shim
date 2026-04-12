@@ -10,12 +10,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
 	"llama_shim/internal/config"
 	"llama_shim/internal/domain"
+	"llama_shim/internal/sandbox"
 	"llama_shim/internal/testutil"
 )
 
@@ -4893,6 +4895,139 @@ func TestResponsesCreateLocalCodeInterpreterWorksAfterStoredFollowUp(t *testing.
 	require.Equal(t, "OK", second.OutputText)
 	require.Len(t, second.Output, 1)
 	require.Equal(t, "message", second.Output[0].Type)
+}
+
+func TestResponsesCreateLocalCodeInterpreterReusesStoredSessionContainerID(t *testing.T) {
+	var (
+		mu                 sync.Mutex
+		activeSessions     = map[string]struct{}{}
+		executedSessionIDs []string
+	)
+
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		CodeInterpreterBackend: testutil.FakeSandboxBackend{
+			KindValue: "docker",
+			CreateSessionFunc: func(_ context.Context, sessionID string) error {
+				mu.Lock()
+				defer mu.Unlock()
+				activeSessions[sessionID] = struct{}{}
+				return nil
+			},
+			ExecuteFunc: func(_ context.Context, req sandbox.ExecuteRequest) (sandbox.ExecuteResult, error) {
+				mu.Lock()
+				defer mu.Unlock()
+				if _, ok := activeSessions[req.SessionID]; !ok {
+					return sandbox.ExecuteResult{}, sandbox.ErrSessionNotFound
+				}
+				executedSessionIDs = append(executedSessionIDs, req.SessionID)
+				return sandbox.ExecuteResult{Logs: "4\n"}, nil
+			},
+		},
+	})
+
+	first := postResponse(t, app, map[string]any{
+		"model": "test-model",
+		"store": true,
+		"input": "Use Python to calculate 2+2. Return only the numeric result.",
+		"tools": []map[string]any{
+			{
+				"type": "code_interpreter",
+				"container": map[string]any{
+					"type": "auto",
+				},
+			},
+		},
+		"tool_choice": "required",
+	})
+	second := postResponse(t, app, map[string]any{
+		"model":                "test-model",
+		"store":                true,
+		"previous_response_id": first.ID,
+		"input":                "Use Python to calculate 2+2. Return only the numeric result.",
+		"tools": []map[string]any{
+			{
+				"type": "code_interpreter",
+				"container": map[string]any{
+					"type": "auto",
+				},
+			},
+		},
+		"tool_choice": "required",
+	})
+
+	firstContainerID := asStringAny(first.Output[0].Map()["container_id"])
+	secondContainerID := asStringAny(second.Output[0].Map()["container_id"])
+	require.NotEmpty(t, firstContainerID)
+	require.Equal(t, firstContainerID, secondContainerID)
+	require.Equal(t, []string{firstContainerID, firstContainerID}, executedSessionIDs)
+}
+
+func TestResponsesCreateLocalCodeInterpreterCreatesNewSessionWhenStoredRuntimeIsGone(t *testing.T) {
+	var (
+		mu             sync.Mutex
+		activeSessions = map[string]struct{}{}
+	)
+
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		CodeInterpreterBackend: testutil.FakeSandboxBackend{
+			KindValue: "docker",
+			CreateSessionFunc: func(_ context.Context, sessionID string) error {
+				mu.Lock()
+				defer mu.Unlock()
+				activeSessions[sessionID] = struct{}{}
+				return nil
+			},
+			ExecuteFunc: func(_ context.Context, req sandbox.ExecuteRequest) (sandbox.ExecuteResult, error) {
+				mu.Lock()
+				defer mu.Unlock()
+				if _, ok := activeSessions[req.SessionID]; !ok {
+					return sandbox.ExecuteResult{}, sandbox.ErrSessionNotFound
+				}
+				return sandbox.ExecuteResult{Logs: "4\n"}, nil
+			},
+		},
+	})
+
+	first := postResponse(t, app, map[string]any{
+		"model": "test-model",
+		"store": true,
+		"input": "Use Python to calculate 2+2. Return only the numeric result.",
+		"tools": []map[string]any{
+			{
+				"type": "code_interpreter",
+				"container": map[string]any{
+					"type": "auto",
+				},
+			},
+		},
+		"tool_choice": "required",
+	})
+
+	firstContainerID := asStringAny(first.Output[0].Map()["container_id"])
+	mu.Lock()
+	delete(activeSessions, firstContainerID)
+	mu.Unlock()
+
+	second := postResponse(t, app, map[string]any{
+		"model":                "test-model",
+		"store":                true,
+		"previous_response_id": first.ID,
+		"input":                "Use Python to calculate 2+2. Return only the numeric result.",
+		"tools": []map[string]any{
+			{
+				"type": "code_interpreter",
+				"container": map[string]any{
+					"type": "auto",
+				},
+			},
+		},
+		"tool_choice": "required",
+	})
+
+	secondContainerID := asStringAny(second.Output[0].Map()["container_id"])
+	require.NotEmpty(t, firstContainerID)
+	require.NotEmpty(t, secondContainerID)
+	require.NotEqual(t, firstContainerID, secondContainerID)
 }
 
 func TestResponsesCreateLocalCodeInterpreterLocalOnlyRequiresUnsafeExecutor(t *testing.T) {

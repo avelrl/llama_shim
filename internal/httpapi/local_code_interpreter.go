@@ -12,6 +12,7 @@ import (
 	"llama_shim/internal/llama"
 	"llama_shim/internal/sandbox"
 	"llama_shim/internal/service"
+	"llama_shim/internal/storage/sqlite"
 )
 
 const (
@@ -57,6 +58,13 @@ type LocalCodeInterpreterRuntimeConfig struct {
 
 func (c LocalCodeInterpreterRuntimeConfig) Enabled() bool {
 	return c.Backend != nil
+}
+
+type LocalCodeInterpreterSessionStore interface {
+	GetCodeInterpreterSession(ctx context.Context, id string) (domain.CodeInterpreterSession, error)
+	SaveCodeInterpreterSession(ctx context.Context, session domain.CodeInterpreterSession) error
+	TouchCodeInterpreterSession(ctx context.Context, id string, lastActiveAt string) error
+	DeleteCodeInterpreterSession(ctx context.Context, id string) error
 }
 
 type localCodeInterpreterConfig struct {
@@ -144,7 +152,7 @@ func (h *responseHandler) createLocalCodeInterpreterResponse(ctx context.Context
 		return domain.Response{}, err
 	}
 
-	logs, err := h.executeLocalCodeInterpreter(ctx, plan.Code)
+	logs, containerID, err := h.executeLocalCodeInterpreter(ctx, prepared, plan.Code)
 	if err != nil {
 		return domain.Response{}, err
 	}
@@ -165,10 +173,6 @@ func (h *responseHandler) createLocalCodeInterpreterResponse(ctx context.Context
 	responseID, err := domain.NewPrefixedID("resp")
 	if err != nil {
 		return domain.Response{}, fmt.Errorf("generate response id: %w", err)
-	}
-	containerID, err := domain.NewPrefixedID("cntr")
-	if err != nil {
-		return domain.Response{}, fmt.Errorf("generate container id: %w", err)
 	}
 	createdAt := domain.NowUTC().Unix()
 	response := domain.NewResponse(responseID, input.Model, outputText, input.PreviousResponseID, input.ConversationID, createdAt)
@@ -396,18 +400,98 @@ func validateLocalCodeInterpreterPlanCode(code string) error {
 	return nil
 }
 
-func (h *responseHandler) executeLocalCodeInterpreter(ctx context.Context, code string) (string, error) {
+func (h *responseHandler) executeLocalCodeInterpreter(ctx context.Context, prepared service.PreparedResponseContext, code string) (string, string, error) {
 	if !h.localCodeInterpreter.Enabled() {
-		return "", localCodeInterpreterDisabledError()
+		return "", "", localCodeInterpreterDisabledError()
 	}
-	result, err := h.localCodeInterpreter.Backend.ExecutePython(ctx, sandbox.ExecuteRequest{Code: code})
+
+	sessionID, canReuse, err := h.findReusableLocalCodeInterpreterSessionID(ctx, prepared)
 	if err != nil {
-		if errors.Is(err, sandbox.ErrDisabled) {
-			return "", localCodeInterpreterDisabledError()
-		}
-		return result.Logs, fmt.Errorf("execute shim-local code_interpreter via %s backend: %w", h.localCodeInterpreter.Backend.Kind(), err)
+		return "", "", err
 	}
-	return result.Logs, nil
+	if canReuse {
+		result, err := h.localCodeInterpreter.Backend.ExecutePython(ctx, sandbox.ExecuteRequest{
+			SessionID: sessionID,
+			Code:      code,
+		})
+		if err == nil {
+			if touchErr := h.localCodeInterpreterSessions.TouchCodeInterpreterSession(ctx, sessionID, domain.FormatTime(domain.NowUTC())); touchErr != nil {
+				return result.Logs, "", touchErr
+			}
+			return result.Logs, sessionID, nil
+		}
+		if errors.Is(err, sandbox.ErrSessionNotFound) {
+			_ = h.localCodeInterpreterSessions.DeleteCodeInterpreterSession(ctx, sessionID)
+		} else if errors.Is(err, sandbox.ErrDisabled) {
+			return "", "", localCodeInterpreterDisabledError()
+		} else {
+			return result.Logs, "", fmt.Errorf("execute shim-local code_interpreter via %s backend: %w", h.localCodeInterpreter.Backend.Kind(), err)
+		}
+	}
+
+	sessionID, err = domain.NewPrefixedID("cntr")
+	if err != nil {
+		return "", "", fmt.Errorf("generate container id: %w", err)
+	}
+	if err := h.localCodeInterpreter.Backend.CreateSession(ctx, sessionID); err != nil {
+		if errors.Is(err, sandbox.ErrDisabled) {
+			return "", "", localCodeInterpreterDisabledError()
+		}
+		return "", "", fmt.Errorf("create shim-local code_interpreter session via %s backend: %w", h.localCodeInterpreter.Backend.Kind(), err)
+	}
+
+	result, err := h.localCodeInterpreter.Backend.ExecutePython(ctx, sandbox.ExecuteRequest{
+		SessionID: sessionID,
+		Code:      code,
+	})
+	if err != nil {
+		_ = h.localCodeInterpreter.Backend.DestroySession(ctx, sessionID)
+		if errors.Is(err, sandbox.ErrDisabled) {
+			return "", "", localCodeInterpreterDisabledError()
+		}
+		return result.Logs, "", fmt.Errorf("execute shim-local code_interpreter via %s backend: %w", h.localCodeInterpreter.Backend.Kind(), err)
+	}
+
+	now := domain.FormatTime(domain.NowUTC())
+	if err := h.localCodeInterpreterSessions.SaveCodeInterpreterSession(ctx, domain.CodeInterpreterSession{
+		ID:           sessionID,
+		Backend:      h.localCodeInterpreter.Backend.Kind(),
+		CreatedAt:    now,
+		LastActiveAt: now,
+	}); err != nil {
+		_ = h.localCodeInterpreter.Backend.DestroySession(ctx, sessionID)
+		return result.Logs, "", err
+	}
+	return result.Logs, sessionID, nil
+}
+
+func (h *responseHandler) findReusableLocalCodeInterpreterSessionID(ctx context.Context, prepared service.PreparedResponseContext) (string, bool, error) {
+	if h.localCodeInterpreterSessions == nil || h.localCodeInterpreter.Backend == nil {
+		return "", false, nil
+	}
+
+	for i := len(prepared.EffectiveInput) - 1; i >= 0; i-- {
+		item := prepared.EffectiveInput[i]
+		if strings.TrimSpace(item.Type) != "code_interpreter_call" {
+			continue
+		}
+		containerID := strings.TrimSpace(item.StringField("container_id"))
+		if containerID == "" {
+			continue
+		}
+		session, err := h.localCodeInterpreterSessions.GetCodeInterpreterSession(ctx, containerID)
+		if err != nil {
+			if errors.Is(err, sqlite.ErrNotFound) {
+				return "", false, nil
+			}
+			return "", false, err
+		}
+		if strings.TrimSpace(session.Backend) != h.localCodeInterpreter.Backend.Kind() {
+			return "", false, nil
+		}
+		return session.ID, true, nil
+	}
+	return "", false, nil
 }
 
 func buildLocalCodeInterpreterExecutionContext(prepared service.PreparedResponseContext, code string, logs string) ([]domain.Item, error) {
