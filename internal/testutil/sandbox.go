@@ -13,6 +13,7 @@ type FakeSandboxBackend struct {
 	DestroySessionFunc func(context.Context, string) error
 	KindValue          string
 	ExecuteFunc        func(context.Context, sandbox.ExecuteRequest) (sandbox.ExecuteResult, error)
+	ListFilesFunc      func(context.Context, string) ([]sandbox.SessionFile, error)
 	UploadFileFunc     func(context.Context, string, sandbox.SessionFile) error
 }
 
@@ -35,6 +36,13 @@ func (b FakeSandboxBackend) UploadFile(ctx context.Context, sessionID string, fi
 		return b.UploadFileFunc(ctx, sessionID, file)
 	}
 	return nil
+}
+
+func (b FakeSandboxBackend) ListFiles(ctx context.Context, sessionID string) ([]sandbox.SessionFile, error) {
+	if b.ListFilesFunc != nil {
+		return b.ListFilesFunc(ctx, sessionID)
+	}
+	return nil, nil
 }
 
 func (b FakeSandboxBackend) ExecutePython(ctx context.Context, req sandbox.ExecuteRequest) (sandbox.ExecuteResult, error) {

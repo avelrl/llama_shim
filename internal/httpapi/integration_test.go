@@ -9,6 +9,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -4867,6 +4868,115 @@ func TestResponsesCreateLocalCodeInterpreterStagesContainerFileIDs(t *testing.T)
 	require.Equal(t, "777", response.OutputText)
 	require.Equal(t, "code_interpreter_call", response.Output[0].Type)
 	require.NotEmpty(t, asStringAny(response.Output[0].Map()["container_id"]))
+}
+
+func TestResponsesCreateLocalCodeInterpreterPersistsGeneratedArtifacts(t *testing.T) {
+	var (
+		mu             sync.Mutex
+		activeSessions = map[string]map[string][]byte{}
+	)
+
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		CodeInterpreterBackend: testutil.FakeSandboxBackend{
+			KindValue: "docker",
+			CreateSessionFunc: func(_ context.Context, sessionID string) error {
+				mu.Lock()
+				defer mu.Unlock()
+				activeSessions[sessionID] = map[string][]byte{}
+				return nil
+			},
+			ListFilesFunc: func(_ context.Context, sessionID string) ([]sandbox.SessionFile, error) {
+				mu.Lock()
+				defer mu.Unlock()
+				session, ok := activeSessions[sessionID]
+				if !ok {
+					return nil, sandbox.ErrSessionNotFound
+				}
+				files := make([]sandbox.SessionFile, 0, len(session))
+				for name, content := range session {
+					files = append(files, sandbox.SessionFile{
+						Name:    name,
+						Content: append([]byte(nil), content...),
+					})
+				}
+				slices.SortFunc(files, func(a, b sandbox.SessionFile) int {
+					return strings.Compare(a.Name, b.Name)
+				})
+				return files, nil
+			},
+			ExecuteFunc: func(_ context.Context, req sandbox.ExecuteRequest) (sandbox.ExecuteResult, error) {
+				mu.Lock()
+				defer mu.Unlock()
+				session, ok := activeSessions[req.SessionID]
+				if !ok {
+					return sandbox.ExecuteResult{}, sandbox.ErrSessionNotFound
+				}
+				session["report.txt"] = []byte("artifact-body")
+				return sandbox.ExecuteResult{Logs: "created report.txt\n"}, nil
+			},
+		},
+	})
+
+	response := postResponse(t, app, map[string]any{
+		"model":   "test-model",
+		"store":   true,
+		"input":   "Use Python to write report.txt containing artifact-body, then say created.",
+		"include": []string{"code_interpreter_call.outputs"},
+		"tools": []map[string]any{
+			{
+				"type": "code_interpreter",
+				"container": map[string]any{
+					"type": "auto",
+				},
+			},
+		},
+		"tool_choice": "required",
+	})
+
+	require.Equal(t, "completed", response.Status)
+	require.Equal(t, "Created report.txt.", response.OutputText)
+	require.Len(t, response.Output, 2)
+
+	callPayload := response.Output[0].Map()
+	outputs, ok := callPayload["outputs"].([]any)
+	require.True(t, ok)
+	require.Len(t, outputs, 2)
+
+	logOutput, ok := outputs[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "logs", asStringAny(logOutput["type"]))
+	require.Equal(t, "created report.txt\n", asStringAny(logOutput["logs"]))
+
+	fileOutput, ok := outputs[1].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "file", asStringAny(fileOutput["type"]))
+	require.Equal(t, "report.txt", asStringAny(fileOutput["filename"]))
+	require.EqualValues(t, len("artifact-body"), fileOutput["bytes"])
+	fileID := asStringAny(fileOutput["file_id"])
+	require.NotEmpty(t, fileID)
+
+	status, filePayload := rawRequest(t, app, http.MethodGet, "/v1/files/"+fileID, nil)
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, fileID, asStringAny(filePayload["id"]))
+	require.Equal(t, "report.txt", asStringAny(filePayload["filename"]))
+	require.Equal(t, "assistants", asStringAny(filePayload["purpose"]))
+	require.EqualValues(t, len("artifact-body"), filePayload["bytes"])
+
+	req, err := http.NewRequest(http.MethodGet, app.Server.URL+"/v1/files/"+fileID+"/content", nil)
+	require.NoError(t, err)
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equal(t, "artifact-body", string(body))
+
+	stored := getResponse(t, app, response.ID)
+	require.Len(t, stored.Output, 2)
+	storedOutputs, ok := stored.Output[0].Map()["outputs"].([]any)
+	require.True(t, ok)
+	require.Len(t, storedOutputs, 2)
 }
 
 func TestResponsesCreateLocalCodeInterpreterStreamReplaysToolEvents(t *testing.T) {

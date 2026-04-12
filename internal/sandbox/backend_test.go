@@ -1,6 +1,8 @@
 package sandbox
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -68,4 +70,21 @@ func TestValidateSessionFileRejectsTraversal(t *testing.T) {
 	_, err := validateSessionFile(SessionFile{Name: "../secret.txt"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "path separators")
+}
+
+func TestListSessionFilesFromDirReturnsSortedRelativeFiles(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "nested"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "b.txt"), []byte("B"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "nested", "a.txt"), []byte("A"), 0o644))
+
+	files, err := listSessionFilesFromDir(root)
+	require.NoError(t, err)
+	require.Len(t, files, 2)
+	require.Equal(t, "b.txt", files[0].Name)
+	require.Equal(t, "B", string(files[0].Content))
+	require.Equal(t, "nested/a.txt", files[1].Name)
+	require.Equal(t, "A", string(files[1].Content))
 }

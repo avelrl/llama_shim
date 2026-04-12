@@ -104,7 +104,8 @@
   backend-gated local executor (`disabled|unsafe_host|docker`) with hardened
   Docker as the primary boundary, non-streaming/streaming create, shim-owned
   `container_id` session reuse across stored `previous_response_id` lineage,
-  optional `include=["code_interpreter_call.outputs"]`, stored
+  optional `include=["code_interpreter_call.outputs"]` with logs plus
+  shim-owned generated file descriptors, stored
   `code_interpreter_call` output item и follow-up turns не ломаются из-за
   stored tool items в локальном generation context
 - non-text/binary attachments не маскируются под успех: local
@@ -1068,6 +1069,10 @@ Definition of done:
   перед execution файлы stage-ятся в текущий session workspace под
   sanitized filenames, planner видит доступные filenames и может читать их
   через guarded workspace-relative `open()`
+- generated file artifacts теперь сохраняются как bounded shim-owned
+  `/v1/files` и попадают в local `code_interpreter_call.outputs` как
+  shim-local `type=file` descriptors с `file_id`, `filename`, `bytes`;
+  final assistant turn видит этот список в local generation context
 
 Что осталось открытым:
 
@@ -1076,12 +1081,13 @@ Definition of done:
   считаться production-grade boundary
 - нет container/file/artifact surface parity:
   не поддержаны automatic upload of `input_file` model content parts,
-  generated files, image outputs, message annotations
-  (`container_file_citation`) и richer hosted container lifecycle
+  image outputs, message annotations (`container_file_citation`) и richer
+  hosted container lifecycle
 - нет explicit container mode parity:
   local subset не принимает `tools[].container = "cntr_..."` и не реализует
   `/v1/containers` surface
-- нет hosted failure/artifact semantics parity beyond minimal logs subset
+- нет hosted failure/artifact semantics parity beyond logs + local generated
+  file subset
 - stronger isolation backends (`gVisor`, microVM) не заведены; текущий
   production-minded шаг это hardened Docker, а не VM parity
 - нет TTL/cleanup policy для session rows и runtime leftovers; это остаётся

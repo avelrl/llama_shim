@@ -136,11 +136,16 @@ paths:
         - supported `container.file_ids` values are staged from local
           `/v1/files` into the current sandbox workspace under sanitized
           filenames before execution
+        - generated files from the local sandbox are captured in a bounded
+          shim-owned subset: small new/changed workspace files are saved into
+          local `/v1/files`, surfaced in local `code_interpreter_call.outputs`
+          as shim-local `type=file` descriptors (`file_id`, `filename`,
+          `bytes`), and made visible to the final local assistant turn
         - `backend=docker` uses a hardened reusable session-container boundary;
           `backend=unsafe_host` remains a development fallback and legacy
           compatibility path
         - the local subset does not yet support automatic upload of
-          `input_file` model content parts, generated file/image artifacts,
+          `input_file` model content parts, image artifacts,
           `container_file_citation` annotations, or hosted sandbox/container
           lifecycle parity
 
@@ -1757,9 +1762,12 @@ components:
         `backend=unsafe_host` remains an explicitly unsafe fallback. Supported
         local `container.file_ids` values are staged from shim-owned
         `/v1/files` into the current sandbox workspace under sanitized
-        filenames. The shim does not yet claim hosted sandbox/container parity
-        and does not support automatic `input_file` upload parity, generated
-        artifacts, `container_file_citation` annotations, explicit
+        filenames. Small new/changed generated files are persisted as
+        shim-owned `/v1/files` and exposed only through the local
+        `code_interpreter_call.outputs` subset. The shim does not yet claim
+        hosted sandbox/container parity and does not support automatic
+        `input_file` upload parity, image artifacts,
+        `container_file_citation` annotations, explicit
         `/v1/containers` parity, or user-specified
         `tools[].container = "cntr_..."` mode.
 

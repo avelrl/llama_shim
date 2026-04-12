@@ -7,9 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -28,6 +30,7 @@ type Backend interface {
 	Kind() string
 	CreateSession(ctx context.Context, sessionID string) error
 	UploadFile(ctx context.Context, sessionID string, file SessionFile) error
+	ListFiles(ctx context.Context, sessionID string) ([]SessionFile, error)
 	ExecutePython(ctx context.Context, req ExecuteRequest) (ExecuteResult, error)
 	DestroySession(ctx context.Context, sessionID string) error
 }
@@ -82,6 +85,25 @@ func (b UnsafeHostBackend) UploadFile(_ context.Context, sessionID string, file 
 		return fmt.Errorf("write unsafe_host session file: %w", err)
 	}
 	return nil
+}
+
+func (b UnsafeHostBackend) ListFiles(_ context.Context, sessionID string) ([]SessionFile, error) {
+	if strings.TrimSpace(sessionID) == "" {
+		return nil, ErrSessionNotFound
+	}
+
+	sessionDir := b.sessionDir(sessionID)
+	if _, err := os.Stat(sessionDir); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, ErrSessionNotFound
+		}
+		return nil, fmt.Errorf("stat unsafe_host session dir: %w", err)
+	}
+	files, err := listSessionFilesFromDir(sessionDir)
+	if err != nil {
+		return nil, fmt.Errorf("list unsafe_host session files: %w", err)
+	}
+	return files, nil
 }
 
 func (b UnsafeHostBackend) ExecutePython(ctx context.Context, req ExecuteRequest) (ExecuteResult, error) {
@@ -258,6 +280,50 @@ func (b DockerBackend) UploadFile(ctx context.Context, sessionID string, file Se
 		return fmt.Errorf("upload docker sandbox file: %w: %s", err, strings.TrimSpace(string(output)))
 	}
 	return nil
+}
+
+func (b DockerBackend) ListFiles(ctx context.Context, sessionID string) ([]SessionFile, error) {
+	if strings.TrimSpace(sessionID) == "" {
+		return nil, ErrSessionNotFound
+	}
+	timeout := b.Timeout
+	if timeout <= 0 {
+		timeout = DefaultExecutionTimeout
+	}
+	execCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	dockerBinary := b.dockerBinary()
+	containerName := b.containerName(sessionID)
+	exists, running, err := b.inspectContainer(execCtx, dockerBinary, containerName)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, ErrSessionNotFound
+	}
+	if !running {
+		if err := b.startContainer(execCtx, dockerBinary, containerName); err != nil {
+			return nil, err
+		}
+	}
+
+	tmpDir, err := os.MkdirTemp("", "llama-shim-sandbox-list-*")
+	if err != nil {
+		return nil, fmt.Errorf("create temp sandbox dir: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(tmpDir) }()
+
+	cmd := exec.CommandContext(execCtx, dockerBinary, "cp", containerName+":/workspace/.", tmpDir)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("list docker sandbox files: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+
+	files, err := listSessionFilesFromDir(tmpDir)
+	if err != nil {
+		return nil, fmt.Errorf("list docker sandbox files: %w", err)
+	}
+	return files, nil
 }
 
 func (b DockerBackend) ExecutePython(ctx context.Context, req ExecuteRequest) (ExecuteResult, error) {
@@ -546,6 +612,45 @@ func validateSessionFile(file SessionFile) (string, error) {
 	default:
 		return name, nil
 	}
+}
+
+func listSessionFilesFromDir(root string) ([]SessionFile, error) {
+	files := make([]SessionFile, 0)
+	if err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if path == root {
+			return nil
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		if !entry.Type().IsRegular() {
+			return nil
+		}
+
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		files = append(files, SessionFile{
+			Name:    filepath.ToSlash(rel),
+			Content: content,
+		})
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+
+	sort.Slice(files, func(i, j int) bool {
+		return files[i].Name < files[j].Name
+	})
+	return files, nil
 }
 
 type limitedOutputBuffer struct {

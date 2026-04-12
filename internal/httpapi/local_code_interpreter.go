@@ -19,6 +19,9 @@ import (
 
 const (
 	defaultLocalCodeInterpreterPlannedCodeLimit = 16 << 10
+	maxLocalCodeInterpreterGeneratedFiles       = 8
+	maxLocalCodeInterpreterGeneratedFileBytes   = 2 << 20
+	maxLocalCodeInterpreterGeneratedTotalBytes  = 8 << 20
 )
 
 var shimLocalCodeInterpreterFields = map[string]struct{}{
@@ -70,6 +73,7 @@ type LocalCodeInterpreterSessionStore interface {
 
 type LocalCodeInterpreterFileStore interface {
 	GetFile(ctx context.Context, id string) (domain.StoredFile, error)
+	SaveFile(ctx context.Context, file domain.StoredFile) error
 }
 
 type localCodeInterpreterConfig struct {
@@ -83,6 +87,18 @@ type localCodeInterpreterInputFile struct {
 	FileID        string
 	Filename      string
 	WorkspaceName string
+}
+
+type localCodeInterpreterGeneratedFile struct {
+	Bytes    int64
+	FileID   string
+	Filename string
+}
+
+type localCodeInterpreterExecutionResult struct {
+	ContainerID    string
+	GeneratedFiles []localCodeInterpreterGeneratedFile
+	Logs           string
 }
 
 type localCodeInterpreterPlan struct {
@@ -170,12 +186,12 @@ func (h *responseHandler) createLocalCodeInterpreterResponse(ctx context.Context
 		return domain.Response{}, err
 	}
 
-	logs, containerID, err := h.executeLocalCodeInterpreter(ctx, prepared, inputFiles, plan.Code)
+	execution, err := h.executeLocalCodeInterpreter(ctx, prepared, inputFiles, plan.Code)
 	if err != nil {
 		return domain.Response{}, err
 	}
 
-	generationContext, err := buildLocalCodeInterpreterExecutionContext(prepared, plan.Code, logs)
+	generationContext, err := buildLocalCodeInterpreterExecutionContext(prepared, plan.Code, execution.Logs, execution.GeneratedFiles)
 	if err != nil {
 		return domain.Response{}, err
 	}
@@ -195,7 +211,7 @@ func (h *responseHandler) createLocalCodeInterpreterResponse(ctx context.Context
 	createdAt := domain.NowUTC().Unix()
 	response := domain.NewResponse(responseID, input.Model, outputText, input.PreviousResponseID, input.ConversationID, createdAt)
 
-	codeInterpreterItem, err := buildLocalCodeInterpreterCallItem(plan.Code, containerID, logs, config.IncludeOutputs)
+	codeInterpreterItem, err := buildLocalCodeInterpreterCallItem(plan.Code, execution.ContainerID, execution.Logs, execution.GeneratedFiles, config.IncludeOutputs)
 	if err != nil {
 		return domain.Response{}, err
 	}
@@ -460,50 +476,51 @@ func validateLocalCodeInterpreterPlanCode(code string) error {
 	return nil
 }
 
-func (h *responseHandler) executeLocalCodeInterpreter(ctx context.Context, prepared service.PreparedResponseContext, inputFiles []localCodeInterpreterInputFile, code string) (string, string, error) {
+func (h *responseHandler) executeLocalCodeInterpreter(ctx context.Context, prepared service.PreparedResponseContext, inputFiles []localCodeInterpreterInputFile, code string) (localCodeInterpreterExecutionResult, error) {
 	if !h.localCodeInterpreter.Enabled() {
-		return "", "", localCodeInterpreterDisabledError()
+		return localCodeInterpreterExecutionResult{}, localCodeInterpreterDisabledError()
 	}
 
 	sessionID, canReuse, err := h.findReusableLocalCodeInterpreterSessionID(ctx, prepared)
 	if err != nil {
-		return "", "", err
+		return localCodeInterpreterExecutionResult{}, err
 	}
 	if canReuse {
 		result, err := h.executeLocalCodeInterpreterSession(ctx, sessionID, inputFiles, code)
 		if err == nil {
 			if touchErr := h.localCodeInterpreterSessions.TouchCodeInterpreterSession(ctx, sessionID, domain.FormatTime(domain.NowUTC())); touchErr != nil {
-				return result.Logs, "", touchErr
+				return localCodeInterpreterExecutionResult{}, touchErr
 			}
-			return result.Logs, sessionID, nil
+			result.ContainerID = sessionID
+			return result, nil
 		}
 		if errors.Is(err, sandbox.ErrSessionNotFound) {
 			_ = h.localCodeInterpreterSessions.DeleteCodeInterpreterSession(ctx, sessionID)
 		} else if errors.Is(err, sandbox.ErrDisabled) {
-			return "", "", localCodeInterpreterDisabledError()
+			return localCodeInterpreterExecutionResult{}, localCodeInterpreterDisabledError()
 		} else {
-			return result.Logs, "", fmt.Errorf("execute shim-local code_interpreter via %s backend: %w", h.localCodeInterpreter.Backend.Kind(), err)
+			return localCodeInterpreterExecutionResult{}, fmt.Errorf("execute shim-local code_interpreter via %s backend: %w", h.localCodeInterpreter.Backend.Kind(), err)
 		}
 	}
 
 	sessionID, err = domain.NewPrefixedID("cntr")
 	if err != nil {
-		return "", "", fmt.Errorf("generate container id: %w", err)
+		return localCodeInterpreterExecutionResult{}, fmt.Errorf("generate container id: %w", err)
 	}
 	if err := h.localCodeInterpreter.Backend.CreateSession(ctx, sessionID); err != nil {
 		if errors.Is(err, sandbox.ErrDisabled) {
-			return "", "", localCodeInterpreterDisabledError()
+			return localCodeInterpreterExecutionResult{}, localCodeInterpreterDisabledError()
 		}
-		return "", "", fmt.Errorf("create shim-local code_interpreter session via %s backend: %w", h.localCodeInterpreter.Backend.Kind(), err)
+		return localCodeInterpreterExecutionResult{}, fmt.Errorf("create shim-local code_interpreter session via %s backend: %w", h.localCodeInterpreter.Backend.Kind(), err)
 	}
 
 	result, err := h.executeLocalCodeInterpreterSession(ctx, sessionID, inputFiles, code)
 	if err != nil {
 		_ = h.localCodeInterpreter.Backend.DestroySession(ctx, sessionID)
 		if errors.Is(err, sandbox.ErrDisabled) {
-			return "", "", localCodeInterpreterDisabledError()
+			return localCodeInterpreterExecutionResult{}, localCodeInterpreterDisabledError()
 		}
-		return result.Logs, "", fmt.Errorf("execute shim-local code_interpreter via %s backend: %w", h.localCodeInterpreter.Backend.Kind(), err)
+		return localCodeInterpreterExecutionResult{}, fmt.Errorf("execute shim-local code_interpreter via %s backend: %w", h.localCodeInterpreter.Backend.Kind(), err)
 	}
 
 	now := domain.FormatTime(domain.NowUTC())
@@ -514,24 +531,49 @@ func (h *responseHandler) executeLocalCodeInterpreter(ctx context.Context, prepa
 		LastActiveAt: now,
 	}); err != nil {
 		_ = h.localCodeInterpreter.Backend.DestroySession(ctx, sessionID)
-		return result.Logs, "", err
+		return localCodeInterpreterExecutionResult{}, err
 	}
-	return result.Logs, sessionID, nil
+	result.ContainerID = sessionID
+	return result, nil
 }
 
-func (h *responseHandler) executeLocalCodeInterpreterSession(ctx context.Context, sessionID string, inputFiles []localCodeInterpreterInputFile, code string) (sandbox.ExecuteResult, error) {
+func (h *responseHandler) executeLocalCodeInterpreterSession(ctx context.Context, sessionID string, inputFiles []localCodeInterpreterInputFile, code string) (localCodeInterpreterExecutionResult, error) {
 	for _, inputFile := range inputFiles {
 		if err := h.localCodeInterpreter.Backend.UploadFile(ctx, sessionID, sandbox.SessionFile{
 			Name:    inputFile.WorkspaceName,
 			Content: inputFile.Content,
 		}); err != nil {
-			return sandbox.ExecuteResult{}, err
+			return localCodeInterpreterExecutionResult{}, err
 		}
 	}
-	return h.localCodeInterpreter.Backend.ExecutePython(ctx, sandbox.ExecuteRequest{
+
+	beforeFiles, err := h.localCodeInterpreter.Backend.ListFiles(ctx, sessionID)
+	if err != nil {
+		return localCodeInterpreterExecutionResult{}, err
+	}
+
+	execResult, err := h.localCodeInterpreter.Backend.ExecutePython(ctx, sandbox.ExecuteRequest{
 		SessionID: sessionID,
 		Code:      code,
 	})
+	if err != nil {
+		return localCodeInterpreterExecutionResult{Logs: execResult.Logs}, err
+	}
+
+	afterFiles, err := h.localCodeInterpreter.Backend.ListFiles(ctx, sessionID)
+	if err != nil {
+		return localCodeInterpreterExecutionResult{Logs: execResult.Logs}, err
+	}
+
+	generatedFiles, err := h.persistLocalCodeInterpreterGeneratedFiles(ctx, diffLocalCodeInterpreterGeneratedFiles(beforeFiles, afterFiles))
+	if err != nil {
+		return localCodeInterpreterExecutionResult{Logs: execResult.Logs}, err
+	}
+
+	return localCodeInterpreterExecutionResult{
+		GeneratedFiles: generatedFiles,
+		Logs:           execResult.Logs,
+	}, nil
 }
 
 func (h *responseHandler) findReusableLocalCodeInterpreterSessionID(ctx context.Context, prepared service.PreparedResponseContext) (string, bool, error) {
@@ -636,7 +678,81 @@ func sanitizeLocalCodeInterpreterWorkspaceName(filename string, fallback string)
 	return sanitized
 }
 
-func buildLocalCodeInterpreterExecutionContext(prepared service.PreparedResponseContext, code string, logs string) ([]domain.Item, error) {
+func diffLocalCodeInterpreterGeneratedFiles(before []sandbox.SessionFile, after []sandbox.SessionFile) []sandbox.SessionFile {
+	if len(after) == 0 {
+		return nil
+	}
+
+	beforeByName := make(map[string][]byte, len(before))
+	for _, file := range before {
+		beforeByName[file.Name] = file.Content
+	}
+
+	generated := make([]sandbox.SessionFile, 0, len(after))
+	for _, file := range after {
+		if content, ok := beforeByName[file.Name]; ok && bytes.Equal(content, file.Content) {
+			continue
+		}
+		generated = append(generated, sandbox.SessionFile{
+			Name:    file.Name,
+			Content: append([]byte(nil), file.Content...),
+		})
+	}
+	return generated
+}
+
+func (h *responseHandler) persistLocalCodeInterpreterGeneratedFiles(ctx context.Context, generated []sandbox.SessionFile) ([]localCodeInterpreterGeneratedFile, error) {
+	if len(generated) == 0 {
+		return nil, nil
+	}
+	if h.localCodeInterpreterFiles == nil {
+		return nil, fmt.Errorf("local code interpreter file store is not configured")
+	}
+
+	saved := make([]localCodeInterpreterGeneratedFile, 0, min(len(generated), maxLocalCodeInterpreterGeneratedFiles))
+	totalBytes := 0
+	now := domain.NowUTC().Unix()
+	for _, file := range generated {
+		if len(saved) >= maxLocalCodeInterpreterGeneratedFiles {
+			break
+		}
+		if len(file.Content) > maxLocalCodeInterpreterGeneratedFileBytes {
+			continue
+		}
+		if totalBytes+len(file.Content) > maxLocalCodeInterpreterGeneratedTotalBytes {
+			continue
+		}
+
+		fileID, err := domain.NewPrefixedID("file")
+		if err != nil {
+			return nil, err
+		}
+
+		storedFile := domain.StoredFile{
+			ID:        fileID,
+			Filename:  file.Name,
+			Purpose:   "assistants",
+			Bytes:     int64(len(file.Content)),
+			CreatedAt: now,
+			Status:    "processed",
+			Content:   append([]byte(nil), file.Content...),
+		}
+		if err := h.localCodeInterpreterFiles.SaveFile(ctx, storedFile); err != nil {
+			return nil, err
+		}
+
+		totalBytes += len(file.Content)
+		saved = append(saved, localCodeInterpreterGeneratedFile{
+			Bytes:    storedFile.Bytes,
+			FileID:   storedFile.ID,
+			Filename: storedFile.Filename,
+		})
+	}
+
+	return saved, nil
+}
+
+func buildLocalCodeInterpreterExecutionContext(prepared service.PreparedResponseContext, code string, logs string, generatedFiles []localCodeInterpreterGeneratedFile) ([]domain.Item, error) {
 	prefixItems := prepared.ContextItems
 	if len(prepared.NormalizedInput) <= len(prefixItems) {
 		prefixItems = prefixItems[:len(prefixItems)-len(prepared.NormalizedInput)]
@@ -651,7 +767,7 @@ func buildLocalCodeInterpreterExecutionContext(prepared service.PreparedResponse
 		return nil, err
 	}
 
-	executionPrompt := domain.NewInputTextMessage("system", buildLocalCodeInterpreterExecutionPrompt(code, logs))
+	executionPrompt := domain.NewInputTextMessage("system", buildLocalCodeInterpreterExecutionPrompt(code, logs, generatedFiles))
 	out := make([]domain.Item, 0, len(prefix)+len(currentInput)+1)
 	out = append(out, prefix...)
 	out = append(out, executionPrompt)
@@ -659,7 +775,7 @@ func buildLocalCodeInterpreterExecutionContext(prepared service.PreparedResponse
 	return out, nil
 }
 
-func buildLocalCodeInterpreterExecutionPrompt(code string, logs string) string {
+func buildLocalCodeInterpreterExecutionPrompt(code string, logs string, generatedFiles []localCodeInterpreterGeneratedFile) string {
 	var builder strings.Builder
 	builder.WriteString("A shim-local code interpreter already ran for this turn.\n")
 	builder.WriteString("Use only the execution result below as the tool output.\n")
@@ -676,10 +792,25 @@ func buildLocalCodeInterpreterExecutionPrompt(code string, logs string) string {
 			builder.WriteString("\n")
 		}
 	}
+	if len(generatedFiles) == 0 {
+		builder.WriteString("Generated files: (none)\n")
+		return builder.String()
+	}
+
+	builder.WriteString("Generated files saved by the shim and available via /v1/files:\n")
+	for _, generatedFile := range generatedFiles {
+		builder.WriteString("- ")
+		builder.WriteString(generatedFile.Filename)
+		builder.WriteString(" (file_id=")
+		builder.WriteString(generatedFile.FileID)
+		builder.WriteString(", bytes=")
+		builder.WriteString(fmt.Sprintf("%d", generatedFile.Bytes))
+		builder.WriteString(")\n")
+	}
 	return builder.String()
 }
 
-func buildLocalCodeInterpreterCallItem(code string, containerID string, logs string, includeOutputs bool) (domain.Item, error) {
+func buildLocalCodeInterpreterCallItem(code string, containerID string, logs string, generatedFiles []localCodeInterpreterGeneratedFile, includeOutputs bool) (domain.Item, error) {
 	payload := map[string]any{
 		"type":         "code_interpreter_call",
 		"status":       "completed",
@@ -688,11 +819,19 @@ func buildLocalCodeInterpreterCallItem(code string, containerID string, logs str
 		"outputs":      nil,
 	}
 	if includeOutputs {
-		outputs := make([]map[string]any, 0, 1)
+		outputs := make([]map[string]any, 0, 1+len(generatedFiles))
 		if logs != "" {
 			outputs = append(outputs, map[string]any{
 				"type": "logs",
 				"logs": logs,
+			})
+		}
+		for _, generatedFile := range generatedFiles {
+			outputs = append(outputs, map[string]any{
+				"type":     "file",
+				"file_id":  generatedFile.FileID,
+				"filename": generatedFile.Filename,
+				"bytes":    generatedFile.Bytes,
 			})
 		}
 		payload["outputs"] = outputs
