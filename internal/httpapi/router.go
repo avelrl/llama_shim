@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"llama_shim/internal/llama"
 	"llama_shim/internal/service"
@@ -21,6 +22,8 @@ type RouterDeps struct {
 	ResponsesCodexForceToolChoiceRequired bool
 	Store                                 *sqlite.Store
 }
+
+const readyzUpstreamTimeout = 2 * time.Second
 
 func NewRouter(deps RouterDeps) http.Handler {
 	proxyHandler := newProxyHandler(deps.Logger, deps.LlamaClient, deps.Store)
@@ -50,6 +53,16 @@ func NewRouter(deps RouterDeps) http.Handler {
 		}
 		if err := deps.Store.PingContext(r.Context()); err != nil {
 			WriteError(w, http.StatusServiceUnavailable, "service_unavailable", "sqlite is not ready", "")
+			return
+		}
+		if deps.LlamaClient == nil {
+			WriteError(w, http.StatusServiceUnavailable, "service_unavailable", "llama backend is not ready", "")
+			return
+		}
+		upstreamCtx, cancel := context.WithTimeout(r.Context(), readyzUpstreamTimeout)
+		defer cancel()
+		if err := deps.LlamaClient.CheckReady(upstreamCtx); err != nil {
+			WriteError(w, http.StatusServiceUnavailable, "service_unavailable", "llama backend is not ready", "")
 			return
 		}
 		WriteJSON(w, http.StatusOK, map[string]string{"status": "ready"})

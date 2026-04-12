@@ -56,19 +56,25 @@ type TestAppOptions struct {
 	CustomToolsMode           string
 	CodexCompatibilityEnabled bool
 	ForceToolChoiceRequired   bool
+	LlamaBaseURL              string
 }
 
 func NewTestAppWithOptions(t *testing.T, options TestAppOptions) *TestApp {
 	t.Helper()
 
-	llamaServer := NewFakeLlamaServer(t)
+	var llamaServer *httptest.Server
+	llamaBaseURL := options.LlamaBaseURL
+	if llamaBaseURL == "" {
+		llamaServer = NewFakeLlamaServer(t)
+		llamaBaseURL = llamaServer.URL
+	}
 	store, err := sqlite.Open(context.Background(), TempDBPath(t))
 	if err != nil {
 		t.Fatalf("open test sqlite: %v", err)
 	}
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	llamaClient := llama.NewClient(llamaServer.URL, 200*time.Millisecond)
+	llamaClient := llama.NewClient(llamaBaseURL, 200*time.Millisecond)
 	responseService := service.NewResponseService(store, store, llamaClient)
 	conversationService := service.NewConversationService(store)
 
@@ -92,7 +98,9 @@ func NewTestAppWithOptions(t *testing.T, options TestAppOptions) *TestApp {
 	t.Cleanup(func() {
 		server.Close()
 		_ = store.Close()
-		llamaServer.Close()
+		if llamaServer != nil {
+			llamaServer.Close()
+		}
 	})
 
 	return &TestApp{

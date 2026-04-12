@@ -76,3 +76,50 @@ func TestContextHeadersDoNotOverrideExplicitAuthorization(t *testing.T) {
 	require.Equal(t, "Bearer request-token", headers.Get("Authorization"))
 	require.Equal(t, "secret", headers.Get("X-Api-Key"))
 }
+
+func TestCheckReady(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			require.Equal(t, http.MethodGet, r.Method)
+			require.Equal(t, "/v1/models", r.URL.Path)
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+				"object": "list",
+				"data": []map[string]any{
+					{"id": "test-model", "object": "model"},
+				},
+			}))
+		}))
+		defer server.Close()
+
+		client := NewClient(server.URL, time.Second)
+		require.NoError(t, client.CheckReady(context.Background()))
+	})
+
+	t.Run("upstream error", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "backend failed", http.StatusBadGateway)
+		}))
+		defer server.Close()
+
+		client := NewClient(server.URL, time.Second)
+		err := client.CheckReady(context.Background())
+		var upstreamErr *UpstreamError
+		require.ErrorAs(t, err, &upstreamErr)
+		require.Equal(t, http.StatusBadGateway, upstreamErr.StatusCode)
+	})
+
+	t.Run("invalid payload", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+				"object": "list",
+			}))
+		}))
+		defer server.Close()
+
+		client := NewClient(server.URL, time.Second)
+		var invalidErr *InvalidResponseError
+		err := client.CheckReady(context.Background())
+		require.ErrorAs(t, err, &invalidErr)
+		require.Contains(t, invalidErr.Message, "did not contain data")
+	})
+}

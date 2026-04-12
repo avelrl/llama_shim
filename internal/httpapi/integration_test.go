@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -50,6 +51,50 @@ func TestResponsesStoreAndGet(t *testing.T) {
 	require.Equal(t, response.Metadata, got.Metadata)
 	require.NotNil(t, got.Store)
 	require.True(t, *got.Store)
+}
+
+func TestReadyzChecksSQLiteAndLlamaBackend(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	req, err := http.NewRequest(http.MethodGet, app.Server.URL+"/readyz", nil)
+	require.NoError(t, err)
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Contains(t, resp.Header.Get("Content-Type"), "application/json")
+
+	var payload map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&payload))
+	require.Equal(t, "ready", payload["status"])
+}
+
+func TestReadyzReturns503WhenLlamaBackendIsUnavailable(t *testing.T) {
+	llamaServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "backend failed", http.StatusBadGateway)
+	}))
+	defer llamaServer.Close()
+
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		LlamaBaseURL: llamaServer.URL,
+	})
+
+	req, err := http.NewRequest(http.MethodGet, app.Server.URL+"/readyz", nil)
+	require.NoError(t, err)
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
+	require.Contains(t, resp.Header.Get("Content-Type"), "application/json")
+
+	var payload map[string]map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&payload))
+	require.Equal(t, "service_unavailable", payload["error"]["type"])
+	require.Equal(t, "llama backend is not ready", payload["error"]["message"])
 }
 
 func TestResponsesGetIncludesExpandedResponseSurface(t *testing.T) {

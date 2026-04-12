@@ -144,6 +144,60 @@ func (c *Client) CreateChatCompletion(ctx context.Context, requestBody []byte) (
 	return body, nil
 }
 
+func (c *Client) CheckReady(ctx context.Context) error {
+	if c == nil {
+		return errors.New("llama client is nil")
+	}
+
+	endpoint, err := url.JoinPath(c.baseURL, "/v1/models")
+	if err != nil {
+		return fmt.Errorf("build llama url: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return fmt.Errorf("create llama request: %w", err)
+	}
+	req.Header.Set("Accept", "application/json")
+	applyContextHeaders(ctx, req.Header)
+
+	resp, err := c.requestClient.Do(req)
+	if err != nil {
+		if mappedErr := mapTimeoutError(err); mappedErr != nil {
+			return mappedErr
+		}
+		return fmt.Errorf("call llama: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return fmt.Errorf("read llama response: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return &UpstreamError{
+			StatusCode: resp.StatusCode,
+			Message:    string(bytes.TrimSpace(body)),
+		}
+	}
+
+	var payload struct {
+		Object string            `json:"object"`
+		Data   []json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return fmt.Errorf("decode llama response: %w", err)
+	}
+	if payload.Object != "" && payload.Object != "list" {
+		return &InvalidResponseError{Message: "llama models response did not contain a list object"}
+	}
+	if payload.Data == nil {
+		return &InvalidResponseError{Message: "llama models response did not contain data"}
+	}
+
+	return nil
+}
+
 func (c *Client) Generate(ctx context.Context, model string, items []domain.Item, options map[string]json.RawMessage) (string, error) {
 	requestBody, err := c.buildChatCompletionRequest(model, items, false, options)
 	if err != nil {

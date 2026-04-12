@@ -49,9 +49,13 @@ paths:
       tags: [health]
       summary: Readiness probe
       x-shim-status: implemented
+      description: |
+        Returns `200` only when both the SQLite store is reachable and the
+        configured upstream llama-compatible backend responds successfully to
+        `GET /v1/models` with a models-list payload.
       responses:
         "200":
-          description: SQLite store is reachable
+          description: SQLite store and upstream backend are reachable
           content:
             application/json:
               schema:
@@ -59,14 +63,14 @@ paths:
               example:
                 status: ready
         "503":
-          description: SQLite store is not ready
+          description: SQLite store or upstream backend is not ready
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelope"
               example:
                 error:
-                  message: sqlite is not ready
+                  message: llama backend is not ready
                   type: service_unavailable
                   param: null
                   code: null
