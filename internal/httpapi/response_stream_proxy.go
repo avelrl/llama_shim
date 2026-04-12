@@ -1380,7 +1380,7 @@ func summarizeResponseEnvelopeForLog(responsePayload map[string]any) []any {
 				continue
 			}
 			switch strings.TrimSpace(asString(item["type"])) {
-			case "function_call", "custom_tool_call", "mcp_call", "mcp_tool_call", "web_search_call", "file_search_call", "code_interpreter_call", "computer_call":
+			case "function_call", "custom_tool_call", "mcp_call", "mcp_tool_call", "mcp_approval_request", "mcp_list_tools", "web_search_call", "file_search_call", "code_interpreter_call", "computer_call":
 				toolCount++
 			case "message":
 				messageCount++
@@ -1476,16 +1476,27 @@ func inProgressOutputItemSnapshot(item map[string]any) map[string]any {
 		delete(cloned, "output")
 	}
 	delete(cloned, "error")
-	cloned["status"] = "in_progress"
+	if syntheticReplayAddedItemNeedsInProgressStatus(strings.TrimSpace(asString(cloned["type"])), item) {
+		cloned["status"] = "in_progress"
+	}
 	return cloned
 }
 
 func isSyntheticReplayOutputItemType(itemType string) bool {
 	switch strings.TrimSpace(itemType) {
-	case "function_call", "custom_tool_call", "mcp_call", "mcp_tool_call", "web_search_call", "file_search_call", "code_interpreter_call", "computer_call":
+	case "function_call", "custom_tool_call", "mcp_call", "mcp_tool_call", "mcp_approval_request", "mcp_list_tools", "web_search_call", "file_search_call", "code_interpreter_call", "computer_call":
 		return true
 	default:
 		return false
+	}
+}
+
+func syntheticReplayAddedItemNeedsInProgressStatus(itemType string, item map[string]any) bool {
+	switch strings.TrimSpace(itemType) {
+	case "mcp_approval_request", "mcp_list_tools":
+		return strings.TrimSpace(asString(item["status"])) != ""
+	default:
+		return true
 	}
 }
 

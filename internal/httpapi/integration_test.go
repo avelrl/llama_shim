@@ -882,6 +882,118 @@ func TestResponsesGetStreamReplaysComputerCallWithoutLeakingActionsInAdded(t *te
 	require.Equal(t, "penguin", asStringAny(secondAction["text"]))
 }
 
+func TestResponsesGetStreamReplaysMCPApprovalRequestAsGenericOutputItemReplay(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	approvalRequest, err := domain.NewItem([]byte(`{"id":"mcpr_test","type":"mcp_approval_request","arguments":"{\"diceRollExpression\":\"2d4 + 1\"}","name":"roll","server_label":"dmcp"}`))
+	require.NoError(t, err)
+
+	stored := domain.StoredResponse{
+		ID:                   "resp_mcp_approval_request",
+		Model:                "test-model",
+		RequestJSON:          `{"model":"test-model","store":true,"input":"Roll 2d4+1"}`,
+		ResponseJSON:         `{"id":"resp_mcp_approval_request","object":"response","created_at":1712059200,"status":"completed","completed_at":1712059200,"error":null,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"model":"test-model","output":[{"id":"mcpr_test","type":"mcp_approval_request","arguments":"{\"diceRollExpression\":\"2d4 + 1\"}","name":"roll","server_label":"dmcp"}],"parallel_tool_calls":true,"previous_response_id":null,"reasoning":{"effort":null,"summary":null},"store":true,"temperature":1.0,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[],"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{},"output_text":""}`,
+		NormalizedInputItems: []domain.Item{domain.NewInputTextMessage("user", "Roll 2d4+1")},
+		EffectiveInputItems:  []domain.Item{domain.NewInputTextMessage("user", "Roll 2d4+1")},
+		Output:               []domain.Item{approvalRequest},
+		OutputText:           "",
+		Store:                true,
+		CreatedAt:            "2026-04-12T11:00:00Z",
+		CompletedAt:          "2026-04-12T11:00:01Z",
+	}
+	require.NoError(t, app.Store.SaveResponse(context.Background(), stored))
+
+	req, err := http.NewRequest(http.MethodGet, app.Server.URL+"/v1/responses/resp_mcp_approval_request?stream=true", nil)
+	require.NoError(t, err)
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	events := readSSEEvents(t, resp.Body)
+	require.Contains(t, eventTypes(events), "response.output_item.added")
+	require.Contains(t, eventTypes(events), "response.output_item.done")
+	for _, eventType := range eventTypes(events) {
+		require.NotContains(t, eventType, "response.mcp_approval_request")
+	}
+
+	added := findEvent(t, events, "response.output_item.added").Data
+	addedItem, ok := added["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "mcp_approval_request", asStringAny(addedItem["type"]))
+	require.Equal(t, "{\"diceRollExpression\":\"2d4 + 1\"}", asStringAny(addedItem["arguments"]))
+	_, hasStatus := addedItem["status"]
+	require.False(t, hasStatus)
+
+	outputDone := findEvent(t, events, "response.output_item.done").Data
+	outputDoneItem, ok := outputDone["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "mcp_approval_request", asStringAny(outputDoneItem["type"]))
+	require.Equal(t, "{\"diceRollExpression\":\"2d4 + 1\"}", asStringAny(outputDoneItem["arguments"]))
+	_, hasStatus = outputDoneItem["status"]
+	require.False(t, hasStatus)
+}
+
+func TestResponsesGetStreamReplaysMCPListToolsAsGenericOutputItemReplay(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	listTools, err := domain.NewItem([]byte(`{"id":"mcpl_test","type":"mcp_list_tools","server_label":"dmcp","tools":[{"annotations":null,"description":"Given a string of text describing a dice roll...","input_schema":{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"diceRollExpression":{"type":"string"}},"required":["diceRollExpression"],"additionalProperties":false},"name":"roll"}]}`))
+	require.NoError(t, err)
+
+	stored := domain.StoredResponse{
+		ID:                   "resp_mcp_list_tools",
+		Model:                "test-model",
+		RequestJSON:          `{"model":"test-model","store":true,"input":"Roll 2d4+1"}`,
+		ResponseJSON:         `{"id":"resp_mcp_list_tools","object":"response","created_at":1712059200,"status":"completed","completed_at":1712059200,"error":null,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"model":"test-model","output":[{"id":"mcpl_test","type":"mcp_list_tools","server_label":"dmcp","tools":[{"annotations":null,"description":"Given a string of text describing a dice roll...","input_schema":{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"diceRollExpression":{"type":"string"}},"required":["diceRollExpression"],"additionalProperties":false},"name":"roll"}]}],"parallel_tool_calls":true,"previous_response_id":null,"reasoning":{"effort":null,"summary":null},"store":true,"temperature":1.0,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[],"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{},"output_text":""}`,
+		NormalizedInputItems: []domain.Item{domain.NewInputTextMessage("user", "Roll 2d4+1")},
+		EffectiveInputItems:  []domain.Item{domain.NewInputTextMessage("user", "Roll 2d4+1")},
+		Output:               []domain.Item{listTools},
+		OutputText:           "",
+		Store:                true,
+		CreatedAt:            "2026-04-12T12:00:00Z",
+		CompletedAt:          "2026-04-12T12:00:01Z",
+	}
+	require.NoError(t, app.Store.SaveResponse(context.Background(), stored))
+
+	req, err := http.NewRequest(http.MethodGet, app.Server.URL+"/v1/responses/resp_mcp_list_tools?stream=true", nil)
+	require.NoError(t, err)
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	events := readSSEEvents(t, resp.Body)
+	require.Contains(t, eventTypes(events), "response.output_item.added")
+	require.Contains(t, eventTypes(events), "response.output_item.done")
+	for _, eventType := range eventTypes(events) {
+		require.NotContains(t, eventType, "response.mcp_list_tools")
+	}
+
+	added := findEvent(t, events, "response.output_item.added").Data
+	addedItem, ok := added["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "mcp_list_tools", asStringAny(addedItem["type"]))
+	require.Equal(t, "dmcp", asStringAny(addedItem["server_label"]))
+	tools, ok := addedItem["tools"].([]any)
+	require.True(t, ok)
+	require.Len(t, tools, 1)
+	_, hasStatus := addedItem["status"]
+	require.False(t, hasStatus)
+
+	outputDone := findEvent(t, events, "response.output_item.done").Data
+	outputDoneItem, ok := outputDone["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "mcp_list_tools", asStringAny(outputDoneItem["type"]))
+	doneTools, ok := outputDoneItem["tools"].([]any)
+	require.True(t, ok)
+	require.Len(t, doneTools, 1)
+	firstTool, ok := doneTools[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "roll", asStringAny(firstTool["name"]))
+	_, hasStatus = outputDoneItem["status"]
+	require.False(t, hasStatus)
+}
+
 func TestResponsesGetStreamSupportsStartingAfter(t *testing.T) {
 	app := testutil.NewTestApp(t)
 

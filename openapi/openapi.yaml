@@ -459,6 +459,17 @@ paths:
           replay therefore stays generic through `response.output_item.*`, and
           synthetic `response.output_item.added` omits final `actions` until
           `response.output_item.done`
+        - docs-backed stored `mcp_approval_request` items replay only through
+          generic `response.output_item.*`; the documented item shape is
+          preserved, shim does not invent a dedicated
+          `response.mcp_approval_request.*` SSE family, and synthetic replay
+          does not add a `status` field that is absent from the documented
+          output item
+        - docs-backed stored `mcp_list_tools` items replay only through
+          generic `response.output_item.*`; shim preserves the documented
+          `server_label` plus imported `tools` list, does not invent a
+          dedicated `response.mcp_list_tools.*` SSE family, and does not add a
+          synthetic `status` field when the documented item has none
         - other hosted/native tool item families may still fall back to
           generic `response.output_item.*` replay
       parameters:

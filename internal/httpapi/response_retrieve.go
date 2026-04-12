@@ -298,7 +298,7 @@ func buildResponseReplayOutputItemEvents(responseID string, outputIndex int, ite
 			addedItem = inProgressOutputItemSnapshot(addedItem)
 		}
 	}
-	if itemType == "message" || isSyntheticReplayOutputItemType(itemType) || strings.TrimSpace(item.Status()) != "" {
+	if itemType == "message" || (!isSyntheticReplayOutputItemType(itemType) && strings.TrimSpace(item.Status()) != "") {
 		addedItem["status"] = "in_progress"
 	}
 

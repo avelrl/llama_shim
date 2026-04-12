@@ -86,6 +86,8 @@
 - [x] - trace-backed `file_search_call` tool-specific SSE replay for stored Responses items ([детали](#task-streaming-replay-file-search))
 - [x] - trace-backed `code_interpreter_call` tool-specific SSE replay for stored Responses items ([детали](#task-streaming-replay-code-interpreter))
 - [x] - trace-backed `computer_call` generic SSE replay for stored Responses items ([детали](#task-streaming-replay-computer))
+- [x] - docs-backed `mcp_approval_request` generic SSE replay for stored Responses items ([детали](#task-streaming-replay-mcp-approval-request))
+- [x] - docs-backed `mcp_list_tools` generic SSE replay for stored Responses items ([детали](#task-streaming-replay-mcp-list-tools))
 - [ ] - hosted/native tool-specific SSE replay beyond core shim item families ([детали](#task-streaming-replay-hosted))
 - [x] - compatibility для `/responses/compact` и `/responses/input_tokens` ([детали](#task-compaction-and-token-counting))
 - [ ] - retrieval-compatible слой: vector stores + `file_search` ([детали](#task-retrieval-layer))
@@ -624,6 +626,77 @@ Definition of done:
 - backlog/OpenAPI wording честно фиксируют, что текущая parity для
   `computer_call` generic-only по trace
 
+## <a id="task-streaming-replay-mcp-approval-request"></a>Docs-backed `mcp_approval_request` generic SSE replay for stored Responses items
+
+Почему это отдельно:
+
+- official MCP docs явно описывают `mcp_approval_request` как Responses
+  output item со shape `id`, `type`, `arguments`, `name`, `server_label`
+- при этом docs не описывают отдельную
+  `response.mcp_approval_request.*` SSE family, поэтому replay нельзя
+  закрывать через invented tool-specific events
+
+Что входит:
+
+- stored retrieve replay для documented `mcp_approval_request` item shape
+- completed-only upstream normalization для того же item family
+- generic synthetic sequence через `response.output_item.added` и
+  `response.output_item.done`
+- synthetic replay сохраняет documented item shape и не добавляет
+  synthetic `status`, если его нет в stored item
+
+Статус на 12 апреля 2026:
+
+- закрыто для stored `mcp_approval_request`: retrieve replay и completed-only
+  normalization теперь synthesize generic `response.output_item.*`
+- docs source: MCP and Connectors approvals section now explicitly documents
+  `mcp_approval_request` output items and follow-up `mcp_approval_response`
+- shim intentionally does not invent unsupported
+  `response.mcp_approval_request.*` events
+- coverage есть и на stored retrieve replay, и на completed-only proxy branch
+
+Definition of done:
+
+- stored `mcp_approval_request` больше не теряется при synthetic retrieve
+  replay
+- synthetic replay не invent-ит dedicated SSE family без docs/trace support
+- backlog/OpenAPI wording честно фиксируют docs-backed generic-only scope
+
+## <a id="task-streaming-replay-mcp-list-tools"></a>Docs-backed `mcp_list_tools` generic SSE replay for stored Responses items
+
+Почему это отдельно:
+
+- official MCP docs явно описывают `mcp_list_tools` как Responses output item,
+  включая `server_label` и imported `tools` list
+- при этом public Responses docs не описывают отдельную
+  `response.mcp_list_tools.*` SSE family для stored/retrieve replay, поэтому
+  shim не должен invent-ить tool-specific events без trace support
+
+Что входит:
+
+- stored retrieve replay для documented `mcp_list_tools` item shape
+- completed-only upstream normalization для того же item family
+- generic synthetic sequence через `response.output_item.added` и
+  `response.output_item.done`
+- synthetic replay preserves documented `tools` list и не добавляет
+  synthetic `status`, если его нет в stored item
+
+Статус на 12 апреля 2026:
+
+- закрыто для stored `mcp_list_tools`: retrieve replay и completed-only
+  normalization теперь synthesize generic `response.output_item.*`
+- docs source: MCP and Connectors guide explicitly documents
+  `mcp_list_tools` output items as part of Responses API flow
+- shim intentionally does not invent unsupported
+  `response.mcp_list_tools.*` events for stored replay without trace support
+- coverage есть и на stored retrieve replay, и на completed-only proxy branch
+
+Definition of done:
+
+- stored `mcp_list_tools` больше не теряется при synthetic retrieve replay
+- synthetic replay не invent-ит dedicated SSE family без docs/trace support
+- backlog/OpenAPI wording честно фиксируют docs-backed generic-only scope
+
 ## <a id="task-streaming-replay-hosted"></a>Hosted/native tool-specific SSE replay beyond core shim item families
 
 Почему это отдельно:
@@ -642,16 +715,21 @@ Definition of done:
 - trace-backed replay для stored `computer_call` вынесен в закрытый item
   выше; captured upstream flow для него generic-only и не содержит
   `response.computer_call.*`
-- для `mcp_approval_request` и других hosted/native families без live
-  source event log replay все еще может деградировать до generic
-  `response.output_item.*`
+- docs-backed generic replay для stored `mcp_approval_request` вынесен в
+  закрытый item выше; dedicated `response.mcp_approval_request.*` family не
+  заявляется без trace/reference support
+- docs-backed generic replay для stored `mcp_list_tools` вынесен в закрытый
+  item выше; dedicated `response.mcp_list_tools.*` family не заявляется без
+  trace/reference support
+- для remaining hosted/native families без live source event log replay все
+  еще может деградировать до generic `response.output_item.*`
 
 Что осталось:
 
 - tool-specific retrieve replay только для remaining hosted/native families,
-  где upstream действительно exposes dedicated SSE families, и, возможно,
-  для `mcp_approval_request`, если docs-backed contract для него удастся
-  подтвердить без догадок
+  где upstream действительно exposes dedicated SSE families, и для item
+  families, которые еще не закрыты отдельным docs-backed или trace-backed
+  item
 - максимальное сближение synthetic replay с реальным upstream event log там,
   где сам stored object не хранит исходные deltas
 

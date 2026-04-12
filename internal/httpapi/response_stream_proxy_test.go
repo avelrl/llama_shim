@@ -690,3 +690,129 @@ func TestNormalizeCompletedToolCallEventSynthesizesComputerCallAddedDoneReplay(t
 	require.True(t, ok)
 	require.Equal(t, "cu_test", asString(finalItem["id"]))
 }
+
+func TestNormalizeCompletedToolCallEventSynthesizesMCPApprovalRequestGenericReplay(t *testing.T) {
+	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, nil)
+
+	before, eventType, payload := proxy.normalizeCompletedToolCallEvent("response.completed", map[string]any{
+		"type": "response.completed",
+		"response": map[string]any{
+			"id":     "resp_proxy_mcp_approval_request",
+			"object": "response",
+			"model":  "test-model",
+			"output": []any{
+				map[string]any{
+					"id":           "mcpr_test",
+					"type":         "mcp_approval_request",
+					"arguments":    "{\"diceRollExpression\":\"2d4 + 1\"}",
+					"name":         "roll",
+					"server_label": "dmcp",
+				},
+			},
+			"output_text": "",
+		},
+	})
+
+	require.Equal(t, "response.completed", eventType)
+	require.Len(t, before, 3)
+	require.Equal(t, "response.created", before[0].eventType)
+	require.Equal(t, "response.output_item.added", before[1].eventType)
+	require.Equal(t, "response.output_item.done", before[2].eventType)
+
+	addedItem, ok := before[1].payload["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "mcp_approval_request", addedItem["type"])
+	require.Equal(t, "mcpr_test", asString(addedItem["id"]))
+	require.Equal(t, "{\"diceRollExpression\":\"2d4 + 1\"}", asString(addedItem["arguments"]))
+	_, hasStatus := addedItem["status"]
+	require.False(t, hasStatus)
+
+	doneItem, ok := before[2].payload["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "mcp_approval_request", doneItem["type"])
+	require.Equal(t, "{\"diceRollExpression\":\"2d4 + 1\"}", asString(doneItem["arguments"]))
+	_, hasStatus = doneItem["status"]
+	require.False(t, hasStatus)
+
+	completedResponse, ok := payload["response"].(map[string]any)
+	require.True(t, ok)
+	output, ok := completedResponse["output"].([]any)
+	require.True(t, ok)
+	require.Len(t, output, 1)
+	finalItem, ok := output[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "mcpr_test", asString(finalItem["id"]))
+}
+
+func TestNormalizeCompletedToolCallEventSynthesizesMCPListToolsGenericReplay(t *testing.T) {
+	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, nil)
+
+	before, eventType, payload := proxy.normalizeCompletedToolCallEvent("response.completed", map[string]any{
+		"type": "response.completed",
+		"response": map[string]any{
+			"id":     "resp_proxy_mcp_list_tools",
+			"object": "response",
+			"model":  "test-model",
+			"output": []any{
+				map[string]any{
+					"id":           "mcpl_test",
+					"type":         "mcp_list_tools",
+					"server_label": "dmcp",
+					"tools": []any{
+						map[string]any{
+							"name":        "roll",
+							"description": "Given a string of text describing a dice roll...",
+							"annotations": nil,
+							"input_schema": map[string]any{
+								"type": "object",
+								"properties": map[string]any{
+									"diceRollExpression": map[string]any{
+										"type": "string",
+									},
+								},
+								"required":             []any{"diceRollExpression"},
+								"additionalProperties": false,
+							},
+						},
+					},
+				},
+			},
+			"output_text": "",
+		},
+	})
+
+	require.Equal(t, "response.completed", eventType)
+	require.Len(t, before, 3)
+	require.Equal(t, "response.created", before[0].eventType)
+	require.Equal(t, "response.output_item.added", before[1].eventType)
+	require.Equal(t, "response.output_item.done", before[2].eventType)
+
+	addedItem, ok := before[1].payload["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "mcp_list_tools", addedItem["type"])
+	require.Equal(t, "mcpl_test", asString(addedItem["id"]))
+	require.Equal(t, "dmcp", asString(addedItem["server_label"]))
+	tools, ok := addedItem["tools"].([]any)
+	require.True(t, ok)
+	require.Len(t, tools, 1)
+	_, hasStatus := addedItem["status"]
+	require.False(t, hasStatus)
+
+	doneItem, ok := before[2].payload["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "mcp_list_tools", doneItem["type"])
+	doneTools, ok := doneItem["tools"].([]any)
+	require.True(t, ok)
+	require.Len(t, doneTools, 1)
+	_, hasStatus = doneItem["status"]
+	require.False(t, hasStatus)
+
+	completedResponse, ok := payload["response"].(map[string]any)
+	require.True(t, ok)
+	output, ok := completedResponse["output"].([]any)
+	require.True(t, ok)
+	require.Len(t, output, 1)
+	finalItem, ok := output[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "mcpl_test", asString(finalItem["id"]))
+}
