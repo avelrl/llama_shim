@@ -1380,7 +1380,7 @@ func summarizeResponseEnvelopeForLog(responsePayload map[string]any) []any {
 				continue
 			}
 			switch strings.TrimSpace(asString(item["type"])) {
-			case "function_call", "custom_tool_call", "mcp_call", "mcp_tool_call", "web_search_call", "file_search_call", "code_interpreter_call":
+			case "function_call", "custom_tool_call", "mcp_call", "mcp_tool_call", "web_search_call", "file_search_call", "code_interpreter_call", "computer_call":
 				toolCount++
 			case "message":
 				messageCount++
@@ -1469,6 +1469,8 @@ func inProgressOutputItemSnapshot(item map[string]any) map[string]any {
 			cloned["outputs"] = emptyHostedSlicePlaceholder(outputs)
 		}
 		delete(cloned, "output")
+	case "computer_call":
+		delete(cloned, "actions")
 	}
 	if isMCPToolStreamItemType(strings.TrimSpace(asString(cloned["type"]))) {
 		delete(cloned, "output")
@@ -1480,7 +1482,7 @@ func inProgressOutputItemSnapshot(item map[string]any) map[string]any {
 
 func isSyntheticReplayOutputItemType(itemType string) bool {
 	switch strings.TrimSpace(itemType) {
-	case "function_call", "custom_tool_call", "mcp_call", "mcp_tool_call", "web_search_call", "file_search_call", "code_interpreter_call":
+	case "function_call", "custom_tool_call", "mcp_call", "mcp_tool_call", "web_search_call", "file_search_call", "code_interpreter_call", "computer_call":
 		return true
 	default:
 		return false

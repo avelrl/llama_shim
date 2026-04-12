@@ -626,3 +626,67 @@ func TestNormalizeCompletedToolCallEventSynthesizesHostedCodeInterpreterNilOutpu
 	require.True(t, ok)
 	require.Equal(t, "ci_nil_outputs_test", asString(finalItem["id"]))
 }
+
+func TestNormalizeCompletedToolCallEventSynthesizesComputerCallAddedDoneReplay(t *testing.T) {
+	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, nil)
+
+	before, eventType, payload := proxy.normalizeCompletedToolCallEvent("response.completed", map[string]any{
+		"type": "response.completed",
+		"response": map[string]any{
+			"id":     "resp_proxy_computer_call",
+			"object": "response",
+			"model":  "test-model",
+			"output": []any{
+				map[string]any{
+					"id":      "cu_test",
+					"type":    "computer_call",
+					"status":  "completed",
+					"call_id": "call_test",
+					"actions": []any{
+						map[string]any{
+							"type":   "click",
+							"button": "left",
+							"x":      636,
+							"y":      343,
+						},
+						map[string]any{
+							"type": "type",
+							"text": "penguin",
+						},
+					},
+				},
+			},
+			"output_text": "",
+		},
+	})
+
+	require.Equal(t, "response.completed", eventType)
+	require.Len(t, before, 3)
+	require.Equal(t, "response.created", before[0].eventType)
+	require.Equal(t, "response.output_item.added", before[1].eventType)
+	require.Equal(t, "response.output_item.done", before[2].eventType)
+
+	addedItem, ok := before[1].payload["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "computer_call", addedItem["type"])
+	require.Equal(t, "call_test", asString(addedItem["call_id"]))
+	require.Equal(t, "in_progress", asString(addedItem["status"]))
+	_, hasActions := addedItem["actions"]
+	require.False(t, hasActions)
+
+	doneItem, ok := before[2].payload["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "completed", asString(doneItem["status"]))
+	actions, ok := doneItem["actions"].([]any)
+	require.True(t, ok)
+	require.Len(t, actions, 2)
+
+	completedResponse, ok := payload["response"].(map[string]any)
+	require.True(t, ok)
+	output, ok := completedResponse["output"].([]any)
+	require.True(t, ok)
+	require.Len(t, output, 1)
+	finalItem, ok := output[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "cu_test", asString(finalItem["id"]))
+}

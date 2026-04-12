@@ -22,6 +22,11 @@ Ready request files:
 - `code_interpreter_call_include_outputs.request.json` for a
   `code_interpreter_call` trace with
   `include=["code_interpreter_call.outputs"]`
+- `computer_call_screenshot.request.json` for a first-turn `computer_call`
+  trace that should request a screenshot before taking any other action
+- `computer_call_output.request.json` for a follow-up
+  `computer_call_output` trace after you have a `previous_response_id`,
+  `call_id`, and a PNG screenshot encoded as base64
 
 Use the capture helper:
 
@@ -45,6 +50,15 @@ Guidelines:
 - `code_interpreter_call*.request.json` templates use
   `container: {"type":"auto"}`, so they do not require any extra setup
   beyond `OPENAI_API_KEY`.
+- `computer_call_output.request.json` requires
+  `OPENAI_PREVIOUS_RESPONSE_ID`, `OPENAI_COMPUTER_CALL_ID`, and
+  `OPENAI_COMPUTER_SCREENSHOT_BASE64`. A convenient way to populate the last
+  one is:
+  `export OPENAI_COMPUTER_SCREENSHOT_BASE64="$(base64 < /path/to/screenshot.png | tr -d '\n')"`
+- For the follow-up `computer_call_output` trace, use a PNG screenshot that
+  actually shows a simple UI with a visible text input or search field;
+  otherwise the model may legitimately stop without returning a useful action
+  batch.
 - Prefer short, deterministic prompts when capturing traces for tests.
 - Treat the raw `.sse` file as the source of truth if the parsed fixture ever
   looks suspicious.

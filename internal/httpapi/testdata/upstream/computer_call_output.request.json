@@ -1,0 +1,22 @@
+{
+  "model": "gpt-5.4",
+  "store": true,
+  "stream": true,
+  "tool_choice": "required",
+  "previous_response_id": "${OPENAI_PREVIOUS_RESPONSE_ID}",
+  "tools": [
+    {
+      "type": "computer"
+    }
+  ],
+  "input": [
+    {
+      "type": "computer_call_output",
+      "call_id": "${OPENAI_COMPUTER_CALL_ID}",
+      "output": {
+        "type": "computer_screenshot",
+        "image_url": "data:image/png;base64,${OPENAI_COMPUTER_SCREENSHOT_BASE64}"
+      }
+    }
+  ]
+}

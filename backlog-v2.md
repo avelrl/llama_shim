@@ -85,6 +85,7 @@
 - [x] - trace-backed `web_search_call` tool-specific SSE replay for stored Responses items ([детали](#task-streaming-replay-web-search))
 - [x] - trace-backed `file_search_call` tool-specific SSE replay for stored Responses items ([детали](#task-streaming-replay-file-search))
 - [x] - trace-backed `code_interpreter_call` tool-specific SSE replay for stored Responses items ([детали](#task-streaming-replay-code-interpreter))
+- [x] - trace-backed `computer_call` generic SSE replay for stored Responses items ([детали](#task-streaming-replay-computer))
 - [ ] - hosted/native tool-specific SSE replay beyond core shim item families ([детали](#task-streaming-replay-hosted))
 - [x] - compatibility для `/responses/compact` и `/responses/input_tokens` ([детали](#task-compaction-and-token-counting))
 - [ ] - retrieval-compatible слой: vector stores + `file_search` ([детали](#task-retrieval-layer))
@@ -580,6 +581,49 @@ Definition of done:
 - backlog/OpenAPI wording не overclaim-ят parity для remaining hosted/native
   tool families
 
+## <a id="task-streaming-replay-computer"></a>Trace-backed `computer_call` generic SSE replay for stored Responses items
+
+Почему это отдельно:
+
+- official docs подтверждают built-in `computer` tool и request/response loop
+  через `computer_call` и `computer_call_output`, но не описывают отдельную
+  `response.computer_call.*` SSE family в Responses streaming reference
+- real upstream traces нужны, чтобы не выдумать unsupported events и не
+  протечь финальными `actions[]` раньше `response.output_item.done`
+
+Что входит:
+
+- stored retrieve replay для screenshot-first turn и для follow-up turn с
+  `computer_call_output`
+- completed-only upstream normalization для тех же случаев
+- generic synthetic sequence, совпадающая с captured upstream flow:
+  `response.created` ->
+  `response.output_item.added` ->
+  `response.output_item.done` ->
+  `response.completed`
+- synthetic `response.output_item.added` для `computer_call` omits final
+  `actions[]` until `response.output_item.done`
+
+Статус на 12 апреля 2026:
+
+- закрыто для stored `computer_call`: retrieve replay и completed-only
+  normalization теперь воспроизводят generic `response.output_item.*`
+  sequence без synthetic `response.computer_call.*`
+- live upstream traces лежат в
+  `internal/httpapi/testdata/upstream/computer_call*.raw.sse` и parsed
+  fixtures рядом
+- captured upstream flow для обоих traces содержит только
+  `response.created`, `response.in_progress`, `response.output_item.added`,
+  `response.output_item.done`, `response.completed`
+- coverage есть и на stored retrieve replay, и на completed-only proxy branch
+
+Definition of done:
+
+- synthetic `response.output_item.added` не протекает финальными `actions[]`
+- shim не invent-ит unsupported `response.computer_call.*` events
+- backlog/OpenAPI wording честно фиксируют, что текущая parity для
+  `computer_call` generic-only по trace
+
 ## <a id="task-streaming-replay-hosted"></a>Hosted/native tool-specific SSE replay beyond core shim item families
 
 Почему это отдельно:
@@ -587,7 +631,7 @@ Definition of done:
 - для hosted/native tools official docs сейчас явно перечисляют event families, но exact payload schema через docs tooling доступна фрагментарно
 - без source event log легко “додумать” synthetic payload неправильно и начать overclaim-ить совместимость
 
-Статус на 11 апреля 2026:
+Статус на 12 апреля 2026:
 
 - docs-backed MCP replay и hosted replay safety subset вынесены в закрытый
   item выше
@@ -595,13 +639,18 @@ Definition of done:
   вынесен в закрытые item выше
 - trace-backed replay для stored `code_interpreter_call` вынесен в закрытый
   item выше
-- для computer-use item families и `mcp_approval_request` replay все еще
-  может деградировать до generic `response.output_item.*`
+- trace-backed replay для stored `computer_call` вынесен в закрытый item
+  выше; captured upstream flow для него generic-only и не содержит
+  `response.computer_call.*`
+- для `mcp_approval_request` и других hosted/native families без live
+  source event log replay все еще может деградировать до generic
+  `response.output_item.*`
 
 Что осталось:
 
-- tool-specific retrieve replay для computer-use item families и, возможно,
-  `mcp_approval_request`, если docs-backed contract для него удастся
+- tool-specific retrieve replay только для remaining hosted/native families,
+  где upstream действительно exposes dedicated SSE families, и, возможно,
+  для `mcp_approval_request`, если docs-backed contract для него удастся
   подтвердить без догадок
 - максимальное сближение synthetic replay с реальным upstream event log там,
   где сам stored object не хранит исходные deltas

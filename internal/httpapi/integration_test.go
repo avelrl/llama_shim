@@ -825,6 +825,63 @@ func TestResponsesGetStreamReplaysCodeInterpreterCallWithNilOutputsPlaceholder(t
 	require.Nil(t, outputs)
 }
 
+func TestResponsesGetStreamReplaysComputerCallWithoutLeakingActionsInAdded(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	computerCall, err := domain.NewItem([]byte(`{"id":"cu_test","type":"computer_call","status":"completed","call_id":"call_test","actions":[{"type":"click","button":"left","keys":null,"x":636,"y":343},{"type":"type","text":"penguin"}]}`))
+	require.NoError(t, err)
+
+	stored := domain.StoredResponse{
+		ID:                   "resp_computer_call",
+		Model:                "test-model",
+		RequestJSON:          `{"model":"test-model","store":true,"input":"use computer"}`,
+		ResponseJSON:         `{"id":"resp_computer_call","object":"response","created_at":1712059200,"status":"completed","completed_at":1712059200,"error":null,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"model":"test-model","output":[{"id":"cu_test","type":"computer_call","status":"completed","call_id":"call_test","actions":[{"type":"click","button":"left","keys":null,"x":636,"y":343},{"type":"type","text":"penguin"}]}],"parallel_tool_calls":true,"previous_response_id":null,"reasoning":{"effort":null,"summary":null},"store":true,"temperature":1.0,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[],"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{},"output_text":""}`,
+		NormalizedInputItems: []domain.Item{domain.NewInputTextMessage("user", "use computer")},
+		EffectiveInputItems:  []domain.Item{domain.NewInputTextMessage("user", "use computer")},
+		Output:               []domain.Item{computerCall},
+		OutputText:           "",
+		Store:                true,
+		CreatedAt:            "2026-04-12T10:00:00Z",
+		CompletedAt:          "2026-04-12T10:00:01Z",
+	}
+	require.NoError(t, app.Store.SaveResponse(context.Background(), stored))
+
+	req, err := http.NewRequest(http.MethodGet, app.Server.URL+"/v1/responses/resp_computer_call?stream=true", nil)
+	require.NoError(t, err)
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	events := readSSEEvents(t, resp.Body)
+	for _, eventType := range eventTypes(events) {
+		require.NotContains(t, eventType, "response.computer_call")
+	}
+
+	added := findEvent(t, events, "response.output_item.added").Data
+	addedItem, ok := added["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "computer_call", asStringAny(addedItem["type"]))
+	require.Equal(t, "call_test", asStringAny(addedItem["call_id"]))
+	require.Equal(t, "in_progress", asStringAny(addedItem["status"]))
+	_, hasActions := addedItem["actions"]
+	require.False(t, hasActions)
+
+	outputDone := findEvent(t, events, "response.output_item.done").Data
+	outputDoneItem, ok := outputDone["item"].(map[string]any)
+	require.True(t, ok)
+	actions, ok := outputDoneItem["actions"].([]any)
+	require.True(t, ok)
+	require.Len(t, actions, 2)
+	firstAction, ok := actions[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "click", asStringAny(firstAction["type"]))
+	secondAction, ok := actions[1].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "type", asStringAny(secondAction["type"]))
+	require.Equal(t, "penguin", asStringAny(secondAction["text"]))
+}
+
 func TestResponsesGetStreamSupportsStartingAfter(t *testing.T) {
 	app := testutil.NewTestApp(t)
 

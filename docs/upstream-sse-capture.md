@@ -62,6 +62,61 @@ explicitly, matching the wording in the official Code Interpreter guide.
 The `include=["code_interpreter_call.outputs"]` variant is intended to verify
 the live upstream behavior for outputs retrieval before we claim parity.
 
+## Suggested request shape for `computer_call`
+
+The repository includes ready-to-run templates at
+[computer_call_screenshot.request.json](/Users/avel/Projects/llama_shim/internal/httpapi/testdata/upstream/computer_call_screenshot.request.json)
+and
+[computer_call_output.request.json](/Users/avel/Projects/llama_shim/internal/httpapi/testdata/upstream/computer_call_output.request.json).
+
+The first request is intended to capture the screenshot-first turn described in
+the official Computer use guide. The follow-up request replays a
+`computer_call_output` item using:
+
+- `OPENAI_PREVIOUS_RESPONSE_ID` from the first trace
+- `OPENAI_COMPUTER_CALL_ID` from the first `computer_call`
+- `OPENAI_COMPUTER_SCREENSHOT_BASE64` containing a PNG screenshot, encoded as
+  a single-line base64 string
+
+Example flow:
+
+```bash
+go run ./cmd/upstream-sse-capture \
+  -request-file internal/httpapi/testdata/upstream/computer_call_screenshot.request.json \
+  -raw-out internal/httpapi/testdata/upstream/computer_call_screenshot.raw.sse \
+  -fixture-out internal/httpapi/testdata/upstream/computer_call_screenshot.fixture.json \
+  -label computer_call_screenshot
+```
+
+```bash
+export OPENAI_PREVIOUS_RESPONSE_ID="$(jq -r 'first(.stream.events[] | select(.event == \"response.completed\") | .json.response.id)' internal/httpapi/testdata/upstream/computer_call_screenshot.fixture.json)"
+export OPENAI_COMPUTER_CALL_ID="$(jq -r 'first(.stream.events[] | select(.json.item.call_id != null) | .json.item.call_id)' internal/httpapi/testdata/upstream/computer_call_screenshot.fixture.json)"
+export OPENAI_COMPUTER_SCREENSHOT_BASE64="$(base64 < /path/to/screenshot.png | tr -d '\n')"
+```
+
+```bash
+go run ./cmd/upstream-sse-capture \
+  -request-file internal/httpapi/testdata/upstream/computer_call_output.request.json \
+  -raw-out internal/httpapi/testdata/upstream/computer_call_output.raw.sse \
+  -fixture-out internal/httpapi/testdata/upstream/computer_call_output.fixture.json \
+  -label computer_call_output
+```
+
+On the docs side, the contract is clear enough for request payloads:
+
+- the built-in tool name is `computer`
+- the first loop turn can return a `computer_call`
+- follow-up input uses `computer_call_output`
+- the API reference currently describes `computer_call_output.output.type` as
+  `computer_screenshot` with `image_url` or `file_id`
+
+What is still missing from docs is the exact Responses SSE family for
+`computer_call`, so replay work should stay trace-backed and conservative.
+For the second trace, use a screenshot that actually contains a visible text
+input or search field. The template asks the model to click and type only if
+the UI makes that possible; otherwise it may legitimately stop without
+producing a richer action trace.
+
 ## Why this exists
 
 Official docs currently confirm hosted output item families such as

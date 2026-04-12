@@ -454,6 +454,11 @@ paths:
           `response.output_item.added` keeps `code` blank and preserves only
           an empty or `null` `outputs` placeholder until
           `response.output_item.done`
+        - trace-backed stored `computer_call` items do not expose a dedicated
+          `response.computer_call.*` SSE family in current upstream captures;
+          replay therefore stays generic through `response.output_item.*`, and
+          synthetic `response.output_item.added` omits final `actions` until
+          `response.output_item.done`
         - other hosted/native tool item families may still fall back to
           generic `response.output_item.*` replay
       parameters:

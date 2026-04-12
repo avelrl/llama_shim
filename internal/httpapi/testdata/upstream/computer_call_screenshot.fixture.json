@@ -1,0 +1,292 @@
+{
+  "captured_at": "2026-04-12T08:00:15Z",
+  "label": "computer_call_screenshot",
+  "method": "POST",
+  "url": "https://api.openai.com/v1/responses",
+  "status_code": 200,
+  "content_type": "text/event-stream; charset=utf-8",
+  "request": {
+    "input": "Use the computer tool. First request a screenshot and do not take any other action until you receive it. After you receive the screenshot, if there is a clearly visible text input or search field, click it and type penguin. If there is no clear input to use, stop and explain that the UI is not suitable for a typing action.",
+    "model": "gpt-5.4",
+    "store": true,
+    "stream": true,
+    "tool_choice": "required",
+    "tools": [
+      {
+        "type": "computer"
+      }
+    ]
+  },
+  "response_headers": {
+    "Alt-Svc": [
+      "h3=\":443\"; ma=86400"
+    ],
+    "Cf-Cache-Status": [
+      "DYNAMIC"
+    ],
+    "Content-Type": [
+      "text/event-stream; charset=utf-8"
+    ],
+    "Date": [
+      "Sun, 12 Apr 2026 08:00:15 GMT"
+    ],
+    "Openai-Processing-Ms": [
+      "2293"
+    ],
+    "Openai-Version": [
+      "2020-10-01"
+    ],
+    "Server": [
+      "cloudflare"
+    ],
+    "X-Content-Type-Options": [
+      "nosniff"
+    ],
+    "X-Ratelimit-Limit-Requests": [
+      "500"
+    ],
+    "X-Ratelimit-Limit-Tokens": [
+      "500000"
+    ],
+    "X-Ratelimit-Remaining-Requests": [
+      "499"
+    ],
+    "X-Ratelimit-Remaining-Tokens": [
+      "498832"
+    ],
+    "X-Ratelimit-Reset-Requests": [
+      "120ms"
+    ],
+    "X-Ratelimit-Reset-Tokens": [
+      "140ms"
+    ]
+  },
+  "stream": {
+    "event_count": 5,
+    "done": false,
+    "events": [
+      {
+        "event": "response.created",
+        "data": "{\"type\":\"response.created\",\"response\":{\"id\":\"resp_05487dbbc0ab34230069db510e77788195b1f4ada7b501ffbe\",\"object\":\"response\",\"created_at\":1775980814,\"status\":\"in_progress\",\"background\":false,\"completed_at\":null,\"error\":null,\"frequency_penalty\":0.0,\"incomplete_details\":null,\"instructions\":null,\"max_output_tokens\":null,\"max_tool_calls\":null,\"model\":\"gpt-5.4-2026-03-05\",\"output\":[],\"parallel_tool_calls\":true,\"presence_penalty\":0.0,\"previous_response_id\":null,\"prompt_cache_key\":null,\"prompt_cache_retention\":null,\"reasoning\":{\"effort\":\"none\",\"summary\":null},\"safety_identifier\":null,\"service_tier\":\"auto\",\"store\":true,\"temperature\":1.0,\"text\":{\"format\":{\"type\":\"text\"},\"verbosity\":\"medium\"},\"tool_choice\":\"required\",\"tools\":[{\"type\":\"computer\"}],\"top_logprobs\":0,\"top_p\":0.98,\"truncation\":\"disabled\",\"usage\":null,\"user\":null,\"metadata\":{}},\"sequence_number\":0}",
+        "json": {
+          "response": {
+            "background": false,
+            "completed_at": null,
+            "created_at": 1775980814,
+            "error": null,
+            "frequency_penalty": 0,
+            "id": "resp_05487dbbc0ab34230069db510e77788195b1f4ada7b501ffbe",
+            "incomplete_details": null,
+            "instructions": null,
+            "max_output_tokens": null,
+            "max_tool_calls": null,
+            "metadata": {},
+            "model": "gpt-5.4-2026-03-05",
+            "object": "response",
+            "output": [],
+            "parallel_tool_calls": true,
+            "presence_penalty": 0,
+            "previous_response_id": null,
+            "prompt_cache_key": null,
+            "prompt_cache_retention": null,
+            "reasoning": {
+              "effort": "none",
+              "summary": null
+            },
+            "safety_identifier": null,
+            "service_tier": "auto",
+            "status": "in_progress",
+            "store": true,
+            "temperature": 1,
+            "text": {
+              "format": {
+                "type": "text"
+              },
+              "verbosity": "medium"
+            },
+            "tool_choice": "required",
+            "tools": [
+              {
+                "type": "computer"
+              }
+            ],
+            "top_logprobs": 0,
+            "top_p": 0.98,
+            "truncation": "disabled",
+            "usage": null,
+            "user": null
+          },
+          "sequence_number": 0,
+          "type": "response.created"
+        }
+      },
+      {
+        "event": "response.in_progress",
+        "data": "{\"type\":\"response.in_progress\",\"response\":{\"id\":\"resp_05487dbbc0ab34230069db510e77788195b1f4ada7b501ffbe\",\"object\":\"response\",\"created_at\":1775980814,\"status\":\"in_progress\",\"background\":false,\"completed_at\":null,\"error\":null,\"frequency_penalty\":0.0,\"incomplete_details\":null,\"instructions\":null,\"max_output_tokens\":null,\"max_tool_calls\":null,\"model\":\"gpt-5.4-2026-03-05\",\"output\":[],\"parallel_tool_calls\":true,\"presence_penalty\":0.0,\"previous_response_id\":null,\"prompt_cache_key\":null,\"prompt_cache_retention\":null,\"reasoning\":{\"effort\":\"none\",\"summary\":null},\"safety_identifier\":null,\"service_tier\":\"auto\",\"store\":true,\"temperature\":1.0,\"text\":{\"format\":{\"type\":\"text\"},\"verbosity\":\"medium\"},\"tool_choice\":\"required\",\"tools\":[{\"type\":\"computer\"}],\"top_logprobs\":0,\"top_p\":0.98,\"truncation\":\"disabled\",\"usage\":null,\"user\":null,\"metadata\":{}},\"sequence_number\":1}",
+        "json": {
+          "response": {
+            "background": false,
+            "completed_at": null,
+            "created_at": 1775980814,
+            "error": null,
+            "frequency_penalty": 0,
+            "id": "resp_05487dbbc0ab34230069db510e77788195b1f4ada7b501ffbe",
+            "incomplete_details": null,
+            "instructions": null,
+            "max_output_tokens": null,
+            "max_tool_calls": null,
+            "metadata": {},
+            "model": "gpt-5.4-2026-03-05",
+            "object": "response",
+            "output": [],
+            "parallel_tool_calls": true,
+            "presence_penalty": 0,
+            "previous_response_id": null,
+            "prompt_cache_key": null,
+            "prompt_cache_retention": null,
+            "reasoning": {
+              "effort": "none",
+              "summary": null
+            },
+            "safety_identifier": null,
+            "service_tier": "auto",
+            "status": "in_progress",
+            "store": true,
+            "temperature": 1,
+            "text": {
+              "format": {
+                "type": "text"
+              },
+              "verbosity": "medium"
+            },
+            "tool_choice": "required",
+            "tools": [
+              {
+                "type": "computer"
+              }
+            ],
+            "top_logprobs": 0,
+            "top_p": 0.98,
+            "truncation": "disabled",
+            "usage": null,
+            "user": null
+          },
+          "sequence_number": 1,
+          "type": "response.in_progress"
+        }
+      },
+      {
+        "event": "response.output_item.added",
+        "data": "{\"type\":\"response.output_item.added\",\"item\":{\"id\":\"cu_05487dbbc0ab34230069db510f6f4081959bc9d368d9e3e5c7\",\"type\":\"computer_call\",\"status\":\"in_progress\",\"call_id\":\"call_IO2HofdIDRJy7RuZ8x67umlA\"},\"output_index\":0,\"sequence_number\":2}",
+        "json": {
+          "item": {
+            "call_id": "call_IO2HofdIDRJy7RuZ8x67umlA",
+            "id": "cu_05487dbbc0ab34230069db510f6f4081959bc9d368d9e3e5c7",
+            "status": "in_progress",
+            "type": "computer_call"
+          },
+          "output_index": 0,
+          "sequence_number": 2,
+          "type": "response.output_item.added"
+        }
+      },
+      {
+        "event": "response.output_item.done",
+        "data": "{\"type\":\"response.output_item.done\",\"item\":{\"id\":\"cu_05487dbbc0ab34230069db510f6f4081959bc9d368d9e3e5c7\",\"type\":\"computer_call\",\"status\":\"completed\",\"actions\":[{\"type\":\"screenshot\"}],\"call_id\":\"call_IO2HofdIDRJy7RuZ8x67umlA\"},\"output_index\":0,\"sequence_number\":3}",
+        "json": {
+          "item": {
+            "actions": [
+              {
+                "type": "screenshot"
+              }
+            ],
+            "call_id": "call_IO2HofdIDRJy7RuZ8x67umlA",
+            "id": "cu_05487dbbc0ab34230069db510f6f4081959bc9d368d9e3e5c7",
+            "status": "completed",
+            "type": "computer_call"
+          },
+          "output_index": 0,
+          "sequence_number": 3,
+          "type": "response.output_item.done"
+        }
+      },
+      {
+        "event": "response.completed",
+        "data": "{\"type\":\"response.completed\",\"response\":{\"id\":\"resp_05487dbbc0ab34230069db510e77788195b1f4ada7b501ffbe\",\"object\":\"response\",\"created_at\":1775980814,\"status\":\"completed\",\"background\":false,\"completed_at\":1775980815,\"error\":null,\"frequency_penalty\":0.0,\"incomplete_details\":null,\"instructions\":null,\"max_output_tokens\":null,\"max_tool_calls\":null,\"model\":\"gpt-5.4-2026-03-05\",\"output\":[{\"id\":\"cu_05487dbbc0ab34230069db510f6f4081959bc9d368d9e3e5c7\",\"type\":\"computer_call\",\"status\":\"completed\",\"actions\":[{\"type\":\"screenshot\"}],\"call_id\":\"call_IO2HofdIDRJy7RuZ8x67umlA\"}],\"parallel_tool_calls\":true,\"presence_penalty\":0.0,\"previous_response_id\":null,\"prompt_cache_key\":null,\"prompt_cache_retention\":null,\"reasoning\":{\"effort\":\"none\",\"summary\":null},\"safety_identifier\":null,\"service_tier\":\"default\",\"store\":true,\"temperature\":1.0,\"text\":{\"format\":{\"type\":\"text\"},\"verbosity\":\"medium\"},\"tool_choice\":\"required\",\"tools\":[{\"type\":\"computer\"}],\"top_logprobs\":0,\"top_p\":0.98,\"truncation\":\"disabled\",\"usage\":{\"input_tokens\":886,\"input_tokens_details\":{\"cached_tokens\":0},\"output_tokens\":18,\"output_tokens_details\":{\"reasoning_tokens\":0},\"total_tokens\":904},\"user\":null,\"metadata\":{}},\"sequence_number\":4}",
+        "json": {
+          "response": {
+            "background": false,
+            "completed_at": 1775980815,
+            "created_at": 1775980814,
+            "error": null,
+            "frequency_penalty": 0,
+            "id": "resp_05487dbbc0ab34230069db510e77788195b1f4ada7b501ffbe",
+            "incomplete_details": null,
+            "instructions": null,
+            "max_output_tokens": null,
+            "max_tool_calls": null,
+            "metadata": {},
+            "model": "gpt-5.4-2026-03-05",
+            "object": "response",
+            "output": [
+              {
+                "actions": [
+                  {
+                    "type": "screenshot"
+                  }
+                ],
+                "call_id": "call_IO2HofdIDRJy7RuZ8x67umlA",
+                "id": "cu_05487dbbc0ab34230069db510f6f4081959bc9d368d9e3e5c7",
+                "status": "completed",
+                "type": "computer_call"
+              }
+            ],
+            "parallel_tool_calls": true,
+            "presence_penalty": 0,
+            "previous_response_id": null,
+            "prompt_cache_key": null,
+            "prompt_cache_retention": null,
+            "reasoning": {
+              "effort": "none",
+              "summary": null
+            },
+            "safety_identifier": null,
+            "service_tier": "default",
+            "status": "completed",
+            "store": true,
+            "temperature": 1,
+            "text": {
+              "format": {
+                "type": "text"
+              },
+              "verbosity": "medium"
+            },
+            "tool_choice": "required",
+            "tools": [
+              {
+                "type": "computer"
+              }
+            ],
+            "top_logprobs": 0,
+            "top_p": 0.98,
+            "truncation": "disabled",
+            "usage": {
+              "input_tokens": 886,
+              "input_tokens_details": {
+                "cached_tokens": 0
+              },
+              "output_tokens": 18,
+              "output_tokens_details": {
+                "reasoning_tokens": 0
+              },
+              "total_tokens": 904
+            },
+            "user": null
+          },
+          "sequence_number": 4,
+          "type": "response.completed"
+        }
+      }
+    ]
+  }
+}
