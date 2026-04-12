@@ -35,6 +35,10 @@ responses:
   codex:
     enable_compatibility: true
     force_tool_choice_required: true
+  code_interpreter:
+    enable_unsafe_host_executor: true
+    python_binary: /opt/homebrew/bin/python3
+    execution_timeout: 45s
 `)
 
 	cfg, err := config.Load(configPath)
@@ -52,6 +56,9 @@ responses:
 	require.Equal(t, "bridge", cfg.ResponsesCustomToolsMode)
 	require.True(t, cfg.ResponsesCodexEnableCompatibility)
 	require.True(t, cfg.ResponsesCodexForceToolChoiceRequired)
+	require.True(t, cfg.ResponsesCodeInterpreterEnableUnsafe)
+	require.Equal(t, "/opt/homebrew/bin/python3", cfg.ResponsesCodeInterpreterPythonBinary)
+	require.Equal(t, 45*time.Second, cfg.ResponsesCodeInterpreterTimeout)
 	require.Equal(t, configPath, cfg.ConfigFile)
 }
 
@@ -69,6 +76,10 @@ responses:
   codex:
     enable_compatibility: false
     force_tool_choice_required: false
+  code_interpreter:
+    enable_unsafe_host_executor: false
+    python_binary: python3
+    execution_timeout: 20s
 `)
 
 	t.Setenv("SHIM_ADDR", ":7070")
@@ -78,6 +89,9 @@ responses:
 	t.Setenv("RESPONSES_MODE", "local_only")
 	t.Setenv("RESPONSES_CODEX_ENABLE_COMPATIBILITY", "true")
 	t.Setenv("RESPONSES_CODEX_FORCE_TOOL_CHOICE_REQUIRED", "true")
+	t.Setenv("RESPONSES_CODE_INTERPRETER_ENABLE_UNSAFE_HOST_EXECUTOR", "true")
+	t.Setenv("RESPONSES_CODE_INTERPRETER_PYTHON_BINARY", "/usr/bin/python3")
+	t.Setenv("RESPONSES_CODE_INTERPRETER_EXECUTION_TIMEOUT", "33s")
 
 	cfg, err := config.Load(configPath)
 	require.NoError(t, err)
@@ -88,6 +102,9 @@ responses:
 	require.Equal(t, config.ResponsesModeLocalOnly, cfg.ResponsesMode)
 	require.True(t, cfg.ResponsesCodexEnableCompatibility)
 	require.True(t, cfg.ResponsesCodexForceToolChoiceRequired)
+	require.True(t, cfg.ResponsesCodeInterpreterEnableUnsafe)
+	require.Equal(t, "/usr/bin/python3", cfg.ResponsesCodeInterpreterPythonBinary)
+	require.Equal(t, 33*time.Second, cfg.ResponsesCodeInterpreterTimeout)
 }
 
 func TestLoadUsesCodexSafeDefaults(t *testing.T) {
@@ -105,4 +122,7 @@ func TestLoadUsesCodexSafeDefaults(t *testing.T) {
 	require.Equal(t, "auto", cfg.ResponsesCustomToolsMode)
 	require.True(t, cfg.ResponsesCodexEnableCompatibility)
 	require.True(t, cfg.ResponsesCodexForceToolChoiceRequired)
+	require.False(t, cfg.ResponsesCodeInterpreterEnableUnsafe)
+	require.Equal(t, "python3", cfg.ResponsesCodeInterpreterPythonBinary)
+	require.Equal(t, 20*time.Second, cfg.ResponsesCodeInterpreterTimeout)
 }

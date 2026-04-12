@@ -52,11 +52,14 @@ func NewTestAppWithResponsesAndCodexSettings(t *testing.T, responsesMode string,
 }
 
 type TestAppOptions struct {
-	ResponsesMode             string
-	CustomToolsMode           string
-	CodexCompatibilityEnabled bool
-	ForceToolChoiceRequired   bool
-	LlamaBaseURL              string
+	ResponsesMode               string
+	CustomToolsMode             string
+	CodexCompatibilityEnabled   bool
+	ForceToolChoiceRequired     bool
+	LlamaBaseURL                string
+	EnableUnsafeCodeInterpreter bool
+	CodeInterpreterPythonBinary string
+	CodeInterpreterExecTimeout  time.Duration
 }
 
 func NewTestAppWithOptions(t *testing.T, options TestAppOptions) *TestApp {
@@ -92,7 +95,12 @@ func NewTestAppWithOptions(t *testing.T, options TestAppOptions) *TestApp {
 		ResponsesCustomToolsMode:              options.CustomToolsMode,
 		ResponsesCodexEnableCompatibility:     options.CodexCompatibilityEnabled,
 		ResponsesCodexForceToolChoiceRequired: options.ForceToolChoiceRequired,
-		Store:                                 store,
+		LocalCodeInterpreter: httpapi.LocalCodeInterpreterRuntimeConfig{
+			Enabled:      options.EnableUnsafeCodeInterpreter,
+			PythonBinary: coalesceString(options.CodeInterpreterPythonBinary, "python3"),
+			ExecTimeout:  coalesceDuration(options.CodeInterpreterExecTimeout, 5*time.Second),
+		},
+		Store: store,
 	}))
 
 	t.Cleanup(func() {
@@ -112,4 +120,18 @@ func NewTestAppWithOptions(t *testing.T, options TestAppOptions) *TestApp {
 
 func (a *TestApp) Client() *http.Client {
 	return a.Server.Client()
+}
+
+func coalesceString(value, fallback string) string {
+	if value != "" {
+		return value
+	}
+	return fallback
+}
+
+func coalesceDuration(value, fallback time.Duration) time.Duration {
+	if value > 0 {
+		return value
+	}
+	return fallback
 }

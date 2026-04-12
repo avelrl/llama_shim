@@ -433,6 +433,12 @@ func fakeLlamaOutputFromChatMessages(messages []map[string]any) string {
 
 	last := strings.ToLower(chatMessageContent(messages[len(messages)-1]))
 	joined := strings.ToLower(joinChatMessageContent(messages))
+	if output, ok := fakeLocalCodeInterpreterPlannerOutput(joined); ok {
+		return output
+	}
+	if output, ok := fakeLocalCodeInterpreterFinalOutput(last, joined); ok {
+		return output
+	}
 	if output, ok := fakeStructuredJSONOutput(last, joined); ok {
 		return output
 	}
@@ -518,6 +524,12 @@ func fakeLlamaOutput(messages []fakeLlamaMessage) string {
 
 	last := strings.ToLower(messages[len(messages)-1].Content)
 	joined := strings.ToLower(joinMessageContent(messages))
+	if output, ok := fakeLocalCodeInterpreterPlannerOutput(joined); ok {
+		return output
+	}
+	if output, ok := fakeLocalCodeInterpreterFinalOutput(last, joined); ok {
+		return output
+	}
 	if output, ok := fakeStructuredJSONOutput(last, joined); ok {
 		return output
 	}
@@ -585,6 +597,41 @@ func marshalAny(value any) string {
 
 func hasFakeCode777Context(text string) bool {
 	return strings.Contains(text, "code=777") || strings.Contains(text, "code 777")
+}
+
+func fakeLocalCodeInterpreterPlannerOutput(joined string) (string, bool) {
+	if !strings.Contains(joined, "shim-local code interpreter planner") {
+		return "", false
+	}
+
+	switch {
+	case strings.Contains(joined, "2+2"):
+		return `{"use_code_interpreter":true,"code":"print(2+2)"}`, true
+	case strings.Contains(joined, "result=2.0"):
+		return `{"use_code_interpreter":true,"code":"print(\"result=2.0\")"}`, true
+	case strings.Contains(joined, "say ok and nothing else"):
+		return `{"use_code_interpreter":false,"code":""}`, true
+	default:
+		return `{"use_code_interpreter":true,"code":"print(2+2)"}`, true
+	}
+}
+
+func fakeLocalCodeInterpreterFinalOutput(last, joined string) (string, bool) {
+	if !strings.Contains(joined, "shim-local code interpreter already ran for this turn") {
+		return "", false
+	}
+
+	switch {
+	case strings.Contains(joined, "execution logs:\n4"):
+		if strings.Contains(last, "json") {
+			return `{"result":4}`, true
+		}
+		return "4", true
+	case strings.Contains(joined, "execution logs:\nresult=2.0"):
+		return "Printed the requested line to stdout.", true
+	default:
+		return "Execution completed.", true
+	}
 }
 
 func buildFakeResponse(id, model, output string, request map[string]any) map[string]any {

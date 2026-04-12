@@ -38,9 +38,10 @@ type responseHandler struct {
 	customToolsMode              string
 	codexCompatibilityEnabled    bool
 	forceCodexToolChoiceRequired bool
+	localCodeInterpreter         LocalCodeInterpreterRuntimeConfig
 }
 
-func newResponseHandler(logger *slog.Logger, service *service.ResponseService, proxy *proxyHandler, responsesMode string, customToolsMode string, codexCompatibilityEnabled bool, forceCodexToolChoiceRequired bool) *responseHandler {
+func newResponseHandler(logger *slog.Logger, service *service.ResponseService, proxy *proxyHandler, responsesMode string, customToolsMode string, codexCompatibilityEnabled bool, forceCodexToolChoiceRequired bool, localCodeInterpreter LocalCodeInterpreterRuntimeConfig) *responseHandler {
 	return &responseHandler{
 		logger:                       logger,
 		service:                      service,
@@ -49,6 +50,7 @@ func newResponseHandler(logger *slog.Logger, service *service.ResponseService, p
 		customToolsMode:              customToolsMode,
 		codexCompatibilityEnabled:    codexCompatibilityEnabled,
 		forceCodexToolChoiceRequired: forceCodexToolChoiceRequired,
+		localCodeInterpreter:         localCodeInterpreter,
 	}
 }
 
@@ -90,6 +92,8 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 
 	localToolLoop := supportsLocalToolLoop(rawFields)
 	localFileSearch := supportsLocalFileSearch(rawFields)
+	localCodeInterpreterRequested := isLocalCodeInterpreterToolRequest(rawFields)
+	localCodeInterpreter := supportsLocalCodeInterpreter(rawFields, h.localCodeInterpreter.Enabled)
 	localSupported := supportsLocalShimState(rawFields)
 	generationOptions := buildGenerationOptions(rawFields)
 	if request.Stream != nil && *request.Stream {
@@ -109,6 +113,21 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 			}
 			if err := writeCompletedResponseAsSSE(r.Context(), h.logger, w, rawResponse, customToolTransportPlan{}, streamOptions.IncludeObfuscation); err != nil && !shouldIgnoreStreamProxyError(err) {
 				h.logger.WarnContext(r.Context(), "local file search stream failed", "request_id", RequestIDFromContext(r.Context()), "err", err)
+			}
+			return
+		case localCodeInterpreter:
+			response, err := h.createLocalCodeInterpreterResponse(r.Context(), request, requestJSON, rawFields)
+			if err != nil {
+				h.writeError(w, r, normalizeLocalOnlyCreateError(h.responsesMode, err))
+				return
+			}
+			rawResponse, marshalErr := json.Marshal(response)
+			if marshalErr != nil {
+				h.writeError(w, r, marshalErr)
+				return
+			}
+			if err := writeCompletedResponseAsSSE(r.Context(), h.logger, w, rawResponse, customToolTransportPlan{}, streamOptions.IncludeObfuscation); err != nil && !shouldIgnoreStreamProxyError(err) {
+				h.logger.WarnContext(r.Context(), "local code interpreter stream failed", "request_id", RequestIDFromContext(r.Context()), "err", err)
 			}
 			return
 		case localToolLoop:
@@ -133,6 +152,9 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			h.writeError(w, r, normalizeLocalOnlyCreateError(h.responsesMode, err))
+		case localCodeInterpreterRequested && h.responsesMode == config.ResponsesModeLocalOnly:
+			h.writeError(w, r, localCodeInterpreterDisabledError())
+			return
 		case localSupported:
 			if err := h.createStream(w, r, request, requestJSON, generationOptions, streamOptions); err != nil {
 				if shouldFallbackLocalState(h.responsesMode, err) {
@@ -161,6 +183,14 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	case localFileSearch:
 		response, err := h.createLocalFileSearchResponse(r.Context(), request, requestJSON, rawFields)
+		if err != nil {
+			h.writeError(w, r, normalizeLocalOnlyCreateError(h.responsesMode, err))
+			return
+		}
+		WriteJSON(w, http.StatusOK, response)
+		return
+	case localCodeInterpreter:
+		response, err := h.createLocalCodeInterpreterResponse(r.Context(), request, requestJSON, rawFields)
 		if err != nil {
 			h.writeError(w, r, normalizeLocalOnlyCreateError(h.responsesMode, err))
 			return
@@ -217,6 +247,9 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 			err = fallbackErr
 		}
 		h.writeError(w, r, normalizeLocalOnlyCreateError(h.responsesMode, err))
+		return
+	case localCodeInterpreterRequested && h.responsesMode == config.ResponsesModeLocalOnly:
+		h.writeError(w, r, localCodeInterpreterDisabledError())
 		return
 	case hasLocalState:
 		if h.responsesMode == config.ResponsesModeLocalOnly {

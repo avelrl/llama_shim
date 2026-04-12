@@ -20,6 +20,7 @@ type RouterDeps struct {
 	ResponsesCustomToolsMode              string
 	ResponsesCodexEnableCompatibility     bool
 	ResponsesCodexForceToolChoiceRequired bool
+	LocalCodeInterpreter                  LocalCodeInterpreterRuntimeConfig
 	Store                                 *sqlite.Store
 }
 
@@ -35,6 +36,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 		deps.ResponsesCustomToolsMode,
 		deps.ResponsesCodexEnableCompatibility,
 		deps.ResponsesCodexForceToolChoiceRequired,
+		deps.LocalCodeInterpreter,
 	)
 	conversationHandler := newConversationHandler(deps.Logger, deps.ConversationService)
 	retrievalHandler := newRetrievalHandler(deps.Logger, deps.Store)

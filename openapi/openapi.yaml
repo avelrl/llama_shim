@@ -120,6 +120,18 @@ paths:
           replay, but does not currently synthesize hosted `file_citation`
           annotations in assistant messages
 
+        Notes for the local `code_interpreter` subset:
+        - the shim executes one `code_interpreter` tool locally only when
+          `responses.code_interpreter.enable_unsafe_host_executor=true`
+        - the supported local subset requires `container.type=auto`,
+          accepts `tool_choice=auto|required`,
+          accepts `include=["code_interpreter_call.outputs"]`,
+          and returns stored/streaming `code_interpreter_call` items
+        - execution uses an explicitly unsafe host Python subprocess and is
+          intended for development, not hosted Code Interpreter parity
+        - the local subset does not support `container.file_ids`, generated
+          file/image artifacts, or hosted sandbox/container lifecycle parity
+
         Retention semantics:
         - standalone responses follow the outward `store` contract returned on
           the response object
@@ -216,6 +228,19 @@ paths:
                   include:
                     - file_search_call.results
                   input: Say OK and nothing else
+              code_interpreter_local:
+                summary: Dev-only local code_interpreter over unsafe host Python
+                value:
+                  model: test-model
+                  store: true
+                  input: Use Python to calculate 2+2. Return only the numeric result.
+                  tools:
+                    - type: code_interpreter
+                      container:
+                        type: auto
+                  tool_choice: required
+                  include:
+                    - code_interpreter_call.outputs
       responses:
         "200":
           description: JSON response or SSE stream
@@ -1701,10 +1726,22 @@ components:
           `tool_choice=auto|required`,
           `parallel_tool_calls`, and
           `include=["file_search_call.results"]`
+        - pragmatic dev-only local `code_interpreter` execution with:
+          one `tools[]` entry of `type=code_interpreter`,
+          `container.type=auto`,
+          `tool_choice=auto|required`,
+          `parallel_tool_calls`, and
+          `include=["code_interpreter_call.outputs"]`
 
         The local `file_search` subset uses deterministic lexical retrieval over
         normalized UTF-8 text chunks. It does not claim hosted semantic-search,
         reranking, or `file_citation` annotation parity.
+
+        The local `code_interpreter` subset is guarded by
+        `responses.code_interpreter.enable_unsafe_host_executor` and runs an
+        explicitly unsafe host Python subprocess. It does not claim hosted
+        sandbox/container parity and does not support `container.file_ids` or
+        generated artifacts.
 
         `background` is forwarded upstream for long-running responses and is not
         executed locally by the shim.

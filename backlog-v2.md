@@ -97,6 +97,13 @@
   `file_search_call` output item, optional
   `include=["file_search_call.results"]`, и follow-up turns не ломаются из-за
   stored tool items в локальном generation context
+- local `/v1/responses` теперь умеет dev-only shim-local `code_interpreter`
+  execution в pragmatic subset:
+  один `code_interpreter` tool с `container.type=auto`,
+  explicit opt-in unsafe host Python executor, non-streaming/streaming create,
+  optional `include=["code_interpreter_call.outputs"]`, stored
+  `code_interpreter_call` output item и follow-up turns не ломаются из-за
+  stored tool items в локальном generation context
 - non-text/binary attachments не маскируются под успех: local
   `vector_store.file` честно возвращает `status=failed` и documented
   `last_error`
@@ -131,6 +138,7 @@
 - [x] - compatibility для `/responses/compact` и `/responses/input_tokens` ([детали](#task-compaction-and-token-counting))
 - [x] - local retrieval substrate: files + vector stores + lexical search ([детали](#task-retrieval-substrate-local))
 - [x] - retrieval-compatible local `file_search` execution inside `/v1/responses` ([детали](#task-retrieval-layer))
+- [x] - dev-only local `code_interpreter` execution inside `/v1/responses` ([детали](#task-local-code-interpreter-runtime))
 - [ ] - true semantic/vector retrieval backend behind local `vector_stores` ([детали](#task-retrieval-semantic-backend))
 - [ ] - parity для hosted/native Responses tools (`web_search`, `computer_use`, `code_interpreter`, `image_generation`, `remote MCP`, `tool_search`) ([детали](#task-hosted-tools-parity))
 - [x] - local stored Chat Completions read surface for explicit `store=true` non-streaming proxy completions ([детали](#task-chat-stored-surface-local))
@@ -1015,6 +1023,54 @@ Definition of done:
 - phase 3: optional reranking and better result shaping for `file_search_call`
 - phase 4: revisit citations/annotations parity for final assistant messages
 
+## <a id="task-local-code-interpreter-runtime"></a>Dev-only local `code_interpreter` execution inside `/v1/responses`
+
+Почему это отдельный pragmatic subset:
+
+- trace-backed replay для stored `code_interpreter_call` уже был закрыт, но это
+  не делало shim реально usable как local runtime
+- hosted Code Interpreter у OpenAI это sandboxed container/VM tool, и притворяться
+  ему равным через silent host exec на сервере было бы небезопасно и нечестно
+- полезный следующий шаг это explicit opt-in local subset, а не overclaim про
+  hosted parity
+- docs rechecked on April 12, 2026 against the official Code Interpreter guide
+  and `/v1/responses` reference before closing this subset
+
+Что закрыто в pragmatic subset:
+
+- local `/v1/responses` path теперь умеет ровно один `tools[]` entry с
+  `type=code_interpreter` и `container.type=auto`
+- local execution включается только через explicit config gate
+  `responses.code_interpreter.enable_unsafe_host_executor`
+- при включенном gate shim делает двухшаговый flow:
+  planner JSON -> unsafe host Python execution -> final assistant answer
+- non-streaming и streaming local create возвращают stored
+  `code_interpreter_call` item и используют уже существующий trace-backed SSE
+  replay family
+- поддержан `include=["code_interpreter_call.outputs"]` для logs output
+- follow-up local turns по `previous_response_id` после stored
+  `code_interpreter_call` не ломаются из-за tool items в generation context
+
+Что осталось открытым:
+
+- это не hosted Code Interpreter parity, а dev-only unsafe subset; по умолчанию
+  он выключен
+- нет container/file/artifact surface parity:
+  не поддержаны `container.file_ids`, generated files, image outputs и richer
+  hosted container lifecycle
+- нет настоящей sandbox/container isolation; execution идет на host через
+  explicitly unsafe Python subprocess
+- нет hosted failure/artifact semantics parity beyond minimal logs subset
+
+Definition of done:
+
+- local shim может реально исполнить базовый `code_interpreter` request внутри
+  `/v1/responses` без upstream hosted runtime
+- config/OpenAPI/backlog явно фиксируют security boundary:
+  opt-in unsafe host executor, disabled by default
+- stored replay, integration tests и follow-up semantics не расходятся с новым
+  runtime path
+
 ## <a id="task-hosted-tools-parity"></a>Parity для hosted/native Responses tools
 
 Почему это важно:
@@ -1026,6 +1082,9 @@ Definition of done:
 Что входит:
 
 - описать поддерживаемый MVP subset для `web_search`, `computer_use`, `code_interpreter`, `image_generation` и `remote MCP`
+- current state уже включает pragmatic local subsets для `file_search` и
+  dev-only unsafe-host `code_interpreter`; remaining work здесь это не
+  “впервые сделать tool”, а довести boundaries/runtime parity осознанно
 - решить по каждому tool type, где shim эмулирует hosted semantics локально, а где честно возвращает `not supported`
 - добавить `tool_search`-совместимый контракт и output item types `tool_search_call` / `tool_search_output`
 - зафиксировать parity по reasoning items / reasoning summaries для tool-heavy flows, где это влияет на качество follow-up шагов

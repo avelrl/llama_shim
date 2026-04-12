@@ -4764,6 +4764,199 @@ func TestResponsesCreatePlainFollowUpAfterLocalFileSearchStoredOutput(t *testing
 	require.Equal(t, "message", second.Output[0].Type)
 }
 
+func TestResponsesCreateExecutesLocalCodeInterpreter(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		EnableUnsafeCodeInterpreter: true,
+	})
+
+	response := postResponse(t, app, map[string]any{
+		"model": "test-model",
+		"store": true,
+		"input": "Use Python to calculate 2+2. Return only the numeric result.",
+		"tools": []map[string]any{
+			{
+				"type": "code_interpreter",
+				"container": map[string]any{
+					"type": "auto",
+				},
+			},
+		},
+		"tool_choice": "required",
+	})
+
+	require.Equal(t, "completed", response.Status)
+	require.Equal(t, "4", response.OutputText)
+	require.Len(t, response.Output, 2)
+	require.Equal(t, "code_interpreter_call", response.Output[0].Type)
+	require.Equal(t, "message", response.Output[1].Type)
+
+	payload := response.Output[0].Map()
+	require.Equal(t, "completed", asStringAny(payload["status"]))
+	require.Equal(t, "print(2+2)", asStringAny(payload["code"]))
+	require.NotEmpty(t, asStringAny(payload["container_id"]))
+	require.Nil(t, payload["outputs"])
+
+	got := getResponse(t, app, response.ID)
+	require.Equal(t, "4", got.OutputText)
+	require.Equal(t, "code_interpreter_call", got.Output[0].Type)
+}
+
+func TestResponsesCreateLocalCodeInterpreterStreamReplaysToolEvents(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		EnableUnsafeCodeInterpreter: true,
+	})
+
+	req, err := http.NewRequest(http.MethodPost, app.Server.URL+"/v1/responses", bytes.NewReader(mustJSON(t, map[string]any{
+		"model":   "test-model",
+		"store":   true,
+		"stream":  true,
+		"input":   "Use Python to calculate 2+2. Return only the numeric result.",
+		"include": []string{"code_interpreter_call.outputs"},
+		"tools": []map[string]any{
+			{
+				"type": "code_interpreter",
+				"container": map[string]any{
+					"type": "auto",
+				},
+			},
+		},
+		"tool_choice": "required",
+	})))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Contains(t, resp.Header.Get("Content-Type"), "text/event-stream")
+
+	events := readSSEEvents(t, resp.Body)
+	require.Contains(t, eventTypes(events), "response.code_interpreter_call.in_progress")
+	require.Contains(t, eventTypes(events), "response.code_interpreter_call_code.delta")
+	require.Contains(t, eventTypes(events), "response.code_interpreter_call_code.done")
+	require.Contains(t, eventTypes(events), "response.code_interpreter_call.interpreting")
+	require.Contains(t, eventTypes(events), "response.code_interpreter_call.completed")
+
+	added := findEvents(events, "response.output_item.added")
+	require.Len(t, added, 2)
+	require.Equal(t, "code_interpreter_call", asStringAny(added[0].Data["item"].(map[string]any)["type"]))
+	require.Equal(t, "message", asStringAny(added[1].Data["item"].(map[string]any)["type"]))
+
+	completed := findEvent(t, events, "response.completed").Data
+	responsePayload, ok := completed["response"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "4", asStringAny(responsePayload["output_text"]))
+
+	output, ok := responsePayload["output"].([]any)
+	require.True(t, ok)
+	require.Len(t, output, 2)
+	callItem, ok := output[0].(map[string]any)
+	require.True(t, ok)
+	outputs, ok := callItem["outputs"].([]any)
+	require.True(t, ok)
+	require.Len(t, outputs, 1)
+	logEntry, ok := outputs[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "logs", asStringAny(logEntry["type"]))
+	require.Equal(t, "4\n", asStringAny(logEntry["logs"]))
+}
+
+func TestResponsesCreateLocalCodeInterpreterWorksAfterStoredFollowUp(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		EnableUnsafeCodeInterpreter: true,
+	})
+
+	first := postResponse(t, app, map[string]any{
+		"model": "test-model",
+		"store": true,
+		"input": "Use Python to calculate 2+2. Return only the numeric result.",
+		"tools": []map[string]any{
+			{
+				"type": "code_interpreter",
+				"container": map[string]any{
+					"type": "auto",
+				},
+			},
+		},
+		"tool_choice": "required",
+	})
+	require.Equal(t, "4", first.OutputText)
+
+	second := postResponse(t, app, map[string]any{
+		"model":                "test-model",
+		"previous_response_id": first.ID,
+		"input":                "Say OK and nothing else",
+	})
+
+	require.Equal(t, "OK", second.OutputText)
+	require.Len(t, second.Output, 1)
+	require.Equal(t, "message", second.Output[0].Type)
+}
+
+func TestResponsesCreateLocalCodeInterpreterLocalOnlyRequiresUnsafeExecutor(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		ResponsesMode: config.ResponsesModeLocalOnly,
+	})
+
+	status, payload := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model": "test-model",
+		"input": "Use Python to calculate 2+2. Return only the numeric result.",
+		"tools": []map[string]any{
+			{
+				"type": "code_interpreter",
+				"container": map[string]any{
+					"type": "auto",
+				},
+			},
+		},
+		"tool_choice": "required",
+	})
+
+	require.Equal(t, http.StatusBadRequest, status)
+	errorPayload, ok := payload["error"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "invalid_request_error", asStringAny(errorPayload["type"]))
+	require.Contains(t, asStringAny(errorPayload["message"]), "enable responses.code_interpreter.enable_unsafe_host_executor")
+}
+
+func TestResponsesCreateLocalCodeInterpreterStreamLocalOnlyRequiresUnsafeExecutor(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		ResponsesMode: config.ResponsesModeLocalOnly,
+	})
+
+	req, err := http.NewRequest(http.MethodPost, app.Server.URL+"/v1/responses", bytes.NewReader(mustJSON(t, map[string]any{
+		"model":       "test-model",
+		"stream":      true,
+		"input":       "Use Python to calculate 2+2. Return only the numeric result.",
+		"tool_choice": "required",
+		"tools": []map[string]any{
+			{
+				"type": "code_interpreter",
+				"container": map[string]any{
+					"type": "auto",
+				},
+			},
+		},
+	})))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+
+	var payload map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&payload))
+	errorPayload, ok := payload["error"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "invalid_request_error", asStringAny(errorPayload["type"]))
+	require.Contains(t, asStringAny(errorPayload["message"]), "enable responses.code_interpreter.enable_unsafe_host_executor")
+}
+
 func postResponse(t *testing.T, app *testutil.TestApp, payload map[string]any) domain.Response {
 	t.Helper()
 

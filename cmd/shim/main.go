@@ -63,7 +63,12 @@ func main() {
 			ResponsesCustomToolsMode:              cfg.ResponsesCustomToolsMode,
 			ResponsesCodexEnableCompatibility:     cfg.ResponsesCodexEnableCompatibility,
 			ResponsesCodexForceToolChoiceRequired: cfg.ResponsesCodexForceToolChoiceRequired,
-			Store:                                 store,
+			LocalCodeInterpreter: httpapi.LocalCodeInterpreterRuntimeConfig{
+				Enabled:      cfg.ResponsesCodeInterpreterEnableUnsafe,
+				PythonBinary: cfg.ResponsesCodeInterpreterPythonBinary,
+				ExecTimeout:  cfg.ResponsesCodeInterpreterTimeout,
+			},
+			Store: store,
 		}),
 		ReadTimeout:  cfg.ReadTimeout,
 		WriteTimeout: cfg.WriteTimeout,
@@ -81,6 +86,9 @@ func main() {
 		"responses_custom_tools_mode", cfg.ResponsesCustomToolsMode,
 		"responses_codex_enable_compatibility", cfg.ResponsesCodexEnableCompatibility,
 		"responses_codex_force_tool_choice_required", cfg.ResponsesCodexForceToolChoiceRequired,
+		"responses_code_interpreter_enable_unsafe_host_executor", cfg.ResponsesCodeInterpreterEnableUnsafe,
+		"responses_code_interpreter_python_binary", cfg.ResponsesCodeInterpreterPythonBinary,
+		"responses_code_interpreter_execution_timeout", cfg.ResponsesCodeInterpreterTimeout,
 	)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		logger.Error("server stopped", "err", err)

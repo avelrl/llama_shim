@@ -26,6 +26,9 @@ type Config struct {
 	ResponsesCustomToolsMode              string
 	ResponsesCodexEnableCompatibility     bool
 	ResponsesCodexForceToolChoiceRequired bool
+	ResponsesCodeInterpreterEnableUnsafe  bool
+	ResponsesCodeInterpreterPythonBinary  string
+	ResponsesCodeInterpreterTimeout       time.Duration
 	ConfigFile                            string
 }
 
@@ -57,6 +60,8 @@ func Load(configPath string) (Config, error) {
 		ResponsesCustomToolsMode:              strings.ToLower(strings.TrimSpace(v.GetString("responses.custom_tools.mode"))),
 		ResponsesCodexEnableCompatibility:     v.GetBool("responses.codex.enable_compatibility"),
 		ResponsesCodexForceToolChoiceRequired: v.GetBool("responses.codex.force_tool_choice_required"),
+		ResponsesCodeInterpreterEnableUnsafe:  v.GetBool("responses.code_interpreter.enable_unsafe_host_executor"),
+		ResponsesCodeInterpreterPythonBinary:  strings.TrimSpace(v.GetString("responses.code_interpreter.python_binary")),
 	}
 
 	if err := parseDuration(v.GetString("llama.timeout"), &cfg.LlamaTimeout); err != nil {
@@ -80,6 +85,12 @@ func Load(configPath string) (Config, error) {
 	if err := parseCustomToolsMode(cfg.ResponsesCustomToolsMode); err != nil {
 		return Config{}, fmt.Errorf("parse responses.custom_tools.mode: %w", err)
 	}
+	if err := parseDuration(v.GetString("responses.code_interpreter.execution_timeout"), &cfg.ResponsesCodeInterpreterTimeout); err != nil {
+		return Config{}, fmt.Errorf("parse responses.code_interpreter.execution_timeout: %w", err)
+	}
+	if cfg.ResponsesCodeInterpreterPythonBinary == "" {
+		return Config{}, fmt.Errorf("parse responses.code_interpreter.python_binary: %w", strconv.ErrSyntax)
+	}
 
 	return cfg, nil
 }
@@ -98,6 +109,9 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("responses.custom_tools.mode", "auto")
 	v.SetDefault("responses.codex.enable_compatibility", true)
 	v.SetDefault("responses.codex.force_tool_choice_required", true)
+	v.SetDefault("responses.code_interpreter.enable_unsafe_host_executor", false)
+	v.SetDefault("responses.code_interpreter.python_binary", "python3")
+	v.SetDefault("responses.code_interpreter.execution_timeout", "20s")
 }
 
 func resolveConfigPath(configPath string) string {
