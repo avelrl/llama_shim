@@ -27,6 +27,11 @@ Ready request files:
 - `computer_call_output.request.json` for a follow-up
   `computer_call_output` trace after you have a `previous_response_id`,
   `call_id`, and a PNG screenshot encoded as base64
+- `image_generation_call.request.json` for a basic
+  `image_generation_call` trace with a final image only
+- `image_generation_call_partial_images.request.json` for an
+  `image_generation_call` trace that should emit at least one
+  `response.image_generation_call.partial_image` event
 
 Use the capture helper:
 
@@ -50,6 +55,10 @@ Guidelines:
 - `code_interpreter_call*.request.json` templates use
   `container: {"type":"auto"}`, so they do not require any extra setup
   beyond `OPENAI_API_KEY`.
+- `image_generation_call*.request.json` templates only require
+  `OPENAI_API_KEY`. They intentionally request a small image with
+  `quality: "low"` and `partial_images: 1` in the streaming variant to keep
+  future trace fixtures smaller.
 - `computer_call_output.request.json` requires
   `OPENAI_PREVIOUS_RESPONSE_ID`, `OPENAI_COMPUTER_CALL_ID`, and
   `OPENAI_COMPUTER_SCREENSHOT_BASE64`. A convenient way to populate the last

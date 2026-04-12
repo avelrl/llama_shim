@@ -1380,7 +1380,7 @@ func summarizeResponseEnvelopeForLog(responsePayload map[string]any) []any {
 				continue
 			}
 			switch strings.TrimSpace(asString(item["type"])) {
-			case "function_call", "custom_tool_call", "mcp_call", "mcp_tool_call", "mcp_approval_request", "mcp_list_tools", "web_search_call", "file_search_call", "code_interpreter_call", "computer_call":
+			case "function_call", "custom_tool_call", "mcp_call", "mcp_tool_call", "mcp_approval_request", "mcp_list_tools", "web_search_call", "file_search_call", "code_interpreter_call", "computer_call", "image_generation_call":
 				toolCount++
 			case "message":
 				messageCount++
@@ -1471,6 +1471,14 @@ func inProgressOutputItemSnapshot(item map[string]any) map[string]any {
 		delete(cloned, "output")
 	case "computer_call":
 		delete(cloned, "actions")
+	case "image_generation_call":
+		delete(cloned, "background")
+		delete(cloned, "output_format")
+		delete(cloned, "quality")
+		delete(cloned, "size")
+		delete(cloned, "result")
+		delete(cloned, "revised_prompt")
+		delete(cloned, "action")
 	}
 	if isMCPToolStreamItemType(strings.TrimSpace(asString(cloned["type"]))) {
 		delete(cloned, "output")
@@ -1484,7 +1492,7 @@ func inProgressOutputItemSnapshot(item map[string]any) map[string]any {
 
 func isSyntheticReplayOutputItemType(itemType string) bool {
 	switch strings.TrimSpace(itemType) {
-	case "function_call", "custom_tool_call", "mcp_call", "mcp_tool_call", "mcp_approval_request", "mcp_list_tools", "web_search_call", "file_search_call", "code_interpreter_call", "computer_call":
+	case "function_call", "custom_tool_call", "mcp_call", "mcp_tool_call", "mcp_approval_request", "mcp_list_tools", "web_search_call", "file_search_call", "code_interpreter_call", "computer_call", "image_generation_call":
 		return true
 	default:
 		return false
@@ -1559,6 +1567,14 @@ func hostedToolReplayEventTypes(itemType string, item map[string]any) []string {
 				"response.file_search_call.in_progress",
 				"response.file_search_call.searching",
 				"response.file_search_call.completed",
+			}
+		}
+	case "image_generation_call":
+		if !isFailedToolStreamItem(item) {
+			return []string{
+				"response.image_generation_call.in_progress",
+				"response.image_generation_call.generating",
+				"response.image_generation_call.completed",
 			}
 		}
 	}

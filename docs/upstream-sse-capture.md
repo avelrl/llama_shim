@@ -117,6 +117,40 @@ input or search field. The template asks the model to click and type only if
 the UI makes that possible; otherwise it may legitimately stop without
 producing a richer action trace.
 
+## Suggested request shape for `image_generation_call`
+
+The repository includes ready-to-run templates at
+[image_generation_call.request.json](/Users/avel/Projects/llama_shim/internal/httpapi/testdata/upstream/image_generation_call.request.json)
+and
+[image_generation_call_partial_images.request.json](/Users/avel/Projects/llama_shim/internal/httpapi/testdata/upstream/image_generation_call_partial_images.request.json).
+
+These only require `OPENAI_API_KEY`. The partial-images variant requests a
+single `response.image_generation_call.partial_image` event and uses
+`quality: "low"` to keep future committed trace fixtures smaller.
+
+Example flow:
+
+```bash
+go run ./cmd/upstream-sse-capture \
+  -request-file internal/httpapi/testdata/upstream/image_generation_call.request.json \
+  -raw-out internal/httpapi/testdata/upstream/image_generation_call.raw.sse \
+  -fixture-out internal/httpapi/testdata/upstream/image_generation_call.fixture.json \
+  -label image_generation_call
+```
+
+```bash
+go run ./cmd/upstream-sse-capture \
+  -request-file internal/httpapi/testdata/upstream/image_generation_call_partial_images.request.json \
+  -raw-out internal/httpapi/testdata/upstream/image_generation_call_partial_images.raw.sse \
+  -fixture-out internal/httpapi/testdata/upstream/image_generation_call_partial_images.fixture.json \
+  -label image_generation_call_partial_images
+```
+
+At the docs level, the contract is clear enough for request payloads and the
+existence of `response.image_generation_call.partial_image`, but not for the
+full stored replay choreography. Replay work should therefore stay
+conservative until a live upstream trace is captured.
+
 ## Why this exists
 
 Official docs currently confirm hosted output item families such as

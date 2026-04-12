@@ -75,6 +75,84 @@ func TestStoreSaveResponseRoundTripAndLineage(t *testing.T) {
 	require.ErrorIs(t, err, sqlite.ErrNotFound)
 }
 
+func TestStoreSaveChatCompletionRoundTripAndList(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store := openTestStore(t, ctx)
+
+	first := domain.StoredChatCompletion{
+		ID:           "chatcmpl_first",
+		Model:        "gpt-5.4",
+		Metadata:     map[string]string{"topic": "alpha"},
+		RequestJSON:  `{"model":"gpt-5.4","store":true,"metadata":{"topic":"alpha"},"messages":[{"role":"user","content":"first"}]}`,
+		ResponseJSON: `{"id":"chatcmpl_first","object":"chat.completion","created":1712059200,"model":"gpt-5.4","metadata":{"topic":"alpha"},"choices":[{"index":0,"message":{"role":"assistant","content":"one"},"finish_reason":"stop","logprobs":null}]}`,
+		CreatedAt:    1712059200,
+	}
+	second := domain.StoredChatCompletion{
+		ID:           "chatcmpl_second",
+		Model:        "gpt-5.4",
+		Metadata:     map[string]string{"topic": "beta"},
+		RequestJSON:  `{"model":"gpt-5.4","store":true,"metadata":{"topic":"beta"},"messages":[{"role":"user","content":"second"}]}`,
+		ResponseJSON: `{"id":"chatcmpl_second","object":"chat.completion","created":1712059260,"model":"gpt-5.4","metadata":{"topic":"beta"},"choices":[{"index":0,"message":{"role":"assistant","content":"two"},"finish_reason":"stop","logprobs":null}]}`,
+		CreatedAt:    1712059260,
+	}
+	third := domain.StoredChatCompletion{
+		ID:           "chatcmpl_third",
+		Model:        "gpt-4o-mini",
+		Metadata:     map[string]string{"topic": "alpha"},
+		RequestJSON:  `{"model":"gpt-4o-mini","store":true,"metadata":{"topic":"alpha"},"messages":[{"role":"user","content":"third"}]}`,
+		ResponseJSON: `{"id":"chatcmpl_third","object":"chat.completion","created":1712059320,"model":"gpt-4o-mini","metadata":{"topic":"alpha"},"choices":[{"index":0,"message":{"role":"assistant","content":"three"},"finish_reason":"stop","logprobs":null}]}`,
+		CreatedAt:    1712059320,
+	}
+
+	require.NoError(t, store.SaveChatCompletion(ctx, first))
+	require.NoError(t, store.SaveChatCompletion(ctx, second))
+	require.NoError(t, store.SaveChatCompletion(ctx, third))
+
+	got, err := store.GetChatCompletion(ctx, second.ID)
+	require.NoError(t, err)
+	require.Equal(t, second.ID, got.ID)
+	require.Equal(t, second.Model, got.Model)
+	require.Equal(t, second.Metadata, got.Metadata)
+	require.Equal(t, second.RequestJSON, got.RequestJSON)
+	require.Equal(t, second.ResponseJSON, got.ResponseJSON)
+	require.Equal(t, second.CreatedAt, got.CreatedAt)
+
+	page, err := store.ListChatCompletions(ctx, domain.ListStoredChatCompletionsQuery{
+		Model:    "gpt-5.4",
+		Metadata: map[string]string{"topic": "alpha"},
+		Limit:    10,
+		Order:    domain.ChatCompletionOrderAsc,
+	})
+	require.NoError(t, err)
+	require.False(t, page.HasMore)
+	require.Len(t, page.Completions, 1)
+	require.Equal(t, first.ID, page.Completions[0].ID)
+
+	page, err = store.ListChatCompletions(ctx, domain.ListStoredChatCompletionsQuery{
+		Limit: 1,
+		Order: domain.ChatCompletionOrderAsc,
+	})
+	require.NoError(t, err)
+	require.True(t, page.HasMore)
+	require.Len(t, page.Completions, 1)
+	require.Equal(t, first.ID, page.Completions[0].ID)
+
+	page, err = store.ListChatCompletions(ctx, domain.ListStoredChatCompletionsQuery{
+		After: page.Completions[0].ID,
+		Limit: 2,
+		Order: domain.ChatCompletionOrderAsc,
+	})
+	require.NoError(t, err)
+	require.False(t, page.HasMore)
+	require.Len(t, page.Completions, 2)
+	require.Equal(t, []string{second.ID, third.ID}, []string{page.Completions[0].ID, page.Completions[1].ID})
+
+	_, err = store.GetChatCompletion(ctx, "chatcmpl_missing")
+	require.ErrorIs(t, err, sqlite.ErrNotFound)
+}
+
 func TestStoreSaveResponseUpsertsLifecyclePayload(t *testing.T) {
 	t.Parallel()
 

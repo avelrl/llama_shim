@@ -8,17 +8,20 @@ import (
 	"strings"
 
 	"llama_shim/internal/llama"
+	"llama_shim/internal/storage/sqlite"
 )
 
 type proxyHandler struct {
 	logger *slog.Logger
 	client *llama.Client
+	store  *sqlite.Store
 }
 
-func newProxyHandler(logger *slog.Logger, client *llama.Client) *proxyHandler {
+func newProxyHandler(logger *slog.Logger, client *llama.Client, store *sqlite.Store) *proxyHandler {
 	return &proxyHandler{
 		logger: logger,
 		client: client,
+		store:  store,
 	}
 }
 

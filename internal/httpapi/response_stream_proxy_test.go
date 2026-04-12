@@ -691,6 +691,79 @@ func TestNormalizeCompletedToolCallEventSynthesizesComputerCallAddedDoneReplay(t
 	require.Equal(t, "cu_test", asString(finalItem["id"]))
 }
 
+func TestNormalizeCompletedToolCallEventSynthesizesImageGenerationCallReplaySubset(t *testing.T) {
+	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, nil)
+
+	before, eventType, payload := proxy.normalizeCompletedToolCallEvent("response.completed", map[string]any{
+		"type": "response.completed",
+		"response": map[string]any{
+			"id":     "resp_proxy_image_generation_call",
+			"object": "response",
+			"model":  "test-model",
+			"output": []any{
+				map[string]any{
+					"id":             "ig_test",
+					"type":           "image_generation_call",
+					"status":         "completed",
+					"background":     "opaque",
+					"output_format":  "jpeg",
+					"quality":        "low",
+					"size":           "1024x1024",
+					"result":         "/9j/4AAQSkZJRgABAQAAAQABAAD...",
+					"revised_prompt": "A tiny orange cat curled up in a teacup.",
+					"action":         "generate",
+				},
+			},
+			"output_text": "",
+		},
+	})
+
+	require.Equal(t, "response.completed", eventType)
+	require.Len(t, before, 6)
+	require.Equal(t, "response.created", before[0].eventType)
+	require.Equal(t, "response.output_item.added", before[1].eventType)
+	require.Equal(t, "response.image_generation_call.in_progress", before[2].eventType)
+	require.Equal(t, "response.image_generation_call.generating", before[3].eventType)
+	require.Equal(t, "response.image_generation_call.completed", before[4].eventType)
+	require.Equal(t, "response.output_item.done", before[5].eventType)
+
+	addedItem, ok := before[1].payload["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "image_generation_call", addedItem["type"])
+	require.Equal(t, "ig_test", asString(addedItem["id"]))
+	require.Equal(t, "in_progress", asString(addedItem["status"]))
+	_, hasBackground := addedItem["background"]
+	require.False(t, hasBackground)
+	_, hasOutputFormat := addedItem["output_format"]
+	require.False(t, hasOutputFormat)
+	_, hasQuality := addedItem["quality"]
+	require.False(t, hasQuality)
+	_, hasSize := addedItem["size"]
+	require.False(t, hasSize)
+	_, hasResult := addedItem["result"]
+	require.False(t, hasResult)
+	_, hasRevisedPrompt := addedItem["revised_prompt"]
+	require.False(t, hasRevisedPrompt)
+	_, hasAction := addedItem["action"]
+	require.False(t, hasAction)
+
+	doneItem, ok := before[5].payload["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "completed", asString(doneItem["status"]))
+	require.Equal(t, "/9j/4AAQSkZJRgABAQAAAQABAAD...", asString(doneItem["result"]))
+	require.Equal(t, "A tiny orange cat curled up in a teacup.", asString(doneItem["revised_prompt"]))
+	require.Equal(t, "generate", asString(doneItem["action"]))
+
+	completedResponse, ok := payload["response"].(map[string]any)
+	require.True(t, ok)
+	output, ok := completedResponse["output"].([]any)
+	require.True(t, ok)
+	require.Len(t, output, 1)
+	finalItem, ok := output[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "ig_test", asString(finalItem["id"]))
+}
+
 func TestNormalizeCompletedToolCallEventSynthesizesMCPApprovalRequestGenericReplay(t *testing.T) {
 	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, nil)
 

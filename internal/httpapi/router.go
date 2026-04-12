@@ -23,7 +23,7 @@ type RouterDeps struct {
 }
 
 func NewRouter(deps RouterDeps) http.Handler {
-	proxyHandler := newProxyHandler(deps.Logger, deps.LlamaClient)
+	proxyHandler := newProxyHandler(deps.Logger, deps.LlamaClient, deps.Store)
 	responseHandler := newResponseHandler(
 		deps.Logger,
 		deps.ResponseService,
@@ -134,11 +134,28 @@ func NewRouter(deps RouterDeps) http.Handler {
 		}
 	})
 	mux.HandleFunc("/v1/chat/completions", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
+		switch r.Method {
+		case http.MethodGet:
+			proxyHandler.listStoredChatCompletions(w, r)
+		case http.MethodPost:
+			proxyHandler.forwardChatCompletions(w, r)
+		default:
+			WriteError(w, http.StatusMethodNotAllowed, "invalid_request_error", "method not allowed", "")
+		}
+	})
+	mux.HandleFunc("/v1/chat/completions/{completion_id}", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
 			WriteError(w, http.StatusMethodNotAllowed, "invalid_request_error", "method not allowed", "")
 			return
 		}
-		proxyHandler.forwardChatCompletions(w, r)
+		proxyHandler.getStoredChatCompletion(w, r)
+	})
+	mux.HandleFunc("/v1/chat/completions/{completion_id}/messages", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			WriteError(w, http.StatusMethodNotAllowed, "invalid_request_error", "method not allowed", "")
+			return
+		}
+		proxyHandler.listStoredChatCompletionMessages(w, r)
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		proxyHandler.forward(w, r)

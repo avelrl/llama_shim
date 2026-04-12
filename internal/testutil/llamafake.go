@@ -226,9 +226,15 @@ func NewFakeLlamaServer(t *testing.T) *httptest.Server {
 			var request map[string]any
 			require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
 
+			model, _ := request["model"].(string)
 			if response, ok := buildFakeChatCompletionToolResponse(request); ok {
+				mu.Lock()
+				nextID++
+				id := "chatcmpl_" + strconv.Itoa(nextID)
+				mu.Unlock()
+
 				w.Header().Set("Content-Type", "application/json")
-				require.NoError(t, json.NewEncoder(w).Encode(response))
+				require.NoError(t, json.NewEncoder(w).Encode(buildFakeChatCompletionResponse(id, model, request, response["choices"])))
 				return
 			}
 
@@ -237,16 +243,24 @@ func NewFakeLlamaServer(t *testing.T) *httptest.Server {
 				writeFakeChatCompletionStream(t, w, output)
 				return
 			}
+			mu.Lock()
+			nextID++
+			id := "chatcmpl_" + strconv.Itoa(nextID)
+			mu.Unlock()
 			w.Header().Set("Content-Type", "application/json")
-			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
-				"choices": []map[string]any{
-					{
-						"message": map[string]any{
-							"content": output,
-						},
+			require.NoError(t, json.NewEncoder(w).Encode(buildFakeChatCompletionResponse(id, model, request, []map[string]any{
+				{
+					"index": 0,
+					"message": map[string]any{
+						"role":          "assistant",
+						"content":       output,
+						"tool_calls":    nil,
+						"function_call": nil,
 					},
+					"finish_reason": "stop",
+					"logprobs":      nil,
 				},
-			}))
+			})))
 		case r.URL.Path == "/v1/echo":
 			body, err := io.ReadAll(r.Body)
 			require.NoError(t, err)
@@ -263,6 +277,34 @@ func NewFakeLlamaServer(t *testing.T) *httptest.Server {
 			http.NotFound(w, r)
 		}
 	}))
+}
+
+func buildFakeChatCompletionResponse(id, model string, request map[string]any, choices any) map[string]any {
+	metadata, ok := request["metadata"].(map[string]any)
+	if !ok || metadata == nil {
+		metadata = map[string]any{}
+	}
+	return map[string]any{
+		"id":                 id,
+		"object":             "chat.completion",
+		"created":            time.Now().Unix(),
+		"model":              model,
+		"choices":            choices,
+		"usage":              map[string]any{"prompt_tokens": 13, "completion_tokens": 18, "total_tokens": 31},
+		"service_tier":       "default",
+		"tool_choice":        request["tool_choice"],
+		"temperature":        1.0,
+		"top_p":              1.0,
+		"presence_penalty":   0.0,
+		"frequency_penalty":  0.0,
+		"metadata":           metadata,
+		"tools":              request["tools"],
+		"response_format":    request["response_format"],
+		"input_user":         request["user"],
+		"request_id":         "req_fake_chat_completion",
+		"system_fingerprint": "fp_fake_chat_completion",
+		"seed":               1,
+	}
 }
 
 func fakeInputTokenCount(request map[string]any) int {
@@ -288,9 +330,13 @@ func buildFakeChatCompletionToolResponse(request map[string]any) (map[string]any
 		return map[string]any{
 			"choices": []map[string]any{
 				{
+					"index": 0,
 					"message": map[string]any{
+						"role":    "assistant",
 						"content": output,
 					},
+					"finish_reason": "stop",
+					"logprobs":      nil,
 				},
 			},
 		}, true
@@ -318,6 +364,7 @@ func buildFakeChatCompletionToolResponse(request map[string]any) (map[string]any
 		arguments = `{"input":"4+4"}`
 	}
 	message := map[string]any{
+		"role":    "assistant",
 		"content": nil,
 		"tool_calls": []map[string]any{
 			{
@@ -337,7 +384,10 @@ func buildFakeChatCompletionToolResponse(request map[string]any) (map[string]any
 	return map[string]any{
 		"choices": []map[string]any{
 			{
-				"message": message,
+				"index":         0,
+				"message":       message,
+				"finish_reason": "tool_calls",
+				"logprobs":      nil,
 			},
 		},
 	}, true

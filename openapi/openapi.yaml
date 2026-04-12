@@ -459,6 +459,16 @@ paths:
           replay therefore stays generic through `response.output_item.*`, and
           synthetic `response.output_item.added` omits final `actions` until
           `response.output_item.done`
+        - trace-backed stored `image_generation_call` items replay through
+          `response.image_generation_call.in_progress`,
+          `response.image_generation_call.generating`,
+          `response.image_generation_call.completed`, and terminal
+          `response.output_item.done`; synthetic
+          `response.output_item.added` follows current upstream captures and
+          omits image metadata plus final `result`, `revised_prompt`, and
+          `action` until the terminal item, and shim does not claim stored
+          replay for `response.image_generation_call.partial_image` without
+          recoverable partial-image payloads
         - docs-backed stored `mcp_approval_request` items replay only through
           generic `response.output_item.*`; the documented item shape is
           preserved, shim does not invent a dedicated
@@ -914,6 +924,67 @@ paths:
         "409":
           $ref: "#/components/responses/ErrorResponse"
   /v1/chat/completions:
+    get:
+      tags: [chat]
+      summary: List locally stored Chat Completions
+      x-shim-status: partial
+      description: |
+        Returns locally shadow-stored Chat Completion resources for successful
+        non-streaming `POST /v1/chat/completions` calls created through this
+        shim with explicit `store: true`.
+
+        This local read surface does not enumerate upstream-owned stored Chat
+        Completions, does not infer account-level default storage when `store`
+        is omitted, and does not reconstruct stored resources from streamed
+        Chat Completion chunks.
+      parameters:
+        - name: model
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: metadata
+          in: query
+          required: false
+          style: deepObject
+          explode: true
+          schema:
+            type: object
+            additionalProperties:
+              type: string
+          description: |
+            Metadata filter using OpenAI-compatible deep-object query syntax,
+            for example `metadata[key]=value`.
+        - name: after
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 20
+            minimum: 1
+        - name: order
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: asc
+      responses:
+        "200":
+          description: Locally stored chat completion list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StoredChatCompletionList"
+        "400":
+          $ref: "#/components/responses/ErrorResponse"
+        "404":
+          $ref: "#/components/responses/ErrorResponse"
     post:
       tags: [chat]
       summary: Validate and proxy Chat Completions
@@ -923,6 +994,13 @@ paths:
         forwards the request to the upstream backend. Successful JSON responses
         are sanitized to remove some backend-specific fields. SSE responses are
         proxied through unchanged.
+
+        Successful non-streaming JSON responses with explicit `store: true` are
+        also shadow-stored locally and become visible via the shim-owned
+        `GET /v1/chat/completions`, `GET /v1/chat/completions/{completion_id}`,
+        and `GET /v1/chat/completions/{completion_id}/messages` read surface.
+        This does not currently cover streamed chat completions or upstream
+        account-level default storage when `store` is omitted.
       requestBody:
         required: true
         content:
@@ -950,6 +1028,68 @@ paths:
           $ref: "#/components/responses/ErrorResponse"
         "504":
           $ref: "#/components/responses/ErrorResponse"
+  /v1/chat/completions/{completion_id}:
+    get:
+      tags: [chat]
+      summary: Retrieve a locally stored Chat Completion
+      x-shim-status: partial
+      description: |
+        Returns a locally shadow-stored Chat Completion created by this shim
+        from a successful non-streaming `POST /v1/chat/completions` request
+        with explicit `store: true`.
+      parameters:
+        - $ref: "#/components/parameters/ChatCompletionID"
+      responses:
+        "200":
+          description: Locally stored chat completion
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatCompletionResource"
+        "404":
+          $ref: "#/components/responses/ErrorResponse"
+  /v1/chat/completions/{completion_id}/messages:
+    get:
+      tags: [chat]
+      summary: List messages for a locally stored Chat Completion
+      x-shim-status: partial
+      description: |
+        Returns the request `messages` array captured for a locally
+        shadow-stored Chat Completion created by this shim from a successful
+        non-streaming `POST /v1/chat/completions` request with explicit
+        `store: true`.
+      parameters:
+        - $ref: "#/components/parameters/ChatCompletionID"
+        - name: after
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 20
+            minimum: 1
+        - name: order
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: asc
+      responses:
+        "200":
+          description: Message list for a locally stored chat completion
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StoredChatCompletionMessagesList"
+        "400":
+          $ref: "#/components/responses/ErrorResponse"
+        "404":
+          $ref: "#/components/responses/ErrorResponse"
 components:
   parameters:
     ResponseID:
@@ -973,6 +1113,13 @@ components:
       schema:
         type: string
       description: Conversation item identifier
+    ChatCompletionID:
+      name: completion_id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Stored Chat Completion identifier
     ResponseInclude:
       name: include
       in: query
@@ -1572,3 +1719,69 @@ components:
     ProxyJSONResponse:
       type: object
       additionalProperties: true
+    ChatCompletionResource:
+      type: object
+      description: |
+        Sanitized Chat Completion JSON resource shadow-stored locally by the
+        shim for successful non-streaming `store: true` proxy requests.
+      additionalProperties: true
+    StoredChatCompletionList:
+      type: object
+      required: [object, data, has_more]
+      properties:
+        object:
+          type: string
+          enum: [list]
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChatCompletionResource"
+        first_id:
+          type: string
+          nullable: true
+        last_id:
+          type: string
+          nullable: true
+        has_more:
+          type: boolean
+    StoredChatCompletionMessage:
+      type: object
+      description: |
+        Stored input message entry reconstructed from the request `messages`
+        array for a locally shadow-stored Chat Completion.
+      additionalProperties: true
+      properties:
+        id:
+          type: string
+        role:
+          type: string
+        content:
+          nullable: true
+        name:
+          type: string
+          nullable: true
+        content_parts:
+          type: array
+          nullable: true
+          items:
+            type: object
+            additionalProperties: true
+    StoredChatCompletionMessagesList:
+      type: object
+      required: [object, data, has_more]
+      properties:
+        object:
+          type: string
+          enum: [list]
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/StoredChatCompletionMessage"
+        first_id:
+          type: string
+          nullable: true
+        last_id:
+          type: string
+          nullable: true
+        has_more:
+          type: boolean

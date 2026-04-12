@@ -1,6 +1,6 @@
 # Backlog / roadmap toward v2
 
-Актуализировано по состоянию на 10 апреля 2026 на основе:
+Актуализировано по состоянию на 12 апреля 2026 на основе:
 
 - текущего состояния репозитория, маршрутов и тестов
 - текущего staged diff
@@ -33,6 +33,9 @@
 - `GET /v1/conversations/{id}/items/{item_id}`
 - `DELETE /v1/conversations/{id}/items/{item_id}`
 - `POST /v1/chat/completions`
+- `GET /v1/chat/completions`
+- `GET /v1/chat/completions/{completion_id}`
+- `GET /v1/chat/completions/{completion_id}/messages`
 - `POST /v1/responses` with `stream: true` over SSE
 - `GET /v1/responses/{id}?stream=true` with local SSE replay
 - `/healthz`
@@ -62,6 +65,10 @@
 - `text.format` поддерживает `text`, `json_object` и ограниченный `json_schema` subset
 - `/readyz` теперь реально проверяет SQLite, а не просто отвечает `200`
 - `/v1/chat/completions` очищает provider-specific поля в обычном JSON и SSE потоке
+- успешные non-streaming `POST /v1/chat/completions` с explicit `store: true`
+  теперь shadow-store-ятся локально и доступны через shim-owned
+  `GET /v1/chat/completions`, `GET /v1/chat/completions/{completion_id}`,
+  `GET /v1/chat/completions/{completion_id}/messages`
 - усилен bridge для custom tools и `tool_choice`: normalizing, contract tracking, fallback/retry для upstream-ов, которые принимают только `tool_choice=auto`
 - локальные constrained custom tools для supported `grammar` / `regex` subset заведены в local tool loop
 - улучшена canonical error mapping для response/tool-choice ошибок
@@ -86,12 +93,14 @@
 - [x] - trace-backed `file_search_call` tool-specific SSE replay for stored Responses items ([детали](#task-streaming-replay-file-search))
 - [x] - trace-backed `code_interpreter_call` tool-specific SSE replay for stored Responses items ([детали](#task-streaming-replay-code-interpreter))
 - [x] - trace-backed `computer_call` generic SSE replay for stored Responses items ([детали](#task-streaming-replay-computer))
+- [x] - trace-backed `image_generation_call` pre-final SSE replay for stored Responses items ([детали](#task-streaming-replay-image-generation))
 - [x] - docs-backed `mcp_approval_request` generic SSE replay for stored Responses items ([детали](#task-streaming-replay-mcp-approval-request))
 - [x] - docs-backed `mcp_list_tools` generic SSE replay for stored Responses items ([детали](#task-streaming-replay-mcp-list-tools))
 - [ ] - hosted/native tool-specific SSE replay beyond core shim item families ([детали](#task-streaming-replay-hosted))
 - [x] - compatibility для `/responses/compact` и `/responses/input_tokens` ([детали](#task-compaction-and-token-counting))
 - [ ] - retrieval-compatible слой: vector stores + `file_search` ([детали](#task-retrieval-layer))
 - [ ] - parity для hosted/native Responses tools (`web_search`, `computer_use`, `code_interpreter`, `image_generation`, `remote MCP`, `tool_search`) ([детали](#task-hosted-tools-parity))
+- [x] - local stored Chat Completions read surface for explicit `store=true` non-streaming proxy completions ([детали](#task-chat-stored-surface-local))
 - [ ] - stored Chat Completions compatibility surface ([детали](#task-chat-stored-surface))
 - [ ] - operational hardening: backend readiness, retention job, local DX ([детали](#task-ops-hardening))
 - [ ] - true constrained decoder/runtime для `grammar` / `regex` custom tools ([детали](#task-true-constrained-runtime))
@@ -626,6 +635,77 @@ Definition of done:
 - backlog/OpenAPI wording честно фиксируют, что текущая parity для
   `computer_call` generic-only по trace
 
+## <a id="task-streaming-replay-image-generation"></a>Trace-backed `image_generation_call` pre-final SSE replay for stored Responses items
+
+Почему это отдельно:
+
+- official image generation docs явно описывают `image_generation_call` как
+  Responses output item with base64 `result`, `revised_prompt`, and optional
+  `action`
+- those same docs also describe a dedicated streaming event
+  `response.image_generation_call.partial_image`, but the stored Response
+  object does not retain the intermediate partial image bytes needed to replay
+  that event faithfully
+- live upstream captures now confirm dedicated
+  `response.image_generation_call.in_progress` and
+  `response.image_generation_call.generating` events before the terminal item,
+  but they still do not make the intermediate partial image bytes recoverable
+  from a stored Response object
+- official Responses streaming reference now also documents
+  `response.image_generation_call.completed`, so stored replay can safely
+  synthesize the pre-final lifecycle around the final stored item while
+  leaving `partial_image` explicitly open
+
+Что входит:
+
+- stored retrieve replay для documented `image_generation_call` item shape
+- completed-only upstream normalization для того же item family
+- trace-backed synthetic sequence через `response.output_item.added`,
+  `response.image_generation_call.in_progress`,
+  `response.image_generation_call.generating`,
+  `response.image_generation_call.completed`, and
+  `response.output_item.done`
+- synthetic `response.output_item.added` follows current upstream captures and
+  is reduced to the minimal in-progress item shape instead of exposing stable
+  image metadata too early
+
+Статус на 12 апреля 2026:
+
+- закрыто для stored `image_generation_call`: retrieve replay и
+  completed-only normalization теперь synthesize
+  `response.image_generation_call.in_progress`,
+  `response.image_generation_call.generating`,
+  `response.image_generation_call.completed`, and terminal
+  `response.output_item.done`
+- docs source: image generation guide and Responses streaming reference
+  explicitly document `image_generation_call` result shape plus
+  `response.image_generation_call.in_progress`,
+  `response.image_generation_call.generating`,
+  `response.image_generation_call.completed`, and
+  `response.image_generation_call.partial_image`
+- shim intentionally keeps `response.image_generation_call.partial_image`
+  open for stored replay because the stored Response object does not retain the
+  intermediate `partial_image_b64` payloads needed for faithful replay
+- explicit follow-up for full closure: persist irrecoverable
+  `response.image_generation_call.partial_image` artifacts during create-time
+  streaming, then attach them to stored responses so retrieve replay can emit
+  the original `partial_image_b64` sequence without synthesizing bytes
+- coverage есть и на stored retrieve replay, и на completed-only proxy branch
+
+Definition of done:
+
+- stored `image_generation_call` больше не протекает final `result`,
+  `revised_prompt`, `action`, or even stable image metadata in synthetic
+  `response.output_item.added`
+- stored replay now emits the docs-backed pre-final lifecycle through
+  `response.image_generation_call.in_progress`,
+  `response.image_generation_call.generating`, and
+  `response.image_generation_call.completed`
+- final stored item shape is still preserved in `response.output_item.done`
+- backlog/OpenAPI wording честно фиксируют, что
+  `response.image_generation_call.partial_image` remains explicitly open for
+  stored replay
+
 ## <a id="task-streaming-replay-mcp-approval-request"></a>Docs-backed `mcp_approval_request` generic SSE replay for stored Responses items
 
 Почему это отдельно:
@@ -715,6 +795,10 @@ Definition of done:
 - trace-backed replay для stored `computer_call` вынесен в закрытый item
   выше; captured upstream flow для него generic-only и не содержит
   `response.computer_call.*`
+- trace-backed pre-final replay для stored `image_generation_call` вынесен в
+  закрытый item выше; dedicated stored replay for
+  `response.image_generation_call.partial_image` is not claimed without a
+  recoverable partial-image policy
 - docs-backed generic replay для stored `mcp_approval_request` вынесен в
   закрытый item выше; dedicated `response.mcp_approval_request.*` family не
   заявляется без trace/reference support
@@ -831,31 +915,88 @@ Definition of done:
 - [Migrate to Responses: Messages vs. Items](https://developers.openai.com/api/docs/guides/migrate-to-responses#messages-vs-items)
 - [Hosted tool search](https://developers.openai.com/api/docs/guides/tools-tool-search#hosted-tool-search)
 
+## <a id="task-chat-stored-surface-local"></a>Local stored Chat Completions read surface for explicit `store=true` non-streaming proxy completions
+
+Почему это отдельно:
+
+- official OpenAI surface у `chat/completions` включает stored-resource routes,
+  но полный parity здесь сильно шире, чем просто “добавить три GET handler-а”
+- прагматичный следующий шаг это не эмулировать весь upstream history, а дать
+  честный local read model для тех Chat Completions, которые реально прошли
+  через shim и были explicitly stored
+- такой partial ownership уже полезен клиентам и не требует выдумывать
+  account-level default storage semantics или reconstruction из streamed chunks
+
+Что входит:
+
+- local shadow-store только для успешных non-streaming JSON
+  `POST /v1/chat/completions` c explicit `store: true`
+- `GET /v1/chat/completions` с filters/pagination subset:
+  `model`, `metadata[key]=value`, `after`, `limit`, `order`
+- `GET /v1/chat/completions/{completion_id}`
+- `GET /v1/chat/completions/{completion_id}/messages`, где message list
+  реконструируется из исходного request `messages[]`
+- OpenAPI/docs wording, которая прямо фиксирует границы этого local subset
+
+Статус на 12 апреля 2026:
+
+- закрыто для local shim-owned subset:
+  successful non-streaming explicit `store: true` chat completions now land in
+  SQLite and are readable through list/get/messages handlers
+- `messages` read surface возвращает reconstructed request messages with stable
+  synthetic ids when the original message object had no `id`
+- filtering/pagination покрыты integration tests и store tests
+- OpenAPI wording explicitly says, что это local shadow-store subset, а не
+  full official stored-chat parity
+
+Definition of done:
+
+- local list/get/messages contract реализован и покрыт integration tests
+- OpenAPI/backlog не overclaim-ят upstream-owned history, default storage при
+  omitted `store`, или streamed-chat reconstruction
+- `go test ./...` проходит на этом scope
+
+Полезные reference:
+
+- [List stored Chat Completions](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/list)
+- [Retrieve a stored Chat Completion](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/retrieve)
+- [List messages for a stored Chat Completion](https://developers.openai.com/api/reference/resources/chat/subresources/completions/subresources/messages/methods/list)
+
 ## <a id="task-chat-stored-surface"></a>Stored Chat Completions compatibility surface
 
 Почему это важно:
 
 - в official OpenAI API у `chat/completions` есть не только `POST`, но и stored-resource surface: list/get/messages
-- сейчас shim владеет только `POST /v1/chat/completions` как validate+proxy path и не дает OpenAI-compatible read model для stored chat completions
+- сейчас shim уже дает local shadow-store subset для explicit `store: true`
+  non-streaming proxy completions, но это еще не полная OpenAI-compatible read
+  model для stored chat completions
 - это один из заметных gaps между “минимальный shim для chat proxy” и “честный OpenAI-compatible facade”
 
 Что входит:
 
-- `GET /v1/chat/completions`
-- `GET /v1/chat/completions/{completion_id}`
-- `GET /v1/chat/completions/{completion_id}/messages`
-- policy: что shim хранит локально при `store=true`, а что честно оставляет upstream-only
-- явное решение, связываем ли мы stored chat completion state с existing SQLite store или оставляем этот surface как explicit not-supported
+- upstream-aware policy: что shim хранит локально при `store=true`, а что
+  честно оставляет upstream-only
+- решение по omitted `store`: считать ли account-level default storage частью
+  shim contract или оставлять это explicit gap
+- streamed chat completions: reconstruct/shadow-store from chunks или честно
+  не включать в local stored surface
+- update/delete endpoints для stored chat completions, если и когда shim
+  начнет владеть ими
 
 Definition of done:
 
-- по каждому из stored chat endpoints есть осознанный contract: implemented, proxy-only или explicit not-supported
+- по remaining stored chat endpoints/semantics есть осознанный contract:
+  implemented, proxy-only или explicit not-supported
 - docs/OpenAPI не создают ложного впечатления, что `POST /v1/chat/completions` автоматически означает полную parity со всем official chat surface
-- если local support выбран, shape и pagination покрыты integration tests
+- local shadow-store subset и remaining gaps разделены явно
+- если расширенный local support выбран, shape и pagination покрыты
+  integration tests
 
 Полезные reference:
 
-- [Chat Completions API spec](https://api.openai.com/v1/chat/completions)
+- [List stored Chat Completions](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/list)
+- [Retrieve a stored Chat Completion](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/retrieve)
+- [List messages for a stored Chat Completion](https://developers.openai.com/api/reference/resources/chat/subresources/completions/subresources/messages/methods/list)
 
 ## <a id="task-ops-hardening"></a>Operational hardening: backend readiness, retention job, local DX
 

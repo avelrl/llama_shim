@@ -1,0 +1,18 @@
+{
+  "model": "gpt-5",
+  "stream": true,
+  "store": true,
+  "tool_choice": {
+    "type": "image_generation"
+  },
+  "tools": [
+    {
+      "type": "image_generation",
+      "action": "generate",
+      "size": "1024x1024",
+      "quality": "low",
+      "background": "opaque"
+    }
+  ],
+  "input": "Draw a tiny orange cat curled up in a teacup."
+}

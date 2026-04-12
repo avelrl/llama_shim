@@ -882,6 +882,71 @@ func TestResponsesGetStreamReplaysComputerCallWithoutLeakingActionsInAdded(t *te
 	require.Equal(t, "penguin", asStringAny(secondAction["text"]))
 }
 
+func TestResponsesGetStreamReplaysImageGenerationCallReplaySubset(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	imageGenerationCall, err := domain.NewItem([]byte(`{"id":"ig_test","type":"image_generation_call","status":"completed","background":"opaque","output_format":"jpeg","quality":"low","size":"1024x1024","result":"/9j/4AAQSkZJRgABAQAAAQABAAD...","revised_prompt":"A tiny orange cat curled up in a teacup.","action":"generate"}`))
+	require.NoError(t, err)
+
+	stored := domain.StoredResponse{
+		ID:                   "resp_image_generation_call",
+		Model:                "test-model",
+		RequestJSON:          `{"model":"test-model","store":true,"input":"draw a tiny orange cat"}`,
+		ResponseJSON:         `{"id":"resp_image_generation_call","object":"response","created_at":1712059200,"status":"completed","completed_at":1712059200,"error":null,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"model":"test-model","output":[{"id":"ig_test","type":"image_generation_call","status":"completed","background":"opaque","output_format":"jpeg","quality":"low","size":"1024x1024","result":"/9j/4AAQSkZJRgABAQAAAQABAAD...","revised_prompt":"A tiny orange cat curled up in a teacup.","action":"generate"}],"parallel_tool_calls":true,"previous_response_id":null,"reasoning":{"effort":null,"summary":null},"store":true,"temperature":1.0,"text":{"format":{"type":"text"}},"tool_choice":{"type":"image_generation"},"tools":[{"type":"image_generation"}],"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{},"output_text":""}`,
+		NormalizedInputItems: []domain.Item{domain.NewInputTextMessage("user", "draw a tiny orange cat")},
+		EffectiveInputItems:  []domain.Item{domain.NewInputTextMessage("user", "draw a tiny orange cat")},
+		Output:               []domain.Item{imageGenerationCall},
+		OutputText:           "",
+		Store:                true,
+		CreatedAt:            "2026-04-12T13:00:00Z",
+		CompletedAt:          "2026-04-12T13:00:01Z",
+	}
+	require.NoError(t, app.Store.SaveResponse(context.Background(), stored))
+
+	req, err := http.NewRequest(http.MethodGet, app.Server.URL+"/v1/responses/resp_image_generation_call?stream=true", nil)
+	require.NoError(t, err)
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	events := readSSEEvents(t, resp.Body)
+	require.Contains(t, eventTypes(events), "response.output_item.added")
+	require.Contains(t, eventTypes(events), "response.output_item.done")
+	require.Contains(t, eventTypes(events), "response.image_generation_call.in_progress")
+	require.Contains(t, eventTypes(events), "response.image_generation_call.generating")
+	require.Contains(t, eventTypes(events), "response.image_generation_call.completed")
+	require.NotContains(t, eventTypes(events), "response.image_generation_call.partial_image")
+
+	added := findEvent(t, events, "response.output_item.added").Data
+	addedItem, ok := added["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "image_generation_call", asStringAny(addedItem["type"]))
+	require.Equal(t, "in_progress", asStringAny(addedItem["status"]))
+	_, hasBackground := addedItem["background"]
+	require.False(t, hasBackground)
+	_, hasOutputFormat := addedItem["output_format"]
+	require.False(t, hasOutputFormat)
+	_, hasQuality := addedItem["quality"]
+	require.False(t, hasQuality)
+	_, hasSize := addedItem["size"]
+	require.False(t, hasSize)
+	_, hasResult := addedItem["result"]
+	require.False(t, hasResult)
+	_, hasRevisedPrompt := addedItem["revised_prompt"]
+	require.False(t, hasRevisedPrompt)
+	_, hasAction := addedItem["action"]
+	require.False(t, hasAction)
+
+	outputDone := findEvent(t, events, "response.output_item.done").Data
+	outputDoneItem, ok := outputDone["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "image_generation_call", asStringAny(outputDoneItem["type"]))
+	require.Equal(t, "/9j/4AAQSkZJRgABAQAAAQABAAD...", asStringAny(outputDoneItem["result"]))
+	require.Equal(t, "A tiny orange cat curled up in a teacup.", asStringAny(outputDoneItem["revised_prompt"]))
+	require.Equal(t, "generate", asStringAny(outputDoneItem["action"]))
+}
+
 func TestResponsesGetStreamReplaysMCPApprovalRequestAsGenericOutputItemReplay(t *testing.T) {
 	app := testutil.NewTestApp(t)
 
@@ -4161,6 +4226,115 @@ func TestChatCompletionsRejectInvalidMessagesShape(t *testing.T) {
 	require.Equal(t, "messages", payload["error"].(map[string]any)["param"])
 }
 
+func TestChatCompletionsStoreTrueExposesStoredReadSurface(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	status, body := rawRequest(t, app, http.MethodPost, "/v1/chat/completions", map[string]any{
+		"model":    "gpt-5.4",
+		"store":    true,
+		"metadata": map[string]any{"topic": "demo"},
+		"messages": []map[string]any{
+			{"role": "developer", "content": "You are terse."},
+			{"role": "user", "content": "Say OK and nothing else"},
+		},
+	})
+	require.Equal(t, http.StatusOK, status)
+	completionID := asStringAny(body["id"])
+	require.NotEmpty(t, completionID)
+	require.Equal(t, "chat.completion", asStringAny(body["object"]))
+
+	list := getStoredChatCompletions(t, app, "")
+	require.Equal(t, "list", list.Object)
+	require.Len(t, list.Data, 1)
+	require.Equal(t, completionID, asStringAny(list.Data[0]["id"]))
+	require.NotNil(t, list.FirstID)
+	require.NotNil(t, list.LastID)
+	require.Equal(t, completionID, *list.FirstID)
+	require.Equal(t, completionID, *list.LastID)
+	require.False(t, list.HasMore)
+
+	stored := getStoredChatCompletion(t, app, completionID)
+	require.Equal(t, completionID, asStringAny(stored["id"]))
+	require.Equal(t, "gpt-5.4", asStringAny(stored["model"]))
+	metadata, ok := stored["metadata"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "demo", asStringAny(metadata["topic"]))
+
+	messages := getStoredChatCompletionMessages(t, app, completionID, "")
+	require.Equal(t, "list", messages.Object)
+	require.Len(t, messages.Data, 2)
+	require.Equal(t, []string{completionID + "-0", completionID + "-1"}, []string{
+		asStringAny(messages.Data[0]["id"]),
+		asStringAny(messages.Data[1]["id"]),
+	})
+	require.Equal(t, []string{"developer", "user"}, []string{
+		asStringAny(messages.Data[0]["role"]),
+		asStringAny(messages.Data[1]["role"]),
+	})
+	require.Equal(t, []string{"You are terse.", "Say OK and nothing else"}, []string{
+		asStringAny(messages.Data[0]["content"]),
+		asStringAny(messages.Data[1]["content"]),
+	})
+	_, hasName := messages.Data[0]["name"]
+	require.True(t, hasName)
+	require.Nil(t, messages.Data[0]["name"])
+	_, hasParts := messages.Data[0]["content_parts"]
+	require.True(t, hasParts)
+	require.Nil(t, messages.Data[0]["content_parts"])
+}
+
+func TestChatCompletionsWithoutExplicitStoreDoNotShadowStore(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	status, body := rawRequest(t, app, http.MethodPost, "/v1/chat/completions", map[string]any{
+		"model": "gpt-5.4",
+		"messages": []map[string]any{
+			{"role": "user", "content": "Say OK and nothing else"},
+		},
+	})
+	require.Equal(t, http.StatusOK, status)
+	require.NotEmpty(t, asStringAny(body["id"]))
+
+	list := getStoredChatCompletions(t, app, "")
+	require.Empty(t, list.Data)
+	require.Nil(t, list.FirstID)
+	require.Nil(t, list.LastID)
+	require.False(t, list.HasMore)
+}
+
+func TestChatCompletionsStoredListFiltersAndPaginates(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	first := postStoredChatCompletion(t, app, map[string]any{
+		"model":    "gpt-5.4",
+		"store":    true,
+		"metadata": map[string]any{"topic": "alpha"},
+		"messages": []map[string]any{{"role": "user", "content": "Say OK and nothing else"}},
+	})
+	_ = postStoredChatCompletion(t, app, map[string]any{
+		"model":    "gpt-4o-mini",
+		"store":    true,
+		"metadata": map[string]any{"topic": "beta"},
+		"messages": []map[string]any{{"role": "user", "content": "Say OK and nothing else"}},
+	})
+	third := postStoredChatCompletion(t, app, map[string]any{
+		"model":    "gpt-5.4",
+		"store":    true,
+		"metadata": map[string]any{"topic": "alpha"},
+		"messages": []map[string]any{{"role": "user", "content": "Say OK and nothing else"}},
+	})
+
+	page1 := getStoredChatCompletions(t, app, "?model=gpt-5.4&metadata[topic]=alpha&limit=1&order=asc")
+	require.Len(t, page1.Data, 1)
+	require.True(t, page1.HasMore)
+	require.Equal(t, first, asStringAny(page1.Data[0]["id"]))
+
+	page2 := getStoredChatCompletions(t, app, "?model=gpt-5.4&metadata[topic]=alpha&limit=1&order=asc&after="+first)
+	require.Len(t, page2.Data, 1)
+	require.False(t, page2.HasMore)
+	require.Equal(t, third, asStringAny(page2.Data[0]["id"]))
+}
+
 func postResponse(t *testing.T, app *testutil.TestApp, payload map[string]any) domain.Response {
 	t.Helper()
 
@@ -4337,6 +4511,14 @@ type conversationItemsListResponse struct {
 	HasMore bool             `json:"has_more"`
 }
 
+type chatCompletionsListResponse struct {
+	Object  string           `json:"object"`
+	Data    []map[string]any `json:"data"`
+	FirstID *string          `json:"first_id"`
+	LastID  *string          `json:"last_id"`
+	HasMore bool             `json:"has_more"`
+}
+
 type conversationResource struct {
 	ID        string            `json:"id"`
 	Object    string            `json:"object"`
@@ -4498,4 +4680,60 @@ func asStringAny(value any) string {
 
 func payloadID(payload map[string]any) string {
 	return asStringAny(payload["id"])
+}
+
+func postStoredChatCompletion(t *testing.T, app *testutil.TestApp, payload map[string]any) string {
+	t.Helper()
+
+	status, body := rawRequest(t, app, http.MethodPost, "/v1/chat/completions", payload)
+	require.Equal(t, http.StatusOK, status)
+	return asStringAny(body["id"])
+}
+
+func getStoredChatCompletions(t *testing.T, app *testutil.TestApp, rawQuery string) chatCompletionsListResponse {
+	t.Helper()
+
+	req, err := http.NewRequest(http.MethodGet, app.Server.URL+"/v1/chat/completions"+rawQuery, nil)
+	require.NoError(t, err)
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var page chatCompletionsListResponse
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&page))
+	return page
+}
+
+func getStoredChatCompletion(t *testing.T, app *testutil.TestApp, id string) map[string]any {
+	t.Helper()
+
+	req, err := http.NewRequest(http.MethodGet, app.Server.URL+"/v1/chat/completions/"+id, nil)
+	require.NoError(t, err)
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var payload map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&payload))
+	return payload
+}
+
+func getStoredChatCompletionMessages(t *testing.T, app *testutil.TestApp, id string, rawQuery string) conversationItemsListResponse {
+	t.Helper()
+
+	req, err := http.NewRequest(http.MethodGet, app.Server.URL+"/v1/chat/completions/"+id+"/messages"+rawQuery, nil)
+	require.NoError(t, err)
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var payload conversationItemsListResponse
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&payload))
+	return payload
 }
