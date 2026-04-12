@@ -105,7 +105,8 @@
   Docker as the primary boundary, non-streaming/streaming create, shim-owned
   `container_id` session reuse across stored `previous_response_id` lineage,
   optional `include=["code_interpreter_call.outputs"]` with logs plus
-  shim-owned generated file descriptors, stored
+  shim-owned generated file descriptors, local final assistant
+  `container_file_citation` subset over shim-added generated-file appendix, stored
   `code_interpreter_call` output item и follow-up turns не ломаются из-за
   stored tool items в локальном generation context
 - non-text/binary attachments не маскируются под успех: local
@@ -1073,6 +1074,10 @@ Definition of done:
   `/v1/files` и попадают в local `code_interpreter_call.outputs` как
   shim-local `type=file` descriptors с `file_id`, `filename`, `bytes`;
   final assistant turn видит этот список в local generation context
+- local final assistant message теперь получает pragmatic
+  `container_file_citation` subset: shim добавляет короткий
+  `Generated files:` appendix и annotates filenames с
+  `container_id`, `file_id`, `filename`, `start_index`, `end_index`
 
 Что осталось открытым:
 
@@ -1081,8 +1086,13 @@ Definition of done:
   считаться production-grade boundary
 - нет container/file/artifact surface parity:
   не поддержаны automatic upload of `input_file` model content parts,
-  image outputs, message annotations (`container_file_citation`) и richer
-  hosted container lifecycle
+  image outputs и richer hosted container lifecycle
+- нет hosted annotation streaming parity:
+  local stored/streaming responses несут final
+  `container_file_citation` annotations в assistant message payload, но shim
+  пока не synthesize-ит отдельные `response.output_text.annotation.added`
+  events и не воспроизводит hosted placement semantics beyond shim-added
+  generated-file appendix
 - нет explicit container mode parity:
   local subset не принимает `tools[].container = "cntr_..."` и не реализует
   `/v1/containers` surface

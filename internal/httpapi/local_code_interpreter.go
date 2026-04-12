@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"llama_shim/internal/domain"
 	"llama_shim/internal/llama"
@@ -204,23 +205,24 @@ func (h *responseHandler) createLocalCodeInterpreterResponse(ctx context.Context
 		return domain.Response{}, err
 	}
 
+	messageItem, finalOutputText, err := buildLocalCodeInterpreterAssistantMessage(outputText, execution.ContainerID, execution.GeneratedFiles)
+	if err != nil {
+		return domain.Response{}, err
+	}
+
 	responseID, err := domain.NewPrefixedID("resp")
 	if err != nil {
 		return domain.Response{}, fmt.Errorf("generate response id: %w", err)
 	}
 	createdAt := domain.NowUTC().Unix()
-	response := domain.NewResponse(responseID, input.Model, outputText, input.PreviousResponseID, input.ConversationID, createdAt)
+	response := domain.NewResponse(responseID, input.Model, finalOutputText, input.PreviousResponseID, input.ConversationID, createdAt)
 
 	codeInterpreterItem, err := buildLocalCodeInterpreterCallItem(plan.Code, execution.ContainerID, execution.Logs, execution.GeneratedFiles, config.IncludeOutputs)
 	if err != nil {
 		return domain.Response{}, err
 	}
-	messageItem, err := buildCompletedAssistantMessage(outputText)
-	if err != nil {
-		return domain.Response{}, err
-	}
 	response.Output = []domain.Item{codeInterpreterItem, messageItem}
-	response.OutputText = outputText
+	response.OutputText = finalOutputText
 
 	response, err = h.service.FinalizeLocalResponse(input, generationContext, response)
 	if err != nil {
@@ -808,6 +810,65 @@ func buildLocalCodeInterpreterExecutionPrompt(code string, logs string, generate
 		builder.WriteString(")\n")
 	}
 	return builder.String()
+}
+
+func buildLocalCodeInterpreterAssistantMessage(text string, containerID string, generatedFiles []localCodeInterpreterGeneratedFile) (domain.Item, string, error) {
+	finalText, annotations := buildLocalCodeInterpreterAssistantTextAnnotations(text, containerID, generatedFiles)
+	item, err := buildCompletedAssistantMessageWithAnnotations(finalText, annotations)
+	if err != nil {
+		return domain.Item{}, "", err
+	}
+	return item, finalText, nil
+}
+
+func buildLocalCodeInterpreterAssistantTextAnnotations(text string, containerID string, generatedFiles []localCodeInterpreterGeneratedFile) (string, []any) {
+	if len(generatedFiles) == 0 || strings.TrimSpace(containerID) == "" {
+		return text, nil
+	}
+
+	var (
+		builder     strings.Builder
+		annotations = make([]any, 0, len(generatedFiles))
+		runeIndex   int
+	)
+	appendText := func(value string) {
+		builder.WriteString(value)
+		runeIndex += utf8.RuneCountInString(value)
+	}
+
+	appendText(text)
+	if strings.TrimSpace(text) != "" {
+		switch {
+		case strings.HasSuffix(text, "\n\n"):
+		case strings.HasSuffix(text, "\n"):
+			appendText("\n")
+		default:
+			appendText("\n\n")
+		}
+	}
+	appendText("Generated files:\n")
+
+	for index, generatedFile := range generatedFiles {
+		appendText("- ")
+		startIndex := runeIndex
+		appendText(generatedFile.Filename)
+		endIndex := runeIndex
+
+		annotations = append(annotations, map[string]any{
+			"type":         "container_file_citation",
+			"container_id": containerID,
+			"file_id":      generatedFile.FileID,
+			"filename":     generatedFile.Filename,
+			"start_index":  startIndex,
+			"end_index":    endIndex,
+		})
+
+		if index+1 < len(generatedFiles) {
+			appendText("\n")
+		}
+	}
+
+	return builder.String(), annotations
 }
 
 func buildLocalCodeInterpreterCallItem(code string, containerID string, logs string, generatedFiles []localCodeInterpreterGeneratedFile, includeOutputs bool) (domain.Item, error) {

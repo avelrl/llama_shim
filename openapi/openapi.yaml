@@ -141,13 +141,16 @@ paths:
           local `/v1/files`, surfaced in local `code_interpreter_call.outputs`
           as shim-local `type=file` descriptors (`file_id`, `filename`,
           `bytes`), and made visible to the final local assistant turn
+        - when generated files exist, the final local assistant message adds a
+          shim-owned `Generated files:` appendix and attaches pragmatic
+          `container_file_citation` annotations over those filenames
         - `backend=docker` uses a hardened reusable session-container boundary;
           `backend=unsafe_host` remains a development fallback and legacy
           compatibility path
         - the local subset does not yet support automatic upload of
-          `input_file` model content parts, image artifacts,
-          `container_file_citation` annotations, or hosted sandbox/container
-          lifecycle parity
+          `input_file` model content parts, image artifacts, dedicated
+          `response.output_text.annotation.added` parity, or hosted
+          sandbox/container lifecycle parity
 
         Retention semantics:
         - standalone responses follow the outward `store` contract returned on
@@ -1764,10 +1767,13 @@ components:
         `/v1/files` into the current sandbox workspace under sanitized
         filenames. Small new/changed generated files are persisted as
         shim-owned `/v1/files` and exposed only through the local
-        `code_interpreter_call.outputs` subset. The shim does not yet claim
-        hosted sandbox/container parity and does not support automatic
-        `input_file` upload parity, image artifacts,
-        `container_file_citation` annotations, explicit
+        `code_interpreter_call.outputs` subset. When generated files exist, the
+        final local assistant message adds a shim-owned `Generated files:`
+        appendix and annotates those filenames with pragmatic
+        `container_file_citation` metadata. The shim does not yet claim hosted
+        sandbox/container parity and does not support automatic
+        `input_file` upload parity, image artifacts, dedicated
+        `response.output_text.annotation.added` parity, explicit
         `/v1/containers` parity, or user-specified
         `tools[].container = "cntr_..."` mode.
 

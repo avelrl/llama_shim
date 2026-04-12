@@ -510,6 +510,13 @@ func buildLocalFileSearchCallItem(query string, results []localFileSearchResult,
 }
 
 func buildCompletedAssistantMessage(text string) (domain.Item, error) {
+	return buildCompletedAssistantMessageWithAnnotations(text, nil)
+}
+
+func buildCompletedAssistantMessageWithAnnotations(text string, annotations []any) (domain.Item, error) {
+	if annotations == nil {
+		annotations = []any{}
+	}
 	raw, err := json.Marshal(map[string]any{
 		"type":   "message",
 		"status": "completed",
@@ -518,7 +525,7 @@ func buildCompletedAssistantMessage(text string) (domain.Item, error) {
 			{
 				"type":        "output_text",
 				"text":        text,
-				"annotations": []any{},
+				"annotations": annotations,
 			},
 		},
 	})

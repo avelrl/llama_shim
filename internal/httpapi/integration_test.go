@@ -4933,8 +4933,12 @@ func TestResponsesCreateLocalCodeInterpreterPersistsGeneratedArtifacts(t *testin
 		"tool_choice": "required",
 	})
 
+	expectedOutputText := "Created report.txt.\n\nGenerated files:\n- report.txt"
+	expectedAnnotationStart := strings.LastIndex(expectedOutputText, "report.txt")
+	expectedAnnotationEnd := expectedAnnotationStart + len("report.txt")
+
 	require.Equal(t, "completed", response.Status)
-	require.Equal(t, "Created report.txt.", response.OutputText)
+	require.Equal(t, expectedOutputText, response.OutputText)
 	require.Len(t, response.Output, 2)
 
 	callPayload := response.Output[0].Map()
@@ -4954,6 +4958,25 @@ func TestResponsesCreateLocalCodeInterpreterPersistsGeneratedArtifacts(t *testin
 	require.EqualValues(t, len("artifact-body"), fileOutput["bytes"])
 	fileID := asStringAny(fileOutput["file_id"])
 	require.NotEmpty(t, fileID)
+
+	messagePayload := response.Output[1].Map()
+	content, ok := messagePayload["content"].([]any)
+	require.True(t, ok)
+	require.Len(t, content, 1)
+	textPart, ok := content[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, expectedOutputText, asStringAny(textPart["text"]))
+	annotations, ok := textPart["annotations"].([]any)
+	require.True(t, ok)
+	require.Len(t, annotations, 1)
+	annotation, ok := annotations[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "container_file_citation", asStringAny(annotation["type"]))
+	require.Equal(t, fileID, asStringAny(annotation["file_id"]))
+	require.Equal(t, "report.txt", asStringAny(annotation["filename"]))
+	require.NotEmpty(t, asStringAny(annotation["container_id"]))
+	require.EqualValues(t, expectedAnnotationStart, annotation["start_index"])
+	require.EqualValues(t, expectedAnnotationEnd, annotation["end_index"])
 
 	status, filePayload := rawRequest(t, app, http.MethodGet, "/v1/files/"+fileID, nil)
 	require.Equal(t, http.StatusOK, status)
@@ -4977,6 +5000,38 @@ func TestResponsesCreateLocalCodeInterpreterPersistsGeneratedArtifacts(t *testin
 	storedOutputs, ok := stored.Output[0].Map()["outputs"].([]any)
 	require.True(t, ok)
 	require.Len(t, storedOutputs, 2)
+	storedContent, ok := stored.Output[1].Map()["content"].([]any)
+	require.True(t, ok)
+	require.Len(t, storedContent, 1)
+	storedAnnotations, ok := storedContent[0].(map[string]any)["annotations"].([]any)
+	require.True(t, ok)
+	require.Len(t, storedAnnotations, 1)
+
+	streamReq, err := http.NewRequest(http.MethodGet, app.Server.URL+"/v1/responses/"+response.ID+"?stream=true", nil)
+	require.NoError(t, err)
+	streamResp, err := app.Client().Do(streamReq)
+	require.NoError(t, err)
+	defer streamResp.Body.Close()
+	require.Equal(t, http.StatusOK, streamResp.StatusCode)
+	require.Contains(t, streamResp.Header.Get("Content-Type"), "text/event-stream")
+
+	events := readSSEEvents(t, streamResp.Body)
+	require.NotContains(t, eventTypes(events), "response.output_text.annotation.added")
+
+	outputDoneEvents := findEvents(events, "response.output_item.done")
+	require.Len(t, outputDoneEvents, 2)
+	outputDone := outputDoneEvents[1].Data
+	doneItem, ok := outputDone["item"].(map[string]any)
+	require.True(t, ok)
+	doneContent, ok := doneItem["content"].([]any)
+	require.True(t, ok)
+	require.Len(t, doneContent, 1)
+	doneTextPart, ok := doneContent[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, expectedOutputText, asStringAny(doneTextPart["text"]))
+	doneAnnotations, ok := doneTextPart["annotations"].([]any)
+	require.True(t, ok)
+	require.Len(t, doneAnnotations, 1)
 }
 
 func TestResponsesCreateLocalCodeInterpreterStreamReplaysToolEvents(t *testing.T) {
