@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
+	"unicode"
 
 	"llama_shim/internal/domain"
 	"llama_shim/internal/llama"
@@ -43,7 +45,6 @@ var localCodeInterpreterForbiddenFragments = []string{
 	"from urllib",
 	"import requests",
 	"from requests",
-	"open(",
 	"exec(",
 	"eval(",
 	"compile(",
@@ -67,9 +68,21 @@ type LocalCodeInterpreterSessionStore interface {
 	DeleteCodeInterpreterSession(ctx context.Context, id string) error
 }
 
+type LocalCodeInterpreterFileStore interface {
+	GetFile(ctx context.Context, id string) (domain.StoredFile, error)
+}
+
 type localCodeInterpreterConfig struct {
 	IncludeOutputs bool
+	InputFileIDs   []string
 	ToolRequired   bool
+}
+
+type localCodeInterpreterInputFile struct {
+	Content       []byte
+	FileID        string
+	Filename      string
+	WorkspaceName string
 }
 
 type localCodeInterpreterPlan struct {
@@ -129,7 +142,12 @@ func (h *responseHandler) createLocalCodeInterpreterResponse(ctx context.Context
 		return domain.Response{}, err
 	}
 
-	planningContext, err := buildLocalCodeInterpreterPlanningContext(prepared)
+	inputFiles, err := h.resolveLocalCodeInterpreterInputFiles(ctx, config.InputFileIDs)
+	if err != nil {
+		return domain.Response{}, err
+	}
+
+	planningContext, err := buildLocalCodeInterpreterPlanningContext(prepared, inputFiles)
 	if err != nil {
 		return domain.Response{}, err
 	}
@@ -152,7 +170,7 @@ func (h *responseHandler) createLocalCodeInterpreterResponse(ctx context.Context
 		return domain.Response{}, err
 	}
 
-	logs, containerID, err := h.executeLocalCodeInterpreter(ctx, prepared, plan.Code)
+	logs, containerID, err := h.executeLocalCodeInterpreter(ctx, prepared, inputFiles, plan.Code)
 	if err != nil {
 		return domain.Response{}, err
 	}
@@ -214,7 +232,8 @@ func parseLocalCodeInterpreterConfig(rawFields map[string]json.RawMessage) (loca
 	if !strings.EqualFold(strings.TrimSpace(asString(tool["type"])), "code_interpreter") {
 		return localCodeInterpreterConfig{}, domain.NewValidationError("tools", "shim-local code_interpreter requires tools[0].type=code_interpreter")
 	}
-	if err := validateLocalCodeInterpreterContainer(tool["container"]); err != nil {
+	inputFileIDs, err := parseLocalCodeInterpreterContainer(tool["container"])
+	if err != nil {
 		return localCodeInterpreterConfig{}, err
 	}
 
@@ -232,26 +251,49 @@ func parseLocalCodeInterpreterConfig(rawFields map[string]json.RawMessage) (loca
 
 	return localCodeInterpreterConfig{
 		IncludeOutputs: includeOutputs,
+		InputFileIDs:   inputFileIDs,
 		ToolRequired:   toolRequired,
 	}, nil
 }
 
-func validateLocalCodeInterpreterContainer(value any) error {
+func parseLocalCodeInterpreterContainer(value any) ([]string, error) {
 	container, ok := value.(map[string]any)
 	if !ok || container == nil {
-		return domain.NewValidationError("tools", "code_interpreter.container must be an object")
+		return nil, domain.NewValidationError("tools", "code_interpreter.container must be an object")
 	}
 	for key := range container {
 		switch key {
-		case "type":
+		case "type", "file_ids":
 		default:
-			return domain.NewValidationError("tools", "unsupported code_interpreter.container field "+`"`+key+`"`+" in shim-local mode")
+			return nil, domain.NewValidationError("tools", "unsupported code_interpreter.container field "+`"`+key+`"`+" in shim-local mode")
 		}
 	}
 	if !strings.EqualFold(strings.TrimSpace(asString(container["type"])), "auto") {
-		return domain.NewValidationError("tools", "shim-local code_interpreter only supports container.type=auto")
+		return nil, domain.NewValidationError("tools", "shim-local code_interpreter only supports container.type=auto")
 	}
-	return nil
+
+	rawFileIDs, ok := container["file_ids"]
+	if !ok || rawFileIDs == nil {
+		return nil, nil
+	}
+	values, ok := rawFileIDs.([]any)
+	if !ok {
+		return nil, domain.NewValidationError("tools", "code_interpreter.container.file_ids must be an array of strings")
+	}
+	seen := make(map[string]struct{}, len(values))
+	fileIDs := make([]string, 0, len(values))
+	for _, value := range values {
+		fileID := strings.TrimSpace(asString(value))
+		if fileID == "" {
+			return nil, domain.NewValidationError("tools", "code_interpreter.container.file_ids must not contain empty values")
+		}
+		if _, ok := seen[fileID]; ok {
+			continue
+		}
+		seen[fileID] = struct{}{}
+		fileIDs = append(fileIDs, fileID)
+	}
+	return fileIDs, nil
 }
 
 func parseLocalCodeInterpreterInclude(raw json.RawMessage) (bool, error) {
@@ -327,7 +369,7 @@ func validateLocalCodeInterpreterParallelToolCalls(raw json.RawMessage) error {
 	return nil
 }
 
-func buildLocalCodeInterpreterPlanningContext(prepared service.PreparedResponseContext) ([]domain.Item, error) {
+func buildLocalCodeInterpreterPlanningContext(prepared service.PreparedResponseContext, inputFiles []localCodeInterpreterInputFile) ([]domain.Item, error) {
 	prefixItems := prepared.ContextItems
 	if len(prepared.NormalizedInput) <= len(prefixItems) {
 		prefixItems = prefixItems[:len(prefixItems)-len(prepared.NormalizedInput)]
@@ -342,7 +384,7 @@ func buildLocalCodeInterpreterPlanningContext(prepared service.PreparedResponseC
 		return nil, err
 	}
 
-	plannerPrompt := domain.NewInputTextMessage("system", buildLocalCodeInterpreterPlanningPrompt())
+	plannerPrompt := domain.NewInputTextMessage("system", buildLocalCodeInterpreterPlanningPrompt(inputFiles))
 	out := make([]domain.Item, 0, len(prefix)+len(currentInput)+1)
 	out = append(out, prefix...)
 	out = append(out, plannerPrompt)
@@ -350,17 +392,35 @@ func buildLocalCodeInterpreterPlanningContext(prepared service.PreparedResponseC
 	return out, nil
 }
 
-func buildLocalCodeInterpreterPlanningPrompt() string {
-	return strings.Join([]string{
+func buildLocalCodeInterpreterPlanningPrompt(inputFiles []localCodeInterpreterInputFile) string {
+	base := []string{
 		"You are the shim-local code interpreter planner.",
 		"Decide whether the current turn needs Python execution.",
 		"Return JSON only with keys use_code_interpreter and code.",
 		"If Python is not needed, return {\"use_code_interpreter\":false,\"code\":\"\"}.",
 		"If Python is needed, return {\"use_code_interpreter\":true,\"code\":\"...\"}.",
 		"The code must be pure Python for the shim-local code interpreter backend.",
-		"Do not access files, the network, subprocesses, environment variables, or interactive input.",
+		"Do not access the network, subprocesses, environment variables, or interactive input.",
 		"Prefer concise code that prints the useful result to stdout.",
-	}, " ")
+	}
+	if len(inputFiles) == 0 {
+		base = append(base, "Do not access any filesystem paths for this turn.")
+		return strings.Join(base, " ")
+	}
+
+	var builder strings.Builder
+	builder.WriteString(strings.Join(base, " "))
+	builder.WriteString(" You may read only the uploaded files already placed in the current working directory using relative paths with open().")
+	builder.WriteString(" Available uploaded files:")
+	for _, inputFile := range inputFiles {
+		builder.WriteString(" ")
+		builder.WriteString(inputFile.WorkspaceName)
+		builder.WriteString(" (file_id=")
+		builder.WriteString(inputFile.FileID)
+		builder.WriteString(")")
+	}
+	builder.WriteString(" Do not access any other filesystem paths.")
+	return builder.String()
 }
 
 func buildLocalCodeInterpreterPlanningOptions(options map[string]json.RawMessage) map[string]json.RawMessage {
@@ -400,7 +460,7 @@ func validateLocalCodeInterpreterPlanCode(code string) error {
 	return nil
 }
 
-func (h *responseHandler) executeLocalCodeInterpreter(ctx context.Context, prepared service.PreparedResponseContext, code string) (string, string, error) {
+func (h *responseHandler) executeLocalCodeInterpreter(ctx context.Context, prepared service.PreparedResponseContext, inputFiles []localCodeInterpreterInputFile, code string) (string, string, error) {
 	if !h.localCodeInterpreter.Enabled() {
 		return "", "", localCodeInterpreterDisabledError()
 	}
@@ -410,10 +470,7 @@ func (h *responseHandler) executeLocalCodeInterpreter(ctx context.Context, prepa
 		return "", "", err
 	}
 	if canReuse {
-		result, err := h.localCodeInterpreter.Backend.ExecutePython(ctx, sandbox.ExecuteRequest{
-			SessionID: sessionID,
-			Code:      code,
-		})
+		result, err := h.executeLocalCodeInterpreterSession(ctx, sessionID, inputFiles, code)
 		if err == nil {
 			if touchErr := h.localCodeInterpreterSessions.TouchCodeInterpreterSession(ctx, sessionID, domain.FormatTime(domain.NowUTC())); touchErr != nil {
 				return result.Logs, "", touchErr
@@ -440,10 +497,7 @@ func (h *responseHandler) executeLocalCodeInterpreter(ctx context.Context, prepa
 		return "", "", fmt.Errorf("create shim-local code_interpreter session via %s backend: %w", h.localCodeInterpreter.Backend.Kind(), err)
 	}
 
-	result, err := h.localCodeInterpreter.Backend.ExecutePython(ctx, sandbox.ExecuteRequest{
-		SessionID: sessionID,
-		Code:      code,
-	})
+	result, err := h.executeLocalCodeInterpreterSession(ctx, sessionID, inputFiles, code)
 	if err != nil {
 		_ = h.localCodeInterpreter.Backend.DestroySession(ctx, sessionID)
 		if errors.Is(err, sandbox.ErrDisabled) {
@@ -463,6 +517,21 @@ func (h *responseHandler) executeLocalCodeInterpreter(ctx context.Context, prepa
 		return result.Logs, "", err
 	}
 	return result.Logs, sessionID, nil
+}
+
+func (h *responseHandler) executeLocalCodeInterpreterSession(ctx context.Context, sessionID string, inputFiles []localCodeInterpreterInputFile, code string) (sandbox.ExecuteResult, error) {
+	for _, inputFile := range inputFiles {
+		if err := h.localCodeInterpreter.Backend.UploadFile(ctx, sessionID, sandbox.SessionFile{
+			Name:    inputFile.WorkspaceName,
+			Content: inputFile.Content,
+		}); err != nil {
+			return sandbox.ExecuteResult{}, err
+		}
+	}
+	return h.localCodeInterpreter.Backend.ExecutePython(ctx, sandbox.ExecuteRequest{
+		SessionID: sessionID,
+		Code:      code,
+	})
 }
 
 func (h *responseHandler) findReusableLocalCodeInterpreterSessionID(ctx context.Context, prepared service.PreparedResponseContext) (string, bool, error) {
@@ -492,6 +561,79 @@ func (h *responseHandler) findReusableLocalCodeInterpreterSessionID(ctx context.
 		return session.ID, true, nil
 	}
 	return "", false, nil
+}
+
+func (h *responseHandler) resolveLocalCodeInterpreterInputFiles(ctx context.Context, fileIDs []string) ([]localCodeInterpreterInputFile, error) {
+	if len(fileIDs) == 0 {
+		return nil, nil
+	}
+	if h.localCodeInterpreterFiles == nil {
+		return nil, fmt.Errorf("local code interpreter file store is not configured")
+	}
+
+	usedNames := make(map[string]int, len(fileIDs))
+	files := make([]localCodeInterpreterInputFile, 0, len(fileIDs))
+	for _, fileID := range fileIDs {
+		file, err := h.localCodeInterpreterFiles.GetFile(ctx, fileID)
+		if err != nil {
+			if errors.Is(err, sqlite.ErrNotFound) {
+				return nil, domain.NewValidationError("tools", "unknown code_interpreter.container.file_ids value "+`"`+fileID+`"`)
+			}
+			return nil, err
+		}
+		files = append(files, localCodeInterpreterInputFile{
+			Content:       file.Content,
+			FileID:        file.ID,
+			Filename:      file.Filename,
+			WorkspaceName: uniqueLocalCodeInterpreterWorkspaceName(file.Filename, file.ID, usedNames),
+		})
+	}
+	return files, nil
+}
+
+func uniqueLocalCodeInterpreterWorkspaceName(filename string, fallback string, used map[string]int) string {
+	name := sanitizeLocalCodeInterpreterWorkspaceName(filename, fallback)
+	candidate := name
+	for suffix := 1; ; suffix++ {
+		key := strings.ToLower(candidate)
+		if used[key] == 0 {
+			used[key] = 1
+			return candidate
+		}
+
+		ext := filepath.Ext(name)
+		stem := strings.TrimSuffix(name, ext)
+		if stem == "" {
+			stem = fallback
+			ext = ""
+		}
+		candidate = fmt.Sprintf("%s-%d%s", stem, suffix+1, ext)
+	}
+}
+
+func sanitizeLocalCodeInterpreterWorkspaceName(filename string, fallback string) string {
+	base := strings.TrimSpace(filepath.Base(filename))
+	if base == "" || base == "." || base == ".." {
+		base = fallback
+	}
+
+	var builder strings.Builder
+	for _, r := range base {
+		switch {
+		case unicode.IsLetter(r), unicode.IsDigit(r):
+			builder.WriteRune(r)
+		case r == '.', r == '_', r == '-':
+			builder.WriteRune(r)
+		default:
+			builder.WriteRune('_')
+		}
+	}
+
+	sanitized := strings.Trim(builder.String(), "._-")
+	if sanitized == "" || sanitized == "." || sanitized == ".." {
+		return fallback
+	}
+	return sanitized
 }
 
 func buildLocalCodeInterpreterExecutionContext(prepared service.PreparedResponseContext, code string, logs string) ([]domain.Item, error) {

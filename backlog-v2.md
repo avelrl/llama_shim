@@ -99,7 +99,8 @@
   stored tool items в локальном generation context
 - local `/v1/responses` теперь умеет dev-only shim-local `code_interpreter`
   execution в pragmatic subset:
-  один `code_interpreter` tool с `container.type=auto`,
+  один `code_interpreter` tool с `container.type=auto` и optional
+  `container.file_ids` against shim-owned `/v1/files`,
   backend-gated local executor (`disabled|unsafe_host|docker`) with hardened
   Docker as the primary boundary, non-streaming/streaming create, shim-owned
   `container_id` session reuse across stored `previous_response_id` lineage,
@@ -1041,7 +1042,8 @@ Definition of done:
 Что закрыто в pragmatic subset:
 
 - local `/v1/responses` path теперь умеет ровно один `tools[]` entry с
-  `type=code_interpreter` и `container.type=auto`
+  `type=code_interpreter`, `container.type=auto`, и optional
+  `container.file_ids`
 - local execution теперь включается через explicit backend gate
   `responses.code_interpreter.backend=unsafe_host|docker`
 - legacy `responses.code_interpreter.enable_unsafe_host_executor=true`
@@ -1062,6 +1064,10 @@ Definition of done:
 - `container.type=auto` теперь reuse-ит активный shim-owned session из
   последнего stored `code_interpreter_call` в lineage того же backend; если
   runtime потерян, shim создает новый `cntr_*` и продолжает без hard failure
+- `container.file_ids` теперь поддержан для shim-owned `/v1/files`:
+  перед execution файлы stage-ятся в текущий session workspace под
+  sanitized filenames, planner видит доступные filenames и может читать их
+  через guarded workspace-relative `open()`
 
 Что осталось открытым:
 
@@ -1069,8 +1075,9 @@ Definition of done:
 - `unsafe_host` остаётся явно небезопасным fallback/dev path и не должен
   считаться production-grade boundary
 - нет container/file/artifact surface parity:
-  не поддержаны `container.file_ids`, generated files, image outputs и richer
-  hosted container lifecycle
+  не поддержаны automatic upload of `input_file` model content parts,
+  generated files, image outputs, message annotations
+  (`container_file_citation`) и richer hosted container lifecycle
 - нет explicit container mode parity:
   local subset не принимает `tools[].container = "cntr_..."` и не реализует
   `/v1/containers` surface

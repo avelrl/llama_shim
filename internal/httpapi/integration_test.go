@@ -4803,6 +4803,72 @@ func TestResponsesCreateExecutesLocalCodeInterpreter(t *testing.T) {
 	require.Equal(t, "code_interpreter_call", got.Output[0].Type)
 }
 
+func TestResponsesCreateLocalCodeInterpreterStagesContainerFileIDs(t *testing.T) {
+	var (
+		mu             sync.Mutex
+		activeSessions = map[string]map[string][]byte{}
+	)
+
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		CodeInterpreterBackend: testutil.FakeSandboxBackend{
+			KindValue: "docker",
+			CreateSessionFunc: func(_ context.Context, sessionID string) error {
+				mu.Lock()
+				defer mu.Unlock()
+				activeSessions[sessionID] = map[string][]byte{}
+				return nil
+			},
+			UploadFileFunc: func(_ context.Context, sessionID string, file sandbox.SessionFile) error {
+				mu.Lock()
+				defer mu.Unlock()
+				session, ok := activeSessions[sessionID]
+				if !ok {
+					return sandbox.ErrSessionNotFound
+				}
+				session[file.Name] = append([]byte(nil), file.Content...)
+				return nil
+			},
+			ExecuteFunc: func(_ context.Context, req sandbox.ExecuteRequest) (sandbox.ExecuteResult, error) {
+				mu.Lock()
+				defer mu.Unlock()
+				session, ok := activeSessions[req.SessionID]
+				if !ok {
+					return sandbox.ExecuteResult{}, sandbox.ErrSessionNotFound
+				}
+				require.Contains(t, req.Code, `open("codes.txt"`)
+				content, ok := session["codes.txt"]
+				require.True(t, ok)
+				return sandbox.ExecuteResult{Logs: string(content)}, nil
+			},
+		},
+	})
+
+	status, uploaded := uploadFile(t, app, "codes.txt", "assistants", []byte("Remember: code=777. Reply OK."), nil)
+	require.Equal(t, http.StatusOK, status)
+	fileID := asStringAny(uploaded["id"])
+
+	response := postResponse(t, app, map[string]any{
+		"model": "test-model",
+		"store": true,
+		"input": "Use Python to read the uploaded file and return only the code.",
+		"tools": []map[string]any{
+			{
+				"type": "code_interpreter",
+				"container": map[string]any{
+					"type":     "auto",
+					"file_ids": []string{fileID},
+				},
+			},
+		},
+		"tool_choice": "required",
+	})
+
+	require.Equal(t, "completed", response.Status)
+	require.Equal(t, "777", response.OutputText)
+	require.Equal(t, "code_interpreter_call", response.Output[0].Type)
+	require.NotEmpty(t, asStringAny(response.Output[0].Map()["container_id"]))
+}
+
 func TestResponsesCreateLocalCodeInterpreterStreamReplaysToolEvents(t *testing.T) {
 	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
 		CodeInterpreterBackend: testutil.FakeSandboxBackend{KindValue: "docker"},
@@ -4863,6 +4929,33 @@ func TestResponsesCreateLocalCodeInterpreterStreamReplaysToolEvents(t *testing.T
 	require.True(t, ok)
 	require.Equal(t, "logs", asStringAny(logEntry["type"]))
 	require.Equal(t, "4\n", asStringAny(logEntry["logs"]))
+}
+
+func TestResponsesCreateLocalCodeInterpreterRejectsUnknownContainerFileID(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		CodeInterpreterBackend: testutil.FakeSandboxBackend{KindValue: "docker"},
+	})
+
+	status, payload := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model": "test-model",
+		"input": "Use Python to read the uploaded file and return only the code.",
+		"tools": []map[string]any{
+			{
+				"type": "code_interpreter",
+				"container": map[string]any{
+					"type":     "auto",
+					"file_ids": []string{"file_missing"},
+				},
+			},
+		},
+		"tool_choice": "required",
+	})
+
+	require.Equal(t, http.StatusBadRequest, status)
+	errorPayload, ok := payload["error"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "invalid_request_error", asStringAny(errorPayload["type"]))
+	require.Contains(t, asStringAny(errorPayload["message"]), "code_interpreter.container.file_ids")
 }
 
 func TestResponsesCreateLocalCodeInterpreterWorksAfterStoredFollowUp(t *testing.T) {

@@ -3,6 +3,7 @@ package sandbox
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -26,8 +27,14 @@ var ErrSessionNotFound = errors.New("sandbox session not found")
 type Backend interface {
 	Kind() string
 	CreateSession(ctx context.Context, sessionID string) error
+	UploadFile(ctx context.Context, sessionID string, file SessionFile) error
 	ExecutePython(ctx context.Context, req ExecuteRequest) (ExecuteResult, error)
 	DestroySession(ctx context.Context, sessionID string) error
+}
+
+type SessionFile struct {
+	Name    string
+	Content []byte
 }
 
 type ExecuteRequest struct {
@@ -55,6 +62,28 @@ func (b UnsafeHostBackend) CreateSession(_ context.Context, sessionID string) er
 	return os.MkdirAll(b.sessionDir(sessionID), 0o755)
 }
 
+func (b UnsafeHostBackend) UploadFile(_ context.Context, sessionID string, file SessionFile) error {
+	if strings.TrimSpace(sessionID) == "" {
+		return ErrSessionNotFound
+	}
+	name, err := validateSessionFile(file)
+	if err != nil {
+		return fmt.Errorf("upload unsafe_host session file: %w", err)
+	}
+
+	sessionDir := b.sessionDir(sessionID)
+	if _, err := os.Stat(sessionDir); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return ErrSessionNotFound
+		}
+		return fmt.Errorf("stat unsafe_host session dir: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(sessionDir, name), file.Content, 0o644); err != nil {
+		return fmt.Errorf("write unsafe_host session file: %w", err)
+	}
+	return nil
+}
+
 func (b UnsafeHostBackend) ExecutePython(ctx context.Context, req ExecuteRequest) (ExecuteResult, error) {
 	if strings.TrimSpace(req.SessionID) == "" {
 		return ExecuteResult{}, fmt.Errorf("execute python: session id is required")
@@ -74,6 +103,10 @@ func (b UnsafeHostBackend) ExecutePython(ctx context.Context, req ExecuteRequest
 	sessionDir := b.sessionDir(req.SessionID)
 	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
 		return ExecuteResult{}, fmt.Errorf("create code interpreter session dir: %w", err)
+	}
+	program, err := buildPythonProgram(req.Code)
+	if err != nil {
+		return ExecuteResult{}, fmt.Errorf("build sandbox program: %w", err)
 	}
 
 	cmd := exec.CommandContext(execCtx, pythonBinary, "-I", "-S", "-B", "-")
@@ -100,7 +133,7 @@ func (b UnsafeHostBackend) ExecutePython(ctx context.Context, req ExecuteRequest
 		_ = stdin.Close()
 		return ExecuteResult{}, fmt.Errorf("start python: %w", err)
 	}
-	if _, err := io.WriteString(stdin, req.Code); err != nil {
+	if _, err := io.WriteString(stdin, program); err != nil {
 		_ = stdin.Close()
 		return ExecuteResult{}, fmt.Errorf("write python program: %w", err)
 	}
@@ -174,6 +207,59 @@ func (b DockerBackend) CreateSession(ctx context.Context, sessionID string) erro
 	return b.startContainer(execCtx, dockerBinary, containerName)
 }
 
+func (b DockerBackend) UploadFile(ctx context.Context, sessionID string, file SessionFile) error {
+	if strings.TrimSpace(sessionID) == "" {
+		return ErrSessionNotFound
+	}
+	name, err := validateSessionFile(file)
+	if err != nil {
+		return fmt.Errorf("upload docker sandbox file: %w", err)
+	}
+
+	timeout := b.Timeout
+	if timeout <= 0 {
+		timeout = DefaultExecutionTimeout
+	}
+	execCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	dockerBinary := b.dockerBinary()
+	containerName := b.containerName(sessionID)
+	exists, running, err := b.inspectContainer(execCtx, dockerBinary, containerName)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return ErrSessionNotFound
+	}
+	if !running {
+		if err := b.startContainer(execCtx, dockerBinary, containerName); err != nil {
+			return err
+		}
+	}
+
+	tmpFile, err := os.CreateTemp("", "llama-shim-sandbox-upload-*")
+	if err != nil {
+		return fmt.Errorf("create temp sandbox file: %w", err)
+	}
+	tmpName := tmpFile.Name()
+	defer func() { _ = os.Remove(tmpName) }()
+	if _, err := tmpFile.Write(file.Content); err != nil {
+		_ = tmpFile.Close()
+		return fmt.Errorf("write temp sandbox file: %w", err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		return fmt.Errorf("close temp sandbox file: %w", err)
+	}
+
+	target := containerName + ":/workspace/" + name
+	cmd := exec.CommandContext(execCtx, dockerBinary, "cp", tmpName, target)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("upload docker sandbox file: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
 func (b DockerBackend) ExecutePython(ctx context.Context, req ExecuteRequest) (ExecuteResult, error) {
 	if strings.TrimSpace(req.SessionID) == "" {
 		return ExecuteResult{}, fmt.Errorf("execute docker sandbox: session id is required")
@@ -198,6 +284,10 @@ func (b DockerBackend) ExecutePython(ctx context.Context, req ExecuteRequest) (E
 		if err := b.startContainer(execCtx, dockerBinary, containerName); err != nil {
 			return ExecuteResult{}, err
 		}
+	}
+	program, err := buildPythonProgram(req.Code)
+	if err != nil {
+		return ExecuteResult{}, fmt.Errorf("build docker sandbox program: %w", err)
 	}
 
 	args := []string{
@@ -226,7 +316,7 @@ func (b DockerBackend) ExecutePython(ctx context.Context, req ExecuteRequest) (E
 		_ = stdin.Close()
 		return ExecuteResult{}, fmt.Errorf("start docker sandbox: %w", err)
 	}
-	if _, err := io.WriteString(stdin, req.Code); err != nil {
+	if _, err := io.WriteString(stdin, program); err != nil {
 		_ = stdin.Close()
 		return ExecuteResult{}, fmt.Errorf("write sandbox program: %w", err)
 	}
@@ -382,6 +472,80 @@ func sanitizeSessionID(value string) string {
 		return out[:96]
 	}
 	return out
+}
+
+func buildPythonProgram(code string) (string, error) {
+	quotedCode, err := json.Marshal(code)
+	if err != nil {
+		return "", fmt.Errorf("marshal python code: %w", err)
+	}
+
+	return strings.Join([]string{
+		"import builtins as _shim_builtins",
+		"import io as _shim_io",
+		"import os as _shim_os",
+		"",
+		"_shim_workspace = _shim_os.path.abspath(_shim_os.getcwd())",
+		"_shim_import = _shim_builtins.__import__",
+		"_shim_open = _shim_builtins.open",
+		"_shim_blocked_modules = {",
+		`    "glob",`,
+		`    "importlib",`,
+		`    "os",`,
+		`    "pathlib",`,
+		`    "requests",`,
+		`    "shutil",`,
+		`    "socket",`,
+		`    "subprocess",`,
+		`    "sys",`,
+		`    "urllib",`,
+		"}",
+		"",
+		`def _shim_safe_open(file, mode="r", buffering=-1, encoding=None, errors=None, newline=None, closefd=True, opener=None):`,
+		"    try:",
+		"        path_value = _shim_os.fspath(file)",
+		"    except TypeError as exc:",
+		`        raise PermissionError("only workspace-relative file paths are allowed") from exc`,
+		"    if _shim_os.path.isabs(path_value):",
+		"        candidate = _shim_os.path.abspath(path_value)",
+		"    else:",
+		"        candidate = _shim_os.path.abspath(_shim_os.path.join(_shim_workspace, path_value))",
+		"    try:",
+		"        if _shim_os.path.commonpath([_shim_workspace, candidate]) != _shim_workspace:",
+		`            raise PermissionError("file access outside workspace is not allowed")`,
+		"    except ValueError as exc:",
+		`        raise PermissionError("file access outside workspace is not allowed") from exc`,
+		"    return _shim_open(candidate, mode, buffering, encoding, errors, newline, closefd, opener)",
+		"",
+		"def _shim_safe_import(name, globals=None, locals=None, fromlist=(), level=0):",
+		"    root = name.split('.', 1)[0]",
+		"    if root in _shim_blocked_modules:",
+		`        raise ImportError(f"import of {root!r} is not allowed in shim-local code_interpreter")`,
+		"    return _shim_import(name, globals, locals, fromlist, level)",
+		"",
+		"_shim_builtins.open = _shim_safe_open",
+		"_shim_builtins.__import__ = _shim_safe_import",
+		"_shim_io.open = _shim_safe_open",
+		"",
+		"_shim_user_code = " + string(quotedCode),
+		`_shim_globals = {"__name__": "__main__"}`,
+		`exec(compile(_shim_user_code, "<shim-local-code-interpreter>", "exec"), _shim_globals, _shim_globals)`,
+		"",
+	}, "\n"), nil
+}
+
+func validateSessionFile(file SessionFile) (string, error) {
+	name := strings.TrimSpace(file.Name)
+	switch {
+	case name == "":
+		return "", fmt.Errorf("file name is required")
+	case name == "." || name == "..":
+		return "", fmt.Errorf("file name must be a workspace-relative filename")
+	case strings.ContainsAny(name, `/\`):
+		return "", fmt.Errorf("file name must not contain path separators")
+	default:
+		return name, nil
+	}
 }
 
 type limitedOutputBuffer struct {

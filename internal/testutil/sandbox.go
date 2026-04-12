@@ -13,6 +13,7 @@ type FakeSandboxBackend struct {
 	DestroySessionFunc func(context.Context, string) error
 	KindValue          string
 	ExecuteFunc        func(context.Context, sandbox.ExecuteRequest) (sandbox.ExecuteResult, error)
+	UploadFileFunc     func(context.Context, string, sandbox.SessionFile) error
 }
 
 func (b FakeSandboxBackend) Kind() string {
@@ -25,6 +26,13 @@ func (b FakeSandboxBackend) Kind() string {
 func (b FakeSandboxBackend) CreateSession(ctx context.Context, sessionID string) error {
 	if b.CreateSessionFunc != nil {
 		return b.CreateSessionFunc(ctx, sessionID)
+	}
+	return nil
+}
+
+func (b FakeSandboxBackend) UploadFile(ctx context.Context, sessionID string, file sandbox.SessionFile) error {
+	if b.UploadFileFunc != nil {
+		return b.UploadFileFunc(ctx, sessionID, file)
 	}
 	return nil
 }

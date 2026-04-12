@@ -607,6 +607,10 @@ func fakeLocalCodeInterpreterPlannerOutput(joined string) (string, bool) {
 	switch {
 	case strings.Contains(joined, "2+2"):
 		return `{"use_code_interpreter":true,"code":"print(2+2)"}`, true
+	case strings.Contains(joined, "uploaded files:") && strings.Contains(joined, "codes.txt") && strings.Contains(joined, "what is the code"):
+		return `{"use_code_interpreter":true,"code":"print(open(\"codes.txt\", encoding=\"utf-8\").read())"}`, true
+	case strings.Contains(joined, "uploaded files:") && strings.Contains(joined, "codes.txt") && strings.Contains(joined, "read the uploaded file"):
+		return `{"use_code_interpreter":true,"code":"print(open(\"codes.txt\", encoding=\"utf-8\").read())"}`, true
 	case strings.Contains(joined, "result=2.0"):
 		return `{"use_code_interpreter":true,"code":"print(\"result=2.0\")"}`, true
 	case strings.Contains(joined, "say ok and nothing else"):
@@ -627,6 +631,8 @@ func fakeLocalCodeInterpreterFinalOutput(last, joined string) (string, bool) {
 			return `{"result":4}`, true
 		}
 		return "4", true
+	case hasFakeCode777Context(joined):
+		return "777", true
 	case strings.Contains(joined, "execution logs:\nresult=2.0"):
 		return "Printed the requested line to stdout.", true
 	default:

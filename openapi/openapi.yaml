@@ -125,6 +125,7 @@ paths:
           `responses.code_interpreter.backend` is set to `docker` or
           `unsafe_host`
         - the supported local subset requires `container.type=auto`,
+          optionally accepts shim-owned `container.file_ids`,
           accepts `tool_choice=auto|required`,
           accepts `include=["code_interpreter_call.outputs"]`,
           and returns stored/streaming `code_interpreter_call` items
@@ -132,11 +133,16 @@ paths:
           `code_interpreter_call.container_id` in stored lineage for the same
           backend, or creates a new `cntr_*` session if no active runtime is
           available
+        - supported `container.file_ids` values are staged from local
+          `/v1/files` into the current sandbox workspace under sanitized
+          filenames before execution
         - `backend=docker` uses a hardened reusable session-container boundary;
           `backend=unsafe_host` remains a development fallback and legacy
           compatibility path
-        - the local subset does not support `container.file_ids`, generated
-          file/image artifacts, or hosted sandbox/container lifecycle parity
+        - the local subset does not yet support automatic upload of
+          `input_file` model content parts, generated file/image artifacts,
+          `container_file_citation` annotations, or hosted sandbox/container
+          lifecycle parity
 
         Retention semantics:
         - standalone responses follow the outward `store` contract returned on
@@ -1735,6 +1741,7 @@ components:
         - pragmatic dev-only local `code_interpreter` execution with:
           one `tools[]` entry of `type=code_interpreter`,
           `container.type=auto`,
+          optional shim-owned `container.file_ids`,
           `tool_choice=auto|required`,
           `parallel_tool_calls`, and
           `include=["code_interpreter_call.outputs"]`
@@ -1747,10 +1754,14 @@ components:
         `responses.code_interpreter.backend`. `backend=docker` uses a hardened
         reusable container with no network, read-only rootfs, tmpfs workspace,
         non-root user, dropped capabilities, and memory/cpu/pids limits.
-        `backend=unsafe_host` remains an explicitly unsafe fallback. The shim
-        does not yet claim hosted sandbox/container parity and does not support
-        `container.file_ids`, generated artifacts, explicit `/v1/containers`
-        parity, or user-specified `tools[].container = "cntr_..."` mode.
+        `backend=unsafe_host` remains an explicitly unsafe fallback. Supported
+        local `container.file_ids` values are staged from shim-owned
+        `/v1/files` into the current sandbox workspace under sanitized
+        filenames. The shim does not yet claim hosted sandbox/container parity
+        and does not support automatic `input_file` upload parity, generated
+        artifacts, `container_file_citation` annotations, explicit
+        `/v1/containers` parity, or user-specified
+        `tools[].container = "cntr_..."` mode.
 
         `background` is forwarded upstream for long-running responses and is not
         executed locally by the shim.
