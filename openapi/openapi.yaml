@@ -27,6 +27,7 @@ tags:
   - name: responses
   - name: conversations
   - name: chat
+  - name: retrieval
 paths:
   /healthz:
     get:
@@ -91,6 +92,8 @@ paths:
         - `metadata` is validated and preserved on shim-local responses
         - shim-local structured outputs support `text.format.type=text`,
           `json_object`, and a documented `json_schema` subset
+        - shim-local retrieval supports a pragmatic `file_search` subset over
+          shim-owned local `vector_stores`
         - `background` is passed through to upstream `/v1/responses`; the shim
           does not execute background responses locally
         - a supported local subset is executed entirely inside the shim
@@ -104,6 +107,18 @@ paths:
         - `text.format.type=json_schema` supports a limited schema subset:
           `object|array|string|number|integer|boolean|null` plus
           `properties`, `required`, `additionalProperties`, `items`, and `enum`
+
+        Notes for the local `file_search` subset:
+        - the shim executes one `file_search` tool locally against shim-owned
+          `vector_store_ids`
+        - supported local knobs are `filters`, `max_num_results`,
+          `ranking_options.score_threshold`, and
+          `include=["file_search_call.results"]`
+        - search is deterministic local lexical retrieval over normalized UTF-8
+          text chunks, not hosted semantic-search parity
+        - the shim returns `file_search_call` output items and stored/streaming
+          replay, but does not currently synthesize hosted `file_citation`
+          annotations in assistant messages
 
         Retention semantics:
         - standalone responses follow the outward `store` contract returned on
@@ -187,6 +202,19 @@ paths:
                   stream: true
                   stream_options:
                     include_obfuscation: false
+              file_search_local:
+                summary: Local file_search over shim-owned vector stores
+                value:
+                  model: test-model
+                  store: true
+                  input: What is the code?
+                  tools:
+                    - type: file_search
+                      vector_store_ids: [vs_local_123]
+                      max_num_results: 5
+                  tool_choice: required
+                  include:
+                    - file_search_call.results
                   input: Say OK and nothing else
       responses:
         "200":
@@ -927,6 +955,384 @@ paths:
           $ref: "#/components/responses/ErrorResponse"
         "409":
           $ref: "#/components/responses/ErrorResponse"
+  /v1/files:
+    get:
+      tags: [retrieval]
+      summary: List locally stored files
+      x-shim-status: partial
+      description: |
+        Returns the shim-owned local file substrate used by retrieval-compatible
+        vector stores.
+
+        This route does not enumerate upstream OpenAI files. It implements the
+        OpenAI-shaped list surface on top of local SQLite-backed file storage.
+      parameters:
+        - name: purpose
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 10000
+            default: 10000
+        - name: order
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+        - name: after
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Locally stored file list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FileListResponse"
+        "400":
+          $ref: "#/components/responses/ErrorResponse"
+        "404":
+          $ref: "#/components/responses/ErrorResponse"
+    post:
+      tags: [retrieval]
+      summary: Upload a local file
+      x-shim-status: partial
+      description: |
+        Uploads a file into the shim-owned local file substrate.
+
+        Current local subset:
+        - multipart `file` + `purpose`
+        - optional `expires_after[anchor]=created_at`
+        - optional `expires_after[seconds]`
+
+        Unlike the hosted OpenAI Files API, this local implementation stores
+        files only in the shim's SQLite-backed storage and currently enforces a
+        local upload limit of 64 MiB per file.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/CreateFileRequest"
+      responses:
+        "200":
+          description: Stored file resource
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FileObject"
+        "400":
+          $ref: "#/components/responses/ErrorResponse"
+  /v1/files/{file_id}:
+    get:
+      tags: [retrieval]
+      summary: Retrieve a locally stored file
+      x-shim-status: partial
+      parameters:
+        - $ref: "#/components/parameters/FileID"
+      responses:
+        "200":
+          description: Stored file resource
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FileObject"
+        "404":
+          $ref: "#/components/responses/ErrorResponse"
+    delete:
+      tags: [retrieval]
+      summary: Delete a locally stored file
+      x-shim-status: partial
+      description: |
+        Deletes a shim-owned local file and removes it from any locally managed
+        vector stores attached to that file.
+      parameters:
+        - $ref: "#/components/parameters/FileID"
+      responses:
+        "200":
+          description: File deletion marker
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FileDeletion"
+        "404":
+          $ref: "#/components/responses/ErrorResponse"
+  /v1/files/{file_id}/content:
+    get:
+      tags: [retrieval]
+      summary: Retrieve local file content
+      x-shim-status: partial
+      parameters:
+        - $ref: "#/components/parameters/FileID"
+      responses:
+        "200":
+          description: Raw file bytes
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "404":
+          $ref: "#/components/responses/ErrorResponse"
+  /v1/vector_stores:
+    get:
+      tags: [retrieval]
+      summary: List locally managed vector stores
+      x-shim-status: partial
+      description: |
+        Returns shim-owned local vector stores. This is a retrieval-compatible
+        local subset and does not claim hosted OpenAI semantic-search parity.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: order
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+        - name: after
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: before
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Local vector store list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VectorStoreList"
+        "400":
+          $ref: "#/components/responses/ErrorResponse"
+        "404":
+          $ref: "#/components/responses/ErrorResponse"
+    post:
+      tags: [retrieval]
+      summary: Create a local vector store
+      x-shim-status: partial
+      description: |
+        Creates a shim-owned local vector store.
+
+        Current local subset:
+        - `name`
+        - `metadata` with the same string limits used elsewhere by the shim
+        - `expires_after.anchor=last_active_at`
+        - `expires_after.days`
+        - `file_ids` for immediate local attachment/indexing
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateVectorStoreRequest"
+      responses:
+        "200":
+          description: Local vector store resource
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VectorStoreObject"
+        "400":
+          $ref: "#/components/responses/ErrorResponse"
+        "404":
+          $ref: "#/components/responses/ErrorResponse"
+  /v1/vector_stores/{vector_store_id}:
+    get:
+      tags: [retrieval]
+      summary: Retrieve a local vector store
+      x-shim-status: partial
+      parameters:
+        - $ref: "#/components/parameters/VectorStoreID"
+      responses:
+        "200":
+          description: Local vector store resource
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VectorStoreObject"
+        "404":
+          $ref: "#/components/responses/ErrorResponse"
+    delete:
+      tags: [retrieval]
+      summary: Delete a local vector store
+      x-shim-status: partial
+      parameters:
+        - $ref: "#/components/parameters/VectorStoreID"
+      responses:
+        "200":
+          description: Vector store deletion marker
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VectorStoreDeletion"
+        "404":
+          $ref: "#/components/responses/ErrorResponse"
+  /v1/vector_stores/{vector_store_id}/files:
+    get:
+      tags: [retrieval]
+      summary: List files attached to a local vector store
+      x-shim-status: partial
+      parameters:
+        - $ref: "#/components/parameters/VectorStoreID"
+        - name: after
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: before
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: filter
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [in_progress, completed, failed, cancelled]
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: order
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+      responses:
+        "200":
+          description: Local vector store file list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VectorStoreFileList"
+        "400":
+          $ref: "#/components/responses/ErrorResponse"
+        "404":
+          $ref: "#/components/responses/ErrorResponse"
+    post:
+      tags: [retrieval]
+      summary: Attach a local file to a local vector store
+      x-shim-status: partial
+      description: |
+        Attaches a previously uploaded local file to a local vector store and
+        indexes valid UTF-8 text content into the shim's deterministic lexical
+        retrieval substrate.
+
+        Unsupported or non-text content is returned as `status=failed` with a
+        documented `last_error` shape rather than silently succeeding.
+      parameters:
+        - $ref: "#/components/parameters/VectorStoreID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateVectorStoreFileRequest"
+      responses:
+        "200":
+          description: Local vector store file resource
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VectorStoreFileObject"
+        "400":
+          $ref: "#/components/responses/ErrorResponse"
+        "404":
+          $ref: "#/components/responses/ErrorResponse"
+  /v1/vector_stores/{vector_store_id}/files/{file_id}:
+    get:
+      tags: [retrieval]
+      summary: Retrieve a local vector store file
+      x-shim-status: partial
+      parameters:
+        - $ref: "#/components/parameters/VectorStoreID"
+        - $ref: "#/components/parameters/FileID"
+      responses:
+        "200":
+          description: Local vector store file resource
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VectorStoreFileObject"
+        "404":
+          $ref: "#/components/responses/ErrorResponse"
+    delete:
+      tags: [retrieval]
+      summary: Remove a file from a local vector store
+      x-shim-status: partial
+      parameters:
+        - $ref: "#/components/parameters/VectorStoreID"
+        - $ref: "#/components/parameters/FileID"
+      responses:
+        "200":
+          description: Vector store file deletion marker
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VectorStoreFileDeletion"
+        "404":
+          $ref: "#/components/responses/ErrorResponse"
+  /v1/vector_stores/{vector_store_id}/search:
+    post:
+      tags: [retrieval]
+      summary: Search a local vector store
+      x-shim-status: partial
+      description: |
+        Performs retrieval-compatible local search over a shim-owned vector
+        store.
+
+        Current implementation is deterministic lexical chunk search with
+        attribute filtering. It does not implement hosted OpenAI semantic
+        embeddings/reranking parity.
+      parameters:
+        - $ref: "#/components/parameters/VectorStoreID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VectorStoreSearchRequest"
+      responses:
+        "200":
+          description: Local vector store search results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VectorStoreSearchResponse"
+        "400":
+          $ref: "#/components/responses/ErrorResponse"
+        "404":
+          $ref: "#/components/responses/ErrorResponse"
   /v1/chat/completions:
     get:
       tags: [chat]
@@ -1124,6 +1530,20 @@ components:
       schema:
         type: string
       description: Stored Chat Completion identifier
+    FileID:
+      name: file_id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Local file identifier
+    VectorStoreID:
+      name: vector_store_id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Local vector store identifier
     ResponseInclude:
       name: include
       in: query
@@ -1274,6 +1694,17 @@ components:
         - `text.format.type=json_schema` with a limited schema subset
         - `metadata` follows the documented OpenAI string key/value limits
         - `stream_options.include_obfuscation` for shim-owned SSE and replay
+        - pragmatic local `file_search` execution with:
+          one `tools[]` entry of `type=file_search`, local `vector_store_ids`,
+          optional `filters`, `max_num_results`,
+          `ranking_options.score_threshold`,
+          `tool_choice=auto|required`,
+          `parallel_tool_calls`, and
+          `include=["file_search_call.results"]`
+
+        The local `file_search` subset uses deterministic lexical retrieval over
+        normalized UTF-8 text chunks. It does not claim hosted semantic-search,
+        reranking, or `file_citation` annotation parity.
 
         `background` is forwarded upstream for long-running responses and is not
         executed locally by the shim.
@@ -1315,6 +1746,16 @@ components:
           $ref: "#/components/schemas/ConversationInputReference"
         instructions:
           type: string
+        include:
+          type: array
+          items:
+            type: string
+        tools:
+          $ref: "#/components/schemas/AnyJSON"
+        tool_choice:
+          $ref: "#/components/schemas/AnyJSON"
+        parallel_tool_calls:
+          type: boolean
     ResponseCompactionRequest:
       type: object
       required: [model]
@@ -1691,6 +2132,449 @@ components:
           type: string
         output:
           description: Tool output payload
+    CreateFileRequest:
+      type: object
+      required: [file, purpose]
+      properties:
+        file:
+          type: string
+          format: binary
+        purpose:
+          type: string
+        expires_after[anchor]:
+          type: string
+          enum: [created_at]
+        expires_after[seconds]:
+          type: integer
+          minimum: 1
+      description: |
+        Multipart local file upload request.
+
+        The current shim-owned subset supports `file`, `purpose`, and optional
+        local expiry fields `expires_after[anchor]=created_at` and
+        `expires_after[seconds]`.
+    FileObject:
+      type: object
+      required: [id, object, bytes, created_at, filename, purpose]
+      properties:
+        id:
+          type: string
+        object:
+          type: string
+          const: file
+        bytes:
+          type: integer
+          format: int64
+        created_at:
+          type: integer
+          format: int64
+        expires_at:
+          type:
+            - integer
+            - "null"
+          format: int64
+        filename:
+          type: string
+        purpose:
+          type: string
+        status:
+          type:
+            - string
+            - "null"
+        status_details:
+          type:
+            - string
+            - "null"
+    FileDeletion:
+      type: object
+      required: [id, object, deleted]
+      properties:
+        id:
+          type: string
+        object:
+          type: string
+          const: file
+        deleted:
+          type: boolean
+    FileListResponse:
+      type: object
+      required: [object, data, has_more]
+      properties:
+        object:
+          type: string
+          const: list
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/FileObject"
+        first_id:
+          type:
+            - string
+            - "null"
+        last_id:
+          type:
+            - string
+            - "null"
+        has_more:
+          type: boolean
+    CreateVectorStoreRequest:
+      type: object
+      additionalProperties: true
+      properties:
+        name:
+          type: string
+        file_ids:
+          type: array
+          items:
+            type: string
+        metadata:
+          type: object
+          maxProperties: 16
+          propertyNames:
+            type: string
+            maxLength: 64
+          additionalProperties:
+            type: string
+            maxLength: 512
+        expires_after:
+          $ref: "#/components/schemas/VectorStoreExpirationPolicy"
+      description: |
+        Local vector store create request.
+
+        `expires_after.anchor` currently supports only `last_active_at`.
+    VectorStoreExpirationPolicy:
+      type: object
+      required: [anchor, days]
+      properties:
+        anchor:
+          type: string
+          enum: [last_active_at]
+        days:
+          type: integer
+          minimum: 1
+    VectorStoreFileCounts:
+      type: object
+      required: [in_progress, completed, failed, cancelled, total]
+      properties:
+        in_progress:
+          type: integer
+        completed:
+          type: integer
+        failed:
+          type: integer
+        cancelled:
+          type: integer
+        total:
+          type: integer
+    VectorStoreObject:
+      type: object
+      required: [id, object, created_at, name, metadata, status, usage_bytes, file_counts, last_active_at]
+      properties:
+        id:
+          type: string
+        object:
+          type: string
+          const: vector_store
+        created_at:
+          type: integer
+          format: int64
+        name:
+          type: string
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+        status:
+          type: string
+        usage_bytes:
+          type: integer
+          format: int64
+        file_counts:
+          $ref: "#/components/schemas/VectorStoreFileCounts"
+        last_active_at:
+          type: integer
+          format: int64
+        expires_after:
+          oneOf:
+            - $ref: "#/components/schemas/VectorStoreExpirationPolicy"
+            - type: "null"
+        expires_at:
+          type:
+            - integer
+            - "null"
+          format: int64
+    VectorStoreDeletion:
+      type: object
+      required: [id, object, deleted]
+      properties:
+        id:
+          type: string
+        object:
+          type: string
+          const: vector_store.deleted
+        deleted:
+          type: boolean
+    VectorStoreList:
+      type: object
+      required: [object, data, has_more]
+      properties:
+        object:
+          type: string
+          const: list
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/VectorStoreObject"
+        first_id:
+          type:
+            - string
+            - "null"
+        last_id:
+          type:
+            - string
+            - "null"
+        has_more:
+          type: boolean
+    RetrievalAttributeValue:
+      oneOf:
+        - type: string
+        - type: number
+        - type: boolean
+    RetrievalAttributes:
+      type: object
+      maxProperties: 16
+      propertyNames:
+        type: string
+        maxLength: 64
+      additionalProperties:
+        $ref: "#/components/schemas/RetrievalAttributeValue"
+    StaticFileChunkingStrategy:
+      type: object
+      required: [max_chunk_size_tokens, chunk_overlap_tokens]
+      properties:
+        max_chunk_size_tokens:
+          type: integer
+          minimum: 100
+          maximum: 4096
+        chunk_overlap_tokens:
+          type: integer
+          minimum: 0
+    FileChunkingStrategy:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [static]
+        static:
+          $ref: "#/components/schemas/StaticFileChunkingStrategy"
+      description: |
+        Returned chunking strategy for the local retrieval subset.
+    CreateVectorStoreFileRequest:
+      type: object
+      required: [file_id]
+      properties:
+        file_id:
+          type: string
+        attributes:
+          $ref: "#/components/schemas/RetrievalAttributes"
+        chunking_strategy:
+          description: |
+            Request-time chunking strategy. The shim currently supports
+            `type=auto` as a compatibility alias for its default static
+            chunking and explicit `type=static`.
+          oneOf:
+            - $ref: "#/components/schemas/FileChunkingStrategy"
+            - type: object
+              required: [type]
+              properties:
+                type:
+                  type: string
+                  enum: [auto]
+    VectorStoreFileError:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          enum: [server_error, unsupported_file, invalid_file]
+        message:
+          type: string
+    VectorStoreFileObject:
+      type: object
+      required: [id, object, created_at, usage_bytes, vector_store_id, status]
+      properties:
+        id:
+          type: string
+        object:
+          type: string
+          const: vector_store.file
+        created_at:
+          type: integer
+          format: int64
+        usage_bytes:
+          type: integer
+          format: int64
+        vector_store_id:
+          type: string
+        status:
+          type: string
+          enum: [in_progress, completed, cancelled, failed]
+        last_error:
+          oneOf:
+            - $ref: "#/components/schemas/VectorStoreFileError"
+            - type: "null"
+        attributes:
+          $ref: "#/components/schemas/RetrievalAttributes"
+        chunking_strategy:
+          $ref: "#/components/schemas/FileChunkingStrategy"
+    VectorStoreFileDeletion:
+      type: object
+      required: [id, object, deleted]
+      properties:
+        id:
+          type: string
+        object:
+          type: string
+          const: vector_store.file.deleted
+        deleted:
+          type: boolean
+    VectorStoreFileList:
+      type: object
+      required: [object, data, has_more]
+      properties:
+        object:
+          type: string
+          const: list
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/VectorStoreFileObject"
+        first_id:
+          type:
+            - string
+            - "null"
+        last_id:
+          type:
+            - string
+            - "null"
+        has_more:
+          type: boolean
+    VectorStoreSearchComparisonFilter:
+      type: object
+      required: [type, key, value]
+      properties:
+        type:
+          type: string
+          enum: [eq, ne, gt, gte, lt, lte, in, nin]
+        key:
+          type: string
+        value:
+          oneOf:
+            - $ref: "#/components/schemas/RetrievalAttributeValue"
+            - type: array
+              items:
+                $ref: "#/components/schemas/RetrievalAttributeValue"
+    VectorStoreSearchCompoundFilter:
+      type: object
+      required: [type, filters]
+      properties:
+        type:
+          type: string
+          enum: [and, or]
+        filters:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/VectorStoreSearchFilter"
+    VectorStoreSearchFilter:
+      oneOf:
+        - $ref: "#/components/schemas/VectorStoreSearchComparisonFilter"
+        - $ref: "#/components/schemas/VectorStoreSearchCompoundFilter"
+    VectorStoreSearchRequest:
+      type: object
+      required: [query]
+      properties:
+        query:
+          oneOf:
+            - type: string
+            - type: array
+              minItems: 1
+              items:
+                type: string
+        filters:
+          $ref: "#/components/schemas/VectorStoreSearchFilter"
+        max_num_results:
+          type: integer
+          minimum: 1
+          maximum: 50
+          default: 10
+        rewrite_query:
+          type: boolean
+        ranking_options:
+          type: object
+          properties:
+            ranker:
+              type: string
+              enum: [none, auto, default-2024-11-15]
+            score_threshold:
+              type: number
+              minimum: 0
+              maximum: 1
+      description: |
+        Local vector store search request.
+
+        `rewrite_query` and `ranking_options.ranker` are accepted for
+        compatibility; the current local implementation performs deterministic
+        lexical search plus optional score-threshold filtering.
+    VectorStoreSearchResultContent:
+      type: object
+      required: [type, text]
+      properties:
+        type:
+          type: string
+          const: text
+        text:
+          type: string
+    VectorStoreSearchResult:
+      type: object
+      required: [file_id, filename, score, content]
+      properties:
+        file_id:
+          type: string
+        filename:
+          type: string
+        score:
+          type: number
+        attributes:
+          $ref: "#/components/schemas/RetrievalAttributes"
+        content:
+          type: array
+          items:
+            $ref: "#/components/schemas/VectorStoreSearchResultContent"
+    VectorStoreSearchResponse:
+      type: object
+      required: [object, search_query, data, has_more]
+      properties:
+        object:
+          type: string
+          const: vector_store.search_results.page
+        search_query:
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: string
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/VectorStoreSearchResult"
+        has_more:
+          type: boolean
+        next_page:
+          type:
+            - string
+            - "null"
     ChatCompletionsRequest:
       type: object
       description: |

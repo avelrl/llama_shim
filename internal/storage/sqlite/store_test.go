@@ -349,6 +349,152 @@ func TestStoreDeleteConversationItemAllowsAppendAfterMidSequenceGap(t *testing.T
 	require.Equal(t, 4, appended[0].Seq)
 }
 
+func TestStoreSaveFileAttachVectorStoreAndSearch(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store := openTestStore(t, ctx)
+
+	file := domain.StoredFile{
+		ID:        "file_alpha",
+		Filename:  "alpha.txt",
+		Purpose:   "assistants",
+		Bytes:     int64(len("OpenAI retrieval layer stores chunks for local file search.")),
+		CreatedAt: 1712059200,
+		Status:    "processed",
+		Content:   []byte("OpenAI retrieval layer stores chunks for local file search."),
+	}
+	require.NoError(t, store.SaveFile(ctx, file))
+
+	gotFile, err := store.GetFile(ctx, file.ID)
+	require.NoError(t, err)
+	require.Equal(t, file.Filename, gotFile.Filename)
+	require.Equal(t, file.Purpose, gotFile.Purpose)
+
+	filePage, err := store.ListFiles(ctx, domain.ListFilesQuery{
+		Purpose: "assistants",
+		Limit:   10,
+		Order:   domain.ListOrderAsc,
+	})
+	require.NoError(t, err)
+	require.Len(t, filePage.Files, 1)
+	require.Equal(t, file.ID, filePage.Files[0].ID)
+
+	vectorStore := domain.StoredVectorStore{
+		ID:           "vs_alpha",
+		Name:         "Local Search",
+		Metadata:     map[string]string{"topic": "demo"},
+		CreatedAt:    1712059201,
+		LastActiveAt: 1712059201,
+	}
+	require.NoError(t, store.SaveVectorStore(ctx, vectorStore))
+
+	attached, err := store.AttachFileToVectorStore(
+		ctx,
+		vectorStore.ID,
+		file.ID,
+		map[string]any{"topic": "docs", "priority": float64(1)},
+		domain.DefaultFileChunkingStrategy(),
+		1712059202,
+	)
+	require.NoError(t, err)
+	require.Equal(t, "completed", attached.Status)
+	require.Nil(t, attached.LastError)
+	require.Equal(t, file.Bytes, attached.UsageBytes)
+
+	storedVectorStore, err := store.GetVectorStore(ctx, vectorStore.ID)
+	require.NoError(t, err)
+	require.Equal(t, "completed", storedVectorStore.Status)
+	require.Equal(t, 1, storedVectorStore.FileCounts.Completed)
+	require.Equal(t, 1, storedVectorStore.FileCounts.Total)
+	require.Equal(t, file.Bytes, storedVectorStore.UsageBytes)
+
+	vectorStoreFile, err := store.GetVectorStoreFile(ctx, vectorStore.ID, file.ID)
+	require.NoError(t, err)
+	require.Equal(t, map[string]any{"topic": "docs", "priority": float64(1)}, vectorStoreFile.Attributes)
+
+	vectorStoreFilePage, err := store.ListVectorStoreFiles(ctx, domain.ListVectorStoreFilesQuery{
+		VectorStoreID: vectorStore.ID,
+		Filter:        "completed",
+		Limit:         10,
+		Order:         domain.ListOrderAsc,
+	})
+	require.NoError(t, err)
+	require.Len(t, vectorStoreFilePage.Files, 1)
+	require.Equal(t, file.ID, vectorStoreFilePage.Files[0].ID)
+
+	searchPage, err := store.SearchVectorStore(ctx, domain.VectorStoreSearchQuery{
+		VectorStoreID:  vectorStore.ID,
+		Queries:        []string{"local file search"},
+		MaxNumResults:  10,
+		RawSearchQuery: "local file search",
+	})
+	require.NoError(t, err)
+	require.False(t, searchPage.HasMore)
+	require.Len(t, searchPage.Results, 1)
+	require.Equal(t, file.ID, searchPage.Results[0].FileID)
+	require.Contains(t, searchPage.Results[0].Content[0].Text, "local file search")
+
+	require.NoError(t, store.DeleteVectorStoreFile(ctx, vectorStore.ID, file.ID))
+
+	afterDeletePage, err := store.ListVectorStoreFiles(ctx, domain.ListVectorStoreFilesQuery{
+		VectorStoreID: vectorStore.ID,
+		Limit:         10,
+		Order:         domain.ListOrderAsc,
+	})
+	require.NoError(t, err)
+	require.Empty(t, afterDeletePage.Files)
+}
+
+func TestStoreAttachBinaryFileToVectorStoreFailsIndexing(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store := openTestStore(t, ctx)
+
+	file := domain.StoredFile{
+		ID:        "file_binary",
+		Filename:  "binary.bin",
+		Purpose:   "assistants",
+		Bytes:     3,
+		CreatedAt: 1712059300,
+		Status:    "processed",
+		Content:   []byte{0xff, 0xfe, 0xfd},
+	}
+	require.NoError(t, store.SaveFile(ctx, file))
+
+	vectorStore := domain.StoredVectorStore{
+		ID:           "vs_binary",
+		Name:         "Binary Search",
+		Metadata:     map[string]string{},
+		CreatedAt:    1712059301,
+		LastActiveAt: 1712059301,
+	}
+	require.NoError(t, store.SaveVectorStore(ctx, vectorStore))
+
+	attached, err := store.AttachFileToVectorStore(
+		ctx,
+		vectorStore.ID,
+		file.ID,
+		map[string]any{},
+		domain.DefaultFileChunkingStrategy(),
+		1712059302,
+	)
+	require.NoError(t, err)
+	require.Equal(t, "failed", attached.Status)
+	require.NotNil(t, attached.LastError)
+	require.Equal(t, "unsupported_file", attached.LastError.Code)
+
+	searchPage, err := store.SearchVectorStore(ctx, domain.VectorStoreSearchQuery{
+		VectorStoreID:  vectorStore.ID,
+		Queries:        []string{"anything"},
+		MaxNumResults:  10,
+		RawSearchQuery: "anything",
+	})
+	require.NoError(t, err)
+	require.Empty(t, searchPage.Results)
+}
+
 func openTestStore(t *testing.T, ctx context.Context) *sqlite.Store {
 	t.Helper()
 

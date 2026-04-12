@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -4380,6 +4381,389 @@ func TestChatCompletionsStoredListFiltersAndPaginates(t *testing.T) {
 	require.Equal(t, third, asStringAny(page2.Data[0]["id"]))
 }
 
+func TestFilesEndpointsUploadListRetrieveContentAndDelete(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	status, uploaded := uploadFile(t, app, "notes.txt", "assistants", []byte("alpha beta gamma"), map[string]string{
+		"expires_after[anchor]":  "created_at",
+		"expires_after[seconds]": "3600",
+	})
+	require.Equal(t, http.StatusOK, status)
+	fileID := asStringAny(uploaded["id"])
+	require.NotEmpty(t, fileID)
+	require.Equal(t, "file", asStringAny(uploaded["object"]))
+	require.Equal(t, "assistants", asStringAny(uploaded["purpose"]))
+	require.Equal(t, "notes.txt", asStringAny(uploaded["filename"]))
+	require.Equal(t, "processed", asStringAny(uploaded["status"]))
+	require.NotNil(t, uploaded["expires_at"])
+
+	status, page := rawRequest(t, app, http.MethodGet, "/v1/files?purpose=assistants&limit=10&order=asc", nil)
+	require.Equal(t, http.StatusOK, status)
+	data := page["data"].([]any)
+	require.Len(t, data, 1)
+	require.Equal(t, fileID, asStringAny(data[0].(map[string]any)["id"]))
+	require.Equal(t, fileID, asStringAny(page["first_id"]))
+	require.Equal(t, fileID, asStringAny(page["last_id"]))
+	require.Equal(t, false, page["has_more"])
+
+	status, stored := rawRequest(t, app, http.MethodGet, "/v1/files/"+fileID, nil)
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, fileID, asStringAny(stored["id"]))
+	require.Equal(t, "notes.txt", asStringAny(stored["filename"]))
+
+	content := getFileContent(t, app, fileID)
+	require.Equal(t, []byte("alpha beta gamma"), content)
+
+	status, deleted := rawRequest(t, app, http.MethodDelete, "/v1/files/"+fileID, nil)
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, fileID, asStringAny(deleted["id"]))
+	require.Equal(t, "file", asStringAny(deleted["object"]))
+	require.Equal(t, true, deleted["deleted"])
+
+	status, missing := rawRequest(t, app, http.MethodGet, "/v1/files/"+fileID, nil)
+	require.Equal(t, http.StatusNotFound, status)
+	require.Equal(t, "not_found_error", missing["error"].(map[string]any)["type"])
+}
+
+func TestVectorStoresEndpointsCreateAttachSearchAndDelete(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	status, uploaded := uploadFile(t, app, "faq.txt", "assistants", []byte("The support answer says you can search local docs."), nil)
+	require.Equal(t, http.StatusOK, status)
+	fileID := asStringAny(uploaded["id"])
+
+	status, created := rawRequest(t, app, http.MethodPost, "/v1/vector_stores", map[string]any{
+		"name":     "FAQ",
+		"file_ids": []string{fileID},
+		"metadata": map[string]any{"topic": "docs"},
+		"expires_after": map[string]any{
+			"anchor": "last_active_at",
+			"days":   7,
+		},
+	})
+	require.Equal(t, http.StatusOK, status)
+	vectorStoreID := asStringAny(created["id"])
+	require.NotEmpty(t, vectorStoreID)
+	require.Equal(t, "vector_store", asStringAny(created["object"]))
+	require.Equal(t, "FAQ", asStringAny(created["name"]))
+	require.Equal(t, "completed", asStringAny(created["status"]))
+	require.Equal(t, "docs", asStringAny(created["metadata"].(map[string]any)["topic"]))
+	require.Equal(t, float64(1), created["file_counts"].(map[string]any)["completed"])
+
+	status, page := rawRequest(t, app, http.MethodGet, "/v1/vector_stores?limit=10&order=asc", nil)
+	require.Equal(t, http.StatusOK, status)
+	require.Len(t, page["data"].([]any), 1)
+	require.Equal(t, vectorStoreID, asStringAny(page["first_id"]))
+	require.Equal(t, vectorStoreID, asStringAny(page["last_id"]))
+
+	status, storeFiles := rawRequest(t, app, http.MethodGet, "/v1/vector_stores/"+vectorStoreID+"/files?filter=completed&limit=10", nil)
+	require.Equal(t, http.StatusOK, status)
+	require.Len(t, storeFiles["data"].([]any), 1)
+	require.Equal(t, fileID, asStringAny(storeFiles["data"].([]any)[0].(map[string]any)["id"]))
+
+	status, attached := rawRequest(t, app, http.MethodPost, "/v1/vector_stores/"+vectorStoreID+"/files", map[string]any{
+		"file_id": fileID,
+		"attributes": map[string]any{
+			"tenant": "alpha",
+			"topic":  "docs",
+		},
+		"chunking_strategy": map[string]any{
+			"type": "static",
+			"static": map[string]any{
+				"max_chunk_size_tokens": 100,
+				"chunk_overlap_tokens":  0,
+			},
+		},
+	})
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, "vector_store.file", asStringAny(attached["object"]))
+	require.Equal(t, "completed", asStringAny(attached["status"]))
+	require.Equal(t, "alpha", asStringAny(attached["attributes"].(map[string]any)["tenant"]))
+
+	status, search := rawRequest(t, app, http.MethodPost, "/v1/vector_stores/"+vectorStoreID+"/search", map[string]any{
+		"query":           "support answer",
+		"max_num_results": 10,
+		"filters": map[string]any{
+			"type":  "eq",
+			"key":   "tenant",
+			"value": "alpha",
+		},
+		"ranking_options": map[string]any{
+			"score_threshold": 0.1,
+		},
+	})
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, "vector_store.search_results.page", asStringAny(search["object"]))
+	require.Equal(t, "support answer", asStringAny(search["search_query"]))
+	require.Len(t, search["data"].([]any), 1)
+	result := search["data"].([]any)[0].(map[string]any)
+	require.Equal(t, fileID, asStringAny(result["file_id"]))
+	require.Equal(t, "faq.txt", asStringAny(result["filename"]))
+	require.Contains(t, asStringAny(result["content"].([]any)[0].(map[string]any)["text"]), "support answer")
+
+	status, deletedFile := rawRequest(t, app, http.MethodDelete, "/v1/vector_stores/"+vectorStoreID+"/files/"+fileID, nil)
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, "vector_store.file.deleted", asStringAny(deletedFile["object"]))
+	require.Equal(t, true, deletedFile["deleted"])
+
+	status, deletedStore := rawRequest(t, app, http.MethodDelete, "/v1/vector_stores/"+vectorStoreID, nil)
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, "vector_store.deleted", asStringAny(deletedStore["object"]))
+	require.Equal(t, true, deletedStore["deleted"])
+
+	status, missing := rawRequest(t, app, http.MethodGet, "/v1/vector_stores/"+vectorStoreID, nil)
+	require.Equal(t, http.StatusNotFound, status)
+	require.Equal(t, "not_found_error", missing["error"].(map[string]any)["type"])
+}
+
+func TestVectorStoreAttachBinaryFileReturnsFailedStatus(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	status, uploaded := uploadFile(t, app, "binary.bin", "assistants", []byte{0xff, 0xfe, 0xfd}, nil)
+	require.Equal(t, http.StatusOK, status)
+	fileID := asStringAny(uploaded["id"])
+
+	status, created := rawRequest(t, app, http.MethodPost, "/v1/vector_stores", map[string]any{
+		"name": "Binary",
+	})
+	require.Equal(t, http.StatusOK, status)
+	vectorStoreID := asStringAny(created["id"])
+
+	status, attached := rawRequest(t, app, http.MethodPost, "/v1/vector_stores/"+vectorStoreID+"/files", map[string]any{
+		"file_id": fileID,
+	})
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, "failed", asStringAny(attached["status"]))
+	require.Equal(t, "unsupported_file", asStringAny(attached["last_error"].(map[string]any)["code"]))
+
+	status, search := rawRequest(t, app, http.MethodPost, "/v1/vector_stores/"+vectorStoreID+"/search", map[string]any{
+		"query": "anything",
+	})
+	require.Equal(t, http.StatusOK, status)
+	require.Empty(t, search["data"].([]any))
+}
+
+func TestResponsesCreateExecutesLocalFileSearch(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	status, uploaded := uploadFile(t, app, "codes.txt", "assistants", []byte("Remember: code=777. Reply OK."), nil)
+	require.Equal(t, http.StatusOK, status)
+	fileID := asStringAny(uploaded["id"])
+
+	status, created := rawRequest(t, app, http.MethodPost, "/v1/vector_stores", map[string]any{
+		"name":     "Codes",
+		"file_ids": []string{fileID},
+	})
+	require.Equal(t, http.StatusOK, status)
+	vectorStoreID := asStringAny(created["id"])
+
+	response := postResponse(t, app, map[string]any{
+		"model": "test-model",
+		"store": true,
+		"input": "What is the code?",
+		"tools": []map[string]any{
+			{
+				"type":             "file_search",
+				"vector_store_ids": []string{vectorStoreID},
+			},
+		},
+		"tool_choice": "required",
+	})
+
+	require.Equal(t, "completed", response.Status)
+	require.Equal(t, "777", response.OutputText)
+	require.Len(t, response.Output, 2)
+	require.Equal(t, "file_search_call", response.Output[0].Type)
+	require.Equal(t, "completed", response.Output[0].Status())
+	require.Equal(t, "message", response.Output[1].Type)
+
+	fileSearchPayload := response.Output[0].Map()
+	require.Equal(t, []any{"What is the code?"}, fileSearchPayload["queries"].([]any))
+	require.Nil(t, fileSearchPayload["results"])
+
+	got := getResponse(t, app, response.ID)
+	require.Equal(t, "777", got.OutputText)
+	require.Len(t, got.Output, 2)
+	require.Equal(t, "file_search_call", got.Output[0].Type)
+	require.Equal(t, "message", got.Output[1].Type)
+}
+
+func TestResponsesCreateLocalFileSearchStreamReplaysToolEvents(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	status, uploaded := uploadFile(t, app, "codes.txt", "assistants", []byte("Remember: code=777. Reply OK."), nil)
+	require.Equal(t, http.StatusOK, status)
+	fileID := asStringAny(uploaded["id"])
+
+	status, created := rawRequest(t, app, http.MethodPost, "/v1/vector_stores", map[string]any{
+		"name":     "Codes",
+		"file_ids": []string{fileID},
+	})
+	require.Equal(t, http.StatusOK, status)
+	vectorStoreID := asStringAny(created["id"])
+
+	req, err := http.NewRequest(http.MethodPost, app.Server.URL+"/v1/responses", bytes.NewReader(mustJSON(t, map[string]any{
+		"model":  "test-model",
+		"store":  true,
+		"stream": true,
+		"input":  "What is the code?",
+		"tools": []map[string]any{
+			{
+				"type":             "file_search",
+				"vector_store_ids": []string{vectorStoreID},
+			},
+		},
+	})))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Contains(t, resp.Header.Get("Content-Type"), "text/event-stream")
+
+	events := readSSEEvents(t, resp.Body)
+	require.Contains(t, eventTypes(events), "response.file_search_call.in_progress")
+	require.Contains(t, eventTypes(events), "response.file_search_call.searching")
+	require.Contains(t, eventTypes(events), "response.file_search_call.completed")
+	require.Contains(t, eventTypes(events), "response.output_text.delta")
+
+	added := findEvents(events, "response.output_item.added")
+	require.Len(t, added, 2)
+	require.Equal(t, "file_search_call", asStringAny(added[0].Data["item"].(map[string]any)["type"]))
+	require.Equal(t, "message", asStringAny(added[1].Data["item"].(map[string]any)["type"]))
+
+	completed := findEvent(t, events, "response.completed").Data
+	responsePayload, ok := completed["response"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "777", asStringAny(responsePayload["output_text"]))
+}
+
+func TestResponsesCreateLocalFileSearchIncludeResults(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	status, uploaded := uploadFile(t, app, "codes.txt", "assistants", []byte("Remember: code=777. Reply OK."), nil)
+	require.Equal(t, http.StatusOK, status)
+	fileID := asStringAny(uploaded["id"])
+
+	status, created := rawRequest(t, app, http.MethodPost, "/v1/vector_stores", map[string]any{
+		"name": "Codes",
+	})
+	require.Equal(t, http.StatusOK, status)
+	vectorStoreID := asStringAny(created["id"])
+
+	status, attached := rawRequest(t, app, http.MethodPost, "/v1/vector_stores/"+vectorStoreID+"/files", map[string]any{
+		"file_id": fileID,
+		"attributes": map[string]any{
+			"tenant": "alpha",
+		},
+	})
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, "completed", asStringAny(attached["status"]))
+
+	response := postResponse(t, app, map[string]any{
+		"model":   "test-model",
+		"store":   true,
+		"input":   "What is the code?",
+		"include": []string{"file_search_call.results"},
+		"tools": []map[string]any{
+			{
+				"type":             "file_search",
+				"vector_store_ids": []string{vectorStoreID},
+				"filters": map[string]any{
+					"type":  "eq",
+					"key":   "tenant",
+					"value": "alpha",
+				},
+			},
+		},
+	})
+
+	require.Equal(t, "777", response.OutputText)
+	fileSearchPayload := response.Output[0].Map()
+	results, ok := fileSearchPayload["results"].([]any)
+	require.True(t, ok)
+	require.Len(t, results, 1)
+
+	result, ok := results[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, fileID, asStringAny(result["file_id"]))
+	require.Equal(t, "codes.txt", asStringAny(result["filename"]))
+	require.Equal(t, vectorStoreID, asStringAny(result["vector_store_id"]))
+	require.Contains(t, asStringAny(result["text"]), "code")
+	require.Contains(t, asStringAny(result["text"]), "777")
+	require.Equal(t, "alpha", asStringAny(result["attributes"].(map[string]any)["tenant"]))
+}
+
+func TestResponsesCreateLocalFileSearchWorksInLocalOnlyMode(t *testing.T) {
+	app := testutil.NewTestAppWithResponsesMode(t, config.ResponsesModeLocalOnly)
+
+	status, uploaded := uploadFile(t, app, "codes.txt", "assistants", []byte("Remember: code=777. Reply OK."), nil)
+	require.Equal(t, http.StatusOK, status)
+	fileID := asStringAny(uploaded["id"])
+
+	status, created := rawRequest(t, app, http.MethodPost, "/v1/vector_stores", map[string]any{
+		"name":     "Codes",
+		"file_ids": []string{fileID},
+	})
+	require.Equal(t, http.StatusOK, status)
+	vectorStoreID := asStringAny(created["id"])
+
+	response := postResponse(t, app, map[string]any{
+		"model": "test-model",
+		"input": "What is the code?",
+		"tools": []map[string]any{
+			{
+				"type":             "file_search",
+				"vector_store_ids": []string{vectorStoreID},
+			},
+		},
+	})
+
+	require.Equal(t, "777", response.OutputText)
+	require.Equal(t, "file_search_call", response.Output[0].Type)
+}
+
+func TestResponsesCreatePlainFollowUpAfterLocalFileSearchStoredOutput(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	status, uploaded := uploadFile(t, app, "codes.txt", "assistants", []byte("Remember: code=777. Reply OK."), nil)
+	require.Equal(t, http.StatusOK, status)
+	fileID := asStringAny(uploaded["id"])
+
+	status, created := rawRequest(t, app, http.MethodPost, "/v1/vector_stores", map[string]any{
+		"name":     "Codes",
+		"file_ids": []string{fileID},
+	})
+	require.Equal(t, http.StatusOK, status)
+	vectorStoreID := asStringAny(created["id"])
+
+	first := postResponse(t, app, map[string]any{
+		"model": "test-model",
+		"store": true,
+		"input": "What is the code?",
+		"tools": []map[string]any{
+			{
+				"type":             "file_search",
+				"vector_store_ids": []string{vectorStoreID},
+			},
+		},
+	})
+	require.Equal(t, "777", first.OutputText)
+
+	second := postResponse(t, app, map[string]any{
+		"model":                "test-model",
+		"previous_response_id": first.ID,
+		"input":                "Say OK and nothing else",
+	})
+
+	require.Equal(t, "OK", second.OutputText)
+	require.Len(t, second.Output, 1)
+	require.Equal(t, "message", second.Output[0].Type)
+}
+
 func postResponse(t *testing.T, app *testutil.TestApp, payload map[string]any) domain.Response {
 	t.Helper()
 
@@ -4535,11 +4919,63 @@ func rawRequest(t *testing.T, app *testutil.TestApp, method, path string, payloa
 	return resp.StatusCode, decoded
 }
 
+func uploadFile(t *testing.T, app *testutil.TestApp, filename, purpose string, content []byte, extraFields map[string]string) (int, map[string]any) {
+	t.Helper()
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	require.NoError(t, writer.WriteField("purpose", purpose))
+	for key, value := range extraFields {
+		require.NoError(t, writer.WriteField(key, value))
+	}
+	part, err := writer.CreateFormFile("file", filename)
+	require.NoError(t, err)
+	_, err = part.Write(content)
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+
+	req, err := http.NewRequest(http.MethodPost, app.Server.URL+"/v1/files", &body)
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	var decoded map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&decoded))
+	return resp.StatusCode, decoded
+}
+
+func getFileContent(t *testing.T, app *testutil.TestApp, fileID string) []byte {
+	t.Helper()
+
+	req, err := http.NewRequest(http.MethodGet, app.Server.URL+"/v1/files/"+fileID+"/content", nil)
+	require.NoError(t, err)
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	content, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	return content
+}
+
 func mustDecode(t *testing.T, payload map[string]any, dst any) {
 	t.Helper()
 	raw, err := json.Marshal(payload)
 	require.NoError(t, err)
 	require.NoError(t, json.Unmarshal(raw, dst))
+}
+
+func mustJSON(t *testing.T, payload any) []byte {
+	t.Helper()
+
+	body, err := json.Marshal(payload)
+	require.NoError(t, err)
+	return body
 }
 
 type sseEvent struct {

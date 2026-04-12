@@ -37,6 +37,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 		deps.ResponsesCodexForceToolChoiceRequired,
 	)
 	conversationHandler := newConversationHandler(deps.Logger, deps.ConversationService)
+	retrievalHandler := newRetrievalHandler(deps.Logger, deps.Store)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -169,6 +170,80 @@ func NewRouter(deps RouterDeps) http.Handler {
 			return
 		}
 		proxyHandler.listStoredChatCompletionMessages(w, r)
+	})
+	mux.HandleFunc("/v1/files", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			retrievalHandler.listFiles(w, r)
+		case http.MethodPost:
+			retrievalHandler.createFile(w, r)
+		default:
+			WriteError(w, http.StatusMethodNotAllowed, "invalid_request_error", "method not allowed", "")
+		}
+	})
+	mux.HandleFunc("/v1/files/{file_id}", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			retrievalHandler.getFile(w, r)
+		case http.MethodDelete:
+			retrievalHandler.deleteFile(w, r)
+		default:
+			WriteError(w, http.StatusMethodNotAllowed, "invalid_request_error", "method not allowed", "")
+		}
+	})
+	mux.HandleFunc("/v1/files/{file_id}/content", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			WriteError(w, http.StatusMethodNotAllowed, "invalid_request_error", "method not allowed", "")
+			return
+		}
+		retrievalHandler.getFileContent(w, r)
+	})
+	mux.HandleFunc("/v1/vector_stores", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			retrievalHandler.listVectorStores(w, r)
+		case http.MethodPost:
+			retrievalHandler.createVectorStore(w, r)
+		default:
+			WriteError(w, http.StatusMethodNotAllowed, "invalid_request_error", "method not allowed", "")
+		}
+	})
+	mux.HandleFunc("/v1/vector_stores/{vector_store_id}", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			retrievalHandler.getVectorStore(w, r)
+		case http.MethodDelete:
+			retrievalHandler.deleteVectorStore(w, r)
+		default:
+			WriteError(w, http.StatusMethodNotAllowed, "invalid_request_error", "method not allowed", "")
+		}
+	})
+	mux.HandleFunc("/v1/vector_stores/{vector_store_id}/files", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			retrievalHandler.listVectorStoreFiles(w, r)
+		case http.MethodPost:
+			retrievalHandler.createVectorStoreFile(w, r)
+		default:
+			WriteError(w, http.StatusMethodNotAllowed, "invalid_request_error", "method not allowed", "")
+		}
+	})
+	mux.HandleFunc("/v1/vector_stores/{vector_store_id}/files/{file_id}", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			retrievalHandler.getVectorStoreFile(w, r)
+		case http.MethodDelete:
+			retrievalHandler.deleteVectorStoreFile(w, r)
+		default:
+			WriteError(w, http.StatusMethodNotAllowed, "invalid_request_error", "method not allowed", "")
+		}
+	})
+	mux.HandleFunc("/v1/vector_stores/{vector_store_id}/search", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			WriteError(w, http.StatusMethodNotAllowed, "invalid_request_error", "method not allowed", "")
+			return
+		}
+		retrievalHandler.searchVectorStore(w, r)
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		proxyHandler.forward(w, r)

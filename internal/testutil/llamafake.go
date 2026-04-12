@@ -440,7 +440,7 @@ func fakeLlamaOutputFromChatMessages(messages []map[string]any) string {
 	switch {
 	case strings.Contains(last, "what was my code") && strings.Contains(joined, "my code = 123"):
 		return "123"
-	case strings.Contains(last, "what is the code") && strings.Contains(joined, "code=777"):
+	case strings.Contains(last, "what is the code") && hasFakeCode777Context(joined):
 		return "777"
 	case strings.Contains(last, "say ok and nothing else"):
 		return "OK"
@@ -469,7 +469,7 @@ func fakeStructuredJSONOutput(last, joined string) (string, bool) {
 		return `{"ok":true}`, true
 	case strings.Contains(last, "json object containing answer and count"):
 		return `{"answer":"OK","count":1}`, true
-	case strings.Contains(last, "json object containing code") && strings.Contains(joined, "code=777"):
+	case strings.Contains(last, "json object containing code") && hasFakeCode777Context(joined):
 		return `{"code":777}`, true
 	case strings.Contains(last, "json object containing code") && strings.Contains(joined, "my code = 123"):
 		return `{"code":123}`, true
@@ -525,7 +525,7 @@ func fakeLlamaOutput(messages []fakeLlamaMessage) string {
 	switch {
 	case strings.Contains(last, "what was my code") && strings.Contains(joined, "my code = 123"):
 		return "123"
-	case strings.Contains(last, "what is the code") && strings.Contains(joined, "code=777"):
+	case strings.Contains(last, "what is the code") && hasFakeCode777Context(joined):
 		return "777"
 	case strings.Contains(last, "say ok and nothing else"):
 		return "OK"
@@ -568,7 +568,7 @@ func fakeResponseOutput(input any) string {
 			return "HELLO"
 		case strings.Contains(joined, "what was my code") && strings.Contains(joined, "my code = 123"):
 			return "123"
-		case strings.Contains(joined, "what is the code") && strings.Contains(joined, "code=777"):
+		case strings.Contains(joined, "what is the code") && hasFakeCode777Context(joined):
 			return "777"
 		default:
 			return "UPSTREAM"
@@ -581,6 +581,10 @@ func fakeResponseOutput(input any) string {
 func marshalAny(value any) string {
 	body, _ := json.Marshal(value)
 	return string(body)
+}
+
+func hasFakeCode777Context(text string) bool {
+	return strings.Contains(text, "code=777") || strings.Contains(text, "code 777")
 }
 
 func buildFakeResponse(id, model, output string, request map[string]any) map[string]any {

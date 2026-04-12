@@ -36,6 +36,20 @@
 - `GET /v1/chat/completions`
 - `GET /v1/chat/completions/{completion_id}`
 - `GET /v1/chat/completions/{completion_id}/messages`
+- `POST /v1/files`
+- `GET /v1/files`
+- `GET /v1/files/{file_id}`
+- `GET /v1/files/{file_id}/content`
+- `DELETE /v1/files/{file_id}`
+- `POST /v1/vector_stores`
+- `GET /v1/vector_stores`
+- `GET /v1/vector_stores/{vector_store_id}`
+- `DELETE /v1/vector_stores/{vector_store_id}`
+- `POST /v1/vector_stores/{vector_store_id}/files`
+- `GET /v1/vector_stores/{vector_store_id}/files`
+- `GET /v1/vector_stores/{vector_store_id}/files/{file_id}`
+- `DELETE /v1/vector_stores/{vector_store_id}/files/{file_id}`
+- `POST /v1/vector_stores/{vector_store_id}/search`
 - `POST /v1/responses` with `stream: true` over SSE
 - `GET /v1/responses/{id}?stream=true` with local SSE replay
 - `/healthz`
@@ -69,6 +83,23 @@
   теперь shadow-store-ятся локально и доступны через shim-owned
   `GET /v1/chat/completions`, `GET /v1/chat/completions/{completion_id}`,
   `GET /v1/chat/completions/{completion_id}/messages`
+- локальный retrieval substrate заведен на OpenAI-shaped surface:
+  `POST/GET/DELETE /v1/files`, `GET /v1/files/{id}/content`,
+  `POST/GET/DELETE /v1/vector_stores`,
+  `POST/GET/DELETE /v1/vector_stores/{id}/files`,
+  `POST /v1/vector_stores/{id}/search`
+- local `vector_stores` search уже usable end-to-end без upstream storage:
+  UTF-8 text files chunk-ятся и индексируются локально, search поддерживает
+  attribute filters и deterministic lexical ranking
+- local `/v1/responses` теперь умеет shim-owned `file_search` execution over
+  local `vector_stores` в pragmatic subset:
+  один `file_search` tool, local lexical retrieval, stored/streaming
+  `file_search_call` output item, optional
+  `include=["file_search_call.results"]`, и follow-up turns не ломаются из-за
+  stored tool items в локальном generation context
+- non-text/binary attachments не маскируются под успех: local
+  `vector_store.file` честно возвращает `status=failed` и documented
+  `last_error`
 - усилен bridge для custom tools и `tool_choice`: normalizing, contract tracking, fallback/retry для upstream-ов, которые принимают только `tool_choice=auto`
 - локальные constrained custom tools для supported `grammar` / `regex` subset заведены в local tool loop
 - улучшена canonical error mapping для response/tool-choice ошибок
@@ -98,7 +129,9 @@
 - [x] - docs-backed `mcp_list_tools` generic SSE replay for stored Responses items ([детали](#task-streaming-replay-mcp-list-tools))
 - [ ] - hosted/native tool-specific SSE replay beyond core shim item families ([детали](#task-streaming-replay-hosted))
 - [x] - compatibility для `/responses/compact` и `/responses/input_tokens` ([детали](#task-compaction-and-token-counting))
-- [ ] - retrieval-compatible слой: vector stores + `file_search` ([детали](#task-retrieval-layer))
+- [x] - local retrieval substrate: files + vector stores + lexical search ([детали](#task-retrieval-substrate-local))
+- [x] - retrieval-compatible local `file_search` execution inside `/v1/responses` ([детали](#task-retrieval-layer))
+- [ ] - true semantic/vector retrieval backend behind local `vector_stores` ([детали](#task-retrieval-semantic-backend))
 - [ ] - parity для hosted/native Responses tools (`web_search`, `computer_use`, `code_interpreter`, `image_generation`, `remote MCP`, `tool_search`) ([детали](#task-hosted-tools-parity))
 - [x] - local stored Chat Completions read surface for explicit `store=true` non-streaming proxy completions ([детали](#task-chat-stored-surface-local))
 - [x] - `/readyz` checks SQLite and upstream llama backend readiness ([детали](#task-ops-hardening))
@@ -860,6 +893,36 @@ Definition of done:
 - [Token counting](https://developers.openai.com/api/docs/guides/token-counting#api-reference)
 - [Conversation state](https://developers.openai.com/api/docs/guides/conversation-state)
 
+## <a id="task-retrieval-substrate-local"></a>Local retrieval substrate: files + vector stores + lexical search
+
+Что уже закрыто:
+
+- shim-owned file substrate:
+  `POST /v1/files`, `GET /v1/files`, `GET /v1/files/{id}`,
+  `GET /v1/files/{id}/content`, `DELETE /v1/files/{id}`
+- local `vector_stores` CRUD subset:
+  `POST /v1/vector_stores`, `GET /v1/vector_stores`,
+  `GET /v1/vector_stores/{id}`, `DELETE /v1/vector_stores/{id}`
+- local `vector_store.file` subset:
+  `POST /v1/vector_stores/{id}/files`,
+  `GET /v1/vector_stores/{id}/files`,
+  `GET /v1/vector_stores/{id}/files/{file_id}`,
+  `DELETE /v1/vector_stores/{id}/files/{file_id}`
+- `POST /v1/vector_stores/{id}/search`
+- current search semantics are explicit and docs-consistent for a pragmatic MVP:
+  deterministic lexical chunk search over valid UTF-8 text content with
+  attribute filtering and score-threshold filtering
+- binary/non-text files are surfaced as failed `vector_store.file` attachments,
+  not silently treated as searchable
+
+Definition of done:
+
+- local file/vector-store/search surface is usable end-to-end without upstream
+  OpenAI storage
+- OpenAPI/backlog wording clearly labels this as local retrieval-compatible
+  subset, not hosted semantic-search parity
+- tests cover text happy path and failed binary indexing path
+
 ## <a id="task-retrieval-layer"></a>Retrieval-compatible слой: vector stores + `file_search`
 
 Почему это важно:
@@ -868,23 +931,89 @@ Definition of done:
 - официальный `file_search` завязан на `vector_stores`, files и annotations/citations
 - это отдельный слой поверх episodic memory, а не замена conversation state
 
-Что входит:
+Что закрыто в pragmatic subset:
 
-- минимальный roadmap для `vector_stores`
-- `vector_stores/{id}/search`
-- `file_search`-compatible tool contract внутри `responses`
-- metadata filtering и citation shape
+- local retrieval substrate подключен к `file_search` execution path внутри
+  `/v1/responses`
+- shim-local path поддерживает один `file_search` tool с
+  `vector_store_ids`, `filters`, `max_num_results`,
+  `ranking_options.score_threshold` и compatibility validation для
+  ranker/tool_choice subset
+- non-streaming и streaming local `/v1/responses` requests возвращают
+  `file_search_call` + assistant `message`, а streaming replay использует уже
+  существующую tool-specific SSE family
+- `include=["file_search_call.results"]` теперь реально меняет stored/local
+  response payload, а не принимается как no-op
+- follow-up local turns по `previous_response_id` после stored
+  `file_search_call` не ломаются из-за tool items в generation context
+
+Что осталось открытым:
+
+- hosted citations/annotations parity: local subset не синтезирует
+  OpenAI-shaped `file_citation` annotations в final assistant `message`
+- hosted ranking parity: локальный path делает deterministic lexical search и
+  возвращает normalized snippets, а не managed semantic ranking/embedding
+  results OpenAI
+- расширить beyond UTF-8 text MVP там, где это реально нужно, не притворяясь
+  hosted embeddings parity
+- отдельно решить, нужен ли позже semantic ranking/embeddings backend behind
+  this contract, или lexical MVP достаточно для `prefer_local`
 
 Definition of done:
 
-- есть четко описанный MVP subset, а не “когда-нибудь сделаем retrieval”
-- архитектурно понятно, где hosted-tool semantics эмулируем, а где честно говорим `not supported`
-- storage choice для local-first (`sqlite-vec`) и later production (`pgvector`) описан заранее
+- `file_search` tool contract inside `/v1/responses` реально исполняется на
+  local retrieval substrate
+- backlog/OpenAPI wording честно отличают retrieval-compatible local execution
+  от hosted OpenAI semantic-search parity
+- архитектурно понятно, где hosted-tool semantics эмулируем, а где честно
+  говорим `not supported`
 
 Полезные reference:
 
 - [File search](https://developers.openai.com/api/docs/guides/tools-file-search)
 - [Retrieval guide](https://developers.openai.com/api/docs/guides/retrieval)
+
+## <a id="task-retrieval-semantic-backend"></a>True semantic/vector retrieval backend behind local `vector_stores`
+
+Почему это отдельный task, а не хвост текущего:
+
+- текущий local retrieval layer уже полезен и закрывает shim-owned contract
+  path для `files`, `vector_stores` и local `file_search`
+- переход от lexical MVP к настоящему semantic/vector backend меняет не только
+  scoring, но и ingestion/indexing/runtime architecture
+- это уже не “дожать пару полей”, а отдельная backend-capability milestone
+
+Что должно появиться:
+
+- настоящая embedding/vector indexing pipeline за local `vector_stores`
+- retrieval path, который ищет по embeddings similarity, а не только по
+  tokenized lexical chunks
+- optional reranking layer поверх dense/sparse retrieval, если она окупается
+- migration path, при котором внешний OpenAI-shaped surface не меняется:
+  `files`, `vector_stores`, `vector_store.search`, `file_search`
+  остаются теми же, меняется только engine под ними
+
+Что уже зафиксировано как сознательное ограничение текущего state:
+
+- local `vector_stores` сейчас contract-shaped, но не являются настоящим
+  managed vector database
+- local `file_search` использует deterministic lexical retrieval over
+  normalized UTF-8 chunks
+- final assistant `message` не претендует на hosted `file_citation` parity
+
+Definition of done:
+
+- local `vector_stores` используют реальный semantic/vector search backend
+- backlog/OpenAPI wording можно ужесточить с “lexical MVP” до
+  “semantic retrieval subset” без overclaim про full OpenAI hosted parity
+- migration не ломает уже существующий external shim contract
+
+Практический decomposition, когда вернемся:
+
+- phase 1: embeddings generation + local chunk/index schema
+- phase 2: search path switch from lexical-only to dense or hybrid retrieval
+- phase 3: optional reranking and better result shaping for `file_search_call`
+- phase 4: revisit citations/annotations parity for final assistant messages
 
 ## <a id="task-hosted-tools-parity"></a>Parity для hosted/native Responses tools
 

@@ -78,19 +78,20 @@ func (s *ResponseService) Create(ctx context.Context, input CreateResponseInput)
 	if err != nil {
 		return domain.Response{}, err
 	}
-	if err := domain.ValidateLocalShimItems(prepared.ContextItems); err != nil {
+	generationContext, err := domain.ProjectLocalTextGenerationContext(prepared.ContextItems)
+	if err != nil {
 		return domain.Response{}, err
 	}
-	if _, err := s.PrepareLocalResponseText(input, prepared.ContextItems); err != nil {
+	if _, err := s.PrepareLocalResponseText(input, generationContext); err != nil {
 		return domain.Response{}, err
 	}
 
-	outputText, err := s.generator.Generate(ctx, input.Model, prepared.ContextItems, input.GenerationOptions)
+	outputText, err := s.generator.Generate(ctx, input.Model, generationContext, input.GenerationOptions)
 	if err != nil {
 		return domain.Response{}, err
 	}
 
-	return s.completeCreate(ctx, prepared, input, outputText)
+	return s.completeCreate(ctx, prepared, generationContext, input, outputText)
 }
 
 func (s *ResponseService) PrepareCreateContext(ctx context.Context, input CreateResponseInput) (PreparedResponseContext, error) {
@@ -336,10 +337,11 @@ func (s *ResponseService) CreateStream(ctx context.Context, input CreateResponse
 	if err != nil {
 		return domain.Response{}, err
 	}
-	if err := domain.ValidateLocalShimItems(prepared.ContextItems); err != nil {
+	generationContext, err := domain.ProjectLocalTextGenerationContext(prepared.ContextItems)
+	if err != nil {
 		return domain.Response{}, err
 	}
-	textConfig, err := s.PrepareLocalResponseText(input, prepared.ContextItems)
+	textConfig, err := s.PrepareLocalResponseText(input, generationContext)
 	if err != nil {
 		return domain.Response{}, err
 	}
@@ -371,7 +373,7 @@ func (s *ResponseService) CreateStream(ctx context.Context, input CreateResponse
 	}
 
 	var builder strings.Builder
-	err = s.generator.GenerateStream(ctx, input.Model, prepared.ContextItems, input.GenerationOptions, func(delta string) error {
+	err = s.generator.GenerateStream(ctx, input.Model, generationContext, input.GenerationOptions, func(delta string) error {
 		if delta == "" {
 			return nil
 		}
@@ -390,7 +392,7 @@ func (s *ResponseService) CreateStream(ctx context.Context, input CreateResponse
 		return domain.Response{}, &llama.InvalidResponseError{Message: "llama stream content was empty"}
 	}
 
-	return s.completeCreate(ctx, prepared, input, outputText)
+	return s.completeCreate(ctx, prepared, generationContext, input, outputText)
 }
 
 func (s *ResponseService) prepareCreate(ctx context.Context, input CreateResponseInput) (preparedResponse, error) {
@@ -414,10 +416,10 @@ func (s *ResponseService) prepareCreate(ctx context.Context, input CreateRespons
 	}, nil
 }
 
-func (s *ResponseService) completeCreate(ctx context.Context, prepared preparedResponse, input CreateResponseInput, outputText string) (domain.Response, error) {
+func (s *ResponseService) completeCreate(ctx context.Context, prepared preparedResponse, generationContext []domain.Item, input CreateResponseInput, outputText string) (domain.Response, error) {
 	response := domain.NewResponse(prepared.ResponseID, input.Model, outputText, input.PreviousResponseID, input.ConversationID, prepared.CreatedAt.Unix())
 	var err error
-	response, err = s.FinalizeLocalResponse(input, prepared.ContextItems, response)
+	response, err = s.FinalizeLocalResponse(input, generationContext, response)
 	if err != nil {
 		return domain.Response{}, err
 	}
