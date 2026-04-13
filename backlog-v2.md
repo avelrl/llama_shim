@@ -1,6 +1,6 @@
 # Backlog / roadmap toward v2
 
-Актуализировано по состоянию на 12 апреля 2026 на основе:
+Актуализировано по состоянию на 13 апреля 2026 на основе:
 
 - текущего состояния репозитория, маршрутов и тестов
 - текущего staged diff
@@ -12,6 +12,7 @@
   [Function calling](https://developers.openai.com/api/docs/guides/function-calling),
   [Structured outputs](https://developers.openai.com/api/docs/guides/structured-outputs),
   [File search](https://developers.openai.com/api/docs/guides/tools-file-search),
+  [Tool search](https://developers.openai.com/api/docs/guides/tools-tool-search),
   [Compaction](https://developers.openai.com/api/docs/guides/conversation-state#compaction),
   [Token counting](https://developers.openai.com/api/docs/guides/token-counting#api-reference)
 
@@ -78,6 +79,9 @@
 - Conversations surface теперь включает `GET /{id}`, `POST /{id}/items`, `GET /{id}/items/{item_id}`, `DELETE /{id}/items/{item_id}`
 - `POST /v1/conversations` и `POST /v1/conversations/{id}/items` синхронизированы с official limits/shape (`items`, `metadata`, batch append)
 - `text.format` поддерживает `text`, `json_object` и ограниченный `json_schema` subset
+- docs-backed `tool_search` passthrough contract now preserves hosted/client
+  `tool_search_call` / `tool_search_output` items and generic stored replay
+  without inventing unsupported `response.tool_search.*` SSE events
 - `/readyz` теперь реально проверяет SQLite и upstream llama backend, а при
   `sqlite_vec` + readiness-aware embedder ещё и retrieval embedder, а не просто
   отвечает `200`
@@ -157,6 +161,7 @@
 - [x] - trace-backed `image_generation_call` pre-final SSE replay for stored Responses items ([детали](#task-streaming-replay-image-generation))
 - [x] - docs-backed `mcp_approval_request` generic SSE replay for stored Responses items ([детали](#task-streaming-replay-mcp-approval-request))
 - [x] - docs-backed `mcp_list_tools` generic SSE replay for stored Responses items ([детали](#task-streaming-replay-mcp-list-tools))
+- [x] - docs-backed `tool_search` passthrough contract and generic SSE replay for stored Responses items ([детали](#task-streaming-replay-tool-search))
 - [ ] - hosted/native tool-specific SSE replay beyond core shim item families ([детали](#task-streaming-replay-hosted))
 - [x] - compatibility для `/responses/compact` и `/responses/input_tokens` ([детали](#task-compaction-and-token-counting))
 - [x] - local retrieval substrate: files + vector stores + lexical search ([детали](#task-retrieval-substrate-local))
@@ -845,6 +850,54 @@ Definition of done:
 - synthetic replay не invent-ит dedicated SSE family без docs/trace support
 - backlog/OpenAPI wording честно фиксируют docs-backed generic-only scope
 
+## <a id="task-streaming-replay-tool-search"></a>Docs-backed `tool_search` passthrough contract and generic SSE replay for stored Responses items
+
+Почему это отдельно:
+
+- official Tool Search guide на 13 апреля 2026 уже задаёт request/response
+  contract для hosted и client execution modes, включая output item types
+  `tool_search_call` и `tool_search_output`
+- при этом public Responses streaming docs не дают отдельную
+  `response.tool_search.*` SSE family, поэтому invent-ить dedicated replay
+  events без fixture evidence было бы overclaim
+- pragmatic полезный шаг здесь не shim-local runtime, а честный
+  passthrough/store/retrieve contract без потери typed items
+
+Что входит:
+
+- proxy/upstream create path accepts hosted and client `tool_search`
+- client follow-up input accepts `tool_search_output`
+- stored responses preserve `tool_search_call` / `tool_search_output` as typed
+  items
+- stored retrieve replay и completed-only create-stream normalization replay
+  these item families only through generic `response.output_item.added` /
+  `response.output_item.done`
+
+Что не входит:
+
+- shim-local `tool_search` runtime
+- dedicated `response.tool_search.*` SSE family without live trace support
+- broader hosted/native `tool_search` runtime parity beyond passthrough/store
+  semantics
+
+Статус на 13 апреля 2026:
+
+- закрыт docs-backed contract slice: proxy/upstream hosted/client `tool_search`,
+  client `tool_search_output` follow-up, stored/retrieve generic replay
+- shim intentionally does not invent unsupported `response.tool_search.*`
+  events
+- coverage есть на hosted/client proxy create flows, completed-only
+  normalization, и stored retrieve replay
+
+Definition of done:
+
+- fake upstream and integration coverage prove hosted `tool_search`
+  passthrough and client `tool_search_output` follow-up
+- stored retrieve replay does not lose `tool_search_call` /
+  `tool_search_output`
+- backlog/OpenAPI wording stays conservative and does not claim shim-local
+  runtime or dedicated `response.tool_search.*` events
+
 ## <a id="task-streaming-replay-hosted"></a>Hosted/native tool-specific SSE replay beyond core shim item families
 
 Почему это отдельно:
@@ -873,6 +926,9 @@ Definition of done:
 - docs-backed generic replay для stored `mcp_list_tools` вынесен в закрытый
   item выше; dedicated `response.mcp_list_tools.*` family не заявляется без
   trace/reference support
+- docs-backed `tool_search` passthrough contract и generic replay вынесены в
+  закрытый item выше; shim-local runtime и dedicated
+  `response.tool_search.*` family без traces не заявляются
 - для remaining hosted/native families без live source event log replay все
   еще может деградировать до generic `response.output_item.*`
 
@@ -1255,7 +1311,8 @@ Definition of done:
   dev-only unsafe-host `code_interpreter`; remaining work здесь это не
   “впервые сделать tool”, а довести boundaries/runtime parity осознанно
 - решить по каждому tool type, где shim эмулирует hosted semantics локально, а где честно возвращает `not supported`
-- добавить `tool_search`-совместимый контракт и output item types `tool_search_call` / `tool_search_output`
+- `tool_search` passthrough contract и generic stored replay уже закрыты
+  отдельным item выше; remaining work здесь это runtime/parity beyond that
 - зафиксировать parity по reasoning items / reasoning summaries для tool-heavy flows, где это влияет на качество follow-up шагов
 - описать границы между local-first shim tools, passthrough/proxy режимом и controlled fallback policy
 

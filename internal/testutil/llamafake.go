@@ -744,6 +744,9 @@ func buildFakeResponseForTools(id, model string, request map[string]any) (map[st
 			},
 		}, http.StatusBadRequest, "", true
 	}
+	if requestHasToolSearchOutput(request["input"]) {
+		return buildFakeToolSearchFollowupFunctionResponse(id, model, request["input"]), http.StatusOK, "function_call", true
+	}
 	if requestHasToolOutput(request["input"]) {
 		return buildFakeResponse(id, model, fakeToolOutputReply(request["input"]), request), http.StatusOK, "message", true
 	}
@@ -782,6 +785,14 @@ func buildFakeResponseForTools(id, model string, request map[string]any) (map[st
 				"message": "tool type custom not supported",
 			},
 		}, http.StatusBadRequest, "", true
+	}
+	if execution, ok := detectToolSearchExecution(tools); ok {
+		switch execution {
+		case "client":
+			return buildFakeClientToolSearchCallResponse(id, model), http.StatusOK, "message", true
+		default:
+			return buildFakeHostedToolSearchResponse(id, model, tools), http.StatusOK, "message", true
+		}
 	}
 
 	firstTool, ok := tools[0].(map[string]any)
@@ -837,7 +848,7 @@ func firstUnsupportedToolType(tools []any) string {
 			continue
 		}
 		switch strings.TrimSpace(asString(payload["type"])) {
-		case "function", "custom", "custom_tool":
+		case "function", "custom", "custom_tool", "tool_search", "namespace":
 			continue
 		case "":
 			continue
@@ -932,12 +943,187 @@ func buildFakeCompletedPlanLoopResponse(id, model string) map[string]any {
 	}
 }
 
+func buildFakeHostedToolSearchResponse(id, model string, tools []any) map[string]any {
+	loadedTool := fakeDeferredToolForToolSearch(tools)
+	toolName := strings.TrimSpace(asString(loadedTool["name"]))
+	if toolName == "" {
+		toolName = "get_shipping_eta"
+	}
+	return map[string]any{
+		"id":          id,
+		"object":      "response",
+		"model":       model,
+		"output_text": "",
+		"output": []map[string]any{
+			{
+				"id":        "tsc_" + id,
+				"type":      "tool_search_call",
+				"execution": "server",
+				"call_id":   nil,
+				"status":    "completed",
+				"arguments": map[string]any{
+					"goal": "Find the shipping ETA tool for order_42.",
+				},
+			},
+			{
+				"id":        "tso_" + id,
+				"type":      "tool_search_output",
+				"execution": "server",
+				"call_id":   nil,
+				"status":    "completed",
+				"tools":     []map[string]any{loadedTool},
+			},
+			{
+				"id":        "fc_" + id,
+				"type":      "function_call",
+				"call_id":   "call_" + id,
+				"name":      toolName,
+				"namespace": toolName,
+				"arguments": fakeToolArguments(toolName),
+				"status":    "completed",
+			},
+		},
+	}
+}
+
+func buildFakeClientToolSearchCallResponse(id, model string) map[string]any {
+	return map[string]any{
+		"id":          id,
+		"object":      "response",
+		"model":       model,
+		"output_text": "",
+		"output": []map[string]any{
+			{
+				"id":        "tsc_" + id,
+				"type":      "tool_search_call",
+				"execution": "client",
+				"call_id":   "call_" + id,
+				"status":    "completed",
+				"arguments": map[string]any{
+					"goal": "Find the shipping ETA tool for order_42.",
+				},
+			},
+		},
+	}
+}
+
+func buildFakeToolSearchFollowupFunctionResponse(id, model string, input any) map[string]any {
+	loadedTool := fakeLoadedToolFromToolSearchOutput(input)
+	toolName := strings.TrimSpace(asString(loadedTool["name"]))
+	if toolName == "" {
+		toolName = "get_shipping_eta"
+	}
+	return buildFakeFunctionToolCallResponse(id, model, toolName, fakeToolArguments(toolName))
+}
+
+func detectToolSearchExecution(tools []any) (string, bool) {
+	for _, rawTool := range tools {
+		tool, ok := rawTool.(map[string]any)
+		if !ok {
+			continue
+		}
+		if strings.TrimSpace(asString(tool["type"])) != "tool_search" {
+			continue
+		}
+		execution := strings.ToLower(strings.TrimSpace(asString(tool["execution"])))
+		if execution == "client" {
+			return "client", true
+		}
+		return "server", true
+	}
+	return "", false
+}
+
+func fakeDeferredToolForToolSearch(tools []any) map[string]any {
+	for _, rawTool := range tools {
+		tool, ok := rawTool.(map[string]any)
+		if !ok {
+			continue
+		}
+		switch strings.TrimSpace(asString(tool["type"])) {
+		case "function":
+			if deferLoading, ok := tool["defer_loading"].(bool); ok && deferLoading {
+				return cloneMap(tool)
+			}
+		case "namespace":
+			if nested := firstNamespaceDeferredTool(tool); len(nested) > 0 {
+				return nested
+			}
+		}
+	}
+	return map[string]any{
+		"type":         "function",
+		"name":         "get_shipping_eta",
+		"description":  "Look up shipping ETA details for an order.",
+		"defer_loading": true,
+		"parameters": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"order_id": map[string]any{"type": "string"},
+			},
+			"required":             []any{"order_id"},
+			"additionalProperties": false,
+		},
+	}
+}
+
+func firstNamespaceDeferredTool(tool map[string]any) map[string]any {
+	rawTools, ok := tool["tools"].([]any)
+	if !ok {
+		return nil
+	}
+	for _, rawNested := range rawTools {
+		nested, ok := rawNested.(map[string]any)
+		if !ok {
+			continue
+		}
+		cloned := cloneMap(nested)
+		if strings.TrimSpace(asString(cloned["type"])) == "" {
+			cloned["type"] = "function"
+		}
+		if strings.TrimSpace(asString(cloned["name"])) != "" {
+			return cloned
+		}
+	}
+	return nil
+}
+
+func fakeLoadedToolFromToolSearchOutput(input any) map[string]any {
+	items, ok := input.([]any)
+	if !ok {
+		return fakeDeferredToolForToolSearch(nil)
+	}
+	for _, entry := range items {
+		item, ok := entry.(map[string]any)
+		if !ok || strings.TrimSpace(asString(item["type"])) != "tool_search_output" {
+			continue
+		}
+		tools, ok := item["tools"].([]any)
+		if !ok {
+			continue
+		}
+		for _, rawTool := range tools {
+			tool, ok := rawTool.(map[string]any)
+			if !ok {
+				continue
+			}
+			if strings.TrimSpace(asString(tool["name"])) == "" {
+				continue
+			}
+			return cloneMap(tool)
+		}
+	}
+	return fakeDeferredToolForToolSearch(nil)
+}
+
 func fakeToolArguments(name string) string {
 	switch name {
 	case "code_exec":
 		return `{"input":"print(\"hello world\")"}`
 	case "math_exp":
 		return `{"input":"4 + 4"}`
+	case "get_shipping_eta":
+		return `{"order_id":"order_42"}`
 	case "exec_command":
 		return `{"cmd":"cd /tmp/snake_test && go test ./game -v 2>&1","sandbox_permissions":"require_escalated","justification":"Need approval to run tests"}`
 	case "add":
@@ -1222,6 +1408,23 @@ func requestHasToolOutput(input any) bool {
 		}
 		switch strings.TrimSpace(asString(item["type"])) {
 		case "function_call_output", "custom_tool_call_output":
+			return true
+		}
+	}
+	return false
+}
+
+func requestHasToolSearchOutput(input any) bool {
+	items, ok := input.([]any)
+	if !ok {
+		return false
+	}
+	for _, entry := range items {
+		item, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		if strings.TrimSpace(asString(item["type"])) == "tool_search_output" {
 			return true
 		}
 	}

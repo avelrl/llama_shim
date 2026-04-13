@@ -1431,7 +1431,7 @@ func summarizeResponseEnvelopeForLog(responsePayload map[string]any) []any {
 				continue
 			}
 			switch strings.TrimSpace(asString(item["type"])) {
-			case "function_call", "custom_tool_call", "mcp_call", "mcp_tool_call", "mcp_approval_request", "mcp_list_tools", "web_search_call", "file_search_call", "code_interpreter_call", "computer_call", "image_generation_call":
+			case "function_call", "custom_tool_call", "mcp_call", "mcp_tool_call", "mcp_approval_request", "mcp_list_tools", "tool_search_call", "tool_search_output", "web_search_call", "file_search_call", "code_interpreter_call", "computer_call", "image_generation_call":
 				toolCount++
 			case "message":
 				messageCount++
@@ -1543,7 +1543,7 @@ func inProgressOutputItemSnapshot(item map[string]any) map[string]any {
 
 func isSyntheticReplayOutputItemType(itemType string) bool {
 	switch strings.TrimSpace(itemType) {
-	case "function_call", "custom_tool_call", "mcp_call", "mcp_tool_call", "mcp_approval_request", "mcp_list_tools", "web_search_call", "file_search_call", "code_interpreter_call", "computer_call", "image_generation_call":
+	case "function_call", "custom_tool_call", "mcp_call", "mcp_tool_call", "mcp_approval_request", "mcp_list_tools", "tool_search_call", "tool_search_output", "web_search_call", "file_search_call", "code_interpreter_call", "computer_call", "image_generation_call":
 		return true
 	default:
 		return false

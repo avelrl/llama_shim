@@ -1236,6 +1236,198 @@ func TestResponsesGetStreamReplaysMCPListToolsAsGenericOutputItemReplay(t *testi
 	require.False(t, hasStatus)
 }
 
+func TestResponsesCreateHostedToolSearchProxyPassthrough(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	response := postResponse(t, app, map[string]any{
+		"model": "gpt-5.4",
+		"store": true,
+		"input": "Find the shipping ETA tool first, then use it for order_42.",
+		"tools": []map[string]any{
+			{
+				"type":        "tool_search",
+				"description": "Find the project-specific tools needed to continue the task.",
+			},
+			{
+				"type":          "function",
+				"name":          "get_shipping_eta",
+				"description":   "Look up shipping ETA details for an order.",
+				"defer_loading": true,
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"order_id": map[string]any{"type": "string"},
+					},
+					"required":             []string{"order_id"},
+					"additionalProperties": false,
+				},
+			},
+		},
+		"parallel_tool_calls": false,
+	})
+
+	require.Len(t, response.Output, 3)
+	require.Equal(t, "tool_search_call", response.Output[0].Type)
+	require.Equal(t, "tool_search_output", response.Output[1].Type)
+	require.Equal(t, "function_call", response.Output[2].Type)
+
+	searchCall := response.Output[0].Map()
+	require.Equal(t, "server", asStringAny(searchCall["execution"]))
+	callID, hasCallID := searchCall["call_id"]
+	require.True(t, hasCallID)
+	require.Nil(t, callID)
+
+	searchOutput := response.Output[1].Map()
+	require.Equal(t, "server", asStringAny(searchOutput["execution"]))
+	loadedTools, ok := searchOutput["tools"].([]any)
+	require.True(t, ok)
+	require.Len(t, loadedTools, 1)
+	firstTool, ok := loadedTools[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "get_shipping_eta", asStringAny(firstTool["name"]))
+
+	functionCall := response.Output[2].Map()
+	require.Equal(t, "get_shipping_eta", asStringAny(functionCall["name"]))
+	require.Equal(t, `{"order_id":"order_42"}`, asStringAny(functionCall["arguments"]))
+
+	got := getResponse(t, app, response.ID)
+	require.Len(t, got.Output, 3)
+	require.Equal(t, "tool_search_call", got.Output[0].Type)
+	require.Equal(t, "tool_search_output", got.Output[1].Type)
+	require.Equal(t, "function_call", got.Output[2].Type)
+}
+
+func TestResponsesCreateClientToolSearchFollowupLoadsDeferredFunction(t *testing.T) {
+	app := testutil.NewTestAppWithResponsesMode(t, config.ResponsesModePreferUpstream)
+
+	first := postResponse(t, app, map[string]any{
+		"model": "gpt-5.4",
+		"store": true,
+		"input": "Find the shipping ETA tool first, then use it for order_42.",
+		"tools": []map[string]any{
+			{
+				"type":        "tool_search",
+				"execution":   "client",
+				"description": "Find the project-specific tools needed to continue the task.",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"goal": map[string]any{"type": "string"},
+					},
+					"required":             []string{"goal"},
+					"additionalProperties": false,
+				},
+			},
+		},
+		"parallel_tool_calls": false,
+	})
+
+	require.Len(t, first.Output, 1)
+	require.Equal(t, "tool_search_call", first.Output[0].Type)
+
+	searchCall := first.Output[0].Map()
+	require.Equal(t, "client", asStringAny(searchCall["execution"]))
+	callID := asStringAny(searchCall["call_id"])
+	require.NotEmpty(t, callID)
+	arguments, ok := searchCall["arguments"].(map[string]any)
+	require.True(t, ok)
+	require.Contains(t, asStringAny(arguments["goal"]), "shipping ETA")
+
+	second := postResponse(t, app, map[string]any{
+		"model": "gpt-5.4",
+		"store": true,
+		"input": []any{
+			first.Output[0],
+			map[string]any{
+				"type":      "tool_search_output",
+				"execution": "client",
+				"call_id":   callID,
+				"status":    "completed",
+				"tools": []map[string]any{
+					{
+						"type":          "function",
+						"name":          "get_shipping_eta",
+						"description":   "Look up shipping ETA details for an order.",
+						"defer_loading": true,
+						"parameters": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"order_id": map[string]any{"type": "string"},
+							},
+							"required":             []string{"order_id"},
+							"additionalProperties": false,
+						},
+					},
+				},
+			},
+		},
+	})
+
+	require.Len(t, second.Output, 1)
+	require.Equal(t, "function_call", second.Output[0].Type)
+	functionCall := second.Output[0].Map()
+	require.Equal(t, "get_shipping_eta", asStringAny(functionCall["name"]))
+	require.Equal(t, `{"order_id":"order_42"}`, asStringAny(functionCall["arguments"]))
+
+	inputItems := getResponseInputItemsWithQuery(t, app, second.ID, "?order=asc")
+	require.Len(t, inputItems.Data, 2)
+	require.Equal(t, "tool_search_call", asStringAny(inputItems.Data[0]["type"]))
+	require.Equal(t, "tool_search_output", asStringAny(inputItems.Data[1]["type"]))
+	require.Equal(t, callID, asStringAny(inputItems.Data[1]["call_id"]))
+}
+
+func TestResponsesGetStreamReplaysToolSearchAsGenericOutputItemReplay(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	searchCall, err := domain.NewItem([]byte(`{"id":"tsc_test","type":"tool_search_call","execution":"client","call_id":"call_abc123","status":"completed","arguments":{"goal":"Find the shipping ETA tool for order_42."}}`))
+	require.NoError(t, err)
+	searchOutput, err := domain.NewItem([]byte(`{"id":"tso_test","type":"tool_search_output","execution":"client","call_id":"call_abc123","status":"completed","tools":[{"type":"function","name":"get_shipping_eta","description":"Look up shipping ETA details for an order.","defer_loading":true,"parameters":{"type":"object","properties":{"order_id":{"type":"string"}},"required":["order_id"],"additionalProperties":false}}]}`))
+	require.NoError(t, err)
+
+	stored := domain.StoredResponse{
+		ID:                   "resp_tool_search",
+		Model:                "gpt-5.4",
+		RequestJSON:          `{"model":"gpt-5.4","store":true,"input":"Find the shipping ETA tool first, then use it for order_42."}`,
+		ResponseJSON:         `{"id":"resp_tool_search","object":"response","created_at":1712059200,"status":"completed","completed_at":1712059200,"error":null,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"model":"gpt-5.4","output":[{"id":"tsc_test","type":"tool_search_call","execution":"client","call_id":"call_abc123","status":"completed","arguments":{"goal":"Find the shipping ETA tool for order_42."}},{"id":"tso_test","type":"tool_search_output","execution":"client","call_id":"call_abc123","status":"completed","tools":[{"type":"function","name":"get_shipping_eta","description":"Look up shipping ETA details for an order.","defer_loading":true,"parameters":{"type":"object","properties":{"order_id":{"type":"string"}},"required":["order_id"],"additionalProperties":false}}]}],"parallel_tool_calls":false,"previous_response_id":null,"reasoning":{"effort":null,"summary":null},"store":true,"temperature":1.0,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[],"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{},"output_text":""}`,
+		NormalizedInputItems: []domain.Item{domain.NewInputTextMessage("user", "Find the shipping ETA tool first, then use it for order_42.")},
+		EffectiveInputItems:  []domain.Item{domain.NewInputTextMessage("user", "Find the shipping ETA tool first, then use it for order_42.")},
+		Output:               []domain.Item{searchCall, searchOutput},
+		OutputText:           "",
+		Store:                true,
+		CreatedAt:            "2026-04-13T12:00:00Z",
+		CompletedAt:          "2026-04-13T12:00:01Z",
+	}
+	require.NoError(t, app.Store.SaveResponse(context.Background(), stored))
+
+	req, err := http.NewRequest(http.MethodGet, app.Server.URL+"/v1/responses/resp_tool_search?stream=true", nil)
+	require.NoError(t, err)
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	events := readSSEEvents(t, resp.Body)
+	require.Contains(t, eventTypes(events), "response.output_item.added")
+	require.Contains(t, eventTypes(events), "response.output_item.done")
+	for _, eventType := range eventTypes(events) {
+		require.NotContains(t, eventType, "response.tool_search")
+	}
+
+	added := findEvents(events, "response.output_item.added")
+	require.Len(t, added, 2)
+	require.Equal(t, "tool_search_call", asStringAny(added[0].Data["item"].(map[string]any)["type"]))
+	require.Equal(t, "in_progress", asStringAny(added[0].Data["item"].(map[string]any)["status"]))
+	require.Equal(t, "tool_search_output", asStringAny(added[1].Data["item"].(map[string]any)["type"]))
+	require.Equal(t, "in_progress", asStringAny(added[1].Data["item"].(map[string]any)["status"]))
+
+	done := findEvents(events, "response.output_item.done")
+	require.Len(t, done, 2)
+	require.Equal(t, "tool_search_call", asStringAny(done[0].Data["item"].(map[string]any)["type"]))
+	require.Equal(t, "completed", asStringAny(done[0].Data["item"].(map[string]any)["status"]))
+	require.Equal(t, "tool_search_output", asStringAny(done[1].Data["item"].(map[string]any)["type"]))
+	require.Equal(t, "completed", asStringAny(done[1].Data["item"].(map[string]any)["status"]))
+}
+
 func TestResponsesGetStreamSupportsStartingAfter(t *testing.T) {
 	app := testutil.NewTestApp(t)
 

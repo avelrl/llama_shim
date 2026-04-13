@@ -197,6 +197,12 @@ paths:
           `response.output_text.annotation.added` events when the final
           assistant message contains annotations; this is a pragmatic replay
           subset, not a claim of exact hosted annotation placement parity
+        - docs-backed proxy/upstream contract accepts hosted and client
+          `tool_search`; client follow-up may send `tool_search_output`
+          items in `input`, and upstream-returned `tool_search_call` /
+          `tool_search_output` items are preserved as typed response items;
+          shim does not yet claim a shim-local `tool_search` runtime in
+          `responses.mode=local_only`
         - live upstream traces now confirm that ordinary Python/tool errors in
           Code Interpreter complete as `response.status=completed` with
           `code_interpreter_call.status=completed`, empty `outputs`, no
@@ -626,6 +632,12 @@ paths:
           `server_label` plus imported `tools` list, does not invent a
           dedicated `response.mcp_list_tools.*` SSE family, and does not add a
           synthetic `status` field when the documented item has none
+        - docs-backed stored `tool_search_call` and `tool_search_output`
+          items replay only through generic `response.output_item.*`; shim
+          preserves documented `execution`, `call_id`, `arguments`, and
+          loaded `tools`, does not invent a dedicated
+          `response.tool_search.*` SSE family, and replays `status` as
+          synthetic `in_progress` only on `response.output_item.added`
         - other hosted/native tool item families may still fall back to
           generic `response.output_item.*` replay
       parameters:

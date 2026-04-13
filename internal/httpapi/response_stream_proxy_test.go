@@ -1041,3 +1041,86 @@ func TestNormalizeCompletedToolCallEventSynthesizesMCPListToolsGenericReplay(t *
 	require.True(t, ok)
 	require.Equal(t, "mcpl_test", asString(finalItem["id"]))
 }
+
+func TestNormalizeCompletedToolCallEventSynthesizesToolSearchGenericReplay(t *testing.T) {
+	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, nil)
+
+	before, eventType, payload := proxy.normalizeCompletedToolCallEvent("response.completed", map[string]any{
+		"type": "response.completed",
+		"response": map[string]any{
+			"id":     "resp_proxy_tool_search",
+			"object": "response",
+			"model":  "gpt-5.4",
+			"output": []any{
+				map[string]any{
+					"id":        "tsc_test",
+					"type":      "tool_search_call",
+					"execution": "client",
+					"call_id":   "call_abc123",
+					"status":    "completed",
+					"arguments": map[string]any{
+						"goal": "Find the shipping ETA tool for order_42.",
+					},
+				},
+				map[string]any{
+					"id":        "tso_test",
+					"type":      "tool_search_output",
+					"execution": "client",
+					"call_id":   "call_abc123",
+					"status":    "completed",
+					"tools": []any{
+						map[string]any{
+							"type":         "function",
+							"name":         "get_shipping_eta",
+							"description":  "Look up shipping ETA details for an order.",
+							"defer_loading": true,
+						},
+					},
+				},
+			},
+			"output_text": "",
+		},
+	})
+
+	require.Equal(t, "response.completed", eventType)
+	require.Len(t, before, 5)
+	require.Equal(t, "response.created", before[0].eventType)
+	require.Equal(t, "response.output_item.added", before[1].eventType)
+	require.Equal(t, "response.output_item.done", before[2].eventType)
+	require.Equal(t, "response.output_item.added", before[3].eventType)
+	require.Equal(t, "response.output_item.done", before[4].eventType)
+
+	for _, event := range before {
+		require.NotContains(t, event.eventType, "response.tool_search")
+	}
+
+	addedCall, ok := before[1].payload["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "tool_search_call", addedCall["type"])
+	require.Equal(t, "in_progress", addedCall["status"])
+	require.Equal(t, "call_abc123", asString(addedCall["call_id"]))
+
+	doneCall, ok := before[2].payload["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "tool_search_call", doneCall["type"])
+	require.Equal(t, "completed", doneCall["status"])
+
+	addedOutput, ok := before[3].payload["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "tool_search_output", addedOutput["type"])
+	require.Equal(t, "in_progress", addedOutput["status"])
+	tools, ok := addedOutput["tools"].([]any)
+	require.True(t, ok)
+	require.Len(t, tools, 1)
+
+	doneOutput, ok := before[4].payload["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "tool_search_output", doneOutput["type"])
+	require.Equal(t, "completed", doneOutput["status"])
+
+	completedResponse, ok := payload["response"].(map[string]any)
+	require.True(t, ok)
+	output, ok := completedResponse["output"].([]any)
+	require.True(t, ok)
+	require.Len(t, output, 2)
+}
