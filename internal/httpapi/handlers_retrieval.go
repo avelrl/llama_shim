@@ -462,8 +462,9 @@ func (h *retrievalHandler) searchVectorStore(w http.ResponseWriter, r *http.Requ
 		MaxNumResults  *int            `json:"max_num_results,omitempty"`
 		RewriteQuery   *bool           `json:"rewrite_query,omitempty"`
 		RankingOptions struct {
-			Ranker         string   `json:"ranker,omitempty"`
-			ScoreThreshold *float64 `json:"score_threshold,omitempty"`
+			Ranker         string          `json:"ranker,omitempty"`
+			ScoreThreshold *float64        `json:"score_threshold,omitempty"`
+			HybridSearch   json.RawMessage `json:"hybrid_search,omitempty"`
 		} `json:"ranking_options,omitempty"`
 	}
 	if err := json.Unmarshal(rawBody, &request); err != nil {
@@ -492,7 +493,7 @@ func (h *retrievalHandler) searchVectorStore(w http.ResponseWriter, r *http.Requ
 	}
 	if ranker := strings.TrimSpace(request.RankingOptions.Ranker); ranker != "" {
 		switch ranker {
-		case "auto", "none", "default-2024-11-15":
+		case "auto", "none", "default-2024-11-15", "default_2024_08_21", "default-2024-08-21":
 		default:
 			h.writeError(w, r, domain.NewValidationError("ranking_options.ranker", "unsupported ranking_options.ranker"))
 			return
@@ -504,6 +505,11 @@ func (h *retrievalHandler) searchVectorStore(w http.ResponseWriter, r *http.Requ
 			return
 		}
 	}
+	hybridSearch, err := parseHybridSearchOptions(request.RankingOptions.HybridSearch, "ranking_options.hybrid_search")
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
 
 	page, err := h.store.SearchVectorStore(r.Context(), domain.VectorStoreSearchQuery{
 		VectorStoreID:  r.PathValue("vector_store_id"),
@@ -511,6 +517,7 @@ func (h *retrievalHandler) searchVectorStore(w http.ResponseWriter, r *http.Requ
 		Filters:        filters,
 		MaxNumResults:  maxNumResults,
 		ScoreThreshold: request.RankingOptions.ScoreThreshold,
+		HybridSearch:   hybridSearch,
 		RawSearchQuery: rawSearchQuery,
 	})
 	if err != nil {
@@ -525,6 +532,54 @@ func (h *retrievalHandler) searchVectorStore(w http.ResponseWriter, r *http.Requ
 		HasMore:     page.HasMore,
 		NextPage:    page.NextPage,
 	})
+}
+
+func parseHybridSearchOptions(raw json.RawMessage, param string) (*domain.VectorStoreHybridSearchOptions, error) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return nil, nil
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(trimmed, &payload); err != nil {
+		return nil, domain.NewValidationError(param, param+" must be an object")
+	}
+	for key := range payload {
+		switch key {
+		case "embedding_weight", "text_weight":
+		default:
+			return nil, domain.NewValidationError(param, "unsupported "+param+" field "+`"`+key+`"`)
+		}
+	}
+
+	options := &domain.VectorStoreHybridSearchOptions{
+		EmbeddingWeight: 1,
+		TextWeight:      1,
+	}
+	if rawWeight, ok := payload["embedding_weight"]; ok && rawWeight != nil {
+		weight, ok := rawWeight.(float64)
+		if !ok {
+			return nil, domain.NewValidationError(param+".embedding_weight", param+".embedding_weight must be a number")
+		}
+		if weight < 0 {
+			return nil, domain.NewValidationError(param+".embedding_weight", param+".embedding_weight must be non-negative")
+		}
+		options.EmbeddingWeight = weight
+	}
+	if rawWeight, ok := payload["text_weight"]; ok && rawWeight != nil {
+		weight, ok := rawWeight.(float64)
+		if !ok {
+			return nil, domain.NewValidationError(param+".text_weight", param+".text_weight must be a number")
+		}
+		if weight < 0 {
+			return nil, domain.NewValidationError(param+".text_weight", param+".text_weight must be non-negative")
+		}
+		options.TextWeight = weight
+	}
+	if options.EmbeddingWeight <= 0 && options.TextWeight <= 0 {
+		return nil, domain.NewValidationError(param, param+".embedding_weight or "+param+".text_weight must be greater than zero")
+	}
+	return options, nil
 }
 
 func (h *retrievalHandler) writeError(w http.ResponseWriter, r *http.Request, err error) {

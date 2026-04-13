@@ -47,6 +47,22 @@ func (semanticTestEmbedder) EmbedTexts(_ context.Context, texts []string) ([][]f
 	return out, nil
 }
 
+type hybridRankingTestEmbedder struct{}
+
+func (hybridRankingTestEmbedder) EmbedTexts(_ context.Context, texts []string) ([][]float32, error) {
+	out := make([][]float32, 0, len(texts))
+	for _, text := range texts {
+		lower := strings.TrimSpace(strings.ToLower(text))
+		switch {
+		case strings.Contains(lower, "semanticwinner"), lower == "banana nutrition":
+			out = append(out, []float32{1, 0})
+		default:
+			out = append(out, []float32{0, 1})
+		}
+	}
+	return out, nil
+}
+
 type failingReadyEmbedder struct{}
 
 func (failingReadyEmbedder) EmbedTexts(context.Context, []string) ([][]float32, error) {
@@ -4639,6 +4655,81 @@ func TestVectorStoreSearchUsesSQLiteVecSemanticBackend(t *testing.T) {
 	require.Greater(t, result["score"].(float64), 0.9)
 }
 
+func TestVectorStoreSearchSupportsHybridRankingOptions(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		RetrievalConfig: retrieval.Config{
+			IndexBackend: retrieval.IndexBackendSQLiteVec,
+		},
+		RetrievalEmbedder: hybridRankingTestEmbedder{},
+	})
+
+	status, uploadedSemantic := uploadFile(t, app, "semantic.txt", "assistants", []byte("semanticwinner banana orchard notes"), nil)
+	require.Equal(t, http.StatusOK, status)
+	fileSemanticID := asStringAny(uploadedSemantic["id"])
+
+	status, uploadedLexical := uploadFile(t, app, "lexical.txt", "assistants", []byte("banana nutrition facts nutrition calories"), nil)
+	require.Equal(t, http.StatusOK, status)
+	fileLexicalID := asStringAny(uploadedLexical["id"])
+
+	status, created := rawRequest(t, app, http.MethodPost, "/v1/vector_stores", map[string]any{
+		"name":     "Hybrid",
+		"file_ids": []string{fileSemanticID, fileLexicalID},
+	})
+	require.Equal(t, http.StatusOK, status)
+	vectorStoreID := asStringAny(created["id"])
+
+	status, search := rawRequest(t, app, http.MethodPost, "/v1/vector_stores/"+vectorStoreID+"/search", map[string]any{
+		"query": "banana nutrition",
+		"ranking_options": map[string]any{
+			"hybrid_search": map[string]any{
+				"embedding_weight": 10,
+				"text_weight":      1,
+			},
+		},
+	})
+	require.Equal(t, http.StatusOK, status)
+	require.NotEmpty(t, search["data"].([]any))
+	result := search["data"].([]any)[0].(map[string]any)
+	require.Equal(t, fileSemanticID, asStringAny(result["file_id"]))
+
+	status, search = rawRequest(t, app, http.MethodPost, "/v1/vector_stores/"+vectorStoreID+"/search", map[string]any{
+		"query": "banana nutrition",
+		"ranking_options": map[string]any{
+			"hybrid_search": map[string]any{
+				"embedding_weight": 1,
+				"text_weight":      10,
+			},
+		},
+	})
+	require.Equal(t, http.StatusOK, status)
+	require.NotEmpty(t, search["data"].([]any))
+	result = search["data"].([]any)[0].(map[string]any)
+	require.Equal(t, fileLexicalID, asStringAny(result["file_id"]))
+}
+
+func TestVectorStoreSearchRejectsHybridRankingWithoutPositiveWeights(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	status, created := rawRequest(t, app, http.MethodPost, "/v1/vector_stores", map[string]any{
+		"name": "HybridValidation",
+	})
+	require.Equal(t, http.StatusOK, status)
+	vectorStoreID := asStringAny(created["id"])
+
+	status, payload := rawRequest(t, app, http.MethodPost, "/v1/vector_stores/"+vectorStoreID+"/search", map[string]any{
+		"query": "banana nutrition",
+		"ranking_options": map[string]any{
+			"hybrid_search": map[string]any{
+				"embedding_weight": 0,
+				"text_weight":      0,
+			},
+		},
+	})
+	require.Equal(t, http.StatusBadRequest, status)
+	require.Equal(t, "invalid_request_error", payload["error"].(map[string]any)["type"])
+	require.Contains(t, asStringAny(payload["error"].(map[string]any)["message"]), "must be greater than zero")
+}
+
 func TestResponsesCreateExecutesLocalFileSearch(t *testing.T) {
 	app := testutil.NewTestApp(t)
 
@@ -4791,6 +4882,57 @@ func TestResponsesCreateLocalFileSearchIncludeResults(t *testing.T) {
 	require.Contains(t, asStringAny(result["text"]), "code")
 	require.Contains(t, asStringAny(result["text"]), "777")
 	require.Equal(t, "alpha", asStringAny(result["attributes"].(map[string]any)["tenant"]))
+}
+
+func TestResponsesCreateLocalFileSearchSupportsHybridRankingOptions(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		RetrievalConfig: retrieval.Config{
+			IndexBackend: retrieval.IndexBackendSQLiteVec,
+		},
+		RetrievalEmbedder: hybridRankingTestEmbedder{},
+	})
+
+	status, uploadedSemantic := uploadFile(t, app, "semantic.txt", "assistants", []byte("semanticwinner banana orchard notes"), nil)
+	require.Equal(t, http.StatusOK, status)
+	fileSemanticID := asStringAny(uploadedSemantic["id"])
+
+	status, uploadedLexical := uploadFile(t, app, "lexical.txt", "assistants", []byte("banana nutrition facts nutrition calories"), nil)
+	require.Equal(t, http.StatusOK, status)
+	fileLexicalID := asStringAny(uploadedLexical["id"])
+
+	status, created := rawRequest(t, app, http.MethodPost, "/v1/vector_stores", map[string]any{
+		"name":     "Hybrid",
+		"file_ids": []string{fileSemanticID, fileLexicalID},
+	})
+	require.Equal(t, http.StatusOK, status)
+	vectorStoreID := asStringAny(created["id"])
+
+	response := postResponse(t, app, map[string]any{
+		"model":   "test-model",
+		"store":   true,
+		"input":   "banana nutrition",
+		"include": []string{"file_search_call.results"},
+		"tools": []map[string]any{
+			{
+				"type":             "file_search",
+				"vector_store_ids": []string{vectorStoreID},
+				"ranking_options": map[string]any{
+					"hybrid_search": map[string]any{
+						"embedding_weight": 1,
+						"text_weight":      10,
+					},
+				},
+			},
+		},
+	})
+
+	require.NotEmpty(t, response.Output)
+	fileSearchPayload := response.Output[0].Map()
+	results, ok := fileSearchPayload["results"].([]any)
+	require.True(t, ok)
+	require.NotEmpty(t, results)
+	require.Equal(t, fileLexicalID, asStringAny(results[0].(map[string]any)["file_id"]))
+	require.Equal(t, "lexical.txt", asStringAny(results[0].(map[string]any)["filename"]))
 }
 
 func TestResponsesCreateLocalFileSearchWorksInLocalOnlyMode(t *testing.T) {

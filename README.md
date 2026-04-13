@@ -153,6 +153,8 @@ The shim can run local semantic retrieval without an external OpenAI embeddings 
 
 - `sqlite_vec` stores and searches embeddings inside the same SQLite database
 - `EmbedAnything` runs as a local OpenAI-compatible `/v1/embeddings` sidecar
+- `ranking_options.hybrid_search` can blend dense semantic matches and lexical
+  keyword matches when `sqlite_vec` is enabled
 
 The official EmbedAnything Actix server starts on `http://0.0.0.0:8080`.
 The simplest local layout is:

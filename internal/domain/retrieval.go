@@ -131,7 +131,13 @@ type VectorStoreSearchQuery struct {
 	Filters        *VectorStoreSearchFilter
 	MaxNumResults  int
 	ScoreThreshold *float64
+	HybridSearch   *VectorStoreHybridSearchOptions
 	RawSearchQuery any
+}
+
+type VectorStoreHybridSearchOptions struct {
+	EmbeddingWeight float64
+	TextWeight      float64
 }
 
 type VectorStoreSearchResultContent struct {

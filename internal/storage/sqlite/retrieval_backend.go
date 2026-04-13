@@ -37,6 +37,8 @@ type sqliteVecRetrievalBackend struct {
 	model    string
 }
 
+const hybridRRFK = 60.0
+
 func (lexicalRetrievalBackend) Name() string {
 	return retrieval.IndexBackendLexical
 }
@@ -156,12 +158,37 @@ func (b sqliteVecRetrievalBackend) IndexVectorStoreFile(ctx context.Context, tx 
 }
 
 func (b sqliteVecRetrievalBackend) SearchVectorStore(ctx context.Context, store *Store, query domain.VectorStoreSearchQuery) (domain.VectorStoreSearchPage, error) {
-	if _, err := store.GetVectorStore(ctx, query.VectorStoreID); err != nil {
+	if query.HybridSearch != nil {
+		return b.searchVectorStoreHybrid(ctx, store, query)
+	}
+
+	results, err := b.searchVectorStoreSemanticResults(ctx, store, query, query.ScoreThreshold)
+	if err != nil {
 		return domain.VectorStoreSearchPage{}, err
+	}
+	if len(results) > query.MaxNumResults {
+		results = results[:query.MaxNumResults]
+	}
+
+	if err := store.touchVectorStoreSearchActivity(ctx, query.VectorStoreID); err != nil {
+		return domain.VectorStoreSearchPage{}, err
+	}
+
+	return domain.VectorStoreSearchPage{
+		SearchQuery: query.RawSearchQuery,
+		Results:     results,
+		HasMore:     false,
+		NextPage:    nil,
+	}, nil
+}
+
+func (b sqliteVecRetrievalBackend) searchVectorStoreSemanticResults(ctx context.Context, store *Store, query domain.VectorStoreSearchQuery, scoreThreshold *float64) ([]domain.VectorStoreSearchResult, error) {
+	if _, err := store.GetVectorStore(ctx, query.VectorStoreID); err != nil {
+		return nil, err
 	}
 	queryEmbeddings, err := b.embedder.EmbedTexts(ctx, query.Queries)
 	if err != nil {
-		return domain.VectorStoreSearchPage{}, fmt.Errorf("embed search query: %w", err)
+		return nil, fmt.Errorf("embed search query: %w", err)
 	}
 
 	type scoredResult struct {
@@ -173,7 +200,7 @@ func (b sqliteVecRetrievalBackend) SearchVectorStore(ctx context.Context, store 
 	for _, queryEmbedding := range queryEmbeddings {
 		queryBlob, _, err := encodeFloat32Vector(queryEmbedding)
 		if err != nil {
-			return domain.VectorStoreSearchPage{}, fmt.Errorf("encode query embedding: %w", err)
+			return nil, fmt.Errorf("encode query embedding: %w", err)
 		}
 
 		rows, err := store.db.QueryContext(ctx, `
@@ -190,7 +217,7 @@ func (b sqliteVecRetrievalBackend) SearchVectorStore(ctx context.Context, store 
 			WHERE c.vector_store_id = ? AND v.status = 'completed'
 		`, queryBlob, query.VectorStoreID)
 		if err != nil {
-			return domain.VectorStoreSearchPage{}, fmt.Errorf("query semantic vector store search: %w", err)
+			return nil, fmt.Errorf("query semantic vector store search: %w", err)
 		}
 
 		for rows.Next() {
@@ -203,14 +230,14 @@ func (b sqliteVecRetrievalBackend) SearchVectorStore(ctx context.Context, store 
 			)
 			if err := rows.Scan(&fileID, &filename, &attributesJSON, &content, &distance); err != nil {
 				rows.Close()
-				return domain.VectorStoreSearchPage{}, fmt.Errorf("scan semantic search row: %w", err)
+				return nil, fmt.Errorf("scan semantic search row: %w", err)
 			}
 
 			attributes := map[string]any{}
 			if strings.TrimSpace(attributesJSON) != "" {
 				if err := json.Unmarshal([]byte(attributesJSON), &attributes); err != nil {
 					rows.Close()
-					return domain.VectorStoreSearchPage{}, fmt.Errorf("decode vector store file attributes: %w", err)
+					return nil, fmt.Errorf("decode vector store file attributes: %w", err)
 				}
 			}
 			if !domain.MatchVectorStoreSearchFilter(attributes, query.Filters) {
@@ -224,7 +251,7 @@ func (b sqliteVecRetrievalBackend) SearchVectorStore(ctx context.Context, store 
 			if score > 1 {
 				score = 1
 			}
-			if query.ScoreThreshold != nil && score < *query.ScoreThreshold {
+			if scoreThreshold != nil && score < *scoreThreshold {
 				continue
 			}
 
@@ -247,7 +274,7 @@ func (b sqliteVecRetrievalBackend) SearchVectorStore(ctx context.Context, store 
 		}
 		if err := rows.Err(); err != nil {
 			rows.Close()
-			return domain.VectorStoreSearchPage{}, fmt.Errorf("iterate semantic search rows: %w", err)
+			return nil, fmt.Errorf("iterate semantic search rows: %w", err)
 		}
 		rows.Close()
 	}
@@ -265,29 +292,7 @@ func (b sqliteVecRetrievalBackend) SearchVectorStore(ctx context.Context, store 
 		}
 		return results[i].Score > results[j].Score
 	})
-	if len(results) > query.MaxNumResults {
-		results = results[:query.MaxNumResults]
-	}
-
-	now := domain.NowUTC().Unix()
-	if _, err := store.db.ExecContext(ctx, `
-		UPDATE vector_stores
-		SET last_active_at = ?, expires_at = CASE
-			WHEN expires_after_days IS NULL OR expires_after_anchor IS NULL THEN expires_at
-			WHEN expires_after_anchor = 'last_active_at' THEN ? + (expires_after_days * 86400)
-			ELSE expires_at
-		END
-		WHERE id = ?
-	`, now, now, query.VectorStoreID); err != nil {
-		return domain.VectorStoreSearchPage{}, fmt.Errorf("touch vector store search activity: %w", err)
-	}
-
-	return domain.VectorStoreSearchPage{
-		SearchQuery: query.RawSearchQuery,
-		Results:     results,
-		HasMore:     false,
-		NextPage:    nil,
-	}, nil
+	return results, nil
 }
 
 func encodeFloat32Vector(vector []float32) ([]byte, int, error) {
@@ -302,4 +307,128 @@ func encodeFloat32Vector(vector []float32) ([]byte, int, error) {
 		binary.LittleEndian.PutUint32(buf[i*4:], math.Float32bits(value))
 	}
 	return buf, len(vector), nil
+}
+
+func (b sqliteVecRetrievalBackend) searchVectorStoreHybrid(ctx context.Context, store *Store, query domain.VectorStoreSearchQuery) (domain.VectorStoreSearchPage, error) {
+	semanticResults, err := b.searchVectorStoreSemanticResults(ctx, store, query, nil)
+	if err != nil {
+		return domain.VectorStoreSearchPage{}, err
+	}
+	lexicalResults, err := store.searchVectorStoreLexicalResults(ctx, query, nil)
+	if err != nil {
+		return domain.VectorStoreSearchPage{}, err
+	}
+
+	results := fuseHybridSearchResults(semanticResults, lexicalResults, query.HybridSearch, query.ScoreThreshold)
+	if len(results) > query.MaxNumResults {
+		results = results[:query.MaxNumResults]
+	}
+
+	if err := store.touchVectorStoreSearchActivity(ctx, query.VectorStoreID); err != nil {
+		return domain.VectorStoreSearchPage{}, err
+	}
+
+	return domain.VectorStoreSearchPage{
+		SearchQuery: query.RawSearchQuery,
+		Results:     results,
+		HasMore:     false,
+		NextPage:    nil,
+	}, nil
+}
+
+func fuseHybridSearchResults(semanticResults, lexicalResults []domain.VectorStoreSearchResult, hybrid *domain.VectorStoreHybridSearchOptions, scoreThreshold *float64) []domain.VectorStoreSearchResult {
+	type scoredHybridResult struct {
+		domain.VectorStoreSearchResult
+		score float64
+	}
+
+	if hybrid == nil {
+		return nil
+	}
+
+	semanticRanks := make(map[string]int, len(semanticResults))
+	semanticByFile := make(map[string]domain.VectorStoreSearchResult, len(semanticResults))
+	for i, result := range semanticResults {
+		semanticRanks[result.FileID] = i + 1
+		semanticByFile[result.FileID] = result
+	}
+
+	lexicalRanks := make(map[string]int, len(lexicalResults))
+	lexicalByFile := make(map[string]domain.VectorStoreSearchResult, len(lexicalResults))
+	for i, result := range lexicalResults {
+		lexicalRanks[result.FileID] = i + 1
+		lexicalByFile[result.FileID] = result
+	}
+
+	maxPossible := 0.0
+	if len(semanticResults) > 0 && hybrid.EmbeddingWeight > 0 {
+		maxPossible += hybrid.EmbeddingWeight / (hybridRRFK + 1)
+	}
+	if len(lexicalResults) > 0 && hybrid.TextWeight > 0 {
+		maxPossible += hybrid.TextWeight / (hybridRRFK + 1)
+	}
+	if maxPossible <= 0 {
+		return []domain.VectorStoreSearchResult{}
+	}
+
+	bestByFile := make(map[string]scoredHybridResult, len(semanticResults)+len(lexicalResults))
+	mergeResult := func(fileID string) {
+		semanticRank, hasSemantic := semanticRanks[fileID]
+		lexicalRank, hasLexical := lexicalRanks[fileID]
+		if !hasSemantic && !hasLexical {
+			return
+		}
+
+		rawScore := 0.0
+		semanticContribution := 0.0
+		lexicalContribution := 0.0
+		if hasSemantic && hybrid.EmbeddingWeight > 0 {
+			semanticContribution = hybrid.EmbeddingWeight / (hybridRRFK + float64(semanticRank))
+			rawScore += semanticContribution
+		}
+		if hasLexical && hybrid.TextWeight > 0 {
+			lexicalContribution = hybrid.TextWeight / (hybridRRFK + float64(lexicalRank))
+			rawScore += lexicalContribution
+		}
+
+		score := rawScore / maxPossible
+		if score > 1 {
+			score = 1
+		}
+		if scoreThreshold != nil && score < *scoreThreshold {
+			return
+		}
+
+		base := semanticByFile[fileID]
+		if !hasSemantic || (hasLexical && lexicalContribution > semanticContribution) {
+			base = lexicalByFile[fileID]
+		}
+		base.Score = score
+		bestByFile[fileID] = scoredHybridResult{
+			VectorStoreSearchResult: base,
+			score:                   score,
+		}
+	}
+
+	for fileID := range semanticByFile {
+		mergeResult(fileID)
+	}
+	for fileID := range lexicalByFile {
+		mergeResult(fileID)
+	}
+
+	results := make([]domain.VectorStoreSearchResult, 0, len(bestByFile))
+	for _, result := range bestByFile {
+		results = append(results, result.VectorStoreSearchResult)
+	}
+	sort.Slice(results, func(i, j int) bool {
+		if results[i].Score == results[j].Score {
+			if results[i].Filename == results[j].Filename {
+				return results[i].FileID < results[j].FileID
+			}
+			return results[i].Filename < results[j].Filename
+		}
+		return results[i].Score > results[j].Score
+	})
+	return results
 }

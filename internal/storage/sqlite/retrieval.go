@@ -434,9 +434,30 @@ func (s *Store) SearchVectorStore(ctx context.Context, query domain.VectorStoreS
 }
 
 func (s *Store) searchVectorStoreLexical(ctx context.Context, query domain.VectorStoreSearchQuery) (domain.VectorStoreSearchPage, error) {
-	store, err := s.GetVectorStore(ctx, query.VectorStoreID)
+	results, err := s.searchVectorStoreLexicalResults(ctx, query, query.ScoreThreshold)
 	if err != nil {
 		return domain.VectorStoreSearchPage{}, err
+	}
+	if len(results) > query.MaxNumResults {
+		results = results[:query.MaxNumResults]
+	}
+
+	if err := s.touchVectorStoreSearchActivity(ctx, query.VectorStoreID); err != nil {
+		return domain.VectorStoreSearchPage{}, err
+	}
+
+	return domain.VectorStoreSearchPage{
+		SearchQuery: query.RawSearchQuery,
+		Results:     results,
+		HasMore:     false,
+		NextPage:    nil,
+	}, nil
+}
+
+func (s *Store) searchVectorStoreLexicalResults(ctx context.Context, query domain.VectorStoreSearchQuery, scoreThreshold *float64) ([]domain.VectorStoreSearchResult, error) {
+	store, err := s.GetVectorStore(ctx, query.VectorStoreID)
+	if err != nil {
+		return nil, err
 	}
 	_ = store
 
@@ -448,7 +469,7 @@ func (s *Store) searchVectorStoreLexical(ctx context.Context, query domain.Vecto
 		WHERE c.vector_store_id = ? AND v.status = 'completed'
 	`, query.VectorStoreID)
 	if err != nil {
-		return domain.VectorStoreSearchPage{}, fmt.Errorf("query vector store chunks: %w", err)
+		return nil, fmt.Errorf("query vector store chunks: %w", err)
 	}
 	defer rows.Close()
 
@@ -466,13 +487,13 @@ func (s *Store) searchVectorStoreLexical(ctx context.Context, query domain.Vecto
 			content        string
 		)
 		if err := rows.Scan(&fileID, &filename, &attributesJSON, &content); err != nil {
-			return domain.VectorStoreSearchPage{}, fmt.Errorf("scan vector store chunk: %w", err)
+			return nil, fmt.Errorf("scan vector store chunk: %w", err)
 		}
 
 		attributes := map[string]any{}
 		if strings.TrimSpace(attributesJSON) != "" {
 			if err := json.Unmarshal([]byte(attributesJSON), &attributes); err != nil {
-				return domain.VectorStoreSearchPage{}, fmt.Errorf("decode vector store file attributes: %w", err)
+				return nil, fmt.Errorf("decode vector store file attributes: %w", err)
 			}
 		}
 		if !domain.MatchVectorStoreSearchFilter(attributes, query.Filters) {
@@ -480,7 +501,7 @@ func (s *Store) searchVectorStoreLexical(ctx context.Context, query domain.Vecto
 		}
 
 		score := chunkScore(content, query.Queries)
-		if query.ScoreThreshold != nil && score < *query.ScoreThreshold {
+		if scoreThreshold != nil && score < *scoreThreshold {
 			continue
 		}
 		if score <= 0 {
@@ -504,7 +525,7 @@ func (s *Store) searchVectorStoreLexical(ctx context.Context, query domain.Vecto
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return domain.VectorStoreSearchPage{}, fmt.Errorf("iterate vector store chunks: %w", err)
+		return nil, fmt.Errorf("iterate vector store chunks: %w", err)
 	}
 
 	results := make([]domain.VectorStoreSearchResult, 0, len(bestByFile))
@@ -520,11 +541,10 @@ func (s *Store) searchVectorStoreLexical(ctx context.Context, query domain.Vecto
 		}
 		return results[i].Score > results[j].Score
 	})
+	return results, nil
+}
 
-	if len(results) > query.MaxNumResults {
-		results = results[:query.MaxNumResults]
-	}
-
+func (s *Store) touchVectorStoreSearchActivity(ctx context.Context, vectorStoreID string) error {
 	now := domain.NowUTC().Unix()
 	if _, err := s.db.ExecContext(ctx, `
 		UPDATE vector_stores
@@ -534,16 +554,10 @@ func (s *Store) searchVectorStoreLexical(ctx context.Context, query domain.Vecto
 			ELSE expires_at
 		END
 		WHERE id = ?
-	`, now, now, query.VectorStoreID); err != nil {
-		return domain.VectorStoreSearchPage{}, fmt.Errorf("touch vector store search activity: %w", err)
+	`, now, now, vectorStoreID); err != nil {
+		return fmt.Errorf("touch vector store search activity: %w", err)
 	}
-
-	return domain.VectorStoreSearchPage{
-		SearchQuery: query.RawSearchQuery,
-		Results:     results,
-		HasMore:     false,
-		NextPage:    nil,
-	}, nil
+	return nil
 }
 
 func (s *Store) getVectorStoreBase(ctx context.Context, id string) (domain.StoredVectorStore, error) {

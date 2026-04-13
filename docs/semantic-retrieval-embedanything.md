@@ -106,6 +106,7 @@ What is implemented now:
 
 - persisted chunk embeddings
 - exact dense cosine retrieval via `sqlite_vec`
+- weighted hybrid dense+text ranking via `ranking_options.hybrid_search`
 - pluggable embedder backend
 - local `/v1/vector_stores/{id}/search`
 - local `file_search` can use the same retrieval engine through the existing
@@ -114,6 +115,5 @@ What is implemented now:
 What is still open:
 
 - ANN indexing beyond exact dense scan
-- hybrid lexical+dense retrieval
 - reranking
 - hosted `file_citation` parity in final assistant messages

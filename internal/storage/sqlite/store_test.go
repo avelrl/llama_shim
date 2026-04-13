@@ -31,6 +31,22 @@ func (fakeEmbedder) EmbedTexts(_ context.Context, texts []string) ([][]float32, 
 	return out, nil
 }
 
+type hybridTestEmbedder struct{}
+
+func (hybridTestEmbedder) EmbedTexts(_ context.Context, texts []string) ([][]float32, error) {
+	out := make([][]float32, 0, len(texts))
+	for _, text := range texts {
+		lower := strings.TrimSpace(strings.ToLower(text))
+		switch {
+		case strings.Contains(lower, "semanticwinner"), lower == "banana nutrition":
+			out = append(out, []float32{1, 0})
+		default:
+			out = append(out, []float32{0, 1})
+		}
+	}
+	return out, nil
+}
+
 func TestStoreSaveResponseRoundTripAndLineage(t *testing.T) {
 	t.Parallel()
 
@@ -180,6 +196,87 @@ func TestStoreSearchVectorStoreSQLiteVecBackend(t *testing.T) {
 	require.Equal(t, fileBanana.ID, page.Results[0].FileID)
 	require.Equal(t, "banana.txt", page.Results[0].Filename)
 	require.Greater(t, page.Results[0].Score, 0.9)
+}
+
+func TestStoreSearchVectorStoreSQLiteVecHybridRanking(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store, err := sqlite.OpenWithOptions(ctx, testutil.TempDBPath(t), sqlite.OpenOptions{
+		Retrieval: retrieval.Config{
+			IndexBackend: retrieval.IndexBackendSQLiteVec,
+		},
+		Embedder: hybridTestEmbedder{},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+
+	fileSemantic := domain.StoredFile{
+		ID:        "file_semantic",
+		Filename:  "semantic.txt",
+		Purpose:   "assistants",
+		Bytes:     int64(len("semanticwinner banana orchard notes")),
+		CreatedAt: 1712059200,
+		Status:    "processed",
+		Content:   []byte("semanticwinner banana orchard notes"),
+	}
+	fileLexical := domain.StoredFile{
+		ID:        "file_lexical",
+		Filename:  "lexical.txt",
+		Purpose:   "assistants",
+		Bytes:     int64(len("banana nutrition facts nutrition calories")),
+		CreatedAt: 1712059201,
+		Status:    "processed",
+		Content:   []byte("banana nutrition facts nutrition calories"),
+	}
+	require.NoError(t, store.SaveFile(ctx, fileSemantic))
+	require.NoError(t, store.SaveFile(ctx, fileLexical))
+
+	vectorStore := domain.StoredVectorStore{
+		ID:           "vs_hybrid",
+		Name:         "Hybrid Store",
+		Metadata:     map[string]string{},
+		CreatedAt:    1712059202,
+		LastActiveAt: 1712059202,
+	}
+	require.NoError(t, store.SaveVectorStore(ctx, vectorStore))
+
+	_, err = store.AttachFileToVectorStore(ctx, vectorStore.ID, fileSemantic.ID, map[string]any{}, domain.DefaultFileChunkingStrategy(), 1712059203)
+	require.NoError(t, err)
+	_, err = store.AttachFileToVectorStore(ctx, vectorStore.ID, fileLexical.ID, map[string]any{}, domain.DefaultFileChunkingStrategy(), 1712059204)
+	require.NoError(t, err)
+
+	page, err := store.SearchVectorStore(ctx, domain.VectorStoreSearchQuery{
+		VectorStoreID: vectorStore.ID,
+		Queries:       []string{"banana nutrition"},
+		MaxNumResults: 5,
+		HybridSearch: &domain.VectorStoreHybridSearchOptions{
+			EmbeddingWeight: 10,
+			TextWeight:      1,
+		},
+		RawSearchQuery: "banana nutrition",
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, page.Results)
+	require.Equal(t, fileSemantic.ID, page.Results[0].FileID)
+	require.Equal(t, "semantic.txt", page.Results[0].Filename)
+
+	page, err = store.SearchVectorStore(ctx, domain.VectorStoreSearchQuery{
+		VectorStoreID: vectorStore.ID,
+		Queries:       []string{"banana nutrition"},
+		MaxNumResults: 5,
+		HybridSearch: &domain.VectorStoreHybridSearchOptions{
+			EmbeddingWeight: 1,
+			TextWeight:      10,
+		},
+		RawSearchQuery: "banana nutrition",
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, page.Results)
+	require.Equal(t, fileLexical.ID, page.Results[0].FileID)
+	require.Equal(t, "lexical.txt", page.Results[0].Filename)
 }
 
 func TestStoreSaveChatCompletionRoundTripAndList(t *testing.T) {

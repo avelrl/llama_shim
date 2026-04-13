@@ -26,6 +26,7 @@ type localFileSearchConfig struct {
 	Filters        *domain.VectorStoreSearchFilter
 	MaxNumResults  int
 	ScoreThreshold *float64
+	HybridSearch   *domain.VectorStoreHybridSearchOptions
 	IncludeResults bool
 }
 
@@ -165,7 +166,7 @@ func parseLocalFileSearchConfig(rawFields map[string]json.RawMessage) (localFile
 		return localFileSearchConfig{}, err
 	}
 
-	scoreThreshold, err := parseLocalFileSearchRankingOptions(tool["ranking_options"])
+	scoreThreshold, hybridSearch, err := parseLocalFileSearchRankingOptions(tool["ranking_options"])
 	if err != nil {
 		return localFileSearchConfig{}, err
 	}
@@ -186,6 +187,7 @@ func parseLocalFileSearchConfig(rawFields map[string]json.RawMessage) (localFile
 		Filters:        filters,
 		MaxNumResults:  maxNumResults,
 		ScoreThreshold: scoreThreshold,
+		HybridSearch:   hybridSearch,
 		IncludeResults: includeResults,
 	}, nil
 }
@@ -235,44 +237,60 @@ func parseLocalFileSearchMaxResults(value any) (int, error) {
 	return maxNumResults, nil
 }
 
-func parseLocalFileSearchRankingOptions(value any) (*float64, error) {
+func parseLocalFileSearchRankingOptions(value any) (*float64, *domain.VectorStoreHybridSearchOptions, error) {
 	if value == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	options, ok := value.(map[string]any)
 	if !ok {
-		return nil, domain.NewValidationError("tools", "file_search.ranking_options must be an object")
+		return nil, nil, domain.NewValidationError("tools", "file_search.ranking_options must be an object")
 	}
 	for key := range options {
 		switch key {
-		case "ranker", "score_threshold":
+		case "ranker", "score_threshold", "hybrid_search":
 		default:
-			return nil, domain.NewValidationError("tools", "unsupported file_search.ranking_options field "+`"`+key+`"`+" in shim-local mode")
+			return nil, nil, domain.NewValidationError("tools", "unsupported file_search.ranking_options field "+`"`+key+`"`+" in shim-local mode")
 		}
 	}
 
 	if rawRanker, ok := options["ranker"]; ok && rawRanker != nil {
 		ranker := strings.TrimSpace(asString(rawRanker))
 		switch ranker {
-		case "", "auto", "none", "default-2024-11-15", "default_2024_08_21":
+		case "", "auto", "none", "default-2024-11-15", "default_2024_08_21", "default-2024-08-21":
 		default:
-			return nil, domain.NewValidationError("tools", "unsupported file_search.ranking_options.ranker")
+			return nil, nil, domain.NewValidationError("tools", "unsupported file_search.ranking_options.ranker")
 		}
 	}
 
 	rawThreshold, ok := options["score_threshold"]
+	var scoreThreshold *float64
 	if !ok || rawThreshold == nil {
-		return nil, nil
+		scoreThreshold = nil
+	} else {
+		thresholdValue, ok := rawThreshold.(float64)
+		if !ok {
+			return nil, nil, domain.NewValidationError("tools", "file_search.ranking_options.score_threshold must be a number")
+		}
+		if thresholdValue < 0 || thresholdValue > 1 {
+			return nil, nil, domain.NewValidationError("tools", "file_search.ranking_options.score_threshold must be between 0 and 1")
+		}
+		scoreThreshold = &thresholdValue
 	}
-	scoreThreshold, ok := rawThreshold.(float64)
-	if !ok {
-		return nil, domain.NewValidationError("tools", "file_search.ranking_options.score_threshold must be a number")
+
+	var hybridSearch *domain.VectorStoreHybridSearchOptions
+	if rawHybrid, ok := options["hybrid_search"]; ok && rawHybrid != nil {
+		raw, err := json.Marshal(rawHybrid)
+		if err != nil {
+			return nil, nil, domain.NewValidationError("tools", "file_search.ranking_options.hybrid_search must be valid JSON")
+		}
+		hybridSearch, err = parseHybridSearchOptions(raw, "tools.file_search.ranking_options.hybrid_search")
+		if err != nil {
+			return nil, nil, err
+		}
 	}
-	if scoreThreshold < 0 || scoreThreshold > 1 {
-		return nil, domain.NewValidationError("tools", "file_search.ranking_options.score_threshold must be between 0 and 1")
-	}
-	return &scoreThreshold, nil
+
+	return scoreThreshold, hybridSearch, nil
 }
 
 func parseLocalFileSearchInclude(raw json.RawMessage) (bool, error) {
@@ -383,6 +401,7 @@ func (h *responseHandler) searchLocalFileSearchResults(ctx context.Context, conf
 			Filters:        config.Filters,
 			MaxNumResults:  config.MaxNumResults,
 			ScoreThreshold: config.ScoreThreshold,
+			HybridSearch:   config.HybridSearch,
 			RawSearchQuery: query,
 		})
 		if err != nil {
