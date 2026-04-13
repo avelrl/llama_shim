@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"llama_shim/internal/llama"
+	"llama_shim/internal/retrieval"
 	"llama_shim/internal/service"
 	"llama_shim/internal/storage/sqlite"
 )
@@ -21,6 +22,8 @@ type RouterDeps struct {
 	ResponsesCodexEnableCompatibility     bool
 	ResponsesCodexForceToolChoiceRequired bool
 	LocalCodeInterpreter                  LocalCodeInterpreterRuntimeConfig
+	RetrievalIndexBackend                 string
+	RetrievalEmbedder                     retrieval.Embedder
 	Store                                 *sqlite.Store
 }
 
@@ -70,6 +73,17 @@ func NewRouter(deps RouterDeps) http.Handler {
 		if err := deps.LlamaClient.CheckReady(upstreamCtx); err != nil {
 			WriteError(w, http.StatusServiceUnavailable, "service_unavailable", "llama backend is not ready", "")
 			return
+		}
+		if deps.RetrievalIndexBackend == retrieval.IndexBackendSQLiteVec {
+			checker, ok := deps.RetrievalEmbedder.(retrieval.ReadyChecker)
+			if ok {
+				retrievalCtx, cancel := context.WithTimeout(r.Context(), readyzUpstreamTimeout)
+				defer cancel()
+				if err := checker.CheckReady(retrievalCtx); err != nil {
+					WriteError(w, http.StatusServiceUnavailable, "service_unavailable", "retrieval embedder is not ready", "")
+					return
+				}
+			}
 		}
 		WriteJSON(w, http.StatusOK, map[string]string{"status": "ready"})
 	})

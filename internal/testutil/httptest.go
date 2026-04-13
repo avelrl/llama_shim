@@ -112,6 +112,8 @@ func NewTestAppWithOptions(t *testing.T, options TestAppOptions) *TestApp {
 		ResponsesCodexEnableCompatibility:     options.CodexCompatibilityEnabled,
 		ResponsesCodexForceToolChoiceRequired: options.ForceToolChoiceRequired,
 		LocalCodeInterpreter:                  localCodeInterpreter,
+		RetrievalIndexBackend:                 options.RetrievalConfig.IndexBackend,
+		RetrievalEmbedder:                     options.RetrievalEmbedder,
 		Store:                                 store,
 	}))
 

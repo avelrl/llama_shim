@@ -44,6 +44,16 @@ func main() {
 	processCtx, processCancel := context.WithCancel(context.Background())
 	defer processCancel()
 
+	retrievalEmbedder, err := retrieval.NewEmbedder(retrieval.EmbedderConfig{
+		Backend: cfg.RetrievalEmbedderBackend,
+		BaseURL: cfg.RetrievalEmbedderBaseURL,
+		Model:   cfg.RetrievalEmbedderModel,
+	})
+	if err != nil {
+		logger.Error("build retrieval embedder", "err", err)
+		os.Exit(1)
+	}
+
 	store, err := sqlite.OpenWithOptions(processCtx, cfg.SQLitePath, sqlite.OpenOptions{
 		Retrieval: retrieval.Config{
 			IndexBackend: cfg.RetrievalIndexBackend,
@@ -53,6 +63,7 @@ func main() {
 				Model:   cfg.RetrievalEmbedderModel,
 			},
 		},
+		Embedder: retrievalEmbedder,
 	})
 	if err != nil {
 		logger.Error("open sqlite", "err", err)
@@ -82,6 +93,8 @@ func main() {
 			ResponsesCodexEnableCompatibility:     cfg.ResponsesCodexEnableCompatibility,
 			ResponsesCodexForceToolChoiceRequired: cfg.ResponsesCodexForceToolChoiceRequired,
 			LocalCodeInterpreter:                  localCodeInterpreter,
+			RetrievalIndexBackend:                 cfg.RetrievalIndexBackend,
+			RetrievalEmbedder:                     retrievalEmbedder,
 			Store:                                 store,
 		}),
 		ReadTimeout:  cfg.ReadTimeout,

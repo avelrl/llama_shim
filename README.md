@@ -88,6 +88,14 @@ log:
   level: info
   file_path: ./.data/shim.log
 
+retrieval:
+  index:
+    backend: lexical
+  embedder:
+    backend: disabled
+    base_url: ""
+    model: ""
+
 responses:
   mode: prefer_local
   custom_tools:
@@ -122,6 +130,10 @@ Supported environment overrides:
 - `LLAMA_BASE_URL` overrides `llama.base_url`
 - `SQLITE_PATH` overrides `sqlite.path`
 - `SHIM_ADDR` overrides `shim.addr`
+- `RETRIEVAL_INDEX_BACKEND` overrides `retrieval.index.backend`; supported values: `lexical`, `sqlite_vec`
+- `RETRIEVAL_EMBEDDER_BACKEND` overrides `retrieval.embedder.backend`; supported values: `disabled`, `openai_compatible`, `embedanything`
+- `RETRIEVAL_EMBEDDER_BASE_URL` overrides `retrieval.embedder.base_url`
+- `RETRIEVAL_EMBEDDER_MODEL` overrides `retrieval.embedder.model`
 - `RESPONSES_MODE` overrides `responses.mode`; supported values: `prefer_local`, `prefer_upstream`, `local_only`
   `prefer_local` is the default: the shim owns `/v1/responses` whenever the request fits the locally-supported subset, and falls back to upstream `/v1/responses` only for unsupported features.
 - `RESPONSES_CUSTOM_TOOLS_MODE` overrides `responses.custom_tools.mode`; supported values: `bridge`, `auto`, `passthrough`
@@ -134,6 +146,53 @@ Response retention notes:
 - standalone `/v1/responses` objects follow the outward `store` contract returned on the response object
 - conversation-attached items follow the conversation lifecycle instead of standalone response retention
 - the shim may keep hidden response rows needed for local `previous_response_id` replay even when the outward response reports `store=false`
+
+## Semantic retrieval with sqlite_vec + EmbedAnything
+
+The shim can run local semantic retrieval without an external OpenAI embeddings API:
+
+- `sqlite_vec` stores and searches embeddings inside the same SQLite database
+- `EmbedAnything` runs as a local OpenAI-compatible `/v1/embeddings` sidecar
+
+The official EmbedAnything Actix server starts on `http://0.0.0.0:8080`.
+The simplest local layout is:
+
+- `EmbedAnything`: `http://127.0.0.1:8080`
+- `llama.cpp`: `http://127.0.0.1:8081`
+- `llama_shim`: `http://127.0.0.1:8083`
+
+Example config:
+
+```yaml
+shim:
+  addr: ":8083"
+
+retrieval:
+  index:
+    backend: sqlite_vec
+  embedder:
+    backend: embedanything
+    base_url: http://127.0.0.1:8080
+    model: BAAI/bge-small-en-v1.5
+```
+
+Then start the shim:
+
+```bash
+go run ./cmd/shim -config ./config.yaml
+```
+
+If you have an EmbedAnything checkout locally, this repo ships a small helper that
+follows the official Actix server guide:
+
+```bash
+git clone --depth=1 https://github.com/StarlightSearch/EmbedAnything ../EmbedAnything
+EMBEDANYTHING_DIR=../EmbedAnything ./scripts/embedanything-actix-local.sh
+```
+
+When `retrieval.index.backend=sqlite_vec` is enabled, `/readyz` also checks the retrieval embedder. For `embedanything`, the shim probes the sidecar `GET /health_check` endpoint before returning `ready`.
+
+For a step-by-step local setup and a smoke test script, see [docs/semantic-retrieval-embedanything.md](docs/semantic-retrieval-embedanything.md).
 
 ## curl examples
 

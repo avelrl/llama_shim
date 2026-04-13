@@ -47,6 +47,16 @@ func (semanticTestEmbedder) EmbedTexts(_ context.Context, texts []string) ([][]f
 	return out, nil
 }
 
+type failingReadyEmbedder struct{}
+
+func (failingReadyEmbedder) EmbedTexts(context.Context, []string) ([][]float32, error) {
+	return [][]float32{{1, 0, 0}}, nil
+}
+
+func (failingReadyEmbedder) CheckReady(context.Context) error {
+	return errors.New("embedder down")
+}
+
 func TestResponsesStoreAndGet(t *testing.T) {
 	app := testutil.NewTestApp(t)
 
@@ -124,6 +134,28 @@ func TestReadyzReturns503WhenLlamaBackendIsUnavailable(t *testing.T) {
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&payload))
 	require.Equal(t, "service_unavailable", payload["error"]["type"])
 	require.Equal(t, "llama backend is not ready", payload["error"]["message"])
+}
+
+func TestReadyzReturns503WhenRetrievalEmbedderIsUnavailable(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		RetrievalConfig: retrieval.Config{
+			IndexBackend: retrieval.IndexBackendSQLiteVec,
+		},
+		RetrievalEmbedder: failingReadyEmbedder{},
+	})
+
+	req, err := http.NewRequest(http.MethodGet, app.Server.URL+"/readyz", nil)
+	require.NoError(t, err)
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
+	var payload map[string]map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&payload))
+	require.Equal(t, "service_unavailable", payload["error"]["type"])
+	require.Equal(t, "retrieval embedder is not ready", payload["error"]["message"])
 }
 
 func TestResponsesGetIncludesExpandedResponseSurface(t *testing.T) {

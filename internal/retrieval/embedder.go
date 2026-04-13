@@ -15,7 +15,12 @@ type Embedder interface {
 	EmbedTexts(ctx context.Context, texts []string) ([][]float32, error)
 }
 
+type ReadyChecker interface {
+	CheckReady(ctx context.Context) error
+}
+
 type openAICompatibleEmbedder struct {
+	backend string
 	baseURL string
 	model   string
 	client  *http.Client
@@ -36,6 +41,7 @@ func NewEmbedder(cfg EmbedderConfig) (Embedder, error) {
 			return nil, fmt.Errorf("embedder model is required when backend=%q", cfg.Backend)
 		}
 		return &openAICompatibleEmbedder{
+			backend: cfg.Backend,
 			baseURL: normalizeEmbeddingsBaseURL(baseURL),
 			model:   model,
 			client: &http.Client{
@@ -125,4 +131,34 @@ func (e *openAICompatibleEmbedder) EmbedTexts(ctx context.Context, texts []strin
 		}
 	}
 	return out, nil
+}
+
+func (e *openAICompatibleEmbedder) CheckReady(ctx context.Context) error {
+	if e.backend == EmbedderBackendEmbedAnything {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, healthCheckURL(e.baseURL), nil)
+		if err != nil {
+			return fmt.Errorf("build embedder health request: %w", err)
+		}
+		resp, err := e.client.Do(req)
+		if err != nil {
+			return fmt.Errorf("request embedder health: %w", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+			return fmt.Errorf("embedder health returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		}
+		return nil
+	}
+
+	_, err := e.EmbedTexts(ctx, []string{"ready"})
+	if err != nil {
+		return fmt.Errorf("embedder readiness probe failed: %w", err)
+	}
+	return nil
+}
+
+func healthCheckURL(embeddingsURL string) string {
+	base := strings.TrimSuffix(embeddingsURL, "/v1/embeddings")
+	return base + "/health_check"
 }

@@ -43,3 +43,9 @@ func TestNormalizeEmbeddingsBaseURL(t *testing.T) {
 	require.Equal(t, "http://127.0.0.1:8082/v1/embeddings", normalizeEmbeddingsBaseURL("http://127.0.0.1:8082"))
 	require.Equal(t, "http://127.0.0.1:8082/v1/embeddings", normalizeEmbeddingsBaseURL("http://127.0.0.1:8082/v1"))
 }
+
+func TestEmbedAnythingHealthCheckURL(t *testing.T) {
+	t.Parallel()
+
+	require.Equal(t, "http://127.0.0.1:8082/health_check", healthCheckURL("http://127.0.0.1:8082/v1/embeddings"))
+}

@@ -53,7 +53,8 @@
 - `POST /v1/responses` with `stream: true` over SSE
 - `GET /v1/responses/{id}?stream=true` with local SSE replay
 - `/healthz`
-- `/readyz` с проверкой SQLite и upstream llama backend readiness
+- `/readyz` с проверкой SQLite, upstream llama backend, и retrieval embedder
+  readiness when semantic retrieval is enabled
 - SQLite migrations, `WAL`, default `busy_timeout`
 - local-first `responses.mode=prefer_local` по умолчанию с controlled upstream fallback
 - локально поддерживаемые response-level fields уже включают lifecycle/storage surface, `text.format` subset и stateful `input_items` snapshot
@@ -77,7 +78,9 @@
 - Conversations surface теперь включает `GET /{id}`, `POST /{id}/items`, `GET /{id}/items/{item_id}`, `DELETE /{id}/items/{item_id}`
 - `POST /v1/conversations` и `POST /v1/conversations/{id}/items` синхронизированы с official limits/shape (`items`, `metadata`, batch append)
 - `text.format` поддерживает `text`, `json_object` и ограниченный `json_schema` subset
-- `/readyz` теперь реально проверяет SQLite и upstream llama backend, а не просто отвечает `200`
+- `/readyz` теперь реально проверяет SQLite и upstream llama backend, а при
+  `sqlite_vec` + readiness-aware embedder ещё и retrieval embedder, а не просто
+  отвечает `200`
 - `/v1/chat/completions` очищает provider-specific поля в обычном JSON и SSE потоке
 - успешные non-streaming `POST /v1/chat/completions` с explicit `store: true`
   теперь shadow-store-ятся локально и доступны через shim-owned
@@ -160,7 +163,7 @@
 - [ ] - hybrid/reranked retrieval parity behind local `vector_stores` ([детали](#task-retrieval-semantic-backend))
 - [ ] - parity для hosted/native Responses tools (`web_search`, `computer_use`, `code_interpreter`, `image_generation`, `remote MCP`, `tool_search`) ([детали](#task-hosted-tools-parity))
 - [x] - local stored Chat Completions read surface for explicit `store=true` non-streaming proxy completions ([детали](#task-chat-stored-surface-local))
-- [x] - `/readyz` checks SQLite and upstream llama backend readiness ([детали](#task-ops-hardening))
+- [x] - `/readyz` checks SQLite, upstream llama backend, and configured retrieval embedder readiness ([детали](#task-ops-hardening))
 - [ ] - stored Chat Completions compatibility surface ([детали](#task-chat-stored-surface))
 - [ ] - operational hardening: backend readiness, retention job, local DX ([детали](#task-ops-hardening))
 - [ ] - true constrained decoder/runtime для `grammar` / `regex` custom tools ([детали](#task-true-constrained-runtime))

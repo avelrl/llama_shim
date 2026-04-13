@@ -31,6 +31,23 @@ log:
   # When set, logs are written to both stdout and this file.
   file_path: ./.data/shim.log
 
+# Local retrieval engine.
+retrieval:
+  index:
+    # lexical: default deterministic text matching over local chunks
+    # sqlite_vec: exact dense cosine search over persisted embeddings in SQLite
+    backend: lexical
+  embedder:
+    # disabled: default; only lexical retrieval works
+    # openai_compatible: any local/remote /v1/embeddings endpoint
+    # embedanything: EmbedAnything Actix server using the same OpenAI-compatible surface
+    backend: disabled
+    # Base URL of the embeddings server. For EmbedAnything this is typically
+    # http://127.0.0.1:8082
+    base_url: ""
+    # Embedding model identifier understood by the embedder server.
+    model: ""
+
 # Settings for the OpenAI Responses-compatible layer.
 responses:
   # How /v1/responses is routed.
