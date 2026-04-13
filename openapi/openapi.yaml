@@ -247,6 +247,16 @@ paths:
         Supported `stream_options` subset:
         - `stream_options.include_obfuscation` controls the synthetic
           `obfuscation` field on shim-owned text/tool delta events
+
+        Shim-local custom tools subset:
+        - plain-text custom tools stay on the bridge/function-call compatibility path
+        - supported `grammar` / `regex` custom tools stay shim-local and preserve
+          native `custom_tool_call` output items
+        - when `tool_choice` names a supported constrained custom tool, the shim
+          first attempts backend-native structured generation of raw `input`
+          through `/v1/chat/completions`; broader auto/mixed constrained-tool
+          cases still rely on shim-local validation/repair compatibility rather
+          than full spec-equivalent constrained decoding
       requestBody:
         required: true
         content:

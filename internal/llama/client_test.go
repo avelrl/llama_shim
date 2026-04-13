@@ -62,6 +62,28 @@ func TestGenerateForwardsAuthorizationFromContext(t *testing.T) {
 	require.Equal(t, "Bearer test-token", seenAuth)
 }
 
+func TestCreateChatCompletionTextExtractsAssistantContent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, http.MethodPost, r.Method)
+		require.Equal(t, "/v1/chat/completions", r.URL.Path)
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{
+				{
+					"message": map[string]any{
+						"content": `{"input":"hello 42"}`,
+					},
+				},
+			},
+		}))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, time.Second)
+	text, err := client.CreateChatCompletionText(context.Background(), []byte(`{"model":"test-model","messages":[{"role":"user","content":"ping"}]}`))
+	require.NoError(t, err)
+	require.Equal(t, `{"input":"hello 42"}`, text)
+}
+
 func TestContextHeadersDoNotOverrideExplicitAuthorization(t *testing.T) {
 	headers := http.Header{
 		"Authorization": []string{"Bearer request-token"},

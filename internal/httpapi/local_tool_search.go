@@ -496,6 +496,12 @@ func (h *responseHandler) runPreparedLocalToolLoopResponse(ctx context.Context, 
 		return domain.Response{}, fmt.Errorf("generate response id: %w", err)
 	}
 
+	if response, handled, err := h.tryRunPreparedLocalConstrainedCustomToolResponse(ctx, input, prepared, rawFields, responseID); handled {
+		if err == nil {
+			return response, nil
+		}
+	}
+
 	repairPrompt := ""
 	for attempt := 1; ; attempt++ {
 		chatBody, plan, err := buildLocalToolLoopChatCompletionBody(rawFields, prepared.ContextItems, prepared.NormalizedInput, prepared.ToolCallRefs, h.customToolsMode, h.codexCompatibilityEnabled, h.forceCodexToolChoiceRequired, repairPrompt)

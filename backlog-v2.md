@@ -141,6 +141,7 @@
   `last_error`
 - усилен bridge для custom tools и `tool_choice`: normalizing, contract tracking, fallback/retry для upstream-ов, которые принимают только `tool_choice=auto`
 - локальные constrained custom tools для supported `grammar` / `regex` subset заведены в local tool loop
+- для named constrained custom tools shim теперь сначала пытается backend-native structured generation of raw `input`, а broad auto/mixed cases по-прежнему остаются на validation/repair path
 - улучшена canonical error mapping для response/tool-choice ошибок
 - добавлены тесты на store, middleware, stream proxy, chat sanitization и integration scenarios
 - docs/config cleanup для публичной репы: английские комментарии в конфиге, отдельный русский README, ссылка на него из английского README
@@ -224,6 +225,7 @@ Definition of done:
 - отдельный local execution path для `custom` tools с `format.type=grammar` и syntax `lark|regex`
 - сохранить native `custom_tool_call` semantics без деградации в `function_call` bridge
 - constrained generation/validation contract внутри shim: поддерживаемый subset грамматик проходит детерминированно, unsupported subset честно возвращает `not supported`
+- для named constrained custom tools local path сначала пытается backend-native structured generation via `/v1/chat/completions`, а для broad auto/mixed cases остаётся shim-local validation/repair compatibility layer
 - корректный SSE path для `response.custom_tool_call_input.delta` / `response.custom_tool_call_input.done`
 - config/docs/tests для `prefer_local`, `prefer_upstream` и `local_only` на grammar custom tools
 
@@ -1547,7 +1549,7 @@ Definition of done:
 Почему это отдельная задача:
 
 - OpenAI docs для custom tools и CFG описывают настоящий constrained generation/runtime, а не prompt+validate и не retry/repair loop
-- текущий shim умеет локально валидировать и чинить supported subset, но это compatibility layer, а не spec-equivalent decoding
+- текущий shim уже умеет делать backend-native structured generation fast path для named constrained custom tools, но broad auto/mixed path всё ещё опирается на validation/repair compatibility layer и не является spec-equivalent decoding
 - без true runtime нельзя честно обещать строгую parity для сложных grammar/regex сценариев
 
 Что входит:

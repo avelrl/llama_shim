@@ -144,6 +144,14 @@ func (c *Client) CreateChatCompletion(ctx context.Context, requestBody []byte) (
 	return body, nil
 }
 
+func (c *Client) CreateChatCompletionText(ctx context.Context, requestBody []byte) (string, error) {
+	body, err := c.CreateChatCompletion(ctx, requestBody)
+	if err != nil {
+		return "", err
+	}
+	return extractAssistantText(body)
+}
+
 func (c *Client) CheckReady(ctx context.Context) error {
 	if c == nil {
 		return errors.New("llama client is nil")

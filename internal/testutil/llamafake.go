@@ -433,6 +433,9 @@ func fakeLlamaOutputFromChatMessages(messages []map[string]any) string {
 
 	last := strings.ToLower(chatMessageContent(messages[len(messages)-1]))
 	joined := strings.ToLower(joinChatMessageContent(messages))
+	if output, ok := fakeConstrainedCustomToolJSONOutput(joined); ok {
+		return output
+	}
 	if output, ok := fakeLocalCodeInterpreterPlannerOutput(joined); ok {
 		return output
 	}
@@ -454,6 +457,22 @@ func fakeLlamaOutputFromChatMessages(messages []map[string]any) string {
 		return "OK"
 	default:
 		return "UNHANDLED"
+	}
+}
+
+func fakeConstrainedCustomToolJSONOutput(joined string) (string, bool) {
+	if !strings.Contains(joined, "shim-local constrained custom tool generator") {
+		return "", false
+	}
+	switch {
+	case strings.Contains(joined, "`math_exp`"):
+		return `{"input":"4 + 4"}`, true
+	case strings.Contains(joined, "`exact_text`"):
+		return `{"input":"hello 42"}`, true
+	case strings.Contains(joined, "`shell.exec`"):
+		return `{"input":"print(\"hello world\")"}`, true
+	default:
+		return `{"input":"UNHANDLED"}`, true
 	}
 }
 
@@ -1052,9 +1071,9 @@ func fakeDeferredToolForToolSearch(tools []any) map[string]any {
 		}
 	}
 	return map[string]any{
-		"type":         "function",
-		"name":         "get_shipping_eta",
-		"description":  "Look up shipping ETA details for an order.",
+		"type":          "function",
+		"name":          "get_shipping_eta",
+		"description":   "Look up shipping ETA details for an order.",
 		"defer_loading": true,
 		"parameters": map[string]any{
 			"type": "object",
