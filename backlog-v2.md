@@ -113,7 +113,10 @@
   `container_file_citation` subset plus replayed
   `response.output_text.annotation.added` over shim-added generated-file
   appendix, stored `code_interpreter_call` output item и follow-up turns не
-  ломаются из-за stored tool items в локальном generation context
+  ломаются из-за stored tool items в локальном generation context; for
+  self-hosted safety `input_file.file_url` is now disabled by default unless
+  explicitly allowlisted/unsafe-enabled, and expired shim-managed containers
+  are swept in the background while keeping `status=expired` metadata
 - non-text/binary attachments не маскируются под успех: local
   `vector_store.file` честно возвращает `status=failed` и documented
   `last_error`
@@ -1090,6 +1093,11 @@ Definition of done:
   (server-side fetch with a local 50 MiB cap), так что shim-local
   `code_interpreter` может читать model-uploaded files без отдельного
   `container.file_ids`
+- `input_file.file_url` fetches теперь честно gated для self-hosted shim:
+  по умолчанию они выключены, а для opt-in subset нужен либо
+  `responses.code_interpreter.input_file_url_policy=allowlist` c exact-host /
+  wildcard-suffix allowlist, либо явный
+  `unsafe_allow_http_https`
 - generated file artifacts теперь сохраняются как bounded shim-owned
   `/v1/files`, зеркалятся в shim-owned container files, и попадают в local
   `code_interpreter_call.outputs` как same-origin `type=image` URLs для
@@ -1106,6 +1114,9 @@ Definition of done:
   `response.output_text.annotation.added` events для final assistant
   annotations, включая shim-local `container_file_citation` annotations над
   generated-file appendix
+- появился background cleanup sweep для expired shim-managed containers:
+  session runtime уничтожается, local container-file access убирается,
+  metadata snapshot остаётся видимым как `status=expired`
 
 Что осталось открытым:
 
@@ -1126,8 +1137,9 @@ Definition of done:
 - stronger isolation backends (`gVisor`, microVM) не заведены; текущий
   production-minded шаг это hardened Docker, а не VM parity
 - нет full hosted expiration/cleanup parity:
-  local subset экспирит и хранит shim snapshot metadata, но не воспроизводит
-  весь hosted lifecycle/retention surface и не делает background cleanup job
+  local subset теперь sweep-ит expired containers в фоне и хранит shim
+  snapshot metadata, но не воспроизводит весь hosted lifecycle/retention
+  surface и не очищает mirrored backing `/v1/files` до hosted-grade parity
 
 Definition of done:
 

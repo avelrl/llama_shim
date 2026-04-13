@@ -38,6 +38,10 @@ responses:
   code_interpreter:
     backend: docker
     python_binary: /opt/homebrew/bin/python3
+    input_file_url_policy: allowlist
+    input_file_url_allow_hosts:
+      - files.example.com
+      - "*.trusted.internal"
     docker:
       binary: /usr/local/bin/docker
       image: ghcr.io/acme/llama-shim-code-interpreter:latest
@@ -45,6 +49,7 @@ responses:
       cpu_limit: "1.5"
       pids_limit: 96
     execution_timeout: 45s
+    cleanup_interval: 2m
 `)
 
 	cfg, err := config.Load(configPath)
@@ -70,6 +75,9 @@ responses:
 	require.Equal(t, "1.5", cfg.ResponsesCodeInterpreterDockerCPU)
 	require.Equal(t, 96, cfg.ResponsesCodeInterpreterDockerPids)
 	require.Equal(t, 45*time.Second, cfg.ResponsesCodeInterpreterTimeout)
+	require.Equal(t, config.ResponsesCodeInterpreterInputFileURLPolicyAllowlist, cfg.ResponsesCodeInterpreterInputFileURLPolicy)
+	require.Equal(t, []string{"files.example.com", "*.trusted.internal"}, cfg.ResponsesCodeInterpreterInputFileURLAllowHosts)
+	require.Equal(t, 2*time.Minute, cfg.ResponsesCodeInterpreterCleanupInterval)
 	require.Equal(t, configPath, cfg.ConfigFile)
 }
 
@@ -114,6 +122,9 @@ responses:
 	t.Setenv("RESPONSES_CODE_INTERPRETER_DOCKER_CPU_LIMIT", "2")
 	t.Setenv("RESPONSES_CODE_INTERPRETER_DOCKER_PIDS_LIMIT", "128")
 	t.Setenv("RESPONSES_CODE_INTERPRETER_EXECUTION_TIMEOUT", "33s")
+	t.Setenv("RESPONSES_CODE_INTERPRETER_INPUT_FILE_URL_POLICY", "unsafe_allow_http_https")
+	t.Setenv("RESPONSES_CODE_INTERPRETER_INPUT_FILE_URL_ALLOW_HOSTS", "files.example.com,*.trusted.internal")
+	t.Setenv("RESPONSES_CODE_INTERPRETER_CLEANUP_INTERVAL", "90s")
 
 	cfg, err := config.Load(configPath)
 	require.NoError(t, err)
@@ -132,6 +143,9 @@ responses:
 	require.Equal(t, "2", cfg.ResponsesCodeInterpreterDockerCPU)
 	require.Equal(t, 128, cfg.ResponsesCodeInterpreterDockerPids)
 	require.Equal(t, 33*time.Second, cfg.ResponsesCodeInterpreterTimeout)
+	require.Equal(t, config.ResponsesCodeInterpreterInputFileURLPolicyUnsafeAllowHTTPHTTPS, cfg.ResponsesCodeInterpreterInputFileURLPolicy)
+	require.Equal(t, []string{"files.example.com", "*.trusted.internal"}, cfg.ResponsesCodeInterpreterInputFileURLAllowHosts)
+	require.Equal(t, 90*time.Second, cfg.ResponsesCodeInterpreterCleanupInterval)
 }
 
 func TestLoadUsesCodexSafeDefaults(t *testing.T) {
@@ -157,6 +171,9 @@ func TestLoadUsesCodexSafeDefaults(t *testing.T) {
 	require.Equal(t, "0.5", cfg.ResponsesCodeInterpreterDockerCPU)
 	require.Equal(t, 64, cfg.ResponsesCodeInterpreterDockerPids)
 	require.Equal(t, 20*time.Second, cfg.ResponsesCodeInterpreterTimeout)
+	require.Equal(t, config.ResponsesCodeInterpreterInputFileURLPolicyDisabled, cfg.ResponsesCodeInterpreterInputFileURLPolicy)
+	require.Empty(t, cfg.ResponsesCodeInterpreterInputFileURLAllowHosts)
+	require.Equal(t, time.Minute, cfg.ResponsesCodeInterpreterCleanupInterval)
 }
 
 func TestLoadSupportsLegacyUnsafeHostAlias(t *testing.T) {

@@ -160,13 +160,21 @@ paths:
           compatibility path
         - current-turn `input_file` model content parts are auto-staged into
           the local sandbox workspace for `input_file.file_id`,
-          `input_file.file_data`, and HTTP(S) `input_file.file_url`
-          (`file_url` fetches use a local 50 MiB cap in the pragmatic subset)
+          `input_file.file_data`, and HTTP(S) `input_file.file_url`;
+          `file_url` fetches use a local 50 MiB cap and are disabled by
+          default unless
+          `responses.code_interpreter.input_file_url_policy` is set to
+          `allowlist` or `unsafe_allow_http_https`
         - stored/local streaming replay now synthesize generic
           `response.output_text.annotation.added` events when the final
           assistant message contains annotations, but local generated-file
           citations still land on the shim-added `Generated files:` appendix
           rather than hosted model-chosen spans
+        - expired shim-managed containers are now swept in the background using
+          `responses.code_interpreter.cleanup_interval`; local container
+          metadata stays visible as `status=expired`, while local
+          `/v1/containers/{container_id}/files*` access is removed after
+          expiry
         - the local subset does not yet claim full hosted sandbox/container
           lifecycle parity, exact non-image `code_interpreter_call.outputs`
           parity, or richer hosted failure/artifact semantics
@@ -1413,6 +1421,9 @@ paths:
         - `limit`, `order`, `after`, `name`
         - `status` currently reflects shim-local lifecycle (`running`,
           `expired`)
+        - expired containers are swept in the background via
+          `responses.code_interpreter.cleanup_interval`, but their metadata
+          snapshots remain retrievable
       parameters:
         - name: limit
           in: query
@@ -2039,7 +2050,11 @@ components:
         filenames, and current-turn `input_file.file_id` /
         `input_file.file_data` / HTTP(S) `input_file.file_url` message content
         parts are auto-staged into that workspace as the pragmatic local
-        subset. The shim now exposes
+        subset. For self-hosted safety, `input_file.file_url` fetches are
+        disabled by default and require
+        `responses.code_interpreter.input_file_url_policy=allowlist` or
+        `unsafe_allow_http_https`; allowlisted mode matches exact hosts or
+        wildcard suffixes like `*.example.com`. The shim now exposes
         local `/v1/containers` and `/v1/containers/{container_id}/files`
         surfaces over the same session store and restores persisted container
         files into the hardened Docker workspace when a reusable local runtime
@@ -2053,9 +2068,13 @@ components:
         with pragmatic `container_file_citation` metadata using shim-owned
         `cfile_*` ids; stored/local streaming replay now synthesize generic
         `response.output_text.annotation.added` events for those final
-        annotations. The shim does not yet claim hosted sandbox/container
-        parity, exact non-image `code_interpreter_call.outputs` parity, or
-        richer hosted failure/artifact semantics.
+        annotations. Expired shim-managed containers are swept in the
+        background using `responses.code_interpreter.cleanup_interval`,
+        clearing local container-file access while keeping container metadata as
+        `status=expired`. The shim does not yet claim hosted
+        sandbox/container parity, exact non-image
+        `code_interpreter_call.outputs` parity, or richer hosted
+        failure/artifact semantics.
 
         `background` is forwarded upstream for long-running responses and is not
         executed locally by the shim.

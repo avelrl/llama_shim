@@ -13,37 +13,43 @@ import (
 )
 
 type Config struct {
-	Addr                                  string
-	SQLitePath                            string
-	LlamaBaseURL                          string
-	LlamaTimeout                          time.Duration
-	ReadTimeout                           time.Duration
-	WriteTimeout                          time.Duration
-	IdleTimeout                           time.Duration
-	LogLevel                              slog.Level
-	LogFilePath                           string
-	ResponsesMode                         string
-	ResponsesCustomToolsMode              string
-	ResponsesCodexEnableCompatibility     bool
-	ResponsesCodexForceToolChoiceRequired bool
-	ResponsesCodeInterpreterBackend       string
-	ResponsesCodeInterpreterPythonBinary  string
-	ResponsesCodeInterpreterDockerBinary  string
-	ResponsesCodeInterpreterDockerImage   string
-	ResponsesCodeInterpreterDockerMemory  string
-	ResponsesCodeInterpreterDockerCPU     string
-	ResponsesCodeInterpreterDockerPids    int
-	ResponsesCodeInterpreterTimeout       time.Duration
-	ConfigFile                            string
+	Addr                                           string
+	SQLitePath                                     string
+	LlamaBaseURL                                   string
+	LlamaTimeout                                   time.Duration
+	ReadTimeout                                    time.Duration
+	WriteTimeout                                   time.Duration
+	IdleTimeout                                    time.Duration
+	LogLevel                                       slog.Level
+	LogFilePath                                    string
+	ResponsesMode                                  string
+	ResponsesCustomToolsMode                       string
+	ResponsesCodexEnableCompatibility              bool
+	ResponsesCodexForceToolChoiceRequired          bool
+	ResponsesCodeInterpreterBackend                string
+	ResponsesCodeInterpreterPythonBinary           string
+	ResponsesCodeInterpreterDockerBinary           string
+	ResponsesCodeInterpreterDockerImage            string
+	ResponsesCodeInterpreterDockerMemory           string
+	ResponsesCodeInterpreterDockerCPU              string
+	ResponsesCodeInterpreterDockerPids             int
+	ResponsesCodeInterpreterTimeout                time.Duration
+	ResponsesCodeInterpreterInputFileURLPolicy     string
+	ResponsesCodeInterpreterInputFileURLAllowHosts []string
+	ResponsesCodeInterpreterCleanupInterval        time.Duration
+	ConfigFile                                     string
 }
 
 const (
-	ResponsesModePreferLocal                  = "prefer_local"
-	ResponsesModePreferUpstream               = "prefer_upstream"
-	ResponsesModeLocalOnly                    = "local_only"
-	ResponsesCodeInterpreterBackendDisabled   = "disabled"
-	ResponsesCodeInterpreterBackendUnsafeHost = "unsafe_host"
-	ResponsesCodeInterpreterBackendDocker     = "docker"
+	ResponsesModePreferLocal                                       = "prefer_local"
+	ResponsesModePreferUpstream                                    = "prefer_upstream"
+	ResponsesModeLocalOnly                                         = "local_only"
+	ResponsesCodeInterpreterBackendDisabled                        = "disabled"
+	ResponsesCodeInterpreterBackendUnsafeHost                      = "unsafe_host"
+	ResponsesCodeInterpreterBackendDocker                          = "docker"
+	ResponsesCodeInterpreterInputFileURLPolicyDisabled             = "disabled"
+	ResponsesCodeInterpreterInputFileURLPolicyAllowlist            = "allowlist"
+	ResponsesCodeInterpreterInputFileURLPolicyUnsafeAllowHTTPHTTPS = "unsafe_allow_http_https"
 )
 
 func Load(configPath string) (Config, error) {
@@ -58,22 +64,24 @@ func Load(configPath string) (Config, error) {
 	}
 
 	cfg := Config{
-		Addr:                                  strings.TrimSpace(v.GetString("shim.addr")),
-		SQLitePath:                            strings.TrimSpace(v.GetString("sqlite.path")),
-		LlamaBaseURL:                          strings.TrimRight(strings.TrimSpace(v.GetString("llama.base_url")), "/"),
-		ConfigFile:                            v.ConfigFileUsed(),
-		LogLevel:                              slog.LevelInfo,
-		LogFilePath:                           strings.TrimSpace(v.GetString("log.file_path")),
-		ResponsesMode:                         strings.ToLower(strings.TrimSpace(v.GetString("responses.mode"))),
-		ResponsesCustomToolsMode:              strings.ToLower(strings.TrimSpace(v.GetString("responses.custom_tools.mode"))),
-		ResponsesCodexEnableCompatibility:     v.GetBool("responses.codex.enable_compatibility"),
-		ResponsesCodexForceToolChoiceRequired: v.GetBool("responses.codex.force_tool_choice_required"),
-		ResponsesCodeInterpreterBackend:       strings.ToLower(strings.TrimSpace(v.GetString("responses.code_interpreter.backend"))),
-		ResponsesCodeInterpreterPythonBinary:  strings.TrimSpace(v.GetString("responses.code_interpreter.python_binary")),
-		ResponsesCodeInterpreterDockerBinary:  strings.TrimSpace(v.GetString("responses.code_interpreter.docker.binary")),
-		ResponsesCodeInterpreterDockerImage:   strings.TrimSpace(v.GetString("responses.code_interpreter.docker.image")),
-		ResponsesCodeInterpreterDockerMemory:  strings.TrimSpace(v.GetString("responses.code_interpreter.docker.memory_limit")),
-		ResponsesCodeInterpreterDockerCPU:     strings.TrimSpace(v.GetString("responses.code_interpreter.docker.cpu_limit")),
+		Addr:                                           strings.TrimSpace(v.GetString("shim.addr")),
+		SQLitePath:                                     strings.TrimSpace(v.GetString("sqlite.path")),
+		LlamaBaseURL:                                   strings.TrimRight(strings.TrimSpace(v.GetString("llama.base_url")), "/"),
+		ConfigFile:                                     v.ConfigFileUsed(),
+		LogLevel:                                       slog.LevelInfo,
+		LogFilePath:                                    strings.TrimSpace(v.GetString("log.file_path")),
+		ResponsesMode:                                  strings.ToLower(strings.TrimSpace(v.GetString("responses.mode"))),
+		ResponsesCustomToolsMode:                       strings.ToLower(strings.TrimSpace(v.GetString("responses.custom_tools.mode"))),
+		ResponsesCodexEnableCompatibility:              v.GetBool("responses.codex.enable_compatibility"),
+		ResponsesCodexForceToolChoiceRequired:          v.GetBool("responses.codex.force_tool_choice_required"),
+		ResponsesCodeInterpreterBackend:                strings.ToLower(strings.TrimSpace(v.GetString("responses.code_interpreter.backend"))),
+		ResponsesCodeInterpreterPythonBinary:           strings.TrimSpace(v.GetString("responses.code_interpreter.python_binary")),
+		ResponsesCodeInterpreterDockerBinary:           strings.TrimSpace(v.GetString("responses.code_interpreter.docker.binary")),
+		ResponsesCodeInterpreterDockerImage:            strings.TrimSpace(v.GetString("responses.code_interpreter.docker.image")),
+		ResponsesCodeInterpreterDockerMemory:           strings.TrimSpace(v.GetString("responses.code_interpreter.docker.memory_limit")),
+		ResponsesCodeInterpreterDockerCPU:              strings.TrimSpace(v.GetString("responses.code_interpreter.docker.cpu_limit")),
+		ResponsesCodeInterpreterInputFileURLPolicy:     strings.ToLower(strings.TrimSpace(v.GetString("responses.code_interpreter.input_file_url_policy"))),
+		ResponsesCodeInterpreterInputFileURLAllowHosts: parseStringList(v, "responses.code_interpreter.input_file_url_allow_hosts"),
 	}
 	if cfg.ResponsesCodeInterpreterBackend == "" {
 		if v.GetBool("responses.code_interpreter.enable_unsafe_host_executor") {
@@ -107,8 +115,14 @@ func Load(configPath string) (Config, error) {
 	if err := parseCodeInterpreterBackend(cfg.ResponsesCodeInterpreterBackend); err != nil {
 		return Config{}, fmt.Errorf("parse responses.code_interpreter.backend: %w", err)
 	}
+	if err := parseCodeInterpreterInputFileURLPolicy(cfg.ResponsesCodeInterpreterInputFileURLPolicy); err != nil {
+		return Config{}, fmt.Errorf("parse responses.code_interpreter.input_file_url_policy: %w", err)
+	}
 	if err := parseDuration(v.GetString("responses.code_interpreter.execution_timeout"), &cfg.ResponsesCodeInterpreterTimeout); err != nil {
 		return Config{}, fmt.Errorf("parse responses.code_interpreter.execution_timeout: %w", err)
+	}
+	if err := parseDuration(v.GetString("responses.code_interpreter.cleanup_interval"), &cfg.ResponsesCodeInterpreterCleanupInterval); err != nil {
+		return Config{}, fmt.Errorf("parse responses.code_interpreter.cleanup_interval: %w", err)
 	}
 	pidsLimit, err := parsePositiveInt(v.GetString("responses.code_interpreter.docker.pids_limit"))
 	if err != nil {
@@ -157,6 +171,9 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("responses.code_interpreter.docker.memory_limit", "1g")
 	v.SetDefault("responses.code_interpreter.docker.cpu_limit", "0.5")
 	v.SetDefault("responses.code_interpreter.docker.pids_limit", "64")
+	v.SetDefault("responses.code_interpreter.input_file_url_policy", ResponsesCodeInterpreterInputFileURLPolicyDisabled)
+	v.SetDefault("responses.code_interpreter.input_file_url_allow_hosts", []string{})
+	v.SetDefault("responses.code_interpreter.cleanup_interval", "1m")
 }
 
 func resolveConfigPath(configPath string) string {
@@ -244,6 +261,17 @@ func parseCodeInterpreterBackend(value string) error {
 	}
 }
 
+func parseCodeInterpreterInputFileURLPolicy(value string) error {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case ResponsesCodeInterpreterInputFileURLPolicyDisabled,
+		ResponsesCodeInterpreterInputFileURLPolicyAllowlist,
+		ResponsesCodeInterpreterInputFileURLPolicyUnsafeAllowHTTPHTTPS:
+		return nil
+	default:
+		return strconv.ErrSyntax
+	}
+}
+
 func parsePositiveInt(value string) (int, error) {
 	parsed, err := strconv.Atoi(strings.TrimSpace(value))
 	if err != nil {
@@ -253,4 +281,31 @@ func parsePositiveInt(value string) (int, error) {
 		return 0, strconv.ErrSyntax
 	}
 	return parsed, nil
+}
+
+func parseStringList(v *viper.Viper, key string) []string {
+	values := v.GetStringSlice(key)
+	if len(values) == 0 {
+		if raw := strings.TrimSpace(v.GetString(key)); raw != "" {
+			values = strings.Split(raw, ",")
+		}
+	} else if len(values) == 1 && strings.Contains(values[0], ",") {
+		values = strings.Split(values[0], ",")
+	}
+
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		normalized := strings.ToLower(trimmed)
+		if _, ok := seen[normalized]; ok {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		out = append(out, trimmed)
+	}
+	return out
 }

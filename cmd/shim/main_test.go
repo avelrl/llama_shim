@@ -47,13 +47,15 @@ func TestBuildLocalCodeInterpreterRuntimeConfigDocker(t *testing.T) {
 	t.Parallel()
 
 	runtime, err := buildLocalCodeInterpreterRuntimeConfig(config.Config{
-		ResponsesCodeInterpreterBackend:      config.ResponsesCodeInterpreterBackendDocker,
-		ResponsesCodeInterpreterDockerBinary: "/usr/local/bin/docker",
-		ResponsesCodeInterpreterDockerImage:  "python:3.12-slim",
-		ResponsesCodeInterpreterDockerMemory: "512m",
-		ResponsesCodeInterpreterDockerCPU:    "1",
-		ResponsesCodeInterpreterDockerPids:   96,
-		ResponsesCodeInterpreterTimeout:      30 * time.Second,
+		ResponsesCodeInterpreterBackend:                config.ResponsesCodeInterpreterBackendDocker,
+		ResponsesCodeInterpreterDockerBinary:           "/usr/local/bin/docker",
+		ResponsesCodeInterpreterDockerImage:            "python:3.12-slim",
+		ResponsesCodeInterpreterDockerMemory:           "512m",
+		ResponsesCodeInterpreterDockerCPU:              "1",
+		ResponsesCodeInterpreterDockerPids:             96,
+		ResponsesCodeInterpreterTimeout:                30 * time.Second,
+		ResponsesCodeInterpreterInputFileURLPolicy:     config.ResponsesCodeInterpreterInputFileURLPolicyAllowlist,
+		ResponsesCodeInterpreterInputFileURLAllowHosts: []string{"files.example.com"},
 	})
 	require.NoError(t, err)
 
@@ -65,15 +67,19 @@ func TestBuildLocalCodeInterpreterRuntimeConfigDocker(t *testing.T) {
 	require.Equal(t, "1", backend.CPULimit)
 	require.Equal(t, 96, backend.PidsLimit)
 	require.Equal(t, 30*time.Second, backend.Timeout)
+	require.Equal(t, config.ResponsesCodeInterpreterInputFileURLPolicyAllowlist, runtime.InputFileURLPolicy)
+	require.Equal(t, []string{"files.example.com"}, runtime.InputFileURLAllowHosts)
 }
 
 func TestBuildLocalCodeInterpreterRuntimeConfigUnsafeHost(t *testing.T) {
 	t.Parallel()
 
 	runtime, err := buildLocalCodeInterpreterRuntimeConfig(config.Config{
-		ResponsesCodeInterpreterBackend:      config.ResponsesCodeInterpreterBackendUnsafeHost,
-		ResponsesCodeInterpreterPythonBinary: "/opt/homebrew/bin/python3",
-		ResponsesCodeInterpreterTimeout:      12 * time.Second,
+		ResponsesCodeInterpreterBackend:                config.ResponsesCodeInterpreterBackendUnsafeHost,
+		ResponsesCodeInterpreterPythonBinary:           "/opt/homebrew/bin/python3",
+		ResponsesCodeInterpreterTimeout:                12 * time.Second,
+		ResponsesCodeInterpreterInputFileURLPolicy:     config.ResponsesCodeInterpreterInputFileURLPolicyUnsafeAllowHTTPHTTPS,
+		ResponsesCodeInterpreterInputFileURLAllowHosts: []string{"files.example.com"},
 	})
 	require.NoError(t, err)
 
@@ -81,4 +87,6 @@ func TestBuildLocalCodeInterpreterRuntimeConfigUnsafeHost(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "/opt/homebrew/bin/python3", backend.PythonBinary)
 	require.Equal(t, 12*time.Second, backend.Timeout)
+	require.Equal(t, config.ResponsesCodeInterpreterInputFileURLPolicyUnsafeAllowHTTPHTTPS, runtime.InputFileURLPolicy)
+	require.Equal(t, []string{"files.example.com"}, runtime.InputFileURLAllowHosts)
 }

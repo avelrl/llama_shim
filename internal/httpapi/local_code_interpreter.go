@@ -64,11 +64,60 @@ var localCodeInterpreterForbiddenFragments = []string{
 }
 
 type LocalCodeInterpreterRuntimeConfig struct {
-	Backend sandbox.Backend
+	Backend                sandbox.Backend
+	InputFileURLPolicy     string
+	InputFileURLAllowHosts []string
 }
 
 func (c LocalCodeInterpreterRuntimeConfig) Enabled() bool {
 	return c.Backend != nil
+}
+
+func (c LocalCodeInterpreterRuntimeConfig) allowsRemoteInputFileURL(parsedURL *neturl.URL) error {
+	mode := strings.ToLower(strings.TrimSpace(c.InputFileURLPolicy))
+	if mode == "" {
+		mode = "disabled"
+	}
+
+	switch mode {
+	case "disabled":
+		return domain.NewValidationError("input", "shim-local code_interpreter disables input_file.file_url by default; set responses.code_interpreter.input_file_url_policy to allowlist or unsafe_allow_http_https")
+	case "unsafe_allow_http_https":
+		return nil
+	case "allowlist":
+		host := strings.ToLower(strings.TrimSpace(parsedURL.Hostname()))
+		if host == "" {
+			return domain.NewValidationError("input", "input_file.file_url must include a host in shim-local code_interpreter mode")
+		}
+		for _, candidate := range c.InputFileURLAllowHosts {
+			if matchesLocalCodeInterpreterAllowedHost(host, candidate) {
+				return nil
+			}
+		}
+		if len(c.InputFileURLAllowHosts) == 0 {
+			return domain.NewValidationError("input", "shim-local code_interpreter input_file.file_url allowlist is empty")
+		}
+		return domain.NewValidationError("input", "input_file.file_url host is not allowlisted in shim-local code_interpreter mode")
+	default:
+		return domain.NewValidationError("input", "shim-local code_interpreter input_file.file_url policy is invalid")
+	}
+}
+
+func matchesLocalCodeInterpreterAllowedHost(host string, candidate string) bool {
+	normalizedHost := strings.ToLower(strings.TrimSpace(host))
+	normalizedCandidate := strings.ToLower(strings.TrimSpace(candidate))
+	if normalizedHost == "" || normalizedCandidate == "" {
+		return false
+	}
+	if strings.HasPrefix(normalizedCandidate, "*.") {
+		suffix := strings.TrimPrefix(normalizedCandidate, "*.")
+		return suffix != "" && strings.HasSuffix(normalizedHost, "."+suffix)
+	}
+	if strings.HasPrefix(normalizedCandidate, ".") {
+		suffix := strings.TrimPrefix(normalizedCandidate, ".")
+		return suffix != "" && strings.HasSuffix(normalizedHost, "."+suffix)
+	}
+	return normalizedHost == normalizedCandidate
 }
 
 type LocalCodeInterpreterSessionStore interface {
@@ -862,12 +911,27 @@ func (h *responseHandler) resolveLocalCodeInterpreterRemoteInputFile(ctx context
 	if strings.TrimSpace(parsedURL.Host) == "" {
 		return localCodeInterpreterInputFile{}, domain.NewValidationError("input", "input_file.file_url must include a host in shim-local code_interpreter mode")
 	}
+	if err := h.localCodeInterpreter.allowsRemoteInputFileURL(parsedURL); err != nil {
+		return localCodeInterpreterInputFile{}, err
+	}
+
+	client := http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if err := h.localCodeInterpreter.allowsRemoteInputFileURL(req.URL); err != nil {
+				return err
+			}
+			if len(via) >= 10 {
+				return errors.New("stopped after 10 redirects")
+			}
+			return nil
+		},
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, parsedURL.String(), nil)
 	if err != nil {
 		return localCodeInterpreterInputFile{}, domain.NewValidationError("input", "input_file.file_url could not be fetched in shim-local code_interpreter mode")
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return localCodeInterpreterInputFile{}, domain.NewValidationError("input", "input_file.file_url could not be fetched in shim-local code_interpreter mode")
 	}

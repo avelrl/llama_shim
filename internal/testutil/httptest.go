@@ -53,12 +53,15 @@ func NewTestAppWithResponsesAndCodexSettings(t *testing.T, responsesMode string,
 }
 
 type TestAppOptions struct {
-	ResponsesMode             string
-	CustomToolsMode           string
-	CodexCompatibilityEnabled bool
-	ForceToolChoiceRequired   bool
-	LlamaBaseURL              string
-	CodeInterpreterBackend    sandbox.Backend
+	ResponsesMode                         string
+	CustomToolsMode                       string
+	CodexCompatibilityEnabled             bool
+	ForceToolChoiceRequired               bool
+	LlamaBaseURL                          string
+	CodeInterpreterBackend                sandbox.Backend
+	CodeInterpreterInputFileURLPolicy     string
+	CodeInterpreterInputFileURLAllowHosts []string
+	CodeInterpreterCleanupInterval        time.Duration
 }
 
 func NewTestAppWithOptions(t *testing.T, options TestAppOptions) *TestApp {
@@ -79,11 +82,19 @@ func NewTestAppWithOptions(t *testing.T, options TestAppOptions) *TestApp {
 	llamaClient := llama.NewClient(llamaBaseURL, 200*time.Millisecond)
 	responseService := service.NewResponseService(store, store, llamaClient)
 	conversationService := service.NewConversationService(store)
+	testCtx, cancel := context.WithCancel(context.Background())
 
 	responsesMode := options.ResponsesMode
 	if responsesMode == "" {
 		responsesMode = config.ResponsesModePreferLocal
 	}
+
+	localCodeInterpreter := httpapi.LocalCodeInterpreterRuntimeConfig{
+		Backend:                options.CodeInterpreterBackend,
+		InputFileURLPolicy:     options.CodeInterpreterInputFileURLPolicy,
+		InputFileURLAllowHosts: append([]string(nil), options.CodeInterpreterInputFileURLAllowHosts...),
+	}
+	httpapi.StartLocalCodeInterpreterCleanupLoop(testCtx, logger, localCodeInterpreter, store, store, options.CodeInterpreterCleanupInterval)
 
 	server := httptest.NewServer(httpapi.NewRouter(httpapi.RouterDeps{
 		Logger:                                logger,
@@ -94,13 +105,12 @@ func NewTestAppWithOptions(t *testing.T, options TestAppOptions) *TestApp {
 		ResponsesCustomToolsMode:              options.CustomToolsMode,
 		ResponsesCodexEnableCompatibility:     options.CodexCompatibilityEnabled,
 		ResponsesCodexForceToolChoiceRequired: options.ForceToolChoiceRequired,
-		LocalCodeInterpreter: httpapi.LocalCodeInterpreterRuntimeConfig{
-			Backend: options.CodeInterpreterBackend,
-		},
-		Store: store,
+		LocalCodeInterpreter:                  localCodeInterpreter,
+		Store:                                 store,
 	}))
 
 	t.Cleanup(func() {
+		cancel()
 		server.Close()
 		_ = store.Close()
 		if llamaServer != nil {

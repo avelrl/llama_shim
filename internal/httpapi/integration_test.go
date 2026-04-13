@@ -10,17 +10,20 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"llama_shim/internal/config"
 	"llama_shim/internal/domain"
 	"llama_shim/internal/sandbox"
+	"llama_shim/internal/storage/sqlite"
 	"llama_shim/internal/testutil"
 )
 
@@ -4847,6 +4850,84 @@ func TestContainersCreateListGetDelete(t *testing.T) {
 	require.Equal(t, "invalid_request_error", asStringAny(errorPayload["type"]))
 }
 
+func TestCodeInterpreterCleanupLoopExpiresContainersInBackground(t *testing.T) {
+	var (
+		mu        sync.Mutex
+		destroyed = map[string]int{}
+	)
+
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		CodeInterpreterCleanupInterval: 10 * time.Millisecond,
+		CodeInterpreterBackend: testutil.FakeSandboxBackend{
+			KindValue: "docker",
+			DestroySessionFunc: func(_ context.Context, sessionID string) error {
+				mu.Lock()
+				defer mu.Unlock()
+				destroyed[sessionID]++
+				return nil
+			},
+		},
+	})
+
+	ctx := context.Background()
+	session := domain.CodeInterpreterSession{
+		ID:                  "cntr_expired_cleanup",
+		Backend:             "docker",
+		Status:              "running",
+		Name:                "Expired Container",
+		MemoryLimit:         "1g",
+		ExpiresAfterMinutes: 20,
+		CreatedAt:           "2026-04-13T08:00:00Z",
+		LastActiveAt:        "2026-04-13T07:00:00Z",
+	}
+	require.NoError(t, app.Store.SaveCodeInterpreterSession(ctx, session))
+	require.NoError(t, app.Store.SaveFile(ctx, domain.StoredFile{
+		ID:        "file_cleanup",
+		Filename:  "report.txt",
+		Purpose:   "assistants_output",
+		Bytes:     4,
+		CreatedAt: 1712995200,
+		Status:    "processed",
+		Content:   []byte("done"),
+	}))
+	_, err := app.Store.SaveCodeInterpreterContainerFile(ctx, domain.CodeInterpreterContainerFile{
+		ID:            "cfile_cleanup",
+		ContainerID:   session.ID,
+		BackingFileID: "file_cleanup",
+		Path:          "/mnt/data/report.txt",
+		Source:        "assistant",
+		Bytes:         4,
+		CreatedAt:     1712995200,
+	})
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		got, err := app.Store.GetCodeInterpreterSession(ctx, session.ID)
+		return err == nil && got.Status == "expired"
+	}, time.Second, 20*time.Millisecond)
+
+	mu.Lock()
+	require.Equal(t, 1, destroyed[session.ID])
+	mu.Unlock()
+
+	status, payload := rawRequest(t, app, http.MethodGet, "/v1/containers/"+session.ID, nil)
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, "expired", asStringAny(payload["status"]))
+
+	status, expiredFiles := rawRequest(t, app, http.MethodGet, "/v1/containers/"+session.ID+"/files?limit=10", nil)
+	require.Equal(t, http.StatusBadRequest, status)
+	errorPayload, ok := expiredFiles["error"].(map[string]any)
+	require.True(t, ok)
+	require.Contains(t, asStringAny(errorPayload["message"]), "expired")
+
+	_, err = app.Store.GetCodeInterpreterContainerFile(ctx, session.ID, "cfile_cleanup")
+	require.ErrorIs(t, err, sqlite.ErrNotFound)
+
+	status, backingPayload := rawRequest(t, app, http.MethodGet, "/v1/files/file_cleanup", nil)
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, "file_cleanup", asStringAny(backingPayload["id"]))
+}
+
 func TestContainerFilesCreateListGetContentDelete(t *testing.T) {
 	var (
 		mu             sync.Mutex
@@ -5284,7 +5365,12 @@ func TestResponsesCreateLocalCodeInterpreterAutoUploadsInputFileURL(t *testing.T
 	}))
 	defer fileServer.Close()
 
+	parsedURL, err := url.Parse(fileServer.URL)
+	require.NoError(t, err)
+
 	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		CodeInterpreterInputFileURLPolicy:     config.ResponsesCodeInterpreterInputFileURLPolicyAllowlist,
+		CodeInterpreterInputFileURLAllowHosts: []string{parsedURL.Hostname()},
 		CodeInterpreterBackend: testutil.FakeSandboxBackend{
 			KindValue: "docker",
 			CreateSessionFunc: func(_ context.Context, req sandbox.CreateSessionRequest) error {
@@ -5348,9 +5434,82 @@ func TestResponsesCreateLocalCodeInterpreterAutoUploadsInputFileURL(t *testing.T
 	require.NotEmpty(t, asStringAny(response.Output[0].Map()["container_id"]))
 }
 
-func TestResponsesCreateLocalCodeInterpreterRejectsUnsupportedInputFileURLScheme(t *testing.T) {
+func TestResponsesCreateLocalCodeInterpreterRejectsInputFileURLWhenPolicyDisabled(t *testing.T) {
 	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
 		CodeInterpreterBackend: testutil.FakeSandboxBackend{KindValue: "docker"},
+	})
+
+	status, payload := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model": "test-model",
+		"input": []map[string]any{
+			{
+				"role": "user",
+				"content": []map[string]any{
+					{"type": "input_text", "text": "Read the uploaded file and return the code."},
+					{"type": "input_file", "file_url": "https://example.com/codes.txt"},
+				},
+			},
+		},
+		"tools": []map[string]any{
+			{
+				"type": "code_interpreter",
+				"container": map[string]any{
+					"type": "auto",
+				},
+			},
+		},
+		"tool_choice": "required",
+	})
+
+	require.Equal(t, http.StatusBadRequest, status)
+	errorPayload, ok := payload["error"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "invalid_request_error", asStringAny(errorPayload["type"]))
+	require.Contains(t, asStringAny(errorPayload["message"]), "disables input_file.file_url by default")
+	require.Equal(t, "input", asStringAny(errorPayload["param"]))
+}
+
+func TestResponsesCreateLocalCodeInterpreterRejectsInputFileURLFromNonAllowlistedHost(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		CodeInterpreterInputFileURLPolicy:     config.ResponsesCodeInterpreterInputFileURLPolicyAllowlist,
+		CodeInterpreterInputFileURLAllowHosts: []string{"example.com"},
+		CodeInterpreterBackend:                testutil.FakeSandboxBackend{KindValue: "docker"},
+	})
+
+	status, payload := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model": "test-model",
+		"input": []map[string]any{
+			{
+				"role": "user",
+				"content": []map[string]any{
+					{"type": "input_text", "text": "Read the uploaded file and return the code."},
+					{"type": "input_file", "file_url": "https://not-allowed.example.net/codes.txt"},
+				},
+			},
+		},
+		"tools": []map[string]any{
+			{
+				"type": "code_interpreter",
+				"container": map[string]any{
+					"type": "auto",
+				},
+			},
+		},
+		"tool_choice": "required",
+	})
+
+	require.Equal(t, http.StatusBadRequest, status)
+	errorPayload, ok := payload["error"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "invalid_request_error", asStringAny(errorPayload["type"]))
+	require.Contains(t, asStringAny(errorPayload["message"]), "not allowlisted")
+	require.Equal(t, "input", asStringAny(errorPayload["param"]))
+}
+
+func TestResponsesCreateLocalCodeInterpreterRejectsUnsupportedInputFileURLScheme(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		CodeInterpreterInputFileURLPolicy: config.ResponsesCodeInterpreterInputFileURLPolicyUnsafeAllowHTTPHTTPS,
+		CodeInterpreterBackend:            testutil.FakeSandboxBackend{KindValue: "docker"},
 	})
 
 	status, payload := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{

@@ -40,9 +40,10 @@ func main() {
 	logger := slog.New(slog.NewJSONHandler(logWriter, &slog.HandlerOptions{
 		Level: cfg.LogLevel,
 	}))
+	processCtx, processCancel := context.WithCancel(context.Background())
+	defer processCancel()
 
-	ctx := context.Background()
-	store, err := sqlite.Open(ctx, cfg.SQLitePath)
+	store, err := sqlite.Open(processCtx, cfg.SQLitePath)
 	if err != nil {
 		logger.Error("open sqlite", "err", err)
 		os.Exit(1)
@@ -57,6 +58,7 @@ func main() {
 		logger.Error("build code interpreter runtime", "err", err)
 		os.Exit(1)
 	}
+	httpapi.StartLocalCodeInterpreterCleanupLoop(processCtx, logger, localCodeInterpreter, store, store, cfg.ResponsesCodeInterpreterCleanupInterval)
 
 	server := &http.Server{
 		Addr: cfg.Addr,
@@ -96,6 +98,9 @@ func main() {
 		"responses_code_interpreter_docker_cpu_limit", cfg.ResponsesCodeInterpreterDockerCPU,
 		"responses_code_interpreter_docker_pids_limit", cfg.ResponsesCodeInterpreterDockerPids,
 		"responses_code_interpreter_execution_timeout", cfg.ResponsesCodeInterpreterTimeout,
+		"responses_code_interpreter_input_file_url_policy", cfg.ResponsesCodeInterpreterInputFileURLPolicy,
+		"responses_code_interpreter_input_file_url_allow_hosts", cfg.ResponsesCodeInterpreterInputFileURLAllowHosts,
+		"responses_code_interpreter_cleanup_interval", cfg.ResponsesCodeInterpreterCleanupInterval,
 	)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		logger.Error("server stopped", "err", err)
@@ -113,6 +118,8 @@ func buildLocalCodeInterpreterRuntimeConfig(cfg config.Config) (httpapi.LocalCod
 				PythonBinary: cfg.ResponsesCodeInterpreterPythonBinary,
 				Timeout:      cfg.ResponsesCodeInterpreterTimeout,
 			},
+			InputFileURLPolicy:     cfg.ResponsesCodeInterpreterInputFileURLPolicy,
+			InputFileURLAllowHosts: append([]string(nil), cfg.ResponsesCodeInterpreterInputFileURLAllowHosts...),
 		}, nil
 	case config.ResponsesCodeInterpreterBackendDocker:
 		return httpapi.LocalCodeInterpreterRuntimeConfig{
@@ -124,6 +131,8 @@ func buildLocalCodeInterpreterRuntimeConfig(cfg config.Config) (httpapi.LocalCod
 				CPULimit:     cfg.ResponsesCodeInterpreterDockerCPU,
 				PidsLimit:    cfg.ResponsesCodeInterpreterDockerPids,
 			},
+			InputFileURLPolicy:     cfg.ResponsesCodeInterpreterInputFileURLPolicy,
+			InputFileURLAllowHosts: append([]string(nil), cfg.ResponsesCodeInterpreterInputFileURLAllowHosts...),
 		}, nil
 	default:
 		return httpapi.LocalCodeInterpreterRuntimeConfig{}, fmt.Errorf("unsupported code interpreter backend %q", cfg.ResponsesCodeInterpreterBackend)
