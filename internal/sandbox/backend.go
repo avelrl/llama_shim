@@ -28,11 +28,17 @@ var ErrSessionNotFound = errors.New("sandbox session not found")
 
 type Backend interface {
 	Kind() string
-	CreateSession(ctx context.Context, sessionID string) error
+	CreateSession(ctx context.Context, req CreateSessionRequest) error
 	UploadFile(ctx context.Context, sessionID string, file SessionFile) error
+	DeleteFile(ctx context.Context, sessionID string, name string) error
 	ListFiles(ctx context.Context, sessionID string) ([]SessionFile, error)
 	ExecutePython(ctx context.Context, req ExecuteRequest) (ExecuteResult, error)
 	DestroySession(ctx context.Context, sessionID string) error
+}
+
+type CreateSessionRequest struct {
+	SessionID   string
+	MemoryLimit string
 }
 
 type SessionFile struct {
@@ -58,11 +64,11 @@ func (b UnsafeHostBackend) Kind() string {
 	return "unsafe_host"
 }
 
-func (b UnsafeHostBackend) CreateSession(_ context.Context, sessionID string) error {
-	if strings.TrimSpace(sessionID) == "" {
+func (b UnsafeHostBackend) CreateSession(_ context.Context, req CreateSessionRequest) error {
+	if strings.TrimSpace(req.SessionID) == "" {
 		return fmt.Errorf("create unsafe_host session: session id is required")
 	}
-	return os.MkdirAll(b.sessionDir(sessionID), 0o755)
+	return os.MkdirAll(b.sessionDir(req.SessionID), 0o755)
 }
 
 func (b UnsafeHostBackend) UploadFile(_ context.Context, sessionID string, file SessionFile) error {
@@ -104,6 +110,24 @@ func (b UnsafeHostBackend) ListFiles(_ context.Context, sessionID string) ([]Ses
 		return nil, fmt.Errorf("list unsafe_host session files: %w", err)
 	}
 	return files, nil
+}
+
+func (b UnsafeHostBackend) DeleteFile(_ context.Context, sessionID string, name string) error {
+	if strings.TrimSpace(sessionID) == "" {
+		return ErrSessionNotFound
+	}
+	sanitizedName, err := validateSessionFile(SessionFile{Name: name})
+	if err != nil {
+		return fmt.Errorf("delete unsafe_host session file: %w", err)
+	}
+	path := filepath.Join(b.sessionDir(sessionID), sanitizedName)
+	if err := os.Remove(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return ErrSessionNotFound
+		}
+		return fmt.Errorf("delete unsafe_host session file: %w", err)
+	}
+	return nil
 }
 
 func (b UnsafeHostBackend) ExecutePython(ctx context.Context, req ExecuteRequest) (ExecuteResult, error) {
@@ -198,8 +222,8 @@ func (b DockerBackend) Kind() string {
 	return "docker"
 }
 
-func (b DockerBackend) CreateSession(ctx context.Context, sessionID string) error {
-	if strings.TrimSpace(sessionID) == "" {
+func (b DockerBackend) CreateSession(ctx context.Context, req CreateSessionRequest) error {
+	if strings.TrimSpace(req.SessionID) == "" {
 		return fmt.Errorf("create docker session: session id is required")
 	}
 	timeout := b.Timeout
@@ -210,7 +234,7 @@ func (b DockerBackend) CreateSession(ctx context.Context, sessionID string) erro
 	defer cancel()
 
 	dockerBinary := b.dockerBinary()
-	containerName := b.containerName(sessionID)
+	containerName := b.containerName(req.SessionID)
 	exists, running, err := b.inspectContainer(execCtx, dockerBinary, containerName)
 	if err != nil {
 		return err
@@ -222,7 +246,7 @@ func (b DockerBackend) CreateSession(ctx context.Context, sessionID string) erro
 		return b.startContainer(execCtx, dockerBinary, containerName)
 	}
 
-	createCmd := exec.CommandContext(execCtx, dockerBinary, b.buildDockerCreateArgs(containerName)...)
+	createCmd := exec.CommandContext(execCtx, dockerBinary, b.buildDockerCreateArgs(containerName, req.MemoryLimit)...)
 	if output, err := createCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("create docker sandbox session: %w: %s", err, strings.TrimSpace(string(output)))
 	}
@@ -425,19 +449,58 @@ func (b DockerBackend) DestroySession(ctx context.Context, sessionID string) err
 	return nil
 }
 
+func (b DockerBackend) DeleteFile(ctx context.Context, sessionID string, name string) error {
+	if strings.TrimSpace(sessionID) == "" {
+		return ErrSessionNotFound
+	}
+	sanitizedName, err := validateSessionFile(SessionFile{Name: name})
+	if err != nil {
+		return fmt.Errorf("delete docker sandbox file: %w", err)
+	}
+	timeout := b.Timeout
+	if timeout <= 0 {
+		timeout = DefaultExecutionTimeout
+	}
+	execCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	dockerBinary := b.dockerBinary()
+	containerName := b.containerName(sessionID)
+	exists, running, err := b.inspectContainer(execCtx, dockerBinary, containerName)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return ErrSessionNotFound
+	}
+	if !running {
+		if err := b.startContainer(execCtx, dockerBinary, containerName); err != nil {
+			return err
+		}
+	}
+	cmd := exec.CommandContext(execCtx, dockerBinary, "exec", "--workdir", "/workspace", containerName, "rm", "-f", "--", sanitizedName)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("delete docker sandbox file: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
 func (b DockerBackend) buildDockerRunArgs() []string {
-	args := b.buildDockerCreateArgs("")
+	args := b.buildDockerCreateArgs("", "")
 	return append([]string{"run", "--rm", "--interactive", "--pull=never"}, args[1:]...)
 }
 
-func (b DockerBackend) buildDockerCreateArgs(containerName string) []string {
+func (b DockerBackend) buildDockerCreateArgs(containerName string, memoryLimitOverride string) []string {
 	image := strings.TrimSpace(b.Image)
 	if image == "" {
 		image = "python:3.12-slim"
 	}
-	memoryLimit := strings.TrimSpace(b.MemoryLimit)
+	memoryLimit := strings.TrimSpace(memoryLimitOverride)
 	if memoryLimit == "" {
-		memoryLimit = "256m"
+		memoryLimit = strings.TrimSpace(b.MemoryLimit)
+	}
+	if memoryLimit == "" {
+		memoryLimit = "1g"
 	}
 	cpuLimit := strings.TrimSpace(b.CPULimit)
 	if cpuLimit == "" {

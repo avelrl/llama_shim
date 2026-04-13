@@ -42,6 +42,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 	)
 	conversationHandler := newConversationHandler(deps.Logger, deps.ConversationService)
 	retrievalHandler := newRetrievalHandler(deps.Logger, deps.Store)
+	containerHandler := newContainerHandler(deps.Logger, deps.LocalCodeInterpreter, deps.Store, deps.Store)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -248,6 +249,53 @@ func NewRouter(deps RouterDeps) http.Handler {
 			return
 		}
 		retrievalHandler.searchVectorStore(w, r)
+	})
+	mux.HandleFunc("/v1/containers", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			containerHandler.listContainers(w, r)
+		case http.MethodPost:
+			containerHandler.createContainer(w, r)
+		default:
+			WriteError(w, http.StatusMethodNotAllowed, "invalid_request_error", "method not allowed", "")
+		}
+	})
+	mux.HandleFunc("/v1/containers/{container_id}", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			containerHandler.getContainer(w, r)
+		case http.MethodDelete:
+			containerHandler.deleteContainer(w, r)
+		default:
+			WriteError(w, http.StatusMethodNotAllowed, "invalid_request_error", "method not allowed", "")
+		}
+	})
+	mux.HandleFunc("/v1/containers/{container_id}/files", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			containerHandler.listContainerFiles(w, r)
+		case http.MethodPost:
+			containerHandler.createContainerFile(w, r)
+		default:
+			WriteError(w, http.StatusMethodNotAllowed, "invalid_request_error", "method not allowed", "")
+		}
+	})
+	mux.HandleFunc("/v1/containers/{container_id}/files/{file_id}", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			containerHandler.getContainerFile(w, r)
+		case http.MethodDelete:
+			containerHandler.deleteContainerFile(w, r)
+		default:
+			WriteError(w, http.StatusMethodNotAllowed, "invalid_request_error", "method not allowed", "")
+		}
+	})
+	mux.HandleFunc("/v1/containers/{container_id}/files/{file_id}/content", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			WriteError(w, http.StatusMethodNotAllowed, "invalid_request_error", "method not allowed", "")
+			return
+		}
+		containerHandler.getContainerFileContent(w, r)
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		proxyHandler.forward(w, r)

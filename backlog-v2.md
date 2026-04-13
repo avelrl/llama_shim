@@ -99,13 +99,16 @@
   stored tool items в локальном generation context
 - local `/v1/responses` теперь умеет dev-only shim-local `code_interpreter`
   execution в pragmatic subset:
-  один `code_interpreter` tool с `container.type=auto` и optional
-  `container.file_ids` against shim-owned `/v1/files`,
+  один `code_interpreter` tool с `container.type=auto` или explicit
+  `tools[].container="cntr_*"`, optional `container.file_ids` against
+  shim-owned `/v1/files`, shim-managed `/v1/containers` and
+  `/v1/containers/{container_id}/files`,
   backend-gated local executor (`disabled|unsafe_host|docker`) with hardened
   Docker as the primary boundary, non-streaming/streaming create, shim-owned
-  `container_id` session reuse across stored `previous_response_id` lineage,
-  optional `include=["code_interpreter_call.outputs"]` with logs plus
-  shim-owned generated file descriptors, local final assistant
+  `container_id` session reuse across stored `previous_response_id` lineage
+  plus same-`cntr_*` restore after transient runtime loss, optional
+  `include=["code_interpreter_call.outputs"]` with logs plus
+  shim-owned generated container-file descriptors, local final assistant
   `container_file_citation` subset over shim-added generated-file appendix, stored
   `code_interpreter_call` output item и follow-up turns не ломаются из-за
   stored tool items в локальном generation context
@@ -1038,14 +1041,14 @@ Definition of done:
   ему равным через silent host exec на сервере было бы небезопасно и нечестно
 - полезный следующий шаг это explicit opt-in local subset, а не overclaim про
   hosted parity
-- docs rechecked on April 12, 2026 against the official Code Interpreter guide
+- docs rechecked on April 13, 2026 against the official Code Interpreter guide
   and `/v1/responses` reference before closing this subset
 
 Что закрыто в pragmatic subset:
 
 - local `/v1/responses` path теперь умеет ровно один `tools[]` entry с
-  `type=code_interpreter`, `container.type=auto`, и optional
-  `container.file_ids`
+  `type=code_interpreter`, `container.type=auto` или explicit
+  `tools[].container = "cntr_*"`, и optional `container.file_ids`
 - local execution теперь включается через explicit backend gate
   `responses.code_interpreter.backend=unsafe_host|docker`
 - legacy `responses.code_interpreter.enable_unsafe_host_executor=true`
@@ -1064,8 +1067,16 @@ Definition of done:
   (`network=none`, `read_only`, tmpfs workspace, non-root,
   `cap_drop=ALL`, `no-new-privileges`, memory/cpu/pids limits)
 - `container.type=auto` теперь reuse-ит активный shim-owned session из
-  последнего stored `code_interpreter_call` в lineage того же backend; если
-  runtime потерян, shim создает новый `cntr_*` и продолжает без hard failure
+  последнего stored `code_interpreter_call` в lineage того же backend
+- explicit `/v1/containers` subset теперь реализован поверх того же
+  shim-owned session store:
+  `POST/GET/LIST/DELETE /v1/containers`,
+  `POST/GET/LIST/DELETE /v1/containers/{container_id}/files`,
+  `GET /v1/containers/{container_id}/files/{file_id}/content`
+- `container.type=auto` и explicit `cntr_*` mode теперь умеют восстановить
+  тот же shim-owned container после transient runtime loss:
+  hardened Docker session пересоздается, persisted container files
+  restage-ятся, а `container_id` не меняется
 - `container.file_ids` теперь поддержан для shim-owned `/v1/files`:
   перед execution файлы stage-ятся в текущий session workspace под
   sanitized filenames, planner видит доступные filenames и может читать их
@@ -1076,13 +1087,15 @@ Definition of done:
   (`filename` required), так что shim-local `code_interpreter` может читать
   model-uploaded files без отдельного `container.file_ids`
 - generated file artifacts теперь сохраняются как bounded shim-owned
-  `/v1/files` и попадают в local `code_interpreter_call.outputs` как
-  shim-local `type=file` descriptors с `file_id`, `filename`, `bytes`;
+  `/v1/files`, зеркалятся в shim-owned container files, и попадают в local
+  `code_interpreter_call.outputs` как shim-local `type=file` descriptors с
+  `file_id` (`cfile_*`), `filename`, `bytes`, `backing_file_id`;
   final assistant turn видит этот список в local generation context
 - local final assistant message теперь получает pragmatic
   `container_file_citation` subset: shim добавляет короткий
   `Generated files:` appendix и annotates filenames с
-  `container_id`, `file_id`, `filename`, `start_index`, `end_index`
+  `container_id`, `file_id` (`cfile_*`), `filename`, `start_index`,
+  `end_index`
 
 Что осталось открытым:
 
@@ -1091,25 +1104,19 @@ Definition of done:
   считаться production-grade boundary
 - нет container/file/artifact surface parity:
   `input_file.file_url`, image outputs и richer hosted container lifecycle
-- historical auto-upload parity не полная:
-  current-turn `input_file` parts stage-ятся автоматически, но если reused
-  runtime потерян и shim создает новый session/container, historical
-  auto-uploaded files из lineage пока не restage-ятся автоматически
 - нет hosted annotation streaming parity:
   local stored/streaming responses несут final
   `container_file_citation` annotations в assistant message payload, но shim
   пока не synthesize-ит отдельные `response.output_text.annotation.added`
   events и не воспроизводит hosted placement semantics beyond shim-added
   generated-file appendix
-- нет explicit container mode parity:
-  local subset не принимает `tools[].container = "cntr_..."` и не реализует
-  `/v1/containers` surface
 - нет hosted failure/artifact semantics parity beyond logs + local generated
   file subset
 - stronger isolation backends (`gVisor`, microVM) не заведены; текущий
   production-minded шаг это hardened Docker, а не VM parity
-- нет TTL/cleanup policy для session rows и runtime leftovers; это остаётся
-  ops/runtime follow-up, а не часть текущего subset
+- нет full hosted expiration/cleanup parity:
+  local subset экспирит и хранит shim snapshot metadata, но не воспроизводит
+  весь hosted lifecycle/retention surface и не делает background cleanup job
 
 Definition of done:
 

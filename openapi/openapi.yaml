@@ -124,26 +124,36 @@ paths:
         - the shim executes one `code_interpreter` tool locally only when
           `responses.code_interpreter.backend` is set to `docker` or
           `unsafe_host`
-        - the supported local subset requires `container.type=auto`,
+        - the supported local subset accepts either `container.type=auto` or
+          explicit shim-managed `tools[].container = "cntr_*"` values,
+          supports OpenAI-shaped local `/v1/containers` and
+          `/v1/containers/{container_id}/files` resources,
           optionally accepts shim-owned `container.file_ids`,
           accepts `tool_choice=auto|required`,
           accepts `include=["code_interpreter_call.outputs"]`,
           and returns stored/streaming `code_interpreter_call` items
         - `container.type=auto` reuses the last active shim-owned
           `code_interpreter_call.container_id` in stored lineage for the same
-          backend, or creates a new `cntr_*` session if no active runtime is
+          backend, or creates a new `cntr_*` session if no prior container is
           available
         - supported `container.file_ids` values are staged from local
           `/v1/files` into the current sandbox workspace under sanitized
           filenames before execution
+        - explicit containers and persisted auto containers restore their
+          shim-owned container files into the hardened Docker workspace if the
+          local runtime disappears, so `cntr_*` reuse remains stable across
+          transient runtime loss
         - generated files from the local sandbox are captured in a bounded
           shim-owned subset: small new/changed workspace files are saved into
-          local `/v1/files`, surfaced in local `code_interpreter_call.outputs`
-          as shim-local `type=file` descriptors (`file_id`, `filename`,
-          `bytes`), and made visible to the final local assistant turn
+          local `/v1/files`, mirrored into local container files, surfaced in
+          local `code_interpreter_call.outputs` as shim-local `type=file`
+          descriptors (`file_id`, `filename`, `bytes`,
+          `backing_file_id`), and made visible to the final local assistant
+          turn
         - when generated files exist, the final local assistant message adds a
           shim-owned `Generated files:` appendix and attaches pragmatic
-          `container_file_citation` annotations over those filenames
+          `container_file_citation` annotations using shim-owned `cfile_*`
+          container file identifiers over those filenames
         - `backend=docker` uses a hardened reusable session-container boundary;
           `backend=unsafe_host` remains a development fallback and legacy
           compatibility path
@@ -152,7 +162,7 @@ paths:
           `input_file.file_data`; `input_file.file_url` remains unsupported in
           the local subset
         - the local subset does not yet support image artifacts, dedicated
-          `response.output_text.annotation.added` parity, or hosted
+          `response.output_text.annotation.added` parity, or full hosted
           sandbox/container lifecycle parity
 
         Retention semantics:
@@ -1381,6 +1391,241 @@ paths:
           $ref: "#/components/responses/ErrorResponse"
         "404":
           $ref: "#/components/responses/ErrorResponse"
+  /v1/containers:
+    get:
+      tags: [containers]
+      summary: List local code interpreter containers
+      x-shim-status: partial
+      description: |
+        Returns shim-managed local `code_interpreter` containers.
+
+        Current local subset:
+        - shim-owned containers only
+        - `limit`, `order`, `after`, `name`
+        - `status` currently reflects shim-local lifecycle (`running`,
+          `expired`)
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: order
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+        - name: after
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: name
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Local container list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContainerListResponse"
+        "400":
+          $ref: "#/components/responses/ErrorResponse"
+        "404":
+          $ref: "#/components/responses/ErrorResponse"
+    post:
+      tags: [containers]
+      summary: Create a local code interpreter container
+      x-shim-status: partial
+      description: |
+        Creates a shim-managed local `code_interpreter` container backed by the
+        configured local sandbox backend.
+
+        Current local subset:
+        - `name`
+        - `memory_limit` in `1g|4g|16g|64g`
+        - `expires_after.anchor=last_active_at`
+        - `expires_after.minutes`
+        - optional `file_ids` to stage shim-owned `/v1/files` into the new
+          container
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateContainerRequest"
+      responses:
+        "200":
+          description: Local container resource
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContainerObject"
+        "400":
+          $ref: "#/components/responses/ErrorResponse"
+        "404":
+          $ref: "#/components/responses/ErrorResponse"
+  /v1/containers/{container_id}:
+    get:
+      tags: [containers]
+      summary: Retrieve a local code interpreter container
+      x-shim-status: partial
+      parameters:
+        - $ref: "#/components/parameters/ContainerID"
+      responses:
+        "200":
+          description: Local container resource
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContainerObject"
+        "404":
+          $ref: "#/components/responses/ErrorResponse"
+    delete:
+      tags: [containers]
+      summary: Delete a local code interpreter container
+      x-shim-status: partial
+      parameters:
+        - $ref: "#/components/parameters/ContainerID"
+      responses:
+        "200":
+          description: Container deletion marker
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContainerDeletion"
+        "404":
+          $ref: "#/components/responses/ErrorResponse"
+  /v1/containers/{container_id}/files:
+    get:
+      tags: [containers]
+      summary: List local files in a code interpreter container
+      x-shim-status: partial
+      parameters:
+        - $ref: "#/components/parameters/ContainerID"
+        - name: after
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: order
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+      responses:
+        "200":
+          description: Local container file list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContainerFileListResponse"
+        "400":
+          $ref: "#/components/responses/ErrorResponse"
+        "404":
+          $ref: "#/components/responses/ErrorResponse"
+    post:
+      tags: [containers]
+      summary: Add a file to a local code interpreter container
+      x-shim-status: partial
+      description: |
+        Adds a shim-owned file or multipart upload to a local code interpreter
+        container and stages it into the hardened Docker workspace.
+
+        Current local subset:
+        - multipart `file`
+        - JSON `{ "file_id": "file_..." }`
+      parameters:
+        - $ref: "#/components/parameters/ContainerID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateContainerFileRequest"
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/CreateContainerFileMultipartRequest"
+      responses:
+        "200":
+          description: Local container file resource
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContainerFileObject"
+        "400":
+          $ref: "#/components/responses/ErrorResponse"
+        "404":
+          $ref: "#/components/responses/ErrorResponse"
+  /v1/containers/{container_id}/files/{file_id}:
+    get:
+      tags: [containers]
+      summary: Retrieve a local code interpreter container file
+      x-shim-status: partial
+      parameters:
+        - $ref: "#/components/parameters/ContainerID"
+        - $ref: "#/components/parameters/ContainerFileID"
+      responses:
+        "200":
+          description: Local container file resource
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContainerFileObject"
+        "404":
+          $ref: "#/components/responses/ErrorResponse"
+    delete:
+      tags: [containers]
+      summary: Delete a local code interpreter container file
+      x-shim-status: partial
+      parameters:
+        - $ref: "#/components/parameters/ContainerID"
+        - $ref: "#/components/parameters/ContainerFileID"
+      responses:
+        "200":
+          description: Container file deletion marker
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContainerFileDeletion"
+        "404":
+          $ref: "#/components/responses/ErrorResponse"
+  /v1/containers/{container_id}/files/{file_id}/content:
+    get:
+      tags: [containers]
+      summary: Retrieve local code interpreter container file content
+      x-shim-status: partial
+      parameters:
+        - $ref: "#/components/parameters/ContainerID"
+        - $ref: "#/components/parameters/ContainerFileID"
+      responses:
+        "200":
+          description: Raw container file bytes
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "404":
+          $ref: "#/components/responses/ErrorResponse"
   /v1/chat/completions:
     get:
       tags: [chat]
@@ -1585,6 +1830,20 @@ components:
       schema:
         type: string
       description: Local file identifier
+    ContainerID:
+      name: container_id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Local code interpreter container identifier
+    ContainerFileID:
+      name: file_id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Local code interpreter container file identifier
     VectorStoreID:
       name: vector_store_id
       in: path
@@ -1751,7 +2010,7 @@ components:
           `include=["file_search_call.results"]`
         - pragmatic dev-only local `code_interpreter` execution with:
           one `tools[]` entry of `type=code_interpreter`,
-          `container.type=auto`,
+          `container.type=auto` or explicit `tools[].container="cntr_*"`,
           optional shim-owned `container.file_ids`,
           `tool_choice=auto|required`,
           `parallel_tool_calls`, and
@@ -1770,18 +2029,19 @@ components:
         `/v1/files` into the current sandbox workspace under sanitized
         filenames, and current-turn `input_file.file_id` /
         `input_file.file_data` message content parts are auto-staged into that
-        workspace as the pragmatic local subset. Small new/changed generated
-        files are persisted as
-        shim-owned `/v1/files` and exposed only through the local
-        `code_interpreter_call.outputs` subset. When generated files exist, the
-        final local assistant message adds a shim-owned `Generated files:`
-        appendix and annotates those filenames with pragmatic
-        `container_file_citation` metadata. The shim does not yet claim hosted
-        sandbox/container parity and does not support `input_file.file_url`,
-        image artifacts, dedicated
-        `response.output_text.annotation.added` parity, explicit
-        `/v1/containers` parity, or user-specified
-        `tools[].container = "cntr_..."` mode.
+        workspace as the pragmatic local subset. The shim now exposes
+        local `/v1/containers` and `/v1/containers/{container_id}/files`
+        surfaces over the same session store and restores persisted container
+        files into the hardened Docker workspace when a reusable local runtime
+        disappears. Small new/changed generated files are persisted as
+        shim-owned `/v1/files`, mirrored into shim-owned container files, and
+        exposed only through the local `code_interpreter_call.outputs` subset.
+        When generated files exist, the final local assistant message adds a
+        shim-owned `Generated files:` appendix and annotates those filenames
+        with pragmatic `container_file_citation` metadata using shim-owned
+        `cfile_*` ids. The shim does not yet claim hosted sandbox/container
+        parity and does not support `input_file.file_url`, image artifacts, or
+        dedicated `response.output_text.annotation.added` parity.
 
         `background` is forwarded upstream for long-running responses and is not
         executed locally by the shim.
@@ -2293,6 +2553,158 @@ components:
             - string
             - "null"
         has_more:
+          type: boolean
+    ContainerExpirationPolicy:
+      type: object
+      required: [anchor, minutes]
+      properties:
+        anchor:
+          type: string
+          enum: [last_active_at]
+        minutes:
+          type: integer
+          minimum: 1
+    CreateContainerRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        memory_limit:
+          type: string
+          enum: [1g, 4g, 16g, 64g]
+        file_ids:
+          type: array
+          items:
+            type: string
+        expires_after:
+          $ref: "#/components/schemas/ContainerExpirationPolicy"
+      description: |
+        Local container create request.
+
+        Current shim-local subset supports `name`, optional `memory_limit`,
+        optional `file_ids`, and `expires_after.anchor=last_active_at`.
+    ContainerObject:
+      type: object
+      required: [id, object, created_at, status, last_active_at, memory_limit, name]
+      properties:
+        id:
+          type: string
+        object:
+          type: string
+          const: container
+        created_at:
+          type: integer
+          format: int64
+        status:
+          type: string
+        expires_after:
+          $ref: "#/components/schemas/ContainerExpirationPolicy"
+        last_active_at:
+          type: integer
+          format: int64
+        memory_limit:
+          type: string
+        name:
+          type: string
+    ContainerListResponse:
+      type: object
+      required: [object, data, has_more]
+      properties:
+        object:
+          type: string
+          const: list
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/ContainerObject"
+        first_id:
+          type:
+            - string
+            - "null"
+        last_id:
+          type:
+            - string
+            - "null"
+        has_more:
+          type: boolean
+    ContainerDeletion:
+      type: object
+      required: [id, object, deleted]
+      properties:
+        id:
+          type: string
+        object:
+          type: string
+          const: container.deleted
+        deleted:
+          type: boolean
+    CreateContainerFileRequest:
+      type: object
+      required: [file_id]
+      properties:
+        file_id:
+          type: string
+    CreateContainerFileMultipartRequest:
+      type: object
+      required: [file]
+      properties:
+        file:
+          type: string
+          format: binary
+    ContainerFileObject:
+      type: object
+      required: [id, object, created_at, bytes, container_id, path, source]
+      properties:
+        id:
+          type: string
+        object:
+          type: string
+          const: container.file
+        created_at:
+          type: integer
+          format: int64
+        bytes:
+          type: integer
+          format: int64
+        container_id:
+          type: string
+        path:
+          type: string
+        source:
+          type: string
+          enum: [user, assistant]
+    ContainerFileListResponse:
+      type: object
+      required: [object, data, has_more]
+      properties:
+        object:
+          type: string
+          const: list
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/ContainerFileObject"
+        first_id:
+          type:
+            - string
+            - "null"
+        last_id:
+          type:
+            - string
+            - "null"
+        has_more:
+          type: boolean
+    ContainerFileDeletion:
+      type: object
+      required: [id, object, deleted]
+      properties:
+        id:
+          type: string
+        object:
+          type: string
+          const: container.file.deleted
+        deleted:
           type: boolean
     CreateVectorStoreRequest:
       type: object

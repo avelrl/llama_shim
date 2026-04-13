@@ -192,10 +192,14 @@ func TestStoreSaveCodeInterpreterSessionRoundTripAndTouch(t *testing.T) {
 	store := openTestStore(t, ctx)
 
 	session := domain.CodeInterpreterSession{
-		ID:           "cntr_test",
-		Backend:      "docker",
-		CreatedAt:    "2026-04-12T10:00:00Z",
-		LastActiveAt: "2026-04-12T10:00:00Z",
+		ID:                  "cntr_test",
+		Backend:             "docker",
+		Status:              "running",
+		Name:                "Test Container",
+		MemoryLimit:         "4g",
+		ExpiresAfterMinutes: 45,
+		CreatedAt:           "2026-04-12T10:00:00Z",
+		LastActiveAt:        "2026-04-12T10:00:00Z",
 	}
 	require.NoError(t, store.SaveCodeInterpreterSession(ctx, session))
 
@@ -210,6 +214,63 @@ func TestStoreSaveCodeInterpreterSessionRoundTripAndTouch(t *testing.T) {
 
 	require.NoError(t, store.DeleteCodeInterpreterSession(ctx, session.ID))
 	_, err = store.GetCodeInterpreterSession(ctx, session.ID)
+	require.ErrorIs(t, err, sqlite.ErrNotFound)
+}
+
+func TestStoreSaveCodeInterpreterContainerFileRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store := openTestStore(t, ctx)
+
+	session := domain.CodeInterpreterSession{
+		ID:                  "cntr_test",
+		Backend:             "docker",
+		Status:              "running",
+		Name:                "Test Container",
+		MemoryLimit:         "1g",
+		ExpiresAfterMinutes: 20,
+		CreatedAt:           "2026-04-12T10:00:00Z",
+		LastActiveAt:        "2026-04-12T10:00:00Z",
+	}
+	require.NoError(t, store.SaveCodeInterpreterSession(ctx, session))
+	require.NoError(t, store.SaveFile(ctx, domain.StoredFile{
+		ID:        "file_test",
+		Filename:  "codes.txt",
+		Purpose:   "user_data",
+		Bytes:     3,
+		CreatedAt: 1712059200,
+		Status:    "processed",
+		Content:   []byte("777"),
+	}))
+
+	saved, err := store.SaveCodeInterpreterContainerFile(ctx, domain.CodeInterpreterContainerFile{
+		ID:            "cfile_test",
+		ContainerID:   session.ID,
+		BackingFileID: "file_test",
+		Path:          "/mnt/data/codes.txt",
+		Source:        "user",
+		Bytes:         3,
+		CreatedAt:     1712059200,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "cfile_test", saved.ID)
+
+	got, err := store.GetCodeInterpreterContainerFile(ctx, session.ID, saved.ID)
+	require.NoError(t, err)
+	require.Equal(t, saved, got)
+
+	page, err := store.ListCodeInterpreterContainerFiles(ctx, domain.ListCodeInterpreterContainerFilesQuery{
+		ContainerID: session.ID,
+		Limit:       10,
+		Order:       domain.ListOrderAsc,
+	})
+	require.NoError(t, err)
+	require.Len(t, page.Files, 1)
+	require.Equal(t, saved, page.Files[0])
+
+	require.NoError(t, store.DeleteCodeInterpreterContainerFile(ctx, session.ID, saved.ID))
+	_, err = store.GetCodeInterpreterContainerFile(ctx, session.ID, saved.ID)
 	require.ErrorIs(t, err, sqlite.ErrNotFound)
 }
 

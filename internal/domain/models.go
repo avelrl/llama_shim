@@ -60,10 +60,14 @@ type StoredResponse struct {
 }
 
 type CodeInterpreterSession struct {
-	ID           string
-	Backend      string
-	CreatedAt    string
-	LastActiveAt string
+	ID                  string
+	Backend             string
+	Status              string
+	Name                string
+	MemoryLimit         string
+	ExpiresAfterMinutes int
+	CreatedAt           string
+	LastActiveAt        string
 }
 
 type ResponseDeletion struct {

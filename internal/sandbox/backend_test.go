@@ -24,7 +24,7 @@ func TestDockerBackendBuildDockerRunArgsAppliesHardeningDefaults(t *testing.T) {
 	require.Contains(t, args, "sh")
 	require.Contains(t, args, "trap 'exit 0' TERM INT; while :; do sleep 3600; done")
 	require.Contains(t, args, "--memory")
-	require.Contains(t, args, "256m")
+	require.Contains(t, args, "1g")
 	require.Contains(t, args, "--cpus")
 	require.Contains(t, args, "0.5")
 	require.Contains(t, args, "--pids-limit")

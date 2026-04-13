@@ -154,7 +154,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("responses.code_interpreter.execution_timeout", "20s")
 	v.SetDefault("responses.code_interpreter.docker.binary", "docker")
 	v.SetDefault("responses.code_interpreter.docker.image", "python:3.12-slim")
-	v.SetDefault("responses.code_interpreter.docker.memory_limit", "256m")
+	v.SetDefault("responses.code_interpreter.docker.memory_limit", "1g")
 	v.SetDefault("responses.code_interpreter.docker.cpu_limit", "0.5")
 	v.SetDefault("responses.code_interpreter.docker.pids_limit", "64")
 }

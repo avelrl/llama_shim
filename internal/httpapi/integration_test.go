@@ -10,6 +10,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"path"
 	"slices"
 	"strings"
 	"sync"
@@ -4768,6 +4769,259 @@ func TestResponsesCreatePlainFollowUpAfterLocalFileSearchStoredOutput(t *testing
 	require.Equal(t, "message", second.Output[0].Type)
 }
 
+func TestContainersCreateListGetDelete(t *testing.T) {
+	var (
+		mu        sync.Mutex
+		created   = map[string]string{}
+		destroyed = map[string]bool{}
+	)
+
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		CodeInterpreterBackend: testutil.FakeSandboxBackend{
+			KindValue: "docker",
+			CreateSessionFunc: func(_ context.Context, req sandbox.CreateSessionRequest) error {
+				mu.Lock()
+				defer mu.Unlock()
+				created[req.SessionID] = req.MemoryLimit
+				return nil
+			},
+			DestroySessionFunc: func(_ context.Context, sessionID string) error {
+				mu.Lock()
+				defer mu.Unlock()
+				destroyed[sessionID] = true
+				return nil
+			},
+		},
+	})
+
+	status, createdPayload := rawRequest(t, app, http.MethodPost, "/v1/containers", map[string]any{
+		"name":         "My Container",
+		"memory_limit": "4g",
+		"expires_after": map[string]any{
+			"anchor":  "last_active_at",
+			"minutes": 45,
+		},
+	})
+	require.Equal(t, http.StatusOK, status)
+	containerID := asStringAny(createdPayload["id"])
+	require.NotEmpty(t, containerID)
+	require.Equal(t, "container", asStringAny(createdPayload["object"]))
+	require.Equal(t, "running", asStringAny(createdPayload["status"]))
+	require.Equal(t, "4g", asStringAny(createdPayload["memory_limit"]))
+	require.Equal(t, "My Container", asStringAny(createdPayload["name"]))
+	expiresAfter, ok := createdPayload["expires_after"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "last_active_at", asStringAny(expiresAfter["anchor"]))
+	require.EqualValues(t, 45, expiresAfter["minutes"])
+
+	mu.Lock()
+	require.Equal(t, "4g", created[containerID])
+	mu.Unlock()
+
+	status, listPayload := rawRequest(t, app, http.MethodGet, "/v1/containers?limit=10&order=asc&name=My%20Container", nil)
+	require.Equal(t, http.StatusOK, status)
+	data, ok := listPayload["data"].([]any)
+	require.True(t, ok)
+	require.Len(t, data, 1)
+	require.Equal(t, containerID, asStringAny(data[0].(map[string]any)["id"]))
+
+	status, getPayload := rawRequest(t, app, http.MethodGet, "/v1/containers/"+containerID, nil)
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, containerID, asStringAny(getPayload["id"]))
+	require.Equal(t, "My Container", asStringAny(getPayload["name"]))
+
+	status, deletePayload := rawRequest(t, app, http.MethodDelete, "/v1/containers/"+containerID, nil)
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, containerID, asStringAny(deletePayload["id"]))
+	require.Equal(t, "container.deleted", asStringAny(deletePayload["object"]))
+	require.Equal(t, true, deletePayload["deleted"])
+
+	mu.Lock()
+	require.True(t, destroyed[containerID])
+	mu.Unlock()
+
+	status, missing := rawRequest(t, app, http.MethodGet, "/v1/containers/"+containerID, nil)
+	require.Equal(t, http.StatusNotFound, status)
+	errorPayload, ok := missing["error"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "invalid_request_error", asStringAny(errorPayload["type"]))
+}
+
+func TestContainerFilesCreateListGetContentDelete(t *testing.T) {
+	var (
+		mu             sync.Mutex
+		activeSessions = map[string]map[string][]byte{}
+	)
+
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		CodeInterpreterBackend: testutil.FakeSandboxBackend{
+			KindValue: "docker",
+			CreateSessionFunc: func(_ context.Context, req sandbox.CreateSessionRequest) error {
+				mu.Lock()
+				defer mu.Unlock()
+				if _, ok := activeSessions[req.SessionID]; !ok {
+					activeSessions[req.SessionID] = map[string][]byte{}
+				}
+				return nil
+			},
+			UploadFileFunc: func(_ context.Context, sessionID string, file sandbox.SessionFile) error {
+				mu.Lock()
+				defer mu.Unlock()
+				session := activeSessions[sessionID]
+				session[file.Name] = append([]byte(nil), file.Content...)
+				return nil
+			},
+			DeleteFileFunc: func(_ context.Context, sessionID string, name string) error {
+				mu.Lock()
+				defer mu.Unlock()
+				delete(activeSessions[sessionID], name)
+				return nil
+			},
+		},
+	})
+
+	status, createdPayload := rawRequest(t, app, http.MethodPost, "/v1/containers", map[string]any{"name": "File Box"})
+	require.Equal(t, http.StatusOK, status)
+	containerID := asStringAny(createdPayload["id"])
+
+	status, createdFile := uploadContainerFile(t, app, containerID, "notes.txt", []byte("hello from container"))
+	require.Equal(t, http.StatusOK, status)
+	fileID := asStringAny(createdFile["id"])
+	require.NotEmpty(t, fileID)
+	require.Equal(t, "container.file", asStringAny(createdFile["object"]))
+	require.Equal(t, containerID, asStringAny(createdFile["container_id"]))
+	require.Equal(t, "user", asStringAny(createdFile["source"]))
+	require.Equal(t, "notes.txt", path.Base(asStringAny(createdFile["path"])))
+
+	status, listPayload := rawRequest(t, app, http.MethodGet, "/v1/containers/"+containerID+"/files?limit=10&order=asc", nil)
+	require.Equal(t, http.StatusOK, status)
+	data, ok := listPayload["data"].([]any)
+	require.True(t, ok)
+	require.Len(t, data, 1)
+	require.Equal(t, fileID, asStringAny(data[0].(map[string]any)["id"]))
+
+	status, getPayload := rawRequest(t, app, http.MethodGet, "/v1/containers/"+containerID+"/files/"+fileID, nil)
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, fileID, asStringAny(getPayload["id"]))
+
+	req, err := http.NewRequest(http.MethodGet, app.Server.URL+"/v1/containers/"+containerID+"/files/"+fileID+"/content", nil)
+	require.NoError(t, err)
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	content, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equal(t, "hello from container", string(content))
+
+	status, deletePayload := rawRequest(t, app, http.MethodDelete, "/v1/containers/"+containerID+"/files/"+fileID, nil)
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, fileID, asStringAny(deletePayload["id"]))
+	require.Equal(t, "container.file.deleted", asStringAny(deletePayload["object"]))
+	require.Equal(t, true, deletePayload["deleted"])
+
+	status, listAfterDelete := rawRequest(t, app, http.MethodGet, "/v1/containers/"+containerID+"/files?limit=10", nil)
+	require.Equal(t, http.StatusOK, status)
+	data, ok = listAfterDelete["data"].([]any)
+	require.True(t, ok)
+	require.Empty(t, data)
+}
+
+func TestContainerFilesRejectEmptyFileID(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		CodeInterpreterBackend: testutil.FakeSandboxBackend{KindValue: "docker"},
+	})
+
+	status, createdPayload := rawRequest(t, app, http.MethodPost, "/v1/containers", map[string]any{"name": "Empty File ID"})
+	require.Equal(t, http.StatusOK, status)
+	containerID := asStringAny(createdPayload["id"])
+
+	status, payload := rawRequest(t, app, http.MethodPost, "/v1/containers/"+containerID+"/files", map[string]any{
+		"file_id": "",
+	})
+	require.Equal(t, http.StatusBadRequest, status)
+	errorPayload, ok := payload["error"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "invalid_request_error", asStringAny(errorPayload["type"]))
+	require.Equal(t, "file_id", asStringAny(errorPayload["param"]))
+}
+
+func TestResponsesCreateLocalCodeInterpreterUsesExplicitContainerAndRestoresPersistedFiles(t *testing.T) {
+	var (
+		mu             sync.Mutex
+		activeSessions = map[string]map[string][]byte{}
+	)
+
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		CodeInterpreterBackend: testutil.FakeSandboxBackend{
+			KindValue: "docker",
+			CreateSessionFunc: func(_ context.Context, req sandbox.CreateSessionRequest) error {
+				mu.Lock()
+				defer mu.Unlock()
+				if _, ok := activeSessions[req.SessionID]; !ok {
+					activeSessions[req.SessionID] = map[string][]byte{}
+				}
+				return nil
+			},
+			UploadFileFunc: func(_ context.Context, sessionID string, file sandbox.SessionFile) error {
+				mu.Lock()
+				defer mu.Unlock()
+				session, ok := activeSessions[sessionID]
+				if !ok {
+					return sandbox.ErrSessionNotFound
+				}
+				session[file.Name] = append([]byte(nil), file.Content...)
+				return nil
+			},
+			ExecuteFunc: func(_ context.Context, req sandbox.ExecuteRequest) (sandbox.ExecuteResult, error) {
+				mu.Lock()
+				defer mu.Unlock()
+				session, ok := activeSessions[req.SessionID]
+				if !ok {
+					return sandbox.ExecuteResult{}, sandbox.ErrSessionNotFound
+				}
+				require.Contains(t, req.Code, `open("codes.txt"`)
+				return sandbox.ExecuteResult{Logs: string(session["codes.txt"])}, nil
+			},
+		},
+	})
+
+	status, createdContainer := rawRequest(t, app, http.MethodPost, "/v1/containers", map[string]any{"name": "Explicit"})
+	require.Equal(t, http.StatusOK, status)
+	containerID := asStringAny(createdContainer["id"])
+
+	status, uploaded := uploadFile(t, app, "codes.txt", "user_data", []byte("Remember: code=777. Reply OK."), nil)
+	require.Equal(t, http.StatusOK, status)
+	storedFileID := asStringAny(uploaded["id"])
+
+	status, attached := rawRequest(t, app, http.MethodPost, "/v1/containers/"+containerID+"/files", map[string]any{
+		"file_id": storedFileID,
+	})
+	require.Equal(t, http.StatusOK, status)
+	require.NotEmpty(t, asStringAny(attached["id"]))
+
+	mu.Lock()
+	delete(activeSessions, containerID)
+	mu.Unlock()
+
+	response := postResponse(t, app, map[string]any{
+		"model": "test-model",
+		"store": true,
+		"input": "What is the code in the uploaded file? Return only the number.",
+		"tools": []map[string]any{
+			{
+				"type":      "code_interpreter",
+				"container": containerID,
+			},
+		},
+		"tool_choice": "required",
+	})
+
+	require.Equal(t, "completed", response.Status)
+	require.Equal(t, "777", response.OutputText)
+	require.Equal(t, containerID, asStringAny(response.Output[0].Map()["container_id"]))
+}
+
 func TestResponsesCreateExecutesLocalCodeInterpreter(t *testing.T) {
 	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
 		CodeInterpreterBackend: testutil.FakeSandboxBackend{KindValue: "docker"},
@@ -4814,10 +5068,10 @@ func TestResponsesCreateLocalCodeInterpreterStagesContainerFileIDs(t *testing.T)
 	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
 		CodeInterpreterBackend: testutil.FakeSandboxBackend{
 			KindValue: "docker",
-			CreateSessionFunc: func(_ context.Context, sessionID string) error {
+			CreateSessionFunc: func(_ context.Context, req sandbox.CreateSessionRequest) error {
 				mu.Lock()
 				defer mu.Unlock()
-				activeSessions[sessionID] = map[string][]byte{}
+				activeSessions[req.SessionID] = map[string][]byte{}
 				return nil
 			},
 			UploadFileFunc: func(_ context.Context, sessionID string, file sandbox.SessionFile) error {
@@ -4880,10 +5134,10 @@ func TestResponsesCreateLocalCodeInterpreterAutoUploadsInputFileID(t *testing.T)
 	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
 		CodeInterpreterBackend: testutil.FakeSandboxBackend{
 			KindValue: "docker",
-			CreateSessionFunc: func(_ context.Context, sessionID string) error {
+			CreateSessionFunc: func(_ context.Context, req sandbox.CreateSessionRequest) error {
 				mu.Lock()
 				defer mu.Unlock()
-				activeSessions[sessionID] = map[string][]byte{}
+				activeSessions[req.SessionID] = map[string][]byte{}
 				return nil
 			},
 			UploadFileFunc: func(_ context.Context, sessionID string, file sandbox.SessionFile) error {
@@ -4954,10 +5208,10 @@ func TestResponsesCreateLocalCodeInterpreterAutoUploadsInlineInputFileData(t *te
 	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
 		CodeInterpreterBackend: testutil.FakeSandboxBackend{
 			KindValue: "docker",
-			CreateSessionFunc: func(_ context.Context, sessionID string) error {
+			CreateSessionFunc: func(_ context.Context, req sandbox.CreateSessionRequest) error {
 				mu.Lock()
 				defer mu.Unlock()
-				activeSessions[sessionID] = map[string][]byte{}
+				activeSessions[req.SessionID] = map[string][]byte{}
 				return nil
 			},
 			UploadFileFunc: func(_ context.Context, sessionID string, file sandbox.SessionFile) error {
@@ -5061,10 +5315,10 @@ func TestResponsesCreateLocalCodeInterpreterPersistsGeneratedArtifacts(t *testin
 	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
 		CodeInterpreterBackend: testutil.FakeSandboxBackend{
 			KindValue: "docker",
-			CreateSessionFunc: func(_ context.Context, sessionID string) error {
+			CreateSessionFunc: func(_ context.Context, req sandbox.CreateSessionRequest) error {
 				mu.Lock()
 				defer mu.Unlock()
-				activeSessions[sessionID] = map[string][]byte{}
+				activeSessions[req.SessionID] = map[string][]byte{}
 				return nil
 			},
 			ListFilesFunc: func(_ context.Context, sessionID string) ([]sandbox.SessionFile, error) {
@@ -5139,7 +5393,9 @@ func TestResponsesCreateLocalCodeInterpreterPersistsGeneratedArtifacts(t *testin
 	require.Equal(t, "report.txt", asStringAny(fileOutput["filename"]))
 	require.EqualValues(t, len("artifact-body"), fileOutput["bytes"])
 	fileID := asStringAny(fileOutput["file_id"])
+	backingFileID := asStringAny(fileOutput["backing_file_id"])
 	require.NotEmpty(t, fileID)
+	require.NotEmpty(t, backingFileID)
 
 	messagePayload := response.Output[1].Map()
 	content, ok := messagePayload["content"].([]any)
@@ -5160,14 +5416,15 @@ func TestResponsesCreateLocalCodeInterpreterPersistsGeneratedArtifacts(t *testin
 	require.EqualValues(t, expectedAnnotationStart, annotation["start_index"])
 	require.EqualValues(t, expectedAnnotationEnd, annotation["end_index"])
 
-	status, filePayload := rawRequest(t, app, http.MethodGet, "/v1/files/"+fileID, nil)
+	containerID := asStringAny(annotation["container_id"])
+	status, filePayload := rawRequest(t, app, http.MethodGet, "/v1/containers/"+containerID+"/files/"+fileID, nil)
 	require.Equal(t, http.StatusOK, status)
 	require.Equal(t, fileID, asStringAny(filePayload["id"]))
-	require.Equal(t, "report.txt", asStringAny(filePayload["filename"]))
-	require.Equal(t, "assistants", asStringAny(filePayload["purpose"]))
+	require.Equal(t, "report.txt", path.Base(asStringAny(filePayload["path"])))
+	require.Equal(t, "assistant", asStringAny(filePayload["source"]))
 	require.EqualValues(t, len("artifact-body"), filePayload["bytes"])
 
-	req, err := http.NewRequest(http.MethodGet, app.Server.URL+"/v1/files/"+fileID+"/content", nil)
+	req, err := http.NewRequest(http.MethodGet, app.Server.URL+"/v1/containers/"+containerID+"/files/"+fileID+"/content", nil)
 	require.NoError(t, err)
 	resp, err := app.Client().Do(req)
 	require.NoError(t, err)
@@ -5176,6 +5433,11 @@ func TestResponsesCreateLocalCodeInterpreterPersistsGeneratedArtifacts(t *testin
 	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
 	require.Equal(t, "artifact-body", string(body))
+
+	status, backingPayload := rawRequest(t, app, http.MethodGet, "/v1/files/"+backingFileID, nil)
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, backingFileID, asStringAny(backingPayload["id"]))
+	require.Equal(t, "assistants_output", asStringAny(backingPayload["purpose"]))
 
 	stored := getResponse(t, app, response.ID)
 	require.Len(t, stored.Output, 2)
@@ -5347,10 +5609,10 @@ func TestResponsesCreateLocalCodeInterpreterReusesStoredSessionContainerID(t *te
 	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
 		CodeInterpreterBackend: testutil.FakeSandboxBackend{
 			KindValue: "docker",
-			CreateSessionFunc: func(_ context.Context, sessionID string) error {
+			CreateSessionFunc: func(_ context.Context, req sandbox.CreateSessionRequest) error {
 				mu.Lock()
 				defer mu.Unlock()
-				activeSessions[sessionID] = struct{}{}
+				activeSessions[req.SessionID] = struct{}{}
 				return nil
 			},
 			ExecuteFunc: func(_ context.Context, req sandbox.ExecuteRequest) (sandbox.ExecuteResult, error) {
@@ -5402,7 +5664,7 @@ func TestResponsesCreateLocalCodeInterpreterReusesStoredSessionContainerID(t *te
 	require.Equal(t, []string{firstContainerID, firstContainerID}, executedSessionIDs)
 }
 
-func TestResponsesCreateLocalCodeInterpreterCreatesNewSessionWhenStoredRuntimeIsGone(t *testing.T) {
+func TestResponsesCreateLocalCodeInterpreterRestoresSameSessionWhenStoredRuntimeIsGone(t *testing.T) {
 	var (
 		mu             sync.Mutex
 		activeSessions = map[string]struct{}{}
@@ -5411,10 +5673,10 @@ func TestResponsesCreateLocalCodeInterpreterCreatesNewSessionWhenStoredRuntimeIs
 	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
 		CodeInterpreterBackend: testutil.FakeSandboxBackend{
 			KindValue: "docker",
-			CreateSessionFunc: func(_ context.Context, sessionID string) error {
+			CreateSessionFunc: func(_ context.Context, req sandbox.CreateSessionRequest) error {
 				mu.Lock()
 				defer mu.Unlock()
-				activeSessions[sessionID] = struct{}{}
+				activeSessions[req.SessionID] = struct{}{}
 				return nil
 			},
 			ExecuteFunc: func(_ context.Context, req sandbox.ExecuteRequest) (sandbox.ExecuteResult, error) {
@@ -5467,7 +5729,7 @@ func TestResponsesCreateLocalCodeInterpreterCreatesNewSessionWhenStoredRuntimeIs
 	secondContainerID := asStringAny(second.Output[0].Map()["container_id"])
 	require.NotEmpty(t, firstContainerID)
 	require.NotEmpty(t, secondContainerID)
-	require.NotEqual(t, firstContainerID, secondContainerID)
+	require.Equal(t, firstContainerID, secondContainerID)
 }
 
 func TestResponsesCreateLocalCodeInterpreterLocalOnlyRequiresUnsafeExecutor(t *testing.T) {
@@ -5703,6 +5965,30 @@ func uploadFile(t *testing.T, app *testutil.TestApp, filename, purpose string, c
 	require.NoError(t, writer.Close())
 
 	req, err := http.NewRequest(http.MethodPost, app.Server.URL+"/v1/files", &body)
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	var decoded map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&decoded))
+	return resp.StatusCode, decoded
+}
+
+func uploadContainerFile(t *testing.T, app *testutil.TestApp, containerID string, filename string, content []byte) (int, map[string]any) {
+	t.Helper()
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("file", filename)
+	require.NoError(t, err)
+	_, err = part.Write(content)
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+
+	req, err := http.NewRequest(http.MethodPost, app.Server.URL+"/v1/containers/"+containerID+"/files", &body)
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 

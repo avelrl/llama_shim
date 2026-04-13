@@ -153,7 +153,7 @@ func TestLoadUsesCodexSafeDefaults(t *testing.T) {
 	require.Equal(t, "python3", cfg.ResponsesCodeInterpreterPythonBinary)
 	require.Equal(t, "docker", cfg.ResponsesCodeInterpreterDockerBinary)
 	require.Equal(t, "python:3.12-slim", cfg.ResponsesCodeInterpreterDockerImage)
-	require.Equal(t, "256m", cfg.ResponsesCodeInterpreterDockerMemory)
+	require.Equal(t, "1g", cfg.ResponsesCodeInterpreterDockerMemory)
 	require.Equal(t, "0.5", cfg.ResponsesCodeInterpreterDockerCPU)
 	require.Equal(t, 64, cfg.ResponsesCodeInterpreterDockerPids)
 	require.Equal(t, 20*time.Second, cfg.ResponsesCodeInterpreterTimeout)

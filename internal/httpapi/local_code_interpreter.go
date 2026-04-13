@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path"
 	"path/filepath"
 	"strings"
 	"unicode"
@@ -68,9 +69,14 @@ func (c LocalCodeInterpreterRuntimeConfig) Enabled() bool {
 
 type LocalCodeInterpreterSessionStore interface {
 	GetCodeInterpreterSession(ctx context.Context, id string) (domain.CodeInterpreterSession, error)
+	ListCodeInterpreterSessions(ctx context.Context, query domain.ListCodeInterpreterSessionsQuery) (domain.CodeInterpreterSessionPage, error)
 	SaveCodeInterpreterSession(ctx context.Context, session domain.CodeInterpreterSession) error
 	TouchCodeInterpreterSession(ctx context.Context, id string, lastActiveAt string) error
 	DeleteCodeInterpreterSession(ctx context.Context, id string) error
+	GetCodeInterpreterContainerFile(ctx context.Context, containerID string, id string) (domain.CodeInterpreterContainerFile, error)
+	ListCodeInterpreterContainerFiles(ctx context.Context, query domain.ListCodeInterpreterContainerFilesQuery) (domain.CodeInterpreterContainerFilePage, error)
+	SaveCodeInterpreterContainerFile(ctx context.Context, file domain.CodeInterpreterContainerFile) (domain.CodeInterpreterContainerFile, error)
+	DeleteCodeInterpreterContainerFile(ctx context.Context, containerID string, id string) error
 }
 
 type LocalCodeInterpreterFileStore interface {
@@ -80,8 +86,15 @@ type LocalCodeInterpreterFileStore interface {
 
 type localCodeInterpreterConfig struct {
 	IncludeOutputs bool
-	InputFileIDs   []string
+	Container      localCodeInterpreterContainerConfig
 	ToolRequired   bool
+}
+
+type localCodeInterpreterContainerConfig struct {
+	InputFileIDs []string
+	MemoryLimit  string
+	Mode         string
+	SessionID    string
 }
 
 type localCodeInterpreterInputFile struct {
@@ -92,9 +105,13 @@ type localCodeInterpreterInputFile struct {
 }
 
 type localCodeInterpreterGeneratedFile struct {
-	Bytes    int64
-	FileID   string
-	Filename string
+	Bytes           int64
+	FileID          string
+	BackingFileID   string
+	Filename        string
+	ContainerID     string
+	ContainerPath   string
+	ContainerSource string
 }
 
 type localCodeInterpreterExecutionResult struct {
@@ -160,12 +177,16 @@ func (h *responseHandler) createLocalCodeInterpreterResponse(ctx context.Context
 		return domain.Response{}, err
 	}
 
-	inputFiles, err := h.resolveLocalCodeInterpreterInputFiles(ctx, prepared.NormalizedInput, config.InputFileIDs)
+	inputFiles, err := h.resolveLocalCodeInterpreterInputFiles(ctx, prepared.NormalizedInput, config.Container.InputFileIDs)
+	if err != nil {
+		return domain.Response{}, err
+	}
+	planningFiles, err := h.resolveLocalCodeInterpreterPlanningFiles(ctx, prepared, config.Container, inputFiles)
 	if err != nil {
 		return domain.Response{}, err
 	}
 
-	planningContext, err := buildLocalCodeInterpreterPlanningContext(prepared, inputFiles)
+	planningContext, err := buildLocalCodeInterpreterPlanningContext(prepared, planningFiles)
 	if err != nil {
 		return domain.Response{}, err
 	}
@@ -188,7 +209,7 @@ func (h *responseHandler) createLocalCodeInterpreterResponse(ctx context.Context
 		return domain.Response{}, err
 	}
 
-	execution, err := h.executeLocalCodeInterpreter(ctx, prepared, inputFiles, plan.Code)
+	execution, err := h.executeLocalCodeInterpreter(ctx, prepared, config.Container, inputFiles, plan.Code)
 	if err != nil {
 		return domain.Response{}, err
 	}
@@ -251,7 +272,7 @@ func parseLocalCodeInterpreterConfig(rawFields map[string]json.RawMessage) (loca
 	if !strings.EqualFold(strings.TrimSpace(asString(tool["type"])), "code_interpreter") {
 		return localCodeInterpreterConfig{}, domain.NewValidationError("tools", "shim-local code_interpreter requires tools[0].type=code_interpreter")
 	}
-	inputFileIDs, err := parseLocalCodeInterpreterContainer(tool["container"])
+	container, err := parseLocalCodeInterpreterContainer(tool["container"])
 	if err != nil {
 		return localCodeInterpreterConfig{}, err
 	}
@@ -270,49 +291,70 @@ func parseLocalCodeInterpreterConfig(rawFields map[string]json.RawMessage) (loca
 
 	return localCodeInterpreterConfig{
 		IncludeOutputs: includeOutputs,
-		InputFileIDs:   inputFileIDs,
+		Container:      container,
 		ToolRequired:   toolRequired,
 	}, nil
 }
 
-func parseLocalCodeInterpreterContainer(value any) ([]string, error) {
+func parseLocalCodeInterpreterContainer(value any) (localCodeInterpreterContainerConfig, error) {
+	containerID := strings.TrimSpace(asString(value))
+	if containerID != "" {
+		if !strings.HasPrefix(containerID, "cntr_") {
+			return localCodeInterpreterContainerConfig{}, domain.NewValidationError("tools", "code_interpreter.container must be container.type=auto or a cntr_* container id")
+		}
+		return localCodeInterpreterContainerConfig{
+			Mode:      "explicit",
+			SessionID: containerID,
+		}, nil
+	}
+
 	container, ok := value.(map[string]any)
 	if !ok || container == nil {
-		return nil, domain.NewValidationError("tools", "code_interpreter.container must be an object")
+		return localCodeInterpreterContainerConfig{}, domain.NewValidationError("tools", "code_interpreter.container must be an object or container id string")
 	}
 	for key := range container {
 		switch key {
-		case "type", "file_ids":
+		case "type", "file_ids", "memory_limit":
 		default:
-			return nil, domain.NewValidationError("tools", "unsupported code_interpreter.container field "+`"`+key+`"`+" in shim-local mode")
+			return localCodeInterpreterContainerConfig{}, domain.NewValidationError("tools", "unsupported code_interpreter.container field "+`"`+key+`"`+" in shim-local mode")
 		}
 	}
 	if !strings.EqualFold(strings.TrimSpace(asString(container["type"])), "auto") {
-		return nil, domain.NewValidationError("tools", "shim-local code_interpreter only supports container.type=auto")
+		return localCodeInterpreterContainerConfig{}, domain.NewValidationError("tools", "shim-local code_interpreter only supports container.type=auto or explicit cntr_* container ids")
 	}
 
 	rawFileIDs, ok := container["file_ids"]
-	if !ok || rawFileIDs == nil {
-		return nil, nil
-	}
-	values, ok := rawFileIDs.([]any)
-	if !ok {
-		return nil, domain.NewValidationError("tools", "code_interpreter.container.file_ids must be an array of strings")
-	}
-	seen := make(map[string]struct{}, len(values))
-	fileIDs := make([]string, 0, len(values))
-	for _, value := range values {
-		fileID := strings.TrimSpace(asString(value))
-		if fileID == "" {
-			return nil, domain.NewValidationError("tools", "code_interpreter.container.file_ids must not contain empty values")
+	fileIDs := make([]string, 0)
+	if ok && rawFileIDs != nil {
+		values, ok := rawFileIDs.([]any)
+		if !ok {
+			return localCodeInterpreterContainerConfig{}, domain.NewValidationError("tools", "code_interpreter.container.file_ids must be an array of strings")
 		}
-		if _, ok := seen[fileID]; ok {
-			continue
+		seen := make(map[string]struct{}, len(values))
+		fileIDs = make([]string, 0, len(values))
+		for _, value := range values {
+			fileID := strings.TrimSpace(asString(value))
+			if fileID == "" {
+				return localCodeInterpreterContainerConfig{}, domain.NewValidationError("tools", "code_interpreter.container.file_ids must not contain empty values")
+			}
+			if _, ok := seen[fileID]; ok {
+				continue
+			}
+			seen[fileID] = struct{}{}
+			fileIDs = append(fileIDs, fileID)
 		}
-		seen[fileID] = struct{}{}
-		fileIDs = append(fileIDs, fileID)
 	}
-	return fileIDs, nil
+
+	memoryLimit, err := normalizeLocalCodeInterpreterMemoryLimit(asString(container["memory_limit"]))
+	if err != nil {
+		return localCodeInterpreterContainerConfig{}, domain.NewValidationError("tools", "code_interpreter.container.memory_limit "+err.Error())
+	}
+
+	return localCodeInterpreterContainerConfig{
+		InputFileIDs: fileIDs,
+		MemoryLimit:  memoryLimit,
+		Mode:         "auto",
+	}, nil
 }
 
 func parseLocalCodeInterpreterInclude(raw json.RawMessage) (bool, error) {
@@ -481,9 +523,37 @@ func validateLocalCodeInterpreterPlanCode(code string) error {
 	return nil
 }
 
-func (h *responseHandler) executeLocalCodeInterpreter(ctx context.Context, prepared service.PreparedResponseContext, inputFiles []localCodeInterpreterInputFile, code string) (localCodeInterpreterExecutionResult, error) {
+func (h *responseHandler) localCodeInterpreterContainerManager() localCodeInterpreterContainerManager {
+	return newLocalCodeInterpreterContainerManager(h.localCodeInterpreter, h.localCodeInterpreterFiles, h.localCodeInterpreterSessions)
+}
+
+func (h *responseHandler) executeLocalCodeInterpreter(ctx context.Context, prepared service.PreparedResponseContext, container localCodeInterpreterContainerConfig, inputFiles []localCodeInterpreterInputFile, code string) (localCodeInterpreterExecutionResult, error) {
 	if !h.localCodeInterpreter.Enabled() {
 		return localCodeInterpreterExecutionResult{}, localCodeInterpreterDisabledError()
+	}
+
+	manager := h.localCodeInterpreterContainerManager()
+	switch container.Mode {
+	case "explicit":
+		session, err := manager.ensureContainerSession(ctx, container.SessionID)
+		if err != nil {
+			return localCodeInterpreterExecutionResult{}, err
+		}
+		result, err := h.executeLocalCodeInterpreterSession(ctx, session.ID, inputFiles, code)
+		if err != nil {
+			if errors.Is(err, sandbox.ErrDisabled) {
+				return localCodeInterpreterExecutionResult{}, localCodeInterpreterDisabledError()
+			}
+			return localCodeInterpreterExecutionResult{}, fmt.Errorf("execute shim-local code_interpreter via %s backend: %w", h.localCodeInterpreter.Backend.Kind(), err)
+		}
+		if touchErr := h.localCodeInterpreterSessions.TouchCodeInterpreterSession(ctx, session.ID, domain.FormatTime(domain.NowUTC())); touchErr != nil {
+			return localCodeInterpreterExecutionResult{}, touchErr
+		}
+		result.ContainerID = session.ID
+		return result, nil
+	case "auto":
+	default:
+		return localCodeInterpreterExecutionResult{}, domain.NewValidationError("tools", "unsupported code_interpreter.container mode in shim-local path")
 	}
 
 	sessionID, canReuse, err := h.findReusableLocalCodeInterpreterSessionID(ctx, prepared)
@@ -491,65 +561,49 @@ func (h *responseHandler) executeLocalCodeInterpreter(ctx context.Context, prepa
 		return localCodeInterpreterExecutionResult{}, err
 	}
 	if canReuse {
-		result, err := h.executeLocalCodeInterpreterSession(ctx, sessionID, inputFiles, code)
+		session, err := manager.ensureContainerSession(ctx, sessionID)
 		if err == nil {
-			if touchErr := h.localCodeInterpreterSessions.TouchCodeInterpreterSession(ctx, sessionID, domain.FormatTime(domain.NowUTC())); touchErr != nil {
-				return localCodeInterpreterExecutionResult{}, touchErr
+			result, execErr := h.executeLocalCodeInterpreterSession(ctx, session.ID, inputFiles, code)
+			if execErr == nil {
+				if touchErr := h.localCodeInterpreterSessions.TouchCodeInterpreterSession(ctx, session.ID, domain.FormatTime(domain.NowUTC())); touchErr != nil {
+					return localCodeInterpreterExecutionResult{}, touchErr
+				}
+				result.ContainerID = session.ID
+				return result, nil
 			}
-			result.ContainerID = sessionID
-			return result, nil
+			if errors.Is(execErr, sandbox.ErrDisabled) {
+				return localCodeInterpreterExecutionResult{}, localCodeInterpreterDisabledError()
+			}
+			return localCodeInterpreterExecutionResult{}, fmt.Errorf("execute shim-local code_interpreter via %s backend: %w", h.localCodeInterpreter.Backend.Kind(), execErr)
 		}
-		if errors.Is(err, sandbox.ErrSessionNotFound) {
-			_ = h.localCodeInterpreterSessions.DeleteCodeInterpreterSession(ctx, sessionID)
-		} else if errors.Is(err, sandbox.ErrDisabled) {
-			return localCodeInterpreterExecutionResult{}, localCodeInterpreterDisabledError()
+		var validationErr *domain.ValidationError
+		if errors.As(err, &validationErr) {
+			canReuse = false
 		} else {
-			return localCodeInterpreterExecutionResult{}, fmt.Errorf("execute shim-local code_interpreter via %s backend: %w", h.localCodeInterpreter.Backend.Kind(), err)
+			return localCodeInterpreterExecutionResult{}, err
 		}
 	}
 
-	sessionID, err = domain.NewPrefixedID("cntr")
+	session, err := manager.createContainer(ctx, "Auto container", container.MemoryLimit, defaultLocalCodeInterpreterContainerExpiryMins)
 	if err != nil {
-		return localCodeInterpreterExecutionResult{}, fmt.Errorf("generate container id: %w", err)
+		return localCodeInterpreterExecutionResult{}, err
 	}
-	if err := h.localCodeInterpreter.Backend.CreateSession(ctx, sessionID); err != nil {
-		if errors.Is(err, sandbox.ErrDisabled) {
-			return localCodeInterpreterExecutionResult{}, localCodeInterpreterDisabledError()
-		}
-		return localCodeInterpreterExecutionResult{}, fmt.Errorf("create shim-local code_interpreter session via %s backend: %w", h.localCodeInterpreter.Backend.Kind(), err)
-	}
-
-	result, err := h.executeLocalCodeInterpreterSession(ctx, sessionID, inputFiles, code)
+	result, err := h.executeLocalCodeInterpreterSession(ctx, session.ID, inputFiles, code)
 	if err != nil {
-		_ = h.localCodeInterpreter.Backend.DestroySession(ctx, sessionID)
+		_ = manager.deleteContainer(ctx, session.ID)
 		if errors.Is(err, sandbox.ErrDisabled) {
 			return localCodeInterpreterExecutionResult{}, localCodeInterpreterDisabledError()
 		}
 		return localCodeInterpreterExecutionResult{}, fmt.Errorf("execute shim-local code_interpreter via %s backend: %w", h.localCodeInterpreter.Backend.Kind(), err)
 	}
-
-	now := domain.FormatTime(domain.NowUTC())
-	if err := h.localCodeInterpreterSessions.SaveCodeInterpreterSession(ctx, domain.CodeInterpreterSession{
-		ID:           sessionID,
-		Backend:      h.localCodeInterpreter.Backend.Kind(),
-		CreatedAt:    now,
-		LastActiveAt: now,
-	}); err != nil {
-		_ = h.localCodeInterpreter.Backend.DestroySession(ctx, sessionID)
-		return localCodeInterpreterExecutionResult{}, err
-	}
-	result.ContainerID = sessionID
+	result.ContainerID = session.ID
 	return result, nil
 }
 
 func (h *responseHandler) executeLocalCodeInterpreterSession(ctx context.Context, sessionID string, inputFiles []localCodeInterpreterInputFile, code string) (localCodeInterpreterExecutionResult, error) {
-	for _, inputFile := range inputFiles {
-		if err := h.localCodeInterpreter.Backend.UploadFile(ctx, sessionID, sandbox.SessionFile{
-			Name:    inputFile.WorkspaceName,
-			Content: inputFile.Content,
-		}); err != nil {
-			return localCodeInterpreterExecutionResult{}, err
-		}
+	manager := h.localCodeInterpreterContainerManager()
+	if _, err := manager.stageInputFiles(ctx, sessionID, inputFiles); err != nil {
+		return localCodeInterpreterExecutionResult{}, err
 	}
 
 	beforeFiles, err := h.localCodeInterpreter.Backend.ListFiles(ctx, sessionID)
@@ -570,7 +624,7 @@ func (h *responseHandler) executeLocalCodeInterpreterSession(ctx context.Context
 		return localCodeInterpreterExecutionResult{Logs: execResult.Logs}, err
 	}
 
-	generatedFiles, err := h.persistLocalCodeInterpreterGeneratedFiles(ctx, diffLocalCodeInterpreterGeneratedFiles(beforeFiles, afterFiles))
+	generatedFiles, err := manager.persistGeneratedFiles(ctx, sessionID, diffLocalCodeInterpreterGeneratedFiles(beforeFiles, afterFiles))
 	if err != nil {
 		return localCodeInterpreterExecutionResult{Logs: execResult.Logs}, err
 	}
@@ -605,9 +659,81 @@ func (h *responseHandler) findReusableLocalCodeInterpreterSessionID(ctx context.
 		if strings.TrimSpace(session.Backend) != h.localCodeInterpreter.Backend.Kind() {
 			return "", false, nil
 		}
+		if session.Status != "running" {
+			return "", false, nil
+		}
 		return session.ID, true, nil
 	}
 	return "", false, nil
+}
+
+func (h *responseHandler) resolveLocalCodeInterpreterPlanningFiles(ctx context.Context, prepared service.PreparedResponseContext, container localCodeInterpreterContainerConfig, current []localCodeInterpreterInputFile) ([]localCodeInterpreterInputFile, error) {
+	files := append([]localCodeInterpreterInputFile(nil), current...)
+	seen := make(map[string]struct{}, len(files))
+	for _, file := range files {
+		seen[strings.ToLower(strings.TrimSpace(file.WorkspaceName))] = struct{}{}
+	}
+
+	var (
+		containerID string
+		canInspect  bool
+		err         error
+	)
+	switch container.Mode {
+	case "explicit":
+		containerID = strings.TrimSpace(container.SessionID)
+		canInspect = containerID != ""
+	case "auto":
+		containerID, canInspect, err = h.findReusableLocalCodeInterpreterSessionID(ctx, prepared)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if !canInspect || containerID == "" {
+		return files, nil
+	}
+
+	manager := h.localCodeInterpreterContainerManager()
+	session, err := manager.getContainer(ctx, containerID, false)
+	if err != nil {
+		if errors.Is(err, sqlite.ErrNotFound) {
+			return files, nil
+		}
+		var validationErr *domain.ValidationError
+		if errors.As(err, &validationErr) {
+			return files, nil
+		}
+		return nil, err
+	}
+	if session.Status != "running" {
+		return files, nil
+	}
+
+	page, err := h.localCodeInterpreterSessions.ListCodeInterpreterContainerFiles(ctx, domain.ListCodeInterpreterContainerFilesQuery{
+		ContainerID: containerID,
+		Limit:       maxLocalCodeInterpreterContainerFilesListLimit,
+		Order:       domain.ListOrderAsc,
+	})
+	if err != nil {
+		return nil, err
+	}
+	for _, file := range page.Files {
+		workspaceName := path.Base(strings.TrimSpace(file.Path))
+		if workspaceName == "" {
+			continue
+		}
+		key := strings.ToLower(workspaceName)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		files = append(files, localCodeInterpreterInputFile{
+			FileID:        file.BackingFileID,
+			Filename:      workspaceName,
+			WorkspaceName: workspaceName,
+		})
+		seen[key] = struct{}{}
+	}
+	return files, nil
 }
 
 func (h *responseHandler) resolveLocalCodeInterpreterInputFiles(ctx context.Context, items []domain.Item, fileIDs []string) ([]localCodeInterpreterInputFile, error) {
@@ -898,7 +1024,7 @@ func buildLocalCodeInterpreterExecutionPrompt(code string, logs string, generate
 		return builder.String()
 	}
 
-	builder.WriteString("Generated files saved by the shim and available via /v1/files:\n")
+	builder.WriteString("Generated files saved by the shim and available via /v1/containers/{container_id}/files/{file_id}/content:\n")
 	for _, generatedFile := range generatedFiles {
 		builder.WriteString("- ")
 		builder.WriteString(generatedFile.Filename)
@@ -1008,10 +1134,14 @@ func buildLocalCodeInterpreterCallItem(code string, containerID string, logs str
 		}
 		for _, generatedFile := range generatedFiles {
 			outputs = append(outputs, map[string]any{
-				"type":     "file",
-				"file_id":  generatedFile.FileID,
-				"filename": generatedFile.Filename,
-				"bytes":    generatedFile.Bytes,
+				"type":              "file",
+				"file_id":           generatedFile.FileID,
+				"filename":          generatedFile.Filename,
+				"bytes":             generatedFile.Bytes,
+				"backing_file_id":   generatedFile.BackingFileID,
+				"container_id":      generatedFile.ContainerID,
+				"container_path":    generatedFile.ContainerPath,
+				"container_source":  generatedFile.ContainerSource,
 			})
 		}
 		payload["outputs"] = outputs
