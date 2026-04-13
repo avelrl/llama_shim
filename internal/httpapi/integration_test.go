@@ -4673,6 +4673,30 @@ func TestVectorStoreAttachBinaryFileReturnsFailedStatus(t *testing.T) {
 	require.Empty(t, search["data"].([]any))
 }
 
+func TestVectorStoreSearchRewriteQueryReturnsRewrittenSearchQuery(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	status, uploaded := uploadFile(t, app, "codes.txt", "assistants", []byte("Remember: code=777. Reply OK."), nil)
+	require.Equal(t, http.StatusOK, status)
+	fileID := asStringAny(uploaded["id"])
+
+	status, created := rawRequest(t, app, http.MethodPost, "/v1/vector_stores", map[string]any{
+		"name":     "Codes",
+		"file_ids": []string{fileID},
+	})
+	require.Equal(t, http.StatusOK, status)
+	vectorStoreID := asStringAny(created["id"])
+
+	status, search := rawRequest(t, app, http.MethodPost, "/v1/vector_stores/"+vectorStoreID+"/search", map[string]any{
+		"query":         "What is the code?",
+		"rewrite_query": true,
+	})
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, "code", asStringAny(search["search_query"]))
+	require.NotEmpty(t, search["data"].([]any))
+	require.Equal(t, fileID, asStringAny(search["data"].([]any)[0].(map[string]any)["file_id"]))
+}
+
 func TestVectorStoreSearchUsesSQLiteVecSemanticBackend(t *testing.T) {
 	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
 		RetrievalConfig: retrieval.Config{
@@ -4915,7 +4939,7 @@ func TestResponsesCreateExecutesLocalFileSearch(t *testing.T) {
 	require.Equal(t, "message", response.Output[1].Type)
 
 	fileSearchPayload := response.Output[0].Map()
-	require.Equal(t, []any{"What is the code?"}, fileSearchPayload["queries"].([]any))
+	require.Equal(t, []any{"code"}, fileSearchPayload["queries"].([]any))
 	require.Nil(t, fileSearchPayload["results"])
 
 	got := getResponse(t, app, response.ID)
@@ -4923,6 +4947,53 @@ func TestResponsesCreateExecutesLocalFileSearch(t *testing.T) {
 	require.Len(t, got.Output, 2)
 	require.Equal(t, "file_search_call", got.Output[0].Type)
 	require.Equal(t, "message", got.Output[1].Type)
+}
+
+func TestResponsesCreateLocalFileSearchPlansMultipleQueries(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	status, uploadedBanana := uploadFile(t, app, "banana.txt", "assistants", []byte("banana nutrition reference"), nil)
+	require.Equal(t, http.StatusOK, status)
+	fileBananaID := asStringAny(uploadedBanana["id"])
+
+	status, uploadedApple := uploadFile(t, app, "apple.txt", "assistants", []byte("apple storage guide"), nil)
+	require.Equal(t, http.StatusOK, status)
+	fileAppleID := asStringAny(uploadedApple["id"])
+
+	status, created := rawRequest(t, app, http.MethodPost, "/v1/vector_stores", map[string]any{
+		"name":     "Compare",
+		"file_ids": []string{fileBananaID, fileAppleID},
+	})
+	require.Equal(t, http.StatusOK, status)
+	vectorStoreID := asStringAny(created["id"])
+
+	response := postResponse(t, app, map[string]any{
+		"model":   "test-model",
+		"store":   true,
+		"input":   "Compare banana nutrition and apple storage.",
+		"include": []string{"file_search_call.results"},
+		"tools": []map[string]any{
+			{
+				"type":             "file_search",
+				"vector_store_ids": []string{vectorStoreID},
+			},
+		},
+	})
+
+	fileSearchPayload := response.Output[0].Map()
+	require.Equal(t, []any{
+		"banana nutrition apple storage",
+		"banana nutrition",
+		"apple storage",
+	}, fileSearchPayload["queries"].([]any))
+
+	results := fileSearchPayload["results"].([]any)
+	require.Len(t, results, 2)
+	gotFileIDs := []string{
+		asStringAny(results[0].(map[string]any)["file_id"]),
+		asStringAny(results[1].(map[string]any)["file_id"]),
+	}
+	require.ElementsMatch(t, []string{fileBananaID, fileAppleID}, gotFileIDs)
 }
 
 func TestResponsesCreateLocalFileSearchStreamReplaysToolEvents(t *testing.T) {

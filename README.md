@@ -159,6 +159,12 @@ The shim can run local semantic retrieval without an external OpenAI embeddings 
   keyword matches when `sqlite_vec` is enabled
 - when `sqlite_vec` is enabled, omitted `ranking_options.ranker` defaults to
   shim-local `auto` reranking; `ranker=none` disables that local rerank stage
+- raw `/v1/vector_stores/{id}/search` honors `rewrite_query=true` with a small
+  deterministic local rewrite pass and returns the rewritten query in
+  `search_query`
+- local `/v1/responses` `file_search` reuses that rewrite core and can fan a
+  complex prompt out into several rewritten search queries before retrieval;
+  this is a pragmatic local subset, not exact hosted planner parity
 - when the configured embedder model or embedding dimensions change, the
   `sqlite_vec` path lazily reindexes stale chunks in the queried vector store
   before semantic search so the shim does not mix incompatible embedding spaces

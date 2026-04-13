@@ -130,6 +130,10 @@ paths:
           configured embedder model or vector dimensions change, and still
           does not claim hosted reranking or full hosted semantic-search
           parity
+        - before local retrieval, the shim applies a small deterministic
+          query-rewrite pass and can fan a complex prompt out into several
+          rewritten search queries; this is a pragmatic local planning subset,
+          not exact hosted `file_search` planner parity
         - the shim returns `file_search_call` output items and stored/streaming
           replay, but does not currently synthesize hosted `file_citation`
           annotations in assistant messages
@@ -2071,8 +2075,11 @@ components:
         `auto`; `ranker=none` disables that local rerank stage. When the
         configured embedder model or vector dimensions change, the shim lazy
         reindexes stale chunks in the queried `vector_store` before semantic
-        search. The shim does not claim hosted reranking or `file_citation`
-        annotation parity.
+        search. Before local retrieval, the shim also applies a small
+        deterministic query-rewrite pass and can fan a complex prompt out into
+        several rewritten search queries. The shim does not claim hosted
+        reranking, hosted query-planning, or `file_citation` annotation
+        parity.
 
         The local `code_interpreter` subset is guarded by
         `responses.code_interpreter.backend`. `backend=docker` uses a hardened
@@ -3098,8 +3105,12 @@ components:
       description: |
         Local vector store search request.
 
-        `rewrite_query` is accepted as a compatibility no-op. When the
-        semantic retrieval backend (`sqlite_vec`) is enabled,
+        `rewrite_query=true` applies a small shim-local deterministic
+        query-rewrite pass before search and returns the rewritten query (or
+        rewritten query array) in `search_query`. Exact hosted rewrite
+        parity is not claimed.
+
+        When the semantic retrieval backend (`sqlite_vec`) is enabled,
         `ranking_options.ranker` controls a shim-local rerank layer:
         omitted `ranker` defaults to local `auto`,
         `default_2024_08_21` / `default-2024-08-21` select a conservative
@@ -3160,6 +3171,10 @@ components:
             - type: array
               items:
                 type: string
+          description: |
+            The query string or query array actually used for search. When
+            `rewrite_query=true`, this reflects the shim-local rewritten
+            query payload rather than the original request text.
         data:
           type: array
           items:

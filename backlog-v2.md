@@ -99,7 +99,8 @@
   configured embedder backend are enabled
 - local `/v1/responses` теперь умеет shim-owned `file_search` execution over
   local `vector_stores` в pragmatic subset:
-  один `file_search` tool, local lexical retrieval, stored/streaming
+  один `file_search` tool, deterministic query rewriting + small multi-search
+  planning subset, local lexical/semantic retrieval, stored/streaming
   `file_search_call` output item, optional
   `include=["file_search_call.results"]`, и follow-up turns не ломаются из-за
   stored tool items в локальном generation context
@@ -970,6 +971,10 @@ Definition of done:
   `vector_store_ids`, `filters`, `max_num_results`,
   `ranking_options.score_threshold` и compatibility validation для
   ranker/tool_choice subset
+- перед local retrieval shim now applies a small deterministic query-rewrite
+  pass and can fan a complex user prompt out into several rewritten search
+  queries; `file_search_call.queries` now reflects those actual local search
+  strings instead of only echoing the original prompt
 - non-streaming и streaming local `/v1/responses` requests возвращают
   `file_search_call` + assistant `message`, а streaming replay использует уже
   существующую tool-specific SSE family
@@ -1037,6 +1042,12 @@ Definition of done:
   rerank stage by default, supports `default_2024_08_21` /
   `default-2024-08-21` as a conservative legacy profile, and accepts
   `ranker=none` as a shim-local escape hatch to disable reranking
+- raw `vector_stores/{id}/search` now honors `rewrite_query=true` with a
+  deterministic local rewrite subset and returns the rewritten query payload
+  in `search_query` instead of treating that field as a compatibility no-op
+- shim-local `file_search` now reuses the same rewrite core and adds a small
+  deterministic multi-search decomposition pass for complex prompts before
+  dense/lexical retrieval
 - embeddings generation тоже стала explicit backend choice:
   `retrieval.embedder.backend=openai_compatible|embedanything`
   с shared OpenAI-compatible `/v1/embeddings` surface, so a future local
@@ -1049,8 +1060,9 @@ Definition of done:
 Что уже зафиксировано как сознательное ограничение текущего state:
 
 - current semantic subset теперь это exact dense search plus weighted hybrid
-  dense+text fusion plus a local rerank layer, but not ANN or hosted reranked
-  pipeline уровня OpenAI file search
+  dense+text fusion plus a local rerank layer plus a small deterministic
+  rewrite/decomposition planner subset, but not ANN or hosted reranked /
+  hosted query-planning pipeline уровня OpenAI file search
 - `sqlite_vec` path всё ещё exact-dense, not ANN: official `sqlite-vec`
   `vec0` KNN path остаётся brute-force only today, так что phase 2 не
   закрывается этим milestone
@@ -1060,6 +1072,9 @@ Definition of done:
 - local reranking is intentionally a shim-owned heuristic subset; it uses the
   documented `ranker` knobs and default-auto behavior, but it does not claim
   exact hosted OpenAI reranker parity
+- local query rewriting and multi-search decomposition are also intentionally
+  shim-owned heuristic subsets; they are docs-backed as product direction, but
+  they do not claim exact hosted OpenAI planner/query-rewrite parity
 - current semantic subset зависит от configured embedder backend; без него
   `sqlite_vec` backend intentionally does not start
 - final assistant `message` не претендует на hosted `file_citation` parity

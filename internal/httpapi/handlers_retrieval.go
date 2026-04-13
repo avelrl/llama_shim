@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"llama_shim/internal/domain"
+	"llama_shim/internal/retrieval"
 	"llama_shim/internal/storage/sqlite"
 )
 
@@ -476,6 +477,10 @@ func (h *retrievalHandler) searchVectorStore(w http.ResponseWriter, r *http.Requ
 	if err != nil {
 		h.writeError(w, r, err)
 		return
+	}
+	if request.RewriteQuery != nil && *request.RewriteQuery {
+		queries = retrieval.RewriteSearchQueries(queries)
+		rawSearchQuery = retrieval.SearchQueryPayloadLike(rawSearchQuery, queries)
 	}
 	filters, err := domain.NormalizeVectorStoreSearchFilter(request.Filters, "filters")
 	if err != nil {

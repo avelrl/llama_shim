@@ -109,6 +109,10 @@ What is implemented now:
 - weighted hybrid dense+text ranking via `ranking_options.hybrid_search`
 - shim-local reranking over the dense/hybrid candidate set; omitted
   `ranking_options.ranker` defaults to `auto`, and `ranker=none` disables it
+- deterministic `rewrite_query=true` support for raw
+  `/v1/vector_stores/{id}/search`
+- a small deterministic rewrite + multi-search planning subset for local
+  `/v1/responses` `file_search`
 - lazy stale-chunk reindex inside the queried `vector_store` when the
   configured embedder model or embedding dimensions change, so semantic search
   only compares chunks in the current embedding space
@@ -121,4 +125,5 @@ What is still open:
 
 - ANN indexing beyond exact dense scan
 - hosted-grade reranking parity
+- hosted-grade query-rewrite / multi-search planner parity
 - hosted `file_citation` parity in final assistant messages

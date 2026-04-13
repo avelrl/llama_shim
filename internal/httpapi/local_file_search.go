@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"llama_shim/internal/domain"
+	"llama_shim/internal/retrieval"
 	"llama_shim/internal/service"
 )
 
@@ -88,13 +89,17 @@ func (h *responseHandler) createLocalFileSearchResponse(ctx context.Context, req
 	if err != nil {
 		return domain.Response{}, err
 	}
+	searchQueries := retrieval.PlanFileSearchQueries(query)
+	if len(searchQueries) == 0 {
+		searchQueries = []string{query}
+	}
 
-	results, err := h.searchLocalFileSearchResults(ctx, config, query)
+	results, err := h.searchLocalFileSearchResults(ctx, config, searchQueries)
 	if err != nil {
 		return domain.Response{}, err
 	}
 
-	generationContext, err := buildLocalFileSearchGenerationContext(prepared, query, results)
+	generationContext, err := buildLocalFileSearchGenerationContext(prepared, query, searchQueries, results)
 	if err != nil {
 		return domain.Response{}, err
 	}
@@ -114,7 +119,7 @@ func (h *responseHandler) createLocalFileSearchResponse(ctx context.Context, req
 	createdAt := domain.NowUTC().Unix()
 	response := domain.NewResponse(responseID, input.Model, outputText, input.PreviousResponseID, input.ConversationID, createdAt)
 
-	fileSearchItem, err := buildLocalFileSearchCallItem(query, results, config.IncludeResults)
+	fileSearchItem, err := buildLocalFileSearchCallItem(searchQueries, results, config.IncludeResults)
 	if err != nil {
 		return domain.Response{}, err
 	}
@@ -390,7 +395,7 @@ func deriveLocalFileSearchQuery(items []domain.Item) (string, error) {
 	return "", domain.NewValidationError("input", "shim-local file_search requires a text message input")
 }
 
-func (h *responseHandler) searchLocalFileSearchResults(ctx context.Context, config localFileSearchConfig, query string) ([]localFileSearchResult, error) {
+func (h *responseHandler) searchLocalFileSearchResults(ctx context.Context, config localFileSearchConfig, queries []string) ([]localFileSearchResult, error) {
 	type resultKey struct {
 		VectorStoreID string
 		FileID        string
@@ -400,13 +405,13 @@ func (h *responseHandler) searchLocalFileSearchResults(ctx context.Context, conf
 	for _, vectorStoreID := range config.VectorStoreIDs {
 		page, err := h.proxy.store.SearchVectorStore(ctx, domain.VectorStoreSearchQuery{
 			VectorStoreID:  vectorStoreID,
-			Queries:        []string{query},
+			Queries:        queries,
 			Filters:        config.Filters,
 			MaxNumResults:  config.MaxNumResults,
 			Ranker:         config.Ranker,
 			ScoreThreshold: config.ScoreThreshold,
 			HybridSearch:   config.HybridSearch,
-			RawSearchQuery: query,
+			RawSearchQuery: retrieval.SearchQueryPayload(queries),
 		})
 		if err != nil {
 			return nil, err
@@ -450,7 +455,7 @@ func (h *responseHandler) searchLocalFileSearchResults(ctx context.Context, conf
 	return results, nil
 }
 
-func buildLocalFileSearchGenerationContext(prepared service.PreparedResponseContext, query string, results []localFileSearchResult) ([]domain.Item, error) {
+func buildLocalFileSearchGenerationContext(prepared service.PreparedResponseContext, query string, searchQueries []string, results []localFileSearchResult) ([]domain.Item, error) {
 	prefixItems := prepared.ContextItems
 	if len(prepared.NormalizedInput) <= len(prefixItems) {
 		prefixItems = prefixItems[:len(prefixItems)-len(prepared.NormalizedInput)]
@@ -465,7 +470,7 @@ func buildLocalFileSearchGenerationContext(prepared service.PreparedResponseCont
 		return nil, err
 	}
 
-	searchContext := domain.NewInputTextMessage("system", buildLocalFileSearchContextPrompt(query, results))
+	searchContext := domain.NewInputTextMessage("system", buildLocalFileSearchContextPrompt(query, searchQueries, results))
 	out := make([]domain.Item, 0, len(prefix)+len(currentInput)+1)
 	out = append(out, prefix...)
 	out = append(out, searchContext)
@@ -473,14 +478,22 @@ func buildLocalFileSearchGenerationContext(prepared service.PreparedResponseCont
 	return out, nil
 }
 
-func buildLocalFileSearchContextPrompt(query string, results []localFileSearchResult) string {
+func buildLocalFileSearchContextPrompt(query string, searchQueries []string, results []localFileSearchResult) string {
 	var builder strings.Builder
 	builder.WriteString("You have access to shim-local file search results.\n")
 	builder.WriteString("Use only the retrieved snippets below as local knowledge for this turn.\n")
 	builder.WriteString("If the snippets do not answer the request, say so plainly.\n")
-	builder.WriteString("Search query: ")
+	builder.WriteString("Original user query: ")
 	builder.WriteString(query)
 	builder.WriteString("\n")
+	if len(searchQueries) > 0 {
+		builder.WriteString("Search queries used:\n")
+		for _, searchQuery := range searchQueries {
+			builder.WriteString("- ")
+			builder.WriteString(searchQuery)
+			builder.WriteString("\n")
+		}
+	}
 	if len(results) == 0 {
 		builder.WriteString("No matching local file search results were found.\n")
 		return builder.String()
@@ -504,11 +517,11 @@ func buildLocalFileSearchContextPrompt(query string, results []localFileSearchRe
 	return builder.String()
 }
 
-func buildLocalFileSearchCallItem(query string, results []localFileSearchResult, includeResults bool) (domain.Item, error) {
+func buildLocalFileSearchCallItem(queries []string, results []localFileSearchResult, includeResults bool) (domain.Item, error) {
 	payload := map[string]any{
 		"type":    "file_search_call",
 		"status":  "completed",
-		"queries": []string{query},
+		"queries": queries,
 		"results": nil,
 	}
 	if includeResults {
