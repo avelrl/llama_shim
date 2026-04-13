@@ -431,29 +431,31 @@ func shouldIgnoreStreamProxyError(err error) bool {
 }
 
 type responseStreamEventProxy struct {
-	ctx               context.Context
-	logger            *slog.Logger
-	plan              customToolTransportPlan
-	onCompleted       func([]byte) error
-	eventType         string
-	dataLines         []string
-	customItemByID    map[string]customToolDescriptor
-	addedItemIDs      map[string]struct{}
-	doneItemIDs       map[string]struct{}
-	toolDoneItemIDs   map[string]struct{}
-	sawCreated        bool
-	sawItemAdded      bool
-	sawOutputTextDone bool
-	sawCompleted      bool
-	summaryLogged     bool
-	eventCount        int
-	lastEventType     string
-	errorType         string
-	errorMessage      string
-	responseID        string
-	itemID            string
-	model             string
-	outputText        strings.Builder
+	ctx                          context.Context
+	logger                       *slog.Logger
+	plan                         customToolTransportPlan
+	onCompleted                  func([]byte) error
+	eventType                    string
+	dataLines                    []string
+	customItemByID               map[string]customToolDescriptor
+	addedItemIDs                 map[string]struct{}
+	doneItemIDs                  map[string]struct{}
+	toolDoneItemIDs              map[string]struct{}
+	sawCreated                   bool
+	sawItemAdded                 bool
+	sawOutputTextAnnotationAdded bool
+	sawOutputTextDone            bool
+	sawCompleted                 bool
+	summaryLogged                bool
+	eventCount                   int
+	lastEventType                string
+	errorType                    string
+	errorMessage                 string
+	responseID                   string
+	itemID                       string
+	model                        string
+	outputAnnotations            []any
+	outputText                   strings.Builder
 }
 
 func newResponseStreamEventProxy(ctx context.Context, logger *slog.Logger, plan customToolTransportPlan, onCompleted func([]byte) error) *responseStreamEventProxy {
@@ -643,6 +645,30 @@ type pendingSSEEvent struct {
 	payload   map[string]any
 }
 
+func replayTextAnnotationPendingEvents(itemID string, outputIndex, contentIndex int, annotations []any) []pendingSSEEvent {
+	if len(annotations) == 0 {
+		return nil
+	}
+	events := make([]pendingSSEEvent, 0, len(annotations))
+	for annotationIndex, annotation := range annotations {
+		if annotation == nil {
+			continue
+		}
+		events = append(events, pendingSSEEvent{
+			eventType: "response.output_text.annotation.added",
+			payload: map[string]any{
+				"type":             "response.output_text.annotation.added",
+				"item_id":          itemID,
+				"output_index":     outputIndex,
+				"content_index":    contentIndex,
+				"annotation_index": annotationIndex,
+				"annotation":       annotation,
+			},
+		})
+	}
+	return events
+}
+
 func (p *responseStreamEventProxy) normalizeTextStreamEvent(eventType string, payload map[string]any) ([]pendingSSEEvent, string, map[string]any) {
 	if eventType == "" {
 		return nil, eventType, payload
@@ -665,7 +691,7 @@ func (p *responseStreamEventProxy) normalizeTextStreamEvent(eventType string, pa
 		}
 	}
 
-	isTextEvent := eventType == "response.output_text.delta" || eventType == "response.output_text.done"
+	isTextEvent := eventType == "response.output_text.delta" || eventType == "response.output_text.annotation.added" || eventType == "response.output_text.done"
 	isSyntheticCompletionEvent := eventType == "response.completed" && p.outputText.Len() > 0
 	if !isTextEvent && !isSyntheticCompletionEvent {
 		return nil, eventType, payload
@@ -690,12 +716,15 @@ func (p *responseStreamEventProxy) normalizeTextStreamEvent(eventType string, pa
 			payload: map[string]any{
 				"type":         "response.output_item.added",
 				"output_index": 0,
-				"item":         p.syntheticOutputItem(""),
+				"item":         p.syntheticOutputItem("", nil),
 			},
 		})
 		p.sawItemAdded = true
 	}
 	if eventType == "response.completed" && p.outputText.Len() > 0 {
+		if !p.sawOutputTextAnnotationAdded {
+			before = append(before, replayTextAnnotationPendingEvents(p.itemID, 0, 0, p.outputAnnotations)...)
+		}
 		if !p.sawOutputTextDone {
 			before = append(before, pendingSSEEvent{
 				eventType: "response.output_text.done",
@@ -716,7 +745,7 @@ func (p *responseStreamEventProxy) normalizeTextStreamEvent(eventType string, pa
 				payload: map[string]any{
 					"type":         "response.output_item.done",
 					"output_index": 0,
-					"item":         p.syntheticOutputItem(p.outputText.String()),
+					"item":         p.syntheticOutputItem(p.outputText.String(), p.outputAnnotations),
 				},
 			})
 			p.doneItemIDs[p.itemID] = struct{}{}
@@ -727,6 +756,8 @@ func (p *responseStreamEventProxy) normalizeTextStreamEvent(eventType string, pa
 	case "response.output_text.delta":
 		payload["response_id"] = p.responseID
 		payload["item_id"] = p.itemID
+	case "response.output_text.annotation.added":
+		payload["item_id"] = fallbackString(strings.TrimSpace(asString(payload["item_id"])), p.itemID)
 	case "response.output_text.done":
 		payload["item_id"] = p.itemID
 		if strings.TrimSpace(asString(payload["text"])) == "" {
@@ -930,11 +961,18 @@ func (p *responseStreamEventProxy) emitSyntheticCompletionIfNeeded(w io.Writer) 
 		if err := p.writeEvent(w, "response.output_item.added", map[string]any{
 			"type":         "response.output_item.added",
 			"output_index": 0,
-			"item":         p.syntheticOutputItem(""),
+			"item":         p.syntheticOutputItem("", nil),
 		}); err != nil {
 			return err
 		}
 		p.sawItemAdded = true
+	}
+	if !p.sawOutputTextAnnotationAdded {
+		for _, event := range replayTextAnnotationPendingEvents(p.itemID, 0, 0, p.outputAnnotations) {
+			if err := p.writeEvent(w, event.eventType, event.payload); err != nil {
+				return err
+			}
+		}
 	}
 	if err := p.writeEvent(w, "response.output_text.done", map[string]any{
 		"type":          "response.output_text.done",
@@ -949,7 +987,7 @@ func (p *responseStreamEventProxy) emitSyntheticCompletionIfNeeded(w io.Writer) 
 	if err := p.writeEvent(w, "response.output_item.done", map[string]any{
 		"type":         "response.output_item.done",
 		"output_index": 0,
-		"item":         p.syntheticOutputItem(p.outputText.String()),
+		"item":         p.syntheticOutputItem(p.outputText.String(), p.outputAnnotations),
 	}); err != nil {
 		return err
 	}
@@ -994,6 +1032,12 @@ func (p *responseStreamEventProxy) observeTextStreamEvent(eventType string, payl
 	case "response.output_text.delta":
 		p.ensureSyntheticIDs(payload)
 		p.outputText.WriteString(asString(payload["delta"]))
+	case "response.output_text.annotation.added":
+		p.ensureSyntheticIDs(payload)
+		p.sawOutputTextAnnotationAdded = true
+		if annotation, ok := payload["annotation"]; ok && annotation != nil {
+			p.outputAnnotations = append(p.outputAnnotations, annotation)
+		}
 	case "response.output_text.done":
 		p.ensureSyntheticIDs(payload)
 		p.sawOutputTextDone = true
@@ -1056,6 +1100,9 @@ func (p *responseStreamEventProxy) captureResponseEnvelope(responsePayload map[s
 				if text != "" && p.outputText.Len() == 0 {
 					p.outputText.WriteString(text)
 				}
+				if annotations := responseReplayPartAnnotations(part); len(annotations) >= len(p.outputAnnotations) {
+					p.outputAnnotations = append([]any(nil), annotations...)
+				}
 			}
 		}
 	}
@@ -1097,19 +1144,23 @@ func (p *responseStreamEventProxy) syntheticResponseEnvelope(final bool) map[str
 	}
 	text := p.outputText.String()
 	response["output_text"] = text
-	response["output"] = []map[string]any{p.syntheticOutputItem(text)}
+	response["output"] = []map[string]any{p.syntheticOutputItem(text, p.outputAnnotations)}
 	return response
 }
 
-func (p *responseStreamEventProxy) syntheticOutputItem(text string) map[string]any {
+func (p *responseStreamEventProxy) syntheticOutputItem(text string, annotations []any) map[string]any {
+	if annotations == nil {
+		annotations = []any{}
+	}
 	return map[string]any{
 		"id":   p.itemID,
 		"type": "message",
 		"role": "assistant",
 		"content": []map[string]any{
 			{
-				"type": "output_text",
-				"text": text,
+				"type":        "output_text",
+				"text":        text,
+				"annotations": annotations,
 			},
 		},
 	}

@@ -322,11 +322,10 @@ func buildResponseReplayOutputItemEvents(responseID string, outputIndex int, ite
 			switch partType {
 			case "output_text":
 				text := asStringValue(part["text"])
+				annotations := responseReplayPartAnnotations(part)
 				addedPart := cloneReplayMap(part)
 				addedPart["text"] = ""
-				if _, ok := addedPart["annotations"]; !ok {
-					addedPart["annotations"] = []any{}
-				}
+				addedPart["annotations"] = []any{}
 				events = append(events, responseReplayEvent{
 					eventType: "response.content_part.added",
 					payload: map[string]any{
@@ -338,21 +337,22 @@ func buildResponseReplayOutputItemEvents(responseID string, outputIndex int, ite
 					},
 				})
 				if text != "" {
-					events = append(events,
-						responseReplayTextDeltaEvent(responseID, itemID, outputIndex, contentIndex, text, includeObfuscation),
-						responseReplayEvent{
-							eventType: "response.output_text.done",
-							payload: map[string]any{
-								"type":          "response.output_text.done",
-								"response_id":   responseID,
-								"item_id":       itemID,
-								"output_index":  outputIndex,
-								"content_index": contentIndex,
-								"text":          text,
-							},
-						},
-					)
+					events = append(events, responseReplayTextDeltaEvent(responseID, itemID, outputIndex, contentIndex, text, includeObfuscation))
 				}
+				events = append(events, responseReplayTextAnnotationEvents(itemID, outputIndex, contentIndex, annotations)...)
+				events = append(events,
+					responseReplayEvent{
+						eventType: "response.output_text.done",
+						payload: map[string]any{
+							"type":          "response.output_text.done",
+							"response_id":   responseID,
+							"item_id":       itemID,
+							"output_index":  outputIndex,
+							"content_index": contentIndex,
+							"text":          text,
+						},
+					},
+				)
 				events = append(events, responseReplayEvent{
 					eventType: "response.content_part.done",
 					payload: map[string]any{
@@ -520,6 +520,42 @@ func responseReplayItemParts(item domain.Item) []map[string]any {
 		parts = append(parts, cloneReplayMap(part))
 	}
 	return parts
+}
+
+func responseReplayPartAnnotations(part map[string]any) []any {
+	rawAnnotations, ok := part["annotations"].([]any)
+	if !ok || len(rawAnnotations) == 0 {
+		return nil
+	}
+	annotations := make([]any, 0, len(rawAnnotations))
+	for _, annotation := range rawAnnotations {
+		if annotation == nil {
+			continue
+		}
+		annotations = append(annotations, annotation)
+	}
+	return annotations
+}
+
+func responseReplayTextAnnotationEvents(itemID string, outputIndex, contentIndex int, annotations []any) []responseReplayEvent {
+	if len(annotations) == 0 {
+		return nil
+	}
+	events := make([]responseReplayEvent, 0, len(annotations))
+	for annotationIndex, annotation := range annotations {
+		events = append(events, responseReplayEvent{
+			eventType: "response.output_text.annotation.added",
+			payload: map[string]any{
+				"type":             "response.output_text.annotation.added",
+				"item_id":          itemID,
+				"output_index":     outputIndex,
+				"content_index":    contentIndex,
+				"annotation_index": annotationIndex,
+				"annotation":       annotation,
+			},
+		})
+	}
+	return events
 }
 
 func cloneReplayMap(in map[string]any) map[string]any {

@@ -107,11 +107,13 @@
   Docker as the primary boundary, non-streaming/streaming create, shim-owned
   `container_id` session reuse across stored `previous_response_id` lineage
   plus same-`cntr_*` restore after transient runtime loss, optional
-  `include=["code_interpreter_call.outputs"]` with logs plus
-  shim-owned generated container-file descriptors, local final assistant
-  `container_file_citation` subset over shim-added generated-file appendix, stored
-  `code_interpreter_call` output item и follow-up turns не ломаются из-за
-  stored tool items в локальном generation context
+  `include=["code_interpreter_call.outputs"]` with logs, same-origin image
+  URLs for generated image artifacts, and shim-owned generated container-file
+  descriptors for non-image artifacts, local final assistant
+  `container_file_citation` subset plus replayed
+  `response.output_text.annotation.added` over shim-added generated-file
+  appendix, stored `code_interpreter_call` output item и follow-up turns не
+  ломаются из-за stored tool items в локальном generation context
 - non-text/binary attachments не маскируются под успех: local
   `vector_store.file` честно возвращает `status=failed` и documented
   `last_error`
@@ -1083,35 +1085,44 @@ Definition of done:
   через guarded workspace-relative `open()`
 - current-turn `input_file` model content parts теперь автоматически
   stage-ятся в local sandbox workspace для pragmatic subset:
-  поддержаны `input_file.file_id` и inline `input_file.file_data`
-  (`filename` required), так что shim-local `code_interpreter` может читать
-  model-uploaded files без отдельного `container.file_ids`
+  поддержаны `input_file.file_id`, inline `input_file.file_data`
+  (`filename` required) и HTTP(S) `input_file.file_url`
+  (server-side fetch with a local 50 MiB cap), так что shim-local
+  `code_interpreter` может читать model-uploaded files без отдельного
+  `container.file_ids`
 - generated file artifacts теперь сохраняются как bounded shim-owned
   `/v1/files`, зеркалятся в shim-owned container files, и попадают в local
-  `code_interpreter_call.outputs` как shim-local `type=file` descriptors с
-  `file_id` (`cfile_*`), `filename`, `bytes`, `backing_file_id`;
-  final assistant turn видит этот список в local generation context
+  `code_interpreter_call.outputs` как same-origin `type=image` URLs для
+  generated image artifacts и как shim-local `type=file` descriptors с
+  `file_id` (`cfile_*`), `filename`, `bytes`, `backing_file_id` для других
+  generated files; final assistant turn видит этот список в local generation
+  context
 - local final assistant message теперь получает pragmatic
   `container_file_citation` subset: shim добавляет короткий
   `Generated files:` appendix и annotates filenames с
   `container_id`, `file_id` (`cfile_*`), `filename`, `start_index`,
   `end_index`
+- stored/local streaming replay теперь synthesize-ит generic
+  `response.output_text.annotation.added` events для final assistant
+  annotations, включая shim-local `container_file_citation` annotations над
+  generated-file appendix
 
 Что осталось открытым:
 
 - это не hosted Code Interpreter parity; по умолчанию backend выключен
 - `unsafe_host` остаётся явно небезопасным fallback/dev path и не должен
   считаться production-grade boundary
-- нет container/file/artifact surface parity:
-  `input_file.file_url`, image outputs и richer hosted container lifecycle
-- нет hosted annotation streaming parity:
-  local stored/streaming responses несут final
-  `container_file_citation` annotations в assistant message payload, но shim
-  пока не synthesize-ит отдельные `response.output_text.annotation.added`
-  events и не воспроизводит hosted placement semantics beyond shim-added
-  generated-file appendix
-- нет hosted failure/artifact semantics parity beyond logs + local generated
-  file subset
+- нет полного hosted container/file/artifact parity:
+  richer hosted container lifecycle (`skills`, `network_policy`,
+  hosted status/failure surface) и exact non-image
+  `code_interpreter_call.outputs` semantics
+- нет hosted citation placement parity:
+  annotations теперь replay-ятся отдельными
+  `response.output_text.annotation.added` events, но для local generated files
+  они всё ещё висят на shim-added `Generated files:` appendix, а не на
+  hosted model-chosen spans
+- нет hosted failure/artifact semantics parity beyond logs, local image URLs,
+  и local generated file subset
 - stronger isolation backends (`gVisor`, microVM) не заведены; текущий
   production-minded шаг это hardened Docker, а не VM parity
 - нет full hosted expiration/cleanup parity:

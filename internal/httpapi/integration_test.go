@@ -5271,7 +5271,84 @@ func TestResponsesCreateLocalCodeInterpreterAutoUploadsInlineInputFileData(t *te
 	require.NotEmpty(t, asStringAny(response.Output[0].Map()["container_id"]))
 }
 
-func TestResponsesCreateLocalCodeInterpreterRejectsInputFileURL(t *testing.T) {
+func TestResponsesCreateLocalCodeInterpreterAutoUploadsInputFileURL(t *testing.T) {
+	var (
+		mu             sync.Mutex
+		activeSessions = map[string]map[string][]byte{}
+	)
+
+	fileServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/codes.txt", r.URL.Path)
+		_, err := io.WriteString(w, "Remember: code=777. Reply OK.")
+		require.NoError(t, err)
+	}))
+	defer fileServer.Close()
+
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		CodeInterpreterBackend: testutil.FakeSandboxBackend{
+			KindValue: "docker",
+			CreateSessionFunc: func(_ context.Context, req sandbox.CreateSessionRequest) error {
+				mu.Lock()
+				defer mu.Unlock()
+				activeSessions[req.SessionID] = map[string][]byte{}
+				return nil
+			},
+			UploadFileFunc: func(_ context.Context, sessionID string, file sandbox.SessionFile) error {
+				mu.Lock()
+				defer mu.Unlock()
+				session, ok := activeSessions[sessionID]
+				if !ok {
+					return sandbox.ErrSessionNotFound
+				}
+				session[file.Name] = append([]byte(nil), file.Content...)
+				return nil
+			},
+			ExecuteFunc: func(_ context.Context, req sandbox.ExecuteRequest) (sandbox.ExecuteResult, error) {
+				mu.Lock()
+				defer mu.Unlock()
+				session, ok := activeSessions[req.SessionID]
+				if !ok {
+					return sandbox.ExecuteResult{}, sandbox.ErrSessionNotFound
+				}
+				require.Contains(t, req.Code, `open("codes.txt"`)
+				content, ok := session["codes.txt"]
+				require.True(t, ok)
+				return sandbox.ExecuteResult{Logs: string(content)}, nil
+			},
+		},
+	})
+
+	response := postResponse(t, app, map[string]any{
+		"model": "test-model",
+		"store": true,
+		"input": []map[string]any{
+			{
+				"role": "user",
+				"content": []map[string]any{
+					{"type": "input_text", "text": "Read the uploaded file and return the code."},
+					{"type": "input_file", "file_url": fileServer.URL + "/codes.txt"},
+				},
+			},
+		},
+		"tools": []map[string]any{
+			{
+				"type": "code_interpreter",
+				"container": map[string]any{
+					"type": "auto",
+				},
+			},
+		},
+		"tool_choice": "required",
+	})
+
+	require.Equal(t, "completed", response.Status)
+	require.Equal(t, "777", response.OutputText)
+	require.Len(t, response.Output, 2)
+	require.Equal(t, "code_interpreter_call", response.Output[0].Type)
+	require.NotEmpty(t, asStringAny(response.Output[0].Map()["container_id"]))
+}
+
+func TestResponsesCreateLocalCodeInterpreterRejectsUnsupportedInputFileURLScheme(t *testing.T) {
 	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
 		CodeInterpreterBackend: testutil.FakeSandboxBackend{KindValue: "docker"},
 	})
@@ -5283,7 +5360,7 @@ func TestResponsesCreateLocalCodeInterpreterRejectsInputFileURL(t *testing.T) {
 				"role": "user",
 				"content": []map[string]any{
 					{"type": "input_text", "text": "Read the uploaded file and return the code."},
-					{"type": "input_file", "file_url": "https://example.com/codes.txt"},
+					{"type": "input_file", "file_url": "file:///tmp/codes.txt"},
 				},
 			},
 		},
@@ -5302,7 +5379,7 @@ func TestResponsesCreateLocalCodeInterpreterRejectsInputFileURL(t *testing.T) {
 	errorPayload, ok := payload["error"].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, "invalid_request_error", asStringAny(errorPayload["type"]))
-	require.Contains(t, asStringAny(errorPayload["message"]), "input_file.file_url")
+	require.Contains(t, asStringAny(errorPayload["message"]), "http(s)")
 	require.Equal(t, "input", asStringAny(errorPayload["param"]))
 }
 
@@ -5460,7 +5537,15 @@ func TestResponsesCreateLocalCodeInterpreterPersistsGeneratedArtifacts(t *testin
 	require.Contains(t, streamResp.Header.Get("Content-Type"), "text/event-stream")
 
 	events := readSSEEvents(t, streamResp.Body)
-	require.NotContains(t, eventTypes(events), "response.output_text.annotation.added")
+	require.Contains(t, eventTypes(events), "response.output_text.annotation.added")
+	annotationEvents := findEvents(events, "response.output_text.annotation.added")
+	require.Len(t, annotationEvents, 1)
+	annotationPayload := annotationEvents[0].Data
+	require.EqualValues(t, 0, annotationPayload["annotation_index"])
+	streamAnnotation, ok := annotationPayload["annotation"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "container_file_citation", asStringAny(streamAnnotation["type"]))
+	require.Equal(t, fileID, asStringAny(streamAnnotation["file_id"]))
 
 	outputDoneEvents := findEvents(events, "response.output_item.done")
 	require.Len(t, outputDoneEvents, 2)
@@ -5476,6 +5561,119 @@ func TestResponsesCreateLocalCodeInterpreterPersistsGeneratedArtifacts(t *testin
 	doneAnnotations, ok := doneTextPart["annotations"].([]any)
 	require.True(t, ok)
 	require.Len(t, doneAnnotations, 1)
+}
+
+func TestResponsesCreateLocalCodeInterpreterPersistsGeneratedImageArtifacts(t *testing.T) {
+	var (
+		mu             sync.Mutex
+		activeSessions = map[string]map[string][]byte{}
+		pngBytes       = []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}
+	)
+
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		CodeInterpreterBackend: testutil.FakeSandboxBackend{
+			KindValue: "docker",
+			CreateSessionFunc: func(_ context.Context, req sandbox.CreateSessionRequest) error {
+				mu.Lock()
+				defer mu.Unlock()
+				activeSessions[req.SessionID] = map[string][]byte{}
+				return nil
+			},
+			ListFilesFunc: func(_ context.Context, sessionID string) ([]sandbox.SessionFile, error) {
+				mu.Lock()
+				defer mu.Unlock()
+				session, ok := activeSessions[sessionID]
+				if !ok {
+					return nil, sandbox.ErrSessionNotFound
+				}
+				files := make([]sandbox.SessionFile, 0, len(session))
+				for name, content := range session {
+					files = append(files, sandbox.SessionFile{
+						Name:    name,
+						Content: append([]byte(nil), content...),
+					})
+				}
+				slices.SortFunc(files, func(left, right sandbox.SessionFile) int {
+					return strings.Compare(left.Name, right.Name)
+				})
+				return files, nil
+			},
+			ExecuteFunc: func(_ context.Context, req sandbox.ExecuteRequest) (sandbox.ExecuteResult, error) {
+				mu.Lock()
+				defer mu.Unlock()
+				session, ok := activeSessions[req.SessionID]
+				if !ok {
+					return sandbox.ExecuteResult{}, sandbox.ErrSessionNotFound
+				}
+				session["plot.png"] = append([]byte(nil), pngBytes...)
+				return sandbox.ExecuteResult{Logs: "created plot.png\n"}, nil
+			},
+		},
+	})
+
+	response := postResponse(t, app, map[string]any{
+		"model":   "test-model",
+		"store":   true,
+		"input":   "Use Python to write plot.png and then say created.",
+		"include": []string{"code_interpreter_call.outputs"},
+		"tools": []map[string]any{
+			{
+				"type": "code_interpreter",
+				"container": map[string]any{
+					"type": "auto",
+				},
+			},
+		},
+		"tool_choice": "required",
+	})
+
+	require.Equal(t, "completed", response.Status)
+	require.Equal(t, "Created plot.png.\n\nGenerated files:\n- plot.png", response.OutputText)
+	require.Len(t, response.Output, 2)
+
+	callPayload := response.Output[0].Map()
+	outputs, ok := callPayload["outputs"].([]any)
+	require.True(t, ok)
+	require.Len(t, outputs, 2)
+
+	logOutput, ok := outputs[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "logs", asStringAny(logOutput["type"]))
+
+	imageOutput, ok := outputs[1].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "image", asStringAny(imageOutput["type"]))
+	imageURL := asStringAny(imageOutput["url"])
+	require.Contains(t, imageURL, "/v1/containers/")
+	require.Contains(t, imageURL, "/content")
+
+	messagePayload := response.Output[1].Map()
+	content, ok := messagePayload["content"].([]any)
+	require.True(t, ok)
+	require.Len(t, content, 1)
+	textPart, ok := content[0].(map[string]any)
+	require.True(t, ok)
+	annotations, ok := textPart["annotations"].([]any)
+	require.True(t, ok)
+	require.Len(t, annotations, 1)
+	annotation, ok := annotations[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "container_file_citation", asStringAny(annotation["type"]))
+	containerID := asStringAny(annotation["container_id"])
+	containerFileID := asStringAny(annotation["file_id"])
+	require.NotEmpty(t, containerID)
+	require.NotEmpty(t, containerFileID)
+	require.Equal(t, "/v1/containers/"+containerID+"/files/"+containerFileID+"/content", imageURL)
+
+	req, err := http.NewRequest(http.MethodGet, app.Server.URL+imageURL, nil)
+	require.NoError(t, err)
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equal(t, pngBytes, body)
 }
 
 func TestResponsesCreateLocalCodeInterpreterStreamReplaysToolEvents(t *testing.T) {

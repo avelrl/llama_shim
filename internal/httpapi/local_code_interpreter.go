@@ -7,6 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	neturl "net/url"
 	"path"
 	"path/filepath"
 	"strings"
@@ -25,6 +28,7 @@ const (
 	maxLocalCodeInterpreterGeneratedFiles       = 8
 	maxLocalCodeInterpreterGeneratedFileBytes   = 2 << 20
 	maxLocalCodeInterpreterGeneratedTotalBytes  = 8 << 20
+	maxLocalCodeInterpreterRemoteInputFileBytes = 50 << 20
 )
 
 var shimLocalCodeInterpreterFields = map[string]struct{}{
@@ -832,13 +836,66 @@ func (h *responseHandler) extractLocalCodeInterpreterAutomaticInputFiles(ctx con
 				WorkspaceName: uniqueLocalCodeInterpreterWorkspaceName(filename, "inline_file", usedNames),
 			})
 		case strings.TrimSpace(asString(part["file_url"])) != "":
-			return nil, domain.NewValidationError("input", "shim-local code_interpreter does not yet support input_file.file_url; use file_id or file_data")
+			inputFile, err := h.resolveLocalCodeInterpreterRemoteInputFile(ctx, asString(part["file_url"]), asString(part["filename"]), usedNames)
+			if err != nil {
+				return nil, err
+			}
+			files = append(files, inputFile)
 		default:
 			return nil, domain.NewValidationError("input", "input_file must include file_id, file_data, or file_url")
 		}
 	}
 
 	return files, nil
+}
+
+func (h *responseHandler) resolveLocalCodeInterpreterRemoteInputFile(ctx context.Context, fileURL string, filename string, usedNames map[string]int) (localCodeInterpreterInputFile, error) {
+	parsedURL, err := neturl.Parse(strings.TrimSpace(fileURL))
+	if err != nil || parsedURL == nil {
+		return localCodeInterpreterInputFile{}, domain.NewValidationError("input", "input_file.file_url must be a valid absolute URL in shim-local code_interpreter mode")
+	}
+	switch strings.ToLower(strings.TrimSpace(parsedURL.Scheme)) {
+	case "http", "https":
+	default:
+		return localCodeInterpreterInputFile{}, domain.NewValidationError("input", "shim-local code_interpreter only supports http(s) input_file.file_url values")
+	}
+	if strings.TrimSpace(parsedURL.Host) == "" {
+		return localCodeInterpreterInputFile{}, domain.NewValidationError("input", "input_file.file_url must include a host in shim-local code_interpreter mode")
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, parsedURL.String(), nil)
+	if err != nil {
+		return localCodeInterpreterInputFile{}, domain.NewValidationError("input", "input_file.file_url could not be fetched in shim-local code_interpreter mode")
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return localCodeInterpreterInputFile{}, domain.NewValidationError("input", "input_file.file_url could not be fetched in shim-local code_interpreter mode")
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return localCodeInterpreterInputFile{}, domain.NewValidationError("input", fmt.Sprintf("input_file.file_url returned HTTP %d in shim-local code_interpreter mode", resp.StatusCode))
+	}
+
+	content, err := io.ReadAll(io.LimitReader(resp.Body, maxLocalCodeInterpreterRemoteInputFileBytes+1))
+	if err != nil {
+		return localCodeInterpreterInputFile{}, domain.NewValidationError("input", "input_file.file_url could not be read in shim-local code_interpreter mode")
+	}
+	if len(content) > maxLocalCodeInterpreterRemoteInputFileBytes {
+		return localCodeInterpreterInputFile{}, domain.NewValidationError("input", "input_file.file_url exceeds the 50 MiB limit in shim-local code_interpreter mode")
+	}
+
+	resolvedFilename := strings.TrimSpace(filename)
+	if resolvedFilename == "" {
+		resolvedFilename = path.Base(parsedURL.Path)
+	}
+	resolvedFilename = sanitizeLocalCodeInterpreterWorkspaceName(resolvedFilename, "remote_input_file")
+
+	return localCodeInterpreterInputFile{
+		Content:       content,
+		Filename:      resolvedFilename,
+		WorkspaceName: uniqueLocalCodeInterpreterWorkspaceName(resolvedFilename, "remote_input_file", usedNames),
+	}, nil
 }
 
 func decodeLocalCodeInterpreterInlineFileData(value string) ([]byte, error) {
@@ -1133,15 +1190,22 @@ func buildLocalCodeInterpreterCallItem(code string, containerID string, logs str
 			})
 		}
 		for _, generatedFile := range generatedFiles {
+			if isLocalCodeInterpreterImageArtifact(generatedFile.Filename) && strings.TrimSpace(generatedFile.ContainerID) != "" && strings.TrimSpace(generatedFile.FileID) != "" {
+				outputs = append(outputs, map[string]any{
+					"type": "image",
+					"url":  localCodeInterpreterGeneratedFileContentURL(generatedFile.ContainerID, generatedFile.FileID),
+				})
+				continue
+			}
 			outputs = append(outputs, map[string]any{
-				"type":              "file",
-				"file_id":           generatedFile.FileID,
-				"filename":          generatedFile.Filename,
-				"bytes":             generatedFile.Bytes,
-				"backing_file_id":   generatedFile.BackingFileID,
-				"container_id":      generatedFile.ContainerID,
-				"container_path":    generatedFile.ContainerPath,
-				"container_source":  generatedFile.ContainerSource,
+				"type":             "file",
+				"file_id":          generatedFile.FileID,
+				"filename":         generatedFile.Filename,
+				"bytes":            generatedFile.Bytes,
+				"backing_file_id":  generatedFile.BackingFileID,
+				"container_id":     generatedFile.ContainerID,
+				"container_path":   generatedFile.ContainerPath,
+				"container_source": generatedFile.ContainerSource,
 			})
 		}
 		payload["outputs"] = outputs
@@ -1152,6 +1216,19 @@ func buildLocalCodeInterpreterCallItem(code string, containerID string, logs str
 		return domain.Item{}, err
 	}
 	return domain.NewItem(raw)
+}
+
+func isLocalCodeInterpreterImageArtifact(filename string) bool {
+	switch strings.ToLower(filepath.Ext(strings.TrimSpace(filename))) {
+	case ".png", ".jpg", ".jpeg", ".gif", ".webp":
+		return true
+	default:
+		return false
+	}
+}
+
+func localCodeInterpreterGeneratedFileContentURL(containerID string, fileID string) string {
+	return "/v1/containers/" + strings.TrimSpace(containerID) + "/files/" + strings.TrimSpace(fileID) + "/content"
 }
 
 func cloneGenerationOptions(options map[string]json.RawMessage) map[string]json.RawMessage {

@@ -146,10 +146,11 @@ paths:
         - generated files from the local sandbox are captured in a bounded
           shim-owned subset: small new/changed workspace files are saved into
           local `/v1/files`, mirrored into local container files, surfaced in
-          local `code_interpreter_call.outputs` as shim-local `type=file`
-          descriptors (`file_id`, `filename`, `bytes`,
-          `backing_file_id`), and made visible to the final local assistant
-          turn
+          local `code_interpreter_call.outputs` as same-origin `type=image`
+          URLs for generated image artifacts plus shim-local `type=file`
+          descriptors (`file_id`, `filename`, `bytes`, `backing_file_id`)
+          for other generated files, and made visible to the final local
+          assistant turn
         - when generated files exist, the final local assistant message adds a
           shim-owned `Generated files:` appendix and attaches pragmatic
           `container_file_citation` annotations using shim-owned `cfile_*`
@@ -158,12 +159,17 @@ paths:
           `backend=unsafe_host` remains a development fallback and legacy
           compatibility path
         - current-turn `input_file` model content parts are auto-staged into
-          the local sandbox workspace for `input_file.file_id` and
-          `input_file.file_data`; `input_file.file_url` remains unsupported in
-          the local subset
-        - the local subset does not yet support image artifacts, dedicated
-          `response.output_text.annotation.added` parity, or full hosted
-          sandbox/container lifecycle parity
+          the local sandbox workspace for `input_file.file_id`,
+          `input_file.file_data`, and HTTP(S) `input_file.file_url`
+          (`file_url` fetches use a local 50 MiB cap in the pragmatic subset)
+        - stored/local streaming replay now synthesize generic
+          `response.output_text.annotation.added` events when the final
+          assistant message contains annotations, but local generated-file
+          citations still land on the shim-added `Generated files:` appendix
+          rather than hosted model-chosen spans
+        - the local subset does not yet claim full hosted sandbox/container
+          lifecycle parity, exact non-image `code_interpreter_call.outputs`
+          parity, or richer hosted failure/artifact semantics
 
         Retention semantics:
         - standalone responses follow the outward `store` contract returned on
@@ -544,6 +550,9 @@ paths:
           `response.output_item.added` keeps `code` blank and preserves only
           an empty or `null` `outputs` placeholder until
           `response.output_item.done`
+        - stored assistant messages with final `output_text.annotations`
+          replay generic `response.output_text.annotation.added` events before
+          `response.output_text.done`
         - trace-backed stored `computer_call` items do not expose a dedicated
           `response.computer_call.*` SSE family in current upstream captures;
           replay therefore stays generic through `response.output_item.*`, and
@@ -2028,20 +2037,25 @@ components:
         local `container.file_ids` values are staged from shim-owned
         `/v1/files` into the current sandbox workspace under sanitized
         filenames, and current-turn `input_file.file_id` /
-        `input_file.file_data` message content parts are auto-staged into that
-        workspace as the pragmatic local subset. The shim now exposes
+        `input_file.file_data` / HTTP(S) `input_file.file_url` message content
+        parts are auto-staged into that workspace as the pragmatic local
+        subset. The shim now exposes
         local `/v1/containers` and `/v1/containers/{container_id}/files`
         surfaces over the same session store and restores persisted container
         files into the hardened Docker workspace when a reusable local runtime
         disappears. Small new/changed generated files are persisted as
         shim-owned `/v1/files`, mirrored into shim-owned container files, and
-        exposed only through the local `code_interpreter_call.outputs` subset.
+        exposed through the local `code_interpreter_call.outputs` subset as
+        same-origin `type=image` URLs for image artifacts plus shim-local
+        `type=file` descriptors for other generated files.
         When generated files exist, the final local assistant message adds a
         shim-owned `Generated files:` appendix and annotates those filenames
         with pragmatic `container_file_citation` metadata using shim-owned
-        `cfile_*` ids. The shim does not yet claim hosted sandbox/container
-        parity and does not support `input_file.file_url`, image artifacts, or
-        dedicated `response.output_text.annotation.added` parity.
+        `cfile_*` ids; stored/local streaming replay now synthesize generic
+        `response.output_text.annotation.added` events for those final
+        annotations. The shim does not yet claim hosted sandbox/container
+        parity, exact non-image `code_interpreter_call.outputs` parity, or
+        richer hosted failure/artifact semantics.
 
         `background` is forwarded upstream for long-running responses and is not
         executed locally by the shim.

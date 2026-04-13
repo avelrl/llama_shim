@@ -609,6 +609,8 @@ func fakeLocalCodeInterpreterPlannerOutput(joined string) (string, bool) {
 		return `{"use_code_interpreter":true,"code":"print(2+2)"}`, true
 	case strings.Contains(joined, "write report.txt") && strings.Contains(joined, "artifact-body"):
 		return `{"use_code_interpreter":true,"code":"with open(\"report.txt\", \"w\", encoding=\"utf-8\") as handle:\n    handle.write(\"artifact-body\")\nprint(\"created report.txt\")"}`, true
+	case strings.Contains(joined, "write plot.png"):
+		return `{"use_code_interpreter":true,"code":"with open(\"plot.png\", \"wb\") as handle:\n    handle.write(b\"fake-png\")\nprint(\"created plot.png\")"}`, true
 	case strings.Contains(joined, "uploaded files:") && strings.Contains(joined, "codes.txt") && strings.Contains(joined, "what is the code"):
 		return `{"use_code_interpreter":true,"code":"print(open(\"codes.txt\", encoding=\"utf-8\").read())"}`, true
 	case strings.Contains(joined, "uploaded files:") && strings.Contains(joined, "codes.txt") && strings.Contains(joined, "read the uploaded file"):
@@ -635,6 +637,8 @@ func fakeLocalCodeInterpreterFinalOutput(last, joined string) (string, bool) {
 		return "4", true
 	case strings.Contains(joined, "generated files saved by the shim") && strings.Contains(joined, "report.txt"):
 		return "Created report.txt.", true
+	case strings.Contains(joined, "generated files saved by the shim") && strings.Contains(joined, "plot.png"):
+		return "Created plot.png.", true
 	case hasFakeCode777Context(joined):
 		return "777", true
 	case strings.Contains(joined, "execution logs:\nresult=2.0"):

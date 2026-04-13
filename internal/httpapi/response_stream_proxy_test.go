@@ -142,6 +142,43 @@ func TestWriteCompletedResponseAsSSEReplaysCoreEventSequence(t *testing.T) {
 	require.Contains(t, body, "data: [DONE]\n\n")
 }
 
+func TestWriteCompletedResponseAsSSEReplaysOutputTextAnnotations(t *testing.T) {
+	recorder := httptest.NewRecorder()
+
+	err := writeCompletedResponseAsSSE(context.Background(), nil, recorder, []byte(`{
+		"id":"resp_test_annotations",
+		"object":"response",
+		"created_at":1741900000,
+		"status":"completed",
+		"completed_at":1741900001,
+		"model":"test-model",
+		"background":false,
+		"store":true,
+		"text":{"format":{"type":"text"}},
+		"usage":null,
+		"metadata":{},
+		"output_text":"See artifact report.txt",
+		"output":[
+			{
+				"id":"msg_test",
+				"type":"message",
+				"role":"assistant",
+				"status":"completed",
+				"content":[
+					{"type":"output_text","text":"See artifact report.txt","annotations":[{"type":"container_file_citation","container_id":"cntr_test","file_id":"cfile_test","filename":"report.txt","start_index":13,"end_index":23}]}
+				]
+			}
+		]
+	}`), customToolTransportPlan{}, true)
+	require.NoError(t, err)
+
+	body := recorder.Body.String()
+	require.Contains(t, body, "event: response.output_text.annotation.added\n")
+	require.Contains(t, body, `"annotation_index":0`)
+	require.Contains(t, body, `"file_id":"cfile_test"`)
+	require.Contains(t, body, `"annotations":[]`)
+}
+
 func TestShouldIgnoreStreamProxyError(t *testing.T) {
 	require.True(t, shouldIgnoreStreamProxyError(context.Canceled))
 	require.False(t, shouldIgnoreStreamProxyError(io.EOF))
@@ -204,6 +241,80 @@ func TestNormalizeCompletedToolCallEventSynthesizesMCPReplayEvents(t *testing.T)
 	finalItem, ok := output[0].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, "item_proxy_mcp_0", asString(finalItem["id"]))
+}
+
+func TestNormalizeTextStreamEventSynthesizesAnnotationReplayFromCompletedResponse(t *testing.T) {
+	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, nil)
+
+	before, eventType, payload := proxy.normalizeTextStreamEvent("response.completed", map[string]any{
+		"type": "response.completed",
+		"response": map[string]any{
+			"id":          "resp_proxy_annotations",
+			"object":      "response",
+			"model":       "test-model",
+			"output_text": "Created report.txt.\n\nGenerated files:\n- report.txt",
+			"output": []any{
+				map[string]any{
+					"id":     "msg_proxy_annotations",
+					"type":   "message",
+					"role":   "assistant",
+					"status": "completed",
+					"content": []any{
+						map[string]any{
+							"type": "output_text",
+							"text": "Created report.txt.\n\nGenerated files:\n- report.txt",
+							"annotations": []any{
+								map[string]any{
+									"type":         "container_file_citation",
+									"container_id": "cntr_test",
+									"file_id":      "cfile_test",
+									"filename":     "report.txt",
+									"start_index":  39,
+									"end_index":    49,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+
+	require.Equal(t, "response.completed", eventType)
+	require.Len(t, before, 5)
+	require.Equal(t, "response.created", before[0].eventType)
+	require.Equal(t, "response.output_item.added", before[1].eventType)
+	require.Equal(t, "response.output_text.annotation.added", before[2].eventType)
+	require.Equal(t, "response.output_text.done", before[3].eventType)
+	require.Equal(t, "response.output_item.done", before[4].eventType)
+
+	addedItem, ok := before[1].payload["item"].(map[string]any)
+	require.True(t, ok)
+	content, ok := addedItem["content"].([]map[string]any)
+	require.True(t, ok)
+	require.Len(t, content, 1)
+	require.Equal(t, []any{}, content[0]["annotations"])
+
+	doneItem, ok := before[4].payload["item"].(map[string]any)
+	require.True(t, ok)
+	doneContent, ok := doneItem["content"].([]map[string]any)
+	require.True(t, ok)
+	require.Len(t, doneContent, 1)
+	doneAnnotations, ok := doneContent[0]["annotations"].([]any)
+	require.True(t, ok)
+	require.Len(t, doneAnnotations, 1)
+
+	completedResponse, ok := payload["response"].(map[string]any)
+	require.True(t, ok)
+	output, ok := completedResponse["output"].([]map[string]any)
+	require.True(t, ok)
+	require.Len(t, output, 1)
+	finalContent, ok := output[0]["content"].([]map[string]any)
+	require.True(t, ok)
+	require.Len(t, finalContent, 1)
+	finalAnnotations, ok := finalContent[0]["annotations"].([]any)
+	require.True(t, ok)
+	require.Len(t, finalAnnotations, 1)
 }
 
 func TestNormalizeCompletedToolCallEventSynthesizesFailedMCPReplayEvents(t *testing.T) {
