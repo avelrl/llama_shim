@@ -47,6 +47,42 @@ func (semanticTestEmbedder) EmbedTexts(_ context.Context, texts []string) ([][]f
 	return out, nil
 }
 
+type semanticV1Embedder struct{}
+
+func (semanticV1Embedder) EmbedTexts(_ context.Context, texts []string) ([][]float32, error) {
+	out := make([][]float32, 0, len(texts))
+	for _, text := range texts {
+		lower := strings.ToLower(text)
+		switch {
+		case strings.Contains(lower, "banana"):
+			out = append(out, []float32{1, 0})
+		case strings.Contains(lower, "ocean"):
+			out = append(out, []float32{0, 1})
+		default:
+			out = append(out, []float32{0.5, 0.5})
+		}
+	}
+	return out, nil
+}
+
+type semanticV2Embedder struct{}
+
+func (semanticV2Embedder) EmbedTexts(_ context.Context, texts []string) ([][]float32, error) {
+	out := make([][]float32, 0, len(texts))
+	for _, text := range texts {
+		lower := strings.ToLower(text)
+		switch {
+		case strings.Contains(lower, "banana"):
+			out = append(out, []float32{1, 0, 0})
+		case strings.Contains(lower, "ocean"):
+			out = append(out, []float32{0, 1, 0})
+		default:
+			out = append(out, []float32{0, 0, 1})
+		}
+	}
+	return out, nil
+}
+
 type hybridRankingTestEmbedder struct{}
 
 func (hybridRankingTestEmbedder) EmbedTexts(_ context.Context, texts []string) ([][]float32, error) {
@@ -4671,6 +4707,57 @@ func TestVectorStoreSearchUsesSQLiteVecSemanticBackend(t *testing.T) {
 	require.Equal(t, fileBananaID, asStringAny(result["file_id"]))
 	require.Equal(t, "banana.txt", asStringAny(result["filename"]))
 	require.Greater(t, result["score"].(float64), 0.8)
+}
+
+func TestVectorStoreSearchSQLiteVecReindexesOnEmbedderModelChange(t *testing.T) {
+	dbPath := testutil.TempDBPath(t)
+
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		DBPath: dbPath,
+		RetrievalConfig: retrieval.Config{
+			IndexBackend: retrieval.IndexBackendSQLiteVec,
+			Embedder: retrieval.EmbedderConfig{
+				Model: "embed-v1",
+			},
+		},
+		RetrievalEmbedder: semanticV1Embedder{},
+	})
+
+	status, uploadedBanana := uploadFile(t, app, "banana.txt", "assistants", []byte("Banana smoothie recipe and ripe banana notes."), nil)
+	require.Equal(t, http.StatusOK, status)
+	fileBananaID := asStringAny(uploadedBanana["id"])
+
+	status, uploadedOcean := uploadFile(t, app, "ocean.txt", "assistants", []byte("Ocean tides and marine currents reference."), nil)
+	require.Equal(t, http.StatusOK, status)
+	fileOceanID := asStringAny(uploadedOcean["id"])
+
+	status, created := rawRequest(t, app, http.MethodPost, "/v1/vector_stores", map[string]any{
+		"name":     "Semantic",
+		"file_ids": []string{fileBananaID, fileOceanID},
+	})
+	require.Equal(t, http.StatusOK, status)
+	vectorStoreID := asStringAny(created["id"])
+	app.Close()
+
+	app = testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		DBPath: dbPath,
+		RetrievalConfig: retrieval.Config{
+			IndexBackend: retrieval.IndexBackendSQLiteVec,
+			Embedder: retrieval.EmbedderConfig{
+				Model: "embed-v2",
+			},
+		},
+		RetrievalEmbedder: semanticV2Embedder{},
+	})
+
+	status, search := rawRequest(t, app, http.MethodPost, "/v1/vector_stores/"+vectorStoreID+"/search", map[string]any{
+		"query":           "banana nutrition",
+		"max_num_results": 5,
+	})
+	require.Equal(t, http.StatusOK, status)
+	require.NotEmpty(t, search["data"].([]any))
+	result := search["data"].([]any)[0].(map[string]any)
+	require.Equal(t, fileBananaID, asStringAny(result["file_id"]))
 }
 
 func TestVectorStoreSearchSupportsHybridRankingOptions(t *testing.T) {

@@ -1023,6 +1023,10 @@ Definition of done:
 - local store теперь умеет optional exact dense semantic retrieval subset:
   `retrieval.index.backend=sqlite_vec` включает persisted chunk embeddings и
   cosine-similarity ranking через SQLite-native vector functions
+- semantic `sqlite_vec` path теперь не смешивает несовместимые embedding
+  spaces: search lazy-reindex-ит stale chunks в текущем `vector_store`, если
+  configured embedder model или vector dimensions поменялись, и потом ищет
+  только по current model/dimension rows
 - поверх того же semantic backend теперь есть weighted hybrid subset:
   `ranking_options.hybrid_search.embedding_weight|text_weight` включают
   reciprocal-rank-fusion between dense semantic and sparse lexical matches
@@ -1047,6 +1051,9 @@ Definition of done:
 - current semantic subset теперь это exact dense search plus weighted hybrid
   dense+text fusion plus a local rerank layer, but not ANN or hosted reranked
   pipeline уровня OpenAI file search
+- `sqlite_vec` path всё ещё exact-dense, not ANN: official `sqlite-vec`
+  `vec0` KNN path остаётся brute-force only today, так что phase 2 не
+  закрывается этим milestone
 - local `file_search` по умолчанию всё ещё lexical; semantic path включается
   только explicit retrieval config, а hybrid tuning работает только when
   `sqlite_vec` backend is active

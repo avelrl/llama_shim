@@ -38,6 +38,16 @@ type sqliteVecRetrievalBackend struct {
 }
 
 const hybridRRFK = 60.0
+const retrievalEmbedBatchSize = 128
+
+type vectorStoreChunk struct {
+	ID      int64
+	Content string
+}
+
+type sqlExecContext interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
 
 type localRerankProfile struct {
 	baseWeight     float64
@@ -126,13 +136,9 @@ func (b sqliteVecRetrievalBackend) IndexVectorStoreFile(ctx context.Context, tx 
 	}
 	defer rows.Close()
 
-	type chunk struct {
-		ID      int64
-		Content string
-	}
-	chunks := make([]chunk, 0, 8)
+	chunks := make([]vectorStoreChunk, 0, 8)
 	for rows.Next() {
-		var item chunk
+		var item vectorStoreChunk
 		if err := rows.Scan(&item.ID, &item.Content); err != nil {
 			return fmt.Errorf("scan vector store chunk for embeddings: %w", err)
 		}
@@ -145,38 +151,8 @@ func (b sqliteVecRetrievalBackend) IndexVectorStoreFile(ctx context.Context, tx 
 		return nil
 	}
 
-	texts := make([]string, 0, len(chunks))
-	for _, chunk := range chunks {
-		texts = append(texts, chunk.Content)
-	}
-
-	embeddings, err := b.embedder.EmbedTexts(ctx, texts)
-	if err != nil {
-		return fmt.Errorf("embed vector store chunks: %w", err)
-	}
-	if len(embeddings) != len(chunks) {
-		return fmt.Errorf("embedder returned %d vectors for %d chunks", len(embeddings), len(chunks))
-	}
-
-	for i, embedding := range embeddings {
-		blob, dims, err := encodeFloat32Vector(embedding)
-		if err != nil {
-			return fmt.Errorf("encode chunk embedding %d: %w", i, err)
-		}
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO vector_store_chunk_embeddings (
-				chunk_id, embedding, embedding_model, embedding_dimensions, created_at
-			) VALUES (?, vec_f32(?), ?, ?, ?)
-			ON CONFLICT(chunk_id) DO UPDATE SET
-				embedding = excluded.embedding,
-				embedding_model = excluded.embedding_model,
-				embedding_dimensions = excluded.embedding_dimensions,
-				created_at = excluded.created_at
-		`, chunks[i].ID, blob, b.model, dims, params.CreatedAt); err != nil {
-			return fmt.Errorf("upsert chunk embedding: %w", err)
-		}
-	}
-	return nil
+	_, err = b.upsertChunkEmbeddings(ctx, tx, chunks, params.CreatedAt)
+	return err
 }
 
 func (b sqliteVecRetrievalBackend) SearchVectorStore(ctx context.Context, store *Store, query domain.VectorStoreSearchQuery) (domain.VectorStoreSearchPage, error) {
@@ -221,9 +197,15 @@ func (b sqliteVecRetrievalBackend) searchVectorStoreSemanticResults(ctx context.
 	if _, err := store.GetVectorStore(ctx, query.VectorStoreID); err != nil {
 		return nil, err
 	}
-	queryEmbeddings, err := b.embedder.EmbedTexts(ctx, query.Queries)
+	queryEmbeddings, queryDims, err := b.embedTexts(ctx, query.Queries)
 	if err != nil {
 		return nil, fmt.Errorf("embed search query: %w", err)
+	}
+	if len(queryEmbeddings) == 0 {
+		return []domain.VectorStoreSearchResult{}, nil
+	}
+	if err := b.ensureCurrentVectorStoreEmbeddings(ctx, store, query.VectorStoreID, queryDims); err != nil {
+		return nil, err
 	}
 
 	type scoredResult struct {
@@ -250,7 +232,8 @@ func (b sqliteVecRetrievalBackend) searchVectorStoreSemanticResults(ctx context.
 			JOIN files f ON f.id = c.file_id
 			JOIN vector_store_files v ON v.vector_store_id = c.vector_store_id AND v.file_id = c.file_id
 			WHERE c.vector_store_id = ? AND v.status = 'completed'
-		`, queryBlob, query.VectorStoreID)
+			  AND e.embedding_model = ? AND e.embedding_dimensions = ?
+		`, queryBlob, query.VectorStoreID, b.model, queryDims)
 		if err != nil {
 			return nil, fmt.Errorf("query semantic vector store search: %w", err)
 		}
@@ -328,6 +311,136 @@ func (b sqliteVecRetrievalBackend) searchVectorStoreSemanticResults(ctx context.
 		return results[i].Score > results[j].Score
 	})
 	return results, nil
+}
+
+func (b sqliteVecRetrievalBackend) embedTexts(ctx context.Context, texts []string) ([][]float32, int, error) {
+	if len(texts) == 0 {
+		return nil, 0, nil
+	}
+
+	embeddings := make([][]float32, 0, len(texts))
+	dims := 0
+	for start := 0; start < len(texts); start += retrievalEmbedBatchSize {
+		end := start + retrievalEmbedBatchSize
+		if end > len(texts) {
+			end = len(texts)
+		}
+
+		batch, err := b.embedder.EmbedTexts(ctx, texts[start:end])
+		if err != nil {
+			return nil, 0, err
+		}
+		if len(batch) != end-start {
+			return nil, 0, fmt.Errorf("embedder returned %d vectors for %d texts", len(batch), end-start)
+		}
+
+		for _, embedding := range batch {
+			if len(embedding) == 0 {
+				return nil, 0, fmt.Errorf("embedder returned empty vector")
+			}
+			if dims == 0 {
+				dims = len(embedding)
+			} else if len(embedding) != dims {
+				return nil, 0, fmt.Errorf("embedder returned inconsistent vector dimensions: got %d, want %d", len(embedding), dims)
+			}
+			embeddings = append(embeddings, embedding)
+		}
+	}
+	return embeddings, dims, nil
+}
+
+func (b sqliteVecRetrievalBackend) upsertChunkEmbeddings(ctx context.Context, exec sqlExecContext, chunks []vectorStoreChunk, createdAt int64) (int, error) {
+	if len(chunks) == 0 {
+		return 0, nil
+	}
+
+	texts := make([]string, 0, len(chunks))
+	for _, chunk := range chunks {
+		texts = append(texts, chunk.Content)
+	}
+
+	embeddings, dims, err := b.embedTexts(ctx, texts)
+	if err != nil {
+		return 0, fmt.Errorf("embed vector store chunks: %w", err)
+	}
+	for i, embedding := range embeddings {
+		blob, encodedDims, err := encodeFloat32Vector(embedding)
+		if err != nil {
+			return 0, fmt.Errorf("encode chunk embedding %d: %w", i, err)
+		}
+		if encodedDims != dims {
+			return 0, fmt.Errorf("encoded vector dimensions %d do not match embedder dimensions %d", encodedDims, dims)
+		}
+		if _, err := exec.ExecContext(ctx, `
+			INSERT INTO vector_store_chunk_embeddings (
+				chunk_id, embedding, embedding_model, embedding_dimensions, created_at
+			) VALUES (?, vec_f32(?), ?, ?, ?)
+			ON CONFLICT(chunk_id) DO UPDATE SET
+				embedding = excluded.embedding,
+				embedding_model = excluded.embedding_model,
+				embedding_dimensions = excluded.embedding_dimensions,
+				created_at = excluded.created_at
+		`, chunks[i].ID, blob, b.model, dims, createdAt); err != nil {
+			return 0, fmt.Errorf("upsert chunk embedding: %w", err)
+		}
+	}
+	return dims, nil
+}
+
+func (b sqliteVecRetrievalBackend) ensureCurrentVectorStoreEmbeddings(ctx context.Context, store *Store, vectorStoreID string, expectedDims int) error {
+	rows, err := store.db.QueryContext(ctx, `
+		SELECT c.id, c.content, e.embedding_model, e.embedding_dimensions
+		FROM vector_store_chunks c
+		JOIN vector_store_files v ON v.vector_store_id = c.vector_store_id AND v.file_id = c.file_id
+		LEFT JOIN vector_store_chunk_embeddings e ON e.chunk_id = c.id
+		WHERE c.vector_store_id = ? AND v.status = 'completed'
+		ORDER BY c.chunk_index ASC, c.id ASC
+	`, vectorStoreID)
+	if err != nil {
+		return fmt.Errorf("query current vector store embeddings: %w", err)
+	}
+	defer rows.Close()
+
+	stale := make([]vectorStoreChunk, 0, 8)
+	for rows.Next() {
+		var (
+			chunk          vectorStoreChunk
+			embeddingModel sql.NullString
+			embeddingDims  sql.NullInt64
+		)
+		if err := rows.Scan(&chunk.ID, &chunk.Content, &embeddingModel, &embeddingDims); err != nil {
+			return fmt.Errorf("scan current vector store embedding row: %w", err)
+		}
+		if !embeddingModel.Valid || !embeddingDims.Valid || embeddingModel.String != b.model || int(embeddingDims.Int64) != expectedDims {
+			stale = append(stale, chunk)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate current vector store embeddings: %w", err)
+	}
+	if len(stale) == 0 {
+		return nil
+	}
+
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin vector store embedding refresh tx: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	actualDims, err := b.upsertChunkEmbeddings(ctx, tx, stale, domain.NowUTC().Unix())
+	if err != nil {
+		return err
+	}
+	if actualDims != expectedDims {
+		return fmt.Errorf("reindexed vector store chunks with dimensions %d, expected %d", actualDims, expectedDims)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit vector store embedding refresh tx: %w", err)
+	}
+	return nil
 }
 
 func encodeFloat32Vector(vector []float32) ([]byte, int, error) {

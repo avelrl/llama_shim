@@ -124,8 +124,11 @@ paths:
           shim-local rerank stage when `retrieval.index.backend=sqlite_vec`
           and a retrieval embedder are configured; omitted
           `ranking_options.ranker` defaults to local `auto`, and
-          `ranker=none` disables that local rerank stage; the shim still does
-          not claim hosted reranking or full hosted semantic-search parity
+          `ranker=none` disables that local rerank stage; the shim lazy
+          reindexes stale chunks in the queried `vector_store` when the
+          configured embedder model or vector dimensions change, and still
+          does not claim hosted reranking or full hosted semantic-search
+          parity
         - the shim returns `file_search_call` output items and stored/streaming
           replay, but does not currently synthesize hosted `file_citation`
           annotations in assistant messages
@@ -2063,8 +2066,11 @@ components:
         ranking and a local rerank layer when
         `retrieval.index.backend=sqlite_vec` and a retrieval embedder are
         configured. Omitted `ranking_options.ranker` defaults to local
-        `auto`; `ranker=none` disables that local rerank stage. The shim does
-        not claim hosted reranking or `file_citation` annotation parity.
+        `auto`; `ranker=none` disables that local rerank stage. When the
+        configured embedder model or vector dimensions change, the shim lazy
+        reindexes stale chunks in the queried `vector_store` before semantic
+        search. The shim does not claim hosted reranking or `file_citation`
+        annotation parity.
 
         The local `code_interpreter` subset is guarded by
         `responses.code_interpreter.backend`. `backend=docker` uses a hardened

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -22,6 +23,7 @@ type TestApp struct {
 	Server      *httptest.Server
 	Store       *sqlite.Store
 	LlamaServer *httptest.Server
+	close       func()
 }
 
 func NewTestApp(t *testing.T) *TestApp {
@@ -58,6 +60,7 @@ type TestAppOptions struct {
 	CustomToolsMode                       string
 	CodexCompatibilityEnabled             bool
 	ForceToolChoiceRequired               bool
+	DBPath                                string
 	LlamaBaseURL                          string
 	RetrievalConfig                       retrieval.Config
 	RetrievalEmbedder                     retrieval.Embedder
@@ -76,7 +79,11 @@ func NewTestAppWithOptions(t *testing.T, options TestAppOptions) *TestApp {
 		llamaServer = NewFakeLlamaServer(t)
 		llamaBaseURL = llamaServer.URL
 	}
-	store, err := sqlite.OpenWithOptions(context.Background(), TempDBPath(t), sqlite.OpenOptions{
+	dbPath := options.DBPath
+	if dbPath == "" {
+		dbPath = TempDBPath(t)
+	}
+	store, err := sqlite.OpenWithOptions(context.Background(), dbPath, sqlite.OpenOptions{
 		Retrieval: options.RetrievalConfig,
 		Embedder:  options.RetrievalEmbedder,
 	})
@@ -117,22 +124,33 @@ func NewTestAppWithOptions(t *testing.T, options TestAppOptions) *TestApp {
 		Store:                                 store,
 	}))
 
-	t.Cleanup(func() {
-		cancel()
-		server.Close()
-		_ = store.Close()
-		if llamaServer != nil {
-			llamaServer.Close()
-		}
-	})
+	var closeOnce sync.Once
+	closeFn := func() {
+		closeOnce.Do(func() {
+			cancel()
+			server.Close()
+			_ = store.Close()
+			if llamaServer != nil {
+				llamaServer.Close()
+			}
+		})
+	}
+	t.Cleanup(closeFn)
 
 	return &TestApp{
 		Server:      server,
 		Store:       store,
 		LlamaServer: llamaServer,
+		close:       closeFn,
 	}
 }
 
 func (a *TestApp) Client() *http.Client {
 	return a.Server.Client()
+}
+
+func (a *TestApp) Close() {
+	if a != nil && a.close != nil {
+		a.close()
+	}
 }

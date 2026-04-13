@@ -157,6 +157,9 @@ The shim can run local semantic retrieval without an external OpenAI embeddings 
   keyword matches when `sqlite_vec` is enabled
 - when `sqlite_vec` is enabled, omitted `ranking_options.ranker` defaults to
   shim-local `auto` reranking; `ranker=none` disables that local rerank stage
+- when the configured embedder model or embedding dimensions change, the
+  `sqlite_vec` path lazily reindexes stale chunks in the queried vector store
+  before semantic search so the shim does not mix incompatible embedding spaces
 
 The official EmbedAnything Actix server starts on `http://0.0.0.0:8080`.
 The simplest local layout is:

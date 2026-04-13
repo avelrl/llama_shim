@@ -109,6 +109,9 @@ What is implemented now:
 - weighted hybrid dense+text ranking via `ranking_options.hybrid_search`
 - shim-local reranking over the dense/hybrid candidate set; omitted
   `ranking_options.ranker` defaults to `auto`, and `ranker=none` disables it
+- lazy stale-chunk reindex inside the queried `vector_store` when the
+  configured embedder model or embedding dimensions change, so semantic search
+  only compares chunks in the current embedding space
 - pluggable embedder backend
 - local `/v1/vector_stores/{id}/search`
 - local `file_search` can use the same retrieval engine through the existing

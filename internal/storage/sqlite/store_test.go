@@ -2,6 +2,7 @@ package sqlite_test
 
 import (
 	"context"
+	"database/sql"
 	"strings"
 	"testing"
 
@@ -11,6 +12,8 @@ import (
 	"llama_shim/internal/retrieval"
 	"llama_shim/internal/storage/sqlite"
 	"llama_shim/internal/testutil"
+
+	_ "modernc.org/sqlite"
 )
 
 type fakeEmbedder struct{}
@@ -60,6 +63,42 @@ func (rerankingTestEmbedder) EmbedTexts(_ context.Context, texts []string) ([][]
 			out = append(out, []float32{0.8, 0.6})
 		default:
 			out = append(out, []float32{0, 1})
+		}
+	}
+	return out, nil
+}
+
+type semanticV1Embedder struct{}
+
+func (semanticV1Embedder) EmbedTexts(_ context.Context, texts []string) ([][]float32, error) {
+	out := make([][]float32, 0, len(texts))
+	for _, text := range texts {
+		lower := strings.ToLower(text)
+		switch {
+		case strings.Contains(lower, "banana"):
+			out = append(out, []float32{1, 0})
+		case strings.Contains(lower, "ocean"):
+			out = append(out, []float32{0, 1})
+		default:
+			out = append(out, []float32{0.5, 0.5})
+		}
+	}
+	return out, nil
+}
+
+type semanticV2Embedder struct{}
+
+func (semanticV2Embedder) EmbedTexts(_ context.Context, texts []string) ([][]float32, error) {
+	out := make([][]float32, 0, len(texts))
+	for _, text := range texts {
+		lower := strings.ToLower(text)
+		switch {
+		case strings.Contains(lower, "banana"):
+			out = append(out, []float32{1, 0, 0})
+		case strings.Contains(lower, "ocean"):
+			out = append(out, []float32{0, 1, 0})
+		default:
+			out = append(out, []float32{0, 0, 1})
 		}
 	}
 	return out, nil
@@ -214,6 +253,114 @@ func TestStoreSearchVectorStoreSQLiteVecBackend(t *testing.T) {
 	require.Equal(t, fileBanana.ID, page.Results[0].FileID)
 	require.Equal(t, "banana.txt", page.Results[0].Filename)
 	require.Greater(t, page.Results[0].Score, 0.7)
+}
+
+func TestStoreSearchVectorStoreSQLiteVecReindexesOnEmbedderModelChange(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := testutil.TempDBPath(t)
+
+	store, err := sqlite.OpenWithOptions(ctx, dbPath, sqlite.OpenOptions{
+		Retrieval: retrieval.Config{
+			IndexBackend: retrieval.IndexBackendSQLiteVec,
+			Embedder: retrieval.EmbedderConfig{
+				Model: "embed-v1",
+			},
+		},
+		Embedder: semanticV1Embedder{},
+	})
+	require.NoError(t, err)
+
+	fileBanana := domain.StoredFile{
+		ID:        "file_banana",
+		Filename:  "banana.txt",
+		Purpose:   "assistants",
+		Bytes:     int64(len("Banana smoothie recipe with ripe banana and yogurt.")),
+		CreatedAt: 1712059200,
+		Status:    "processed",
+		Content:   []byte("Banana smoothie recipe with ripe banana and yogurt."),
+	}
+	fileOcean := domain.StoredFile{
+		ID:        "file_ocean",
+		Filename:  "ocean.txt",
+		Purpose:   "assistants",
+		Bytes:     int64(len("Ocean tides and marine currents reference.")),
+		CreatedAt: 1712059201,
+		Status:    "processed",
+		Content:   []byte("Ocean tides and marine currents reference."),
+	}
+	require.NoError(t, store.SaveFile(ctx, fileBanana))
+	require.NoError(t, store.SaveFile(ctx, fileOcean))
+
+	vectorStore := domain.StoredVectorStore{
+		ID:           "vs_semantic",
+		Name:         "Semantic Store",
+		Metadata:     map[string]string{},
+		CreatedAt:    1712059202,
+		LastActiveAt: 1712059202,
+	}
+	require.NoError(t, store.SaveVectorStore(ctx, vectorStore))
+	_, err = store.AttachFileToVectorStore(ctx, vectorStore.ID, fileBanana.ID, map[string]any{}, domain.DefaultFileChunkingStrategy(), 1712059203)
+	require.NoError(t, err)
+	_, err = store.AttachFileToVectorStore(ctx, vectorStore.ID, fileOcean.ID, map[string]any{}, domain.DefaultFileChunkingStrategy(), 1712059204)
+	require.NoError(t, err)
+	require.NoError(t, store.Close())
+
+	rawDB, err := sql.Open("sqlite", dbPath)
+	require.NoError(t, err)
+	defer rawDB.Close()
+
+	var countV1 int
+	require.NoError(t, rawDB.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM vector_store_chunk_embeddings
+		WHERE embedding_model = 'embed-v1' AND embedding_dimensions = 2
+	`).Scan(&countV1))
+	require.Greater(t, countV1, 0)
+
+	store, err = sqlite.OpenWithOptions(ctx, dbPath, sqlite.OpenOptions{
+		Retrieval: retrieval.Config{
+			IndexBackend: retrieval.IndexBackendSQLiteVec,
+			Embedder: retrieval.EmbedderConfig{
+				Model: "embed-v2",
+			},
+		},
+		Embedder: semanticV2Embedder{},
+	})
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
+	page, err := store.SearchVectorStore(ctx, domain.VectorStoreSearchQuery{
+		VectorStoreID:  vectorStore.ID,
+		Queries:        []string{"banana nutrition"},
+		MaxNumResults:  5,
+		RawSearchQuery: "banana nutrition",
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, page.Results)
+	require.Equal(t, fileBanana.ID, page.Results[0].FileID)
+
+	var (
+		countV2  int
+		countOld int
+	)
+	require.NoError(t, rawDB.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM vector_store_chunk_embeddings e
+		JOIN vector_store_chunks c ON c.id = e.chunk_id
+		WHERE c.vector_store_id = ? AND e.embedding_model = 'embed-v2' AND e.embedding_dimensions = 3
+	`, vectorStore.ID).Scan(&countV2))
+	require.NoError(t, rawDB.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM vector_store_chunk_embeddings e
+		JOIN vector_store_chunks c ON c.id = e.chunk_id
+		WHERE c.vector_store_id = ? AND e.embedding_model = 'embed-v1'
+	`, vectorStore.ID).Scan(&countOld))
+	require.Greater(t, countV2, 0)
+	require.Zero(t, countOld)
 }
 
 func TestStoreSearchVectorStoreSQLiteVecHybridRanking(t *testing.T) {
