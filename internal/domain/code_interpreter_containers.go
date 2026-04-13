@@ -18,13 +18,14 @@ type CodeInterpreterSessionPage struct {
 }
 
 type CodeInterpreterContainerFile struct {
-	ID            string
-	ContainerID   string
-	BackingFileID string
-	Path          string
-	Source        string
-	Bytes         int64
-	CreatedAt     int64
+	ID                string
+	ContainerID       string
+	BackingFileID     string
+	DeleteBackingFile bool
+	Path              string
+	Source            string
+	Bytes             int64
+	CreatedAt         int64
 }
 
 type ListCodeInterpreterContainerFilesQuery struct {

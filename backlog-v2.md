@@ -107,16 +107,17 @@
   Docker as the primary boundary, non-streaming/streaming create, shim-owned
   `container_id` session reuse across stored `previous_response_id` lineage
   plus same-`cntr_*` restore after transient runtime loss, optional
-  `include=["code_interpreter_call.outputs"]` with logs, same-origin image
-  URLs for generated image artifacts, and shim-owned generated container-file
-  descriptors for non-image artifacts, local final assistant
-  `container_file_citation` subset plus replayed
-  `response.output_text.annotation.added` over shim-added generated-file
-  appendix, stored `code_interpreter_call` output item и follow-up turns не
-  ломаются из-за stored tool items в локальном generation context; for
-  self-hosted safety `input_file.file_url` is now disabled by default unless
-  explicitly allowlisted/unsafe-enabled, and expired shim-managed containers
-  are swept in the background while keeping `status=expired` metadata
+  `include=["code_interpreter_call.outputs"]` as logs-only subset, generated
+  artifacts mirrored into shim-managed
+  `/v1/containers/{container_id}/files*`, local final assistant
+  `container_file_citation` subset with inline-filename placement when
+  possible and shim-added fallback appendix only for unmentioned files, plus
+  replayed `response.output_text.annotation.added`, stored
+  `code_interpreter_call` output item и follow-up turns не ломаются из-за
+  stored tool items в локальном generation context; for self-hosted safety
+  `input_file.file_url` is now disabled by default unless explicitly
+  allowlisted/unsafe-enabled, and expired shim-managed containers are swept
+  in the background while keeping `status=expired` metadata
 - non-text/binary attachments не маскируются под успех: local
   `vector_store.file` честно возвращает `status=failed` и documented
   `last_error`
@@ -1099,30 +1100,31 @@ Definition of done:
   wildcard-suffix allowlist, либо явный
   `unsafe_allow_http_https`
 - generated file artifacts теперь сохраняются как bounded shim-owned
-  `/v1/files`, зеркалятся в shim-owned container files, и попадают в local
-  `code_interpreter_call.outputs` как same-origin `type=image` URLs для
-  generated image artifacts и как shim-local `type=file` descriptors с
-  `file_id` (`cfile_*`), `filename`, `bytes`, `backing_file_id` для других
-  generated files; final assistant turn видит этот список в local generation
-  context
+  `/v1/files`, зеркалятся в shim-owned container files, и становятся
+  доступными через local `/v1/containers/{container_id}/files*`; local
+  `include=["code_interpreter_call.outputs"]` остаётся docs-backed
+  logs-only subset по официальному guide + live trace, а final assistant turn
+  видит generated files в local generation context
 - local final assistant message теперь получает pragmatic
-  `container_file_citation` subset: shim добавляет короткий
-  `Generated files:` appendix и annotates filenames с
-  `container_id`, `file_id` (`cfile_*`), `filename`, `start_index`,
-  `end_index`
+  `container_file_citation` subset: shim сначала пытается поставить
+  annotations на inline mentions exact filename в assistant text, и только
+  для неупомянутых generated files добавляет короткий
+  `Generated files:` appendix с `container_id`, `file_id` (`cfile_*`),
+  `filename`, `start_index`, `end_index`
 - stored/local streaming replay теперь synthesize-ит generic
   `response.output_text.annotation.added` events для final assistant
-  annotations, включая shim-local `container_file_citation` annotations над
-  generated-file appendix
+  annotations, включая shim-local `container_file_citation`; это закрывает
+  pragmatic replay subset, но не claim про exact hosted annotation placement
 - появился background cleanup sweep для expired shim-managed containers:
   session runtime уничтожается, local container-file access убирается,
   metadata snapshot остаётся видимым как `status=expired`
-- runtime execution failures в shim-local subset теперь не валятся только в
-  transport/request error path: create и retrieve/stream replay возвращают
-  stored `response.status=failed` с top-level `response.error.code/message`,
-  failed `code_interpreter_call` output item и terminal `response.failed`
-  event; это pragmatic shim-local subset, а не claim про exact hosted
-  failure parity
+- live fixtures теперь подтверждают docs-thin distinction по failure surface:
+  ordinary Python/tool errors завершаются как обычный
+  `response.status=completed` с `code_interpreter_call.status=completed`,
+  empty `outputs`, без top-level `response.error`, и с final assistant message;
+  shim-local infra/runtime failures вроде timeout или lost session всё ещё
+  возвращаются как pragmatic `response.status=failed` subset с
+  `response.failed`
 
 Что осталось открытым:
 
@@ -1131,21 +1133,30 @@ Definition of done:
   считаться production-grade boundary
 - нет полного hosted container/file/artifact parity:
   richer hosted container lifecycle (`skills`, `network_policy`,
-  exact hosted status/failure surface) и exact non-image
-  `code_interpreter_call.outputs` semantics
-- нет hosted citation placement parity:
-  annotations теперь replay-ятся отдельными
-  `response.output_text.annotation.added` events, но для local generated files
-  они всё ещё висят на shim-added `Generated files:` appendix, а не на
-  hosted model-chosen spans
-- нет hosted failure/artifact semantics parity beyond logs, local image URLs,
-  и local generated file subset
+  broader hosted infra/status surface) и broader hosted
+  `code_interpreter_call.outputs` semantics beyond currently verified
+  logs-only subset
+- нет exact hosted citation placement parity:
+  shim теперь предпочитает inline filename mentions и использует fallback
+  appendix только для неупомянутых generated files, но trace-backed parity
+  всё ещё не закрыта: generated-file fixture annotates sandbox path span,
+  а generated-image fixture вообще не дал annotation despite docs text
+- нет hosted failure/artifact semantics parity beyond logs-only `outputs`
+  subset и shim-managed container-file / assistant-annotation subset; ordinary
+  tool-error completion path уже fixture-backed, но broader hosted artifact
+  semantics всё ещё open
 - stronger isolation backends (`gVisor`, microVM) не заведены; текущий
   production-minded шаг это hardened Docker, а не VM parity
+- exact hosted `code_interpreter` parity дальше требует live fixtures там,
+  где public docs тонкие or disagree with traces:
+  especially image artifact / annotation behavior and broader failure-status
+  classes beyond the captured ordinary tool-error path
 - нет full hosted expiration/cleanup parity:
-  local subset теперь sweep-ит expired containers в фоне и хранит shim
-  snapshot metadata, но не воспроизводит весь hosted lifecycle/retention
-  surface и не очищает mirrored backing `/v1/files` до hosted-grade parity
+  local subset теперь sweep-ит expired containers в фоне, garbage-collect-ит
+  shim-owned mirrored backing `/v1/files` для generated / uploaded
+  container-owned files при replace-path, delete, delete-container и expiry,
+  и хранит shim snapshot metadata, но всё равно не воспроизводит весь hosted
+  lifecycle/retention surface
 
 Definition of done:
 

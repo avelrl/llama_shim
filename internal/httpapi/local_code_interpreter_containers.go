@@ -158,24 +158,27 @@ func (m localCodeInterpreterContainerManager) deleteContainer(ctx context.Contex
 	if err != nil {
 		return err
 	}
+	files, err := m.listAllContainerFiles(ctx, id)
+	if err != nil {
+		return err
+	}
 	if session.Backend == m.runtime.Backend.Kind() && m.runtime.Backend != nil {
 		if err := m.runtime.Backend.DestroySession(ctx, id); err != nil && !errors.Is(err, sandbox.ErrSessionNotFound) && !errors.Is(err, sandbox.ErrDisabled) {
 			return err
 		}
 	}
-	return m.sessions.DeleteCodeInterpreterSession(ctx, id)
+	if err := m.sessions.DeleteCodeInterpreterSession(ctx, id); err != nil {
+		return err
+	}
+	return m.cleanupOwnedBackingFiles(ctx, files)
 }
 
 func (m localCodeInterpreterContainerManager) restoreContainerFiles(ctx context.Context, containerID string) error {
-	page, err := m.sessions.ListCodeInterpreterContainerFiles(ctx, domain.ListCodeInterpreterContainerFilesQuery{
-		ContainerID: containerID,
-		Limit:       maxLocalCodeInterpreterContainerFilesListLimit,
-		Order:       domain.ListOrderAsc,
-	})
+	files, err := m.listAllContainerFiles(ctx, containerID)
 	if err != nil {
 		return err
 	}
-	for _, file := range page.Files {
+	for _, file := range files {
 		backingFile, err := m.files.GetFile(ctx, file.BackingFileID)
 		if err != nil {
 			if errors.Is(err, sqlite.ErrNotFound) {
@@ -208,7 +211,7 @@ func (m localCodeInterpreterContainerManager) stageInputFiles(ctx context.Contex
 			Filename: preparedFile.Filename,
 			Bytes:    int64(len(preparedFile.Content)),
 			Content:  preparedFile.Content,
-		}, preparedFile.WorkspaceName, "user"); err != nil {
+		}, preparedFile.WorkspaceName, "user", preparedFile.DeleteBackingFile); err != nil {
 			return nil, err
 		}
 		prepared = append(prepared, preparedFile)
@@ -216,11 +219,11 @@ func (m localCodeInterpreterContainerManager) stageInputFiles(ctx context.Contex
 	return prepared, nil
 }
 
-func (m localCodeInterpreterContainerManager) addStoredFileToContainer(ctx context.Context, containerID string, storedFile domain.StoredFile, workspaceName string, source string) (domain.CodeInterpreterContainerFile, error) {
+func (m localCodeInterpreterContainerManager) addStoredFileToContainer(ctx context.Context, containerID string, storedFile domain.StoredFile, workspaceName string, source string, deleteBackingFile bool) (domain.CodeInterpreterContainerFile, error) {
 	if _, err := m.ensureContainerSession(ctx, containerID); err != nil {
 		return domain.CodeInterpreterContainerFile{}, err
 	}
-	containerFile, err := m.saveContainerFileMetadata(ctx, containerID, storedFile.ID, workspaceName, source, storedFile.Bytes)
+	containerFile, err := m.saveContainerFileMetadata(ctx, containerID, storedFile.ID, workspaceName, source, storedFile.Bytes, deleteBackingFile)
 	if err != nil {
 		return domain.CodeInterpreterContainerFile{}, err
 	}
@@ -250,7 +253,7 @@ func (m localCodeInterpreterContainerManager) createUploadedContainerFile(ctx co
 	if err := m.files.SaveFile(ctx, storedFile); err != nil {
 		return domain.CodeInterpreterContainerFile{}, err
 	}
-	return m.addStoredFileToContainer(ctx, containerID, storedFile, sanitizeLocalCodeInterpreterWorkspaceName(filename, "uploaded_file"), "user")
+	return m.addStoredFileToContainer(ctx, containerID, storedFile, sanitizeLocalCodeInterpreterWorkspaceName(filename, "uploaded_file"), "user", true)
 }
 
 func (m localCodeInterpreterContainerManager) createStoredContainerFile(ctx context.Context, containerID string, fileID string) (domain.CodeInterpreterContainerFile, error) {
@@ -261,7 +264,7 @@ func (m localCodeInterpreterContainerManager) createStoredContainerFile(ctx cont
 	if err != nil {
 		return domain.CodeInterpreterContainerFile{}, err
 	}
-	return m.addStoredFileToContainer(ctx, containerID, storedFile, sanitizeLocalCodeInterpreterWorkspaceName(storedFile.Filename, storedFile.ID), "user")
+	return m.addStoredFileToContainer(ctx, containerID, storedFile, sanitizeLocalCodeInterpreterWorkspaceName(storedFile.Filename, storedFile.ID), "user", false)
 }
 
 func (m localCodeInterpreterContainerManager) persistInputFile(ctx context.Context, inputFile localCodeInterpreterInputFile) (localCodeInterpreterInputFile, error) {
@@ -286,28 +289,40 @@ func (m localCodeInterpreterContainerManager) persistInputFile(ctx context.Conte
 		return localCodeInterpreterInputFile{}, err
 	}
 	inputFile.FileID = storedFile.ID
+	inputFile.DeleteBackingFile = true
 	return inputFile, nil
 }
 
-func (m localCodeInterpreterContainerManager) saveContainerFileMetadata(ctx context.Context, containerID string, backingFileID string, workspaceName string, source string, bytes int64) (domain.CodeInterpreterContainerFile, error) {
+func (m localCodeInterpreterContainerManager) saveContainerFileMetadata(ctx context.Context, containerID string, backingFileID string, workspaceName string, source string, bytes int64, deleteBackingFile bool) (domain.CodeInterpreterContainerFile, error) {
 	if strings.TrimSpace(backingFileID) == "" {
 		return domain.CodeInterpreterContainerFile{}, fmt.Errorf("container file backing id is required")
+	}
+	containerPath := localCodeInterpreterContainerPath(workspaceName)
+	replacedFile, err := m.sessions.GetCodeInterpreterContainerFileByPath(ctx, containerID, containerPath)
+	if err != nil && !errors.Is(err, sqlite.ErrNotFound) {
+		return domain.CodeInterpreterContainerFile{}, err
 	}
 	containerFileID, err := domain.NewPrefixedID("cfile")
 	if err != nil {
 		return domain.CodeInterpreterContainerFile{}, err
 	}
 	saved, err := m.sessions.SaveCodeInterpreterContainerFile(ctx, domain.CodeInterpreterContainerFile{
-		ID:            containerFileID,
-		ContainerID:   containerID,
-		BackingFileID: backingFileID,
-		Path:          localCodeInterpreterContainerPath(workspaceName),
-		Source:        source,
-		Bytes:         bytes,
-		CreatedAt:     domain.NowUTC().Unix(),
+		ID:                containerFileID,
+		ContainerID:       containerID,
+		BackingFileID:     backingFileID,
+		DeleteBackingFile: deleteBackingFile,
+		Path:              containerPath,
+		Source:            source,
+		Bytes:             bytes,
+		CreatedAt:         domain.NowUTC().Unix(),
 	})
 	if err != nil {
 		return domain.CodeInterpreterContainerFile{}, err
+	}
+	if replacedFile.ID != "" && (replacedFile.ID != saved.ID || replacedFile.BackingFileID != saved.BackingFileID) {
+		if err := m.cleanupOwnedBackingFile(ctx, replacedFile); err != nil {
+			return domain.CodeInterpreterContainerFile{}, err
+		}
 	}
 	if err := m.touchContainer(ctx, containerID); err != nil {
 		return domain.CodeInterpreterContainerFile{}, err
@@ -349,7 +364,7 @@ func (m localCodeInterpreterContainerManager) persistGeneratedFiles(ctx context.
 		if err := m.files.SaveFile(ctx, storedFile); err != nil {
 			return nil, err
 		}
-		containerFile, err := m.saveContainerFileMetadata(ctx, containerID, storedFile.ID, path.Base(file.Name), "assistant", storedFile.Bytes)
+		containerFile, err := m.saveContainerFileMetadata(ctx, containerID, storedFile.ID, path.Base(file.Name), "assistant", storedFile.Bytes, true)
 		if err != nil {
 			return nil, err
 		}
@@ -415,6 +430,9 @@ func (m localCodeInterpreterContainerManager) deleteContainerFile(ctx context.Co
 	if err := m.sessions.DeleteCodeInterpreterContainerFile(ctx, containerID, fileID); err != nil {
 		return err
 	}
+	if err := m.cleanupOwnedBackingFile(ctx, containerFile); err != nil {
+		return err
+	}
 	return m.touchContainer(ctx, containerID)
 }
 
@@ -432,16 +450,15 @@ func (m localCodeInterpreterContainerManager) expireIfNeeded(ctx context.Context
 			return domain.CodeInterpreterSession{}, err
 		}
 	}
-	filesPage, err := m.sessions.ListCodeInterpreterContainerFiles(ctx, domain.ListCodeInterpreterContainerFilesQuery{
-		ContainerID: session.ID,
-		Limit:       maxLocalCodeInterpreterContainerFilesListLimit,
-		Order:       domain.ListOrderAsc,
-	})
+	files, err := m.listAllContainerFiles(ctx, session.ID)
 	if err != nil {
 		return domain.CodeInterpreterSession{}, err
 	}
-	for _, file := range filesPage.Files {
+	for _, file := range files {
 		if err := m.sessions.DeleteCodeInterpreterContainerFile(ctx, session.ID, file.ID); err != nil {
+			return domain.CodeInterpreterSession{}, err
+		}
+		if err := m.cleanupOwnedBackingFile(ctx, file); err != nil {
 			return domain.CodeInterpreterSession{}, err
 		}
 	}
@@ -450,6 +467,53 @@ func (m localCodeInterpreterContainerManager) expireIfNeeded(ctx context.Context
 		return domain.CodeInterpreterSession{}, err
 	}
 	return session, nil
+}
+
+func (m localCodeInterpreterContainerManager) listAllContainerFiles(ctx context.Context, containerID string) ([]domain.CodeInterpreterContainerFile, error) {
+	after := ""
+	files := make([]domain.CodeInterpreterContainerFile, 0, defaultLocalCodeInterpreterContainerFilesLimit)
+	for {
+		page, err := m.sessions.ListCodeInterpreterContainerFiles(ctx, domain.ListCodeInterpreterContainerFilesQuery{
+			ContainerID: containerID,
+			After:       after,
+			Limit:       maxLocalCodeInterpreterContainerFilesListLimit,
+			Order:       domain.ListOrderAsc,
+		})
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, page.Files...)
+		if !page.HasMore || len(page.Files) == 0 {
+			return files, nil
+		}
+		after = page.Files[len(page.Files)-1].ID
+	}
+}
+
+func (m localCodeInterpreterContainerManager) cleanupOwnedBackingFiles(ctx context.Context, files []domain.CodeInterpreterContainerFile) error {
+	for _, file := range files {
+		if err := m.cleanupOwnedBackingFile(ctx, file); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (m localCodeInterpreterContainerManager) cleanupOwnedBackingFile(ctx context.Context, file domain.CodeInterpreterContainerFile) error {
+	if !file.DeleteBackingFile || strings.TrimSpace(file.BackingFileID) == "" {
+		return nil
+	}
+	refCount, err := m.sessions.CountCodeInterpreterContainerFileBackingReferences(ctx, file.BackingFileID)
+	if err != nil {
+		return err
+	}
+	if refCount > 0 {
+		return nil
+	}
+	if err := m.files.DeleteFile(ctx, file.BackingFileID); err != nil && !errors.Is(err, sqlite.ErrNotFound) {
+		return err
+	}
+	return nil
 }
 
 func normalizeLocalCodeInterpreterMemoryLimit(value string) (string, error) {

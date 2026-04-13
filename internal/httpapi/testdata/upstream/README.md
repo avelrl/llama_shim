@@ -22,6 +22,16 @@ Ready request files:
 - `code_interpreter_call_include_outputs.request.json` for a
   `code_interpreter_call` trace with
   `include=["code_interpreter_call.outputs"]`
+- `code_interpreter_call_generated_file.request.json` for a
+  `code_interpreter_call` trace that creates a small text artifact while
+  `include=["code_interpreter_call.outputs"]` is enabled
+- `code_interpreter_call_generated_image.request.json` for a
+  `code_interpreter_call` trace that creates a small PNG artifact while
+  `include=["code_interpreter_call.outputs"]` is enabled
+- `code_interpreter_call_tool_error.request.json` for a
+  `code_interpreter_call` trace that intentionally raises a Python error to
+  clarify whether the hosted surface completes with logs or emits
+  `response.failed`
 - `computer_call_screenshot.request.json` for a first-turn `computer_call`
   trace that should request a screenshot before taking any other action
 - `computer_call_output.request.json` for a follow-up
@@ -55,6 +65,10 @@ Guidelines:
 - `code_interpreter_call*.request.json` templates use
   `container: {"type":"auto"}`, so they do not require any extra setup
   beyond `OPENAI_API_KEY`.
+- the generated-file/image/tool-error `code_interpreter_call` templates exist
+  specifically to capture docs-thin hosted behavior around
+  `code_interpreter_call.outputs`, assistant-message annotations, and
+  failure/status surface before we claim parity
 - `image_generation_call*.request.json` templates only require
   `OPENAI_API_KEY`. They intentionally request a small image with
   `quality: "low"` and `partial_images: 1` in the streaming variant to keep

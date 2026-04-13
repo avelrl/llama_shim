@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -4833,6 +4834,12 @@ func TestContainersCreateListGetDelete(t *testing.T) {
 	require.Equal(t, containerID, asStringAny(getPayload["id"]))
 	require.Equal(t, "My Container", asStringAny(getPayload["name"]))
 
+	status, createdFile := uploadContainerFile(t, app, containerID, "cleanup.txt", []byte("delete me"))
+	require.Equal(t, http.StatusOK, status)
+	containerFileID := asStringAny(createdFile["id"])
+	containerFile, err := app.Store.GetCodeInterpreterContainerFile(context.Background(), containerID, containerFileID)
+	require.NoError(t, err)
+
 	status, deletePayload := rawRequest(t, app, http.MethodDelete, "/v1/containers/"+containerID, nil)
 	require.Equal(t, http.StatusOK, status)
 	require.Equal(t, containerID, asStringAny(deletePayload["id"]))
@@ -4848,6 +4855,9 @@ func TestContainersCreateListGetDelete(t *testing.T) {
 	errorPayload, ok := missing["error"].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, "invalid_request_error", asStringAny(errorPayload["type"]))
+
+	_, err = app.Store.GetFile(context.Background(), containerFile.BackingFileID)
+	require.ErrorIs(t, err, sqlite.ErrNotFound)
 }
 
 func TestCodeInterpreterCleanupLoopExpiresContainersInBackground(t *testing.T) {
@@ -4891,13 +4901,14 @@ func TestCodeInterpreterCleanupLoopExpiresContainersInBackground(t *testing.T) {
 		Content:   []byte("done"),
 	}))
 	_, err := app.Store.SaveCodeInterpreterContainerFile(ctx, domain.CodeInterpreterContainerFile{
-		ID:            "cfile_cleanup",
-		ContainerID:   session.ID,
-		BackingFileID: "file_cleanup",
-		Path:          "/mnt/data/report.txt",
-		Source:        "assistant",
-		Bytes:         4,
-		CreatedAt:     1712995200,
+		ID:                "cfile_cleanup",
+		ContainerID:       session.ID,
+		BackingFileID:     "file_cleanup",
+		DeleteBackingFile: true,
+		Path:              "/mnt/data/report.txt",
+		Source:            "assistant",
+		Bytes:             4,
+		CreatedAt:         1712995200,
 	})
 	require.NoError(t, err)
 
@@ -4924,8 +4935,10 @@ func TestCodeInterpreterCleanupLoopExpiresContainersInBackground(t *testing.T) {
 	require.ErrorIs(t, err, sqlite.ErrNotFound)
 
 	status, backingPayload := rawRequest(t, app, http.MethodGet, "/v1/files/file_cleanup", nil)
-	require.Equal(t, http.StatusOK, status)
-	require.Equal(t, "file_cleanup", asStringAny(backingPayload["id"]))
+	require.Equal(t, http.StatusNotFound, status)
+	errorPayload, ok = backingPayload["error"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "not_found_error", asStringAny(errorPayload["type"]))
 }
 
 func TestContainerFilesCreateListGetContentDelete(t *testing.T) {
@@ -4973,6 +4986,9 @@ func TestContainerFilesCreateListGetContentDelete(t *testing.T) {
 	require.Equal(t, containerID, asStringAny(createdFile["container_id"]))
 	require.Equal(t, "user", asStringAny(createdFile["source"]))
 	require.Equal(t, "notes.txt", path.Base(asStringAny(createdFile["path"])))
+	firstContainerFile, err := app.Store.GetCodeInterpreterContainerFile(context.Background(), containerID, fileID)
+	require.NoError(t, err)
+	firstBackingFileID := firstContainerFile.BackingFileID
 
 	status, listPayload := rawRequest(t, app, http.MethodGet, "/v1/containers/"+containerID+"/files?limit=10&order=asc", nil)
 	require.Equal(t, http.StatusOK, status)
@@ -4995,11 +5011,28 @@ func TestContainerFilesCreateListGetContentDelete(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "hello from container", string(content))
 
-	status, deletePayload := rawRequest(t, app, http.MethodDelete, "/v1/containers/"+containerID+"/files/"+fileID, nil)
+	status, replacedFile := uploadContainerFile(t, app, containerID, "notes.txt", []byte("updated from container"))
 	require.Equal(t, http.StatusOK, status)
-	require.Equal(t, fileID, asStringAny(deletePayload["id"]))
+	replacedFileID := asStringAny(replacedFile["id"])
+	require.NotEmpty(t, replacedFileID)
+	require.NotEqual(t, fileID, replacedFileID)
+
+	_, err = app.Store.GetCodeInterpreterContainerFile(context.Background(), containerID, fileID)
+	require.ErrorIs(t, err, sqlite.ErrNotFound)
+	_, err = app.Store.GetFile(context.Background(), firstBackingFileID)
+	require.ErrorIs(t, err, sqlite.ErrNotFound)
+
+	replacedContainerFile, err := app.Store.GetCodeInterpreterContainerFile(context.Background(), containerID, replacedFileID)
+	require.NoError(t, err)
+	secondBackingFileID := replacedContainerFile.BackingFileID
+
+	status, deletePayload := rawRequest(t, app, http.MethodDelete, "/v1/containers/"+containerID+"/files/"+replacedFileID, nil)
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, replacedFileID, asStringAny(deletePayload["id"]))
 	require.Equal(t, "container.file.deleted", asStringAny(deletePayload["object"]))
 	require.Equal(t, true, deletePayload["deleted"])
+	_, err = app.Store.GetFile(context.Background(), secondBackingFileID)
+	require.ErrorIs(t, err, sqlite.ErrNotFound)
 
 	status, listAfterDelete := rawRequest(t, app, http.MethodGet, "/v1/containers/"+containerID+"/files?limit=10", nil)
 	require.Equal(t, http.StatusOK, status)
@@ -5212,6 +5245,62 @@ func TestResponsesCreateLocalCodeInterpreterReturnsFailedResponseOnExecutionTime
 	require.True(t, ok)
 	require.Equal(t, "server_error", asStringAny(errorPayload["code"]))
 	require.Equal(t, "shim-local code_interpreter execution timed out", asStringAny(errorPayload["message"]))
+}
+
+func TestResponsesCreateLocalCodeInterpreterCompletesResponseOnToolError(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		CodeInterpreterBackend: testutil.FakeSandboxBackend{
+			KindValue: "docker",
+			ExecuteFunc: func(_ context.Context, _ sandbox.ExecuteRequest) (sandbox.ExecuteResult, error) {
+				return sandbox.ExecuteResult{
+					Logs: "Traceback (most recent call last):\nRuntimeError: fixture boom\n",
+				}, &sandbox.ToolExecutionError{Err: errors.New("exit status 1")}
+			},
+		},
+	})
+
+	response := postResponse(t, app, map[string]any{
+		"model":   "test-model",
+		"store":   true,
+		"input":   "Use Python to calculate 2+2. Return only the numeric result.",
+		"include": []string{"code_interpreter_call.outputs"},
+		"tools": []map[string]any{
+			{
+				"type": "code_interpreter",
+				"container": map[string]any{
+					"type": "auto",
+				},
+			},
+		},
+		"tool_choice": "required",
+	})
+
+	require.Equal(t, "completed", response.Status)
+	require.NotNil(t, response.CompletedAt)
+	require.JSONEq(t, `null`, string(response.Error))
+	require.Equal(t, `The run failed because the code deliberately raised a RuntimeError with the message "fixture boom."`, response.OutputText)
+	require.Len(t, response.Output, 2)
+
+	callItem := response.Output[0].Map()
+	require.Equal(t, "completed", asStringAny(callItem["status"]))
+	require.Equal(t, "print(2+2)", asStringAny(callItem["code"]))
+	outputs, ok := callItem["outputs"].([]any)
+	require.True(t, ok)
+	require.Empty(t, outputs)
+
+	messageItem := response.Output[1].Map()
+	content, ok := messageItem["content"].([]any)
+	require.True(t, ok)
+	require.Len(t, content, 1)
+	textPart, ok := content[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, response.OutputText, asStringAny(textPart["text"]))
+	require.Equal(t, []any{}, textPart["annotations"])
+
+	got := getResponse(t, app, response.ID)
+	require.Equal(t, "completed", got.Status)
+	require.JSONEq(t, `null`, string(got.Error))
+	require.Equal(t, response.OutputText, got.OutputText)
 }
 
 func TestResponsesCreateLocalCodeInterpreterStagesContainerFileIDs(t *testing.T) {
@@ -5679,8 +5768,8 @@ func TestResponsesCreateLocalCodeInterpreterPersistsGeneratedArtifacts(t *testin
 		"tool_choice": "required",
 	})
 
-	expectedOutputText := "Created report.txt.\n\nGenerated files:\n- report.txt"
-	expectedAnnotationStart := strings.LastIndex(expectedOutputText, "report.txt")
+	expectedOutputText := "Created report.txt."
+	expectedAnnotationStart := strings.Index(expectedOutputText, "report.txt")
 	expectedAnnotationEnd := expectedAnnotationStart + len("report.txt")
 
 	require.Equal(t, "completed", response.Status)
@@ -5690,22 +5779,12 @@ func TestResponsesCreateLocalCodeInterpreterPersistsGeneratedArtifacts(t *testin
 	callPayload := response.Output[0].Map()
 	outputs, ok := callPayload["outputs"].([]any)
 	require.True(t, ok)
-	require.Len(t, outputs, 2)
+	require.Len(t, outputs, 1)
 
 	logOutput, ok := outputs[0].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, "logs", asStringAny(logOutput["type"]))
 	require.Equal(t, "created report.txt\n", asStringAny(logOutput["logs"]))
-
-	fileOutput, ok := outputs[1].(map[string]any)
-	require.True(t, ok)
-	require.Equal(t, "file", asStringAny(fileOutput["type"]))
-	require.Equal(t, "report.txt", asStringAny(fileOutput["filename"]))
-	require.EqualValues(t, len("artifact-body"), fileOutput["bytes"])
-	fileID := asStringAny(fileOutput["file_id"])
-	backingFileID := asStringAny(fileOutput["backing_file_id"])
-	require.NotEmpty(t, fileID)
-	require.NotEmpty(t, backingFileID)
 
 	messagePayload := response.Output[1].Map()
 	content, ok := messagePayload["content"].([]any)
@@ -5720,6 +5799,7 @@ func TestResponsesCreateLocalCodeInterpreterPersistsGeneratedArtifacts(t *testin
 	annotation, ok := annotations[0].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, "container_file_citation", asStringAny(annotation["type"]))
+	fileID := asStringAny(annotation["file_id"])
 	require.Equal(t, fileID, asStringAny(annotation["file_id"]))
 	require.Equal(t, "report.txt", asStringAny(annotation["filename"]))
 	require.NotEmpty(t, asStringAny(annotation["container_id"]))
@@ -5733,6 +5813,10 @@ func TestResponsesCreateLocalCodeInterpreterPersistsGeneratedArtifacts(t *testin
 	require.Equal(t, "report.txt", path.Base(asStringAny(filePayload["path"])))
 	require.Equal(t, "assistant", asStringAny(filePayload["source"]))
 	require.EqualValues(t, len("artifact-body"), filePayload["bytes"])
+	containerFile, err := app.Store.GetCodeInterpreterContainerFile(context.Background(), containerID, fileID)
+	require.NoError(t, err)
+	backingFileID := containerFile.BackingFileID
+	require.NotEmpty(t, backingFileID)
 
 	req, err := http.NewRequest(http.MethodGet, app.Server.URL+"/v1/containers/"+containerID+"/files/"+fileID+"/content", nil)
 	require.NoError(t, err)
@@ -5753,7 +5837,7 @@ func TestResponsesCreateLocalCodeInterpreterPersistsGeneratedArtifacts(t *testin
 	require.Len(t, stored.Output, 2)
 	storedOutputs, ok := stored.Output[0].Map()["outputs"].([]any)
 	require.True(t, ok)
-	require.Len(t, storedOutputs, 2)
+	require.Len(t, storedOutputs, 1)
 	storedContent, ok := stored.Output[1].Map()["content"].([]any)
 	require.True(t, ok)
 	require.Len(t, storedContent, 1)
@@ -5861,24 +5945,17 @@ func TestResponsesCreateLocalCodeInterpreterPersistsGeneratedImageArtifacts(t *t
 	})
 
 	require.Equal(t, "completed", response.Status)
-	require.Equal(t, "Created plot.png.\n\nGenerated files:\n- plot.png", response.OutputText)
+	require.Equal(t, "Created plot.png.", response.OutputText)
 	require.Len(t, response.Output, 2)
 
 	callPayload := response.Output[0].Map()
 	outputs, ok := callPayload["outputs"].([]any)
 	require.True(t, ok)
-	require.Len(t, outputs, 2)
+	require.Len(t, outputs, 1)
 
 	logOutput, ok := outputs[0].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, "logs", asStringAny(logOutput["type"]))
-
-	imageOutput, ok := outputs[1].(map[string]any)
-	require.True(t, ok)
-	require.Equal(t, "image", asStringAny(imageOutput["type"]))
-	imageURL := asStringAny(imageOutput["url"])
-	require.Contains(t, imageURL, "/v1/containers/")
-	require.Contains(t, imageURL, "/content")
 
 	messagePayload := response.Output[1].Map()
 	content, ok := messagePayload["content"].([]any)
@@ -5896,7 +5973,7 @@ func TestResponsesCreateLocalCodeInterpreterPersistsGeneratedImageArtifacts(t *t
 	containerFileID := asStringAny(annotation["file_id"])
 	require.NotEmpty(t, containerID)
 	require.NotEmpty(t, containerFileID)
-	require.Equal(t, "/v1/containers/"+containerID+"/files/"+containerFileID+"/content", imageURL)
+	imageURL := "/v1/containers/" + containerID + "/files/" + containerFileID + "/content"
 
 	req, err := http.NewRequest(http.MethodGet, app.Server.URL+imageURL, nil)
 	require.NoError(t, err)
@@ -6034,6 +6111,75 @@ func TestResponsesCreateLocalCodeInterpreterStreamReturnsFailedResponseOnExecuti
 	require.True(t, ok)
 	require.Equal(t, "server_error", asStringAny(errorPayload["code"]))
 	require.Equal(t, "shim-local code_interpreter execution timed out", asStringAny(errorPayload["message"]))
+}
+
+func TestResponsesCreateLocalCodeInterpreterStreamCompletesResponseOnToolError(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		CodeInterpreterBackend: testutil.FakeSandboxBackend{
+			KindValue: "docker",
+			ExecuteFunc: func(_ context.Context, _ sandbox.ExecuteRequest) (sandbox.ExecuteResult, error) {
+				return sandbox.ExecuteResult{
+					Logs: "Traceback (most recent call last):\nRuntimeError: fixture boom\n",
+				}, &sandbox.ToolExecutionError{Err: errors.New("exit status 1")}
+			},
+		},
+	})
+
+	req, err := http.NewRequest(http.MethodPost, app.Server.URL+"/v1/responses", bytes.NewReader(mustJSON(t, map[string]any{
+		"model":   "test-model",
+		"store":   true,
+		"stream":  true,
+		"input":   "Use Python to calculate 2+2. Return only the numeric result.",
+		"include": []string{"code_interpreter_call.outputs"},
+		"tools": []map[string]any{
+			{
+				"type": "code_interpreter",
+				"container": map[string]any{
+					"type": "auto",
+				},
+			},
+		},
+		"tool_choice": "required",
+	})))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Contains(t, resp.Header.Get("Content-Type"), "text/event-stream")
+
+	events := readSSEEvents(t, resp.Body)
+	require.NotContains(t, eventTypes(events), "response.failed")
+	require.Contains(t, eventTypes(events), "response.completed")
+	require.Contains(t, eventTypes(events), "response.code_interpreter_call.completed")
+
+	completed := findEvent(t, events, "response.completed").Data
+	responsePayload, ok := completed["response"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "completed", asStringAny(responsePayload["status"]))
+	require.Nil(t, responsePayload["error"])
+
+	output, ok := responsePayload["output"].([]any)
+	require.True(t, ok)
+	require.Len(t, output, 2)
+	callItem, ok := output[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "completed", asStringAny(callItem["status"]))
+	outputs, ok := callItem["outputs"].([]any)
+	require.True(t, ok)
+	require.Empty(t, outputs)
+
+	messageItem, ok := output[1].(map[string]any)
+	require.True(t, ok)
+	content, ok := messageItem["content"].([]any)
+	require.True(t, ok)
+	require.Len(t, content, 1)
+	textPart, ok := content[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, `The run failed because the code deliberately raised a RuntimeError with the message "fixture boom."`, asStringAny(textPart["text"]))
 }
 
 func TestResponsesCreateLocalCodeInterpreterRejectsUnknownContainerFileID(t *testing.T) {

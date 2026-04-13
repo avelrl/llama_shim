@@ -1,0 +1,18 @@
+{
+  "model": "gpt-5",
+  "stream": true,
+  "store": true,
+  "include": [
+    "code_interpreter_call.outputs"
+  ],
+  "tool_choice": "required",
+  "tools": [
+    {
+      "type": "code_interpreter",
+      "container": {
+        "type": "auto"
+      }
+    }
+  ],
+  "input": "Use the python tool. Create a UTF-8 text file named report.txt containing exactly the text artifact-body. Then answer in one short sentence that explicitly mentions report.txt."
+}

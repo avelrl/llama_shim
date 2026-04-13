@@ -245,13 +245,14 @@ func TestStoreSaveCodeInterpreterContainerFileRoundTrip(t *testing.T) {
 	}))
 
 	saved, err := store.SaveCodeInterpreterContainerFile(ctx, domain.CodeInterpreterContainerFile{
-		ID:            "cfile_test",
-		ContainerID:   session.ID,
-		BackingFileID: "file_test",
-		Path:          "/mnt/data/codes.txt",
-		Source:        "user",
-		Bytes:         3,
-		CreatedAt:     1712059200,
+		ID:                "cfile_test",
+		ContainerID:       session.ID,
+		BackingFileID:     "file_test",
+		DeleteBackingFile: true,
+		Path:              "/mnt/data/codes.txt",
+		Source:            "user",
+		Bytes:             3,
+		CreatedAt:         1712059200,
 	})
 	require.NoError(t, err)
 	require.Equal(t, "cfile_test", saved.ID)
@@ -259,6 +260,10 @@ func TestStoreSaveCodeInterpreterContainerFileRoundTrip(t *testing.T) {
 	got, err := store.GetCodeInterpreterContainerFile(ctx, session.ID, saved.ID)
 	require.NoError(t, err)
 	require.Equal(t, saved, got)
+
+	byPath, err := store.GetCodeInterpreterContainerFileByPath(ctx, session.ID, saved.Path)
+	require.NoError(t, err)
+	require.Equal(t, saved, byPath)
 
 	page, err := store.ListCodeInterpreterContainerFiles(ctx, domain.ListCodeInterpreterContainerFilesQuery{
 		ContainerID: session.ID,
@@ -269,9 +274,17 @@ func TestStoreSaveCodeInterpreterContainerFileRoundTrip(t *testing.T) {
 	require.Len(t, page.Files, 1)
 	require.Equal(t, saved, page.Files[0])
 
+	refCount, err := store.CountCodeInterpreterContainerFileBackingReferences(ctx, saved.BackingFileID)
+	require.NoError(t, err)
+	require.Equal(t, 1, refCount)
+
 	require.NoError(t, store.DeleteCodeInterpreterContainerFile(ctx, session.ID, saved.ID))
 	_, err = store.GetCodeInterpreterContainerFile(ctx, session.ID, saved.ID)
 	require.ErrorIs(t, err, sqlite.ErrNotFound)
+
+	refCount, err = store.CountCodeInterpreterContainerFileBackingReferences(ctx, saved.BackingFileID)
+	require.NoError(t, err)
+	require.Zero(t, refCount)
 }
 
 func TestStoreCreateConversationAppendAndPaginateItems(t *testing.T) {

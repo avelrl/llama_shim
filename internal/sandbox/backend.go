@@ -26,6 +26,29 @@ const (
 var ErrDisabled = errors.New("sandbox backend is disabled")
 var ErrSessionNotFound = errors.New("sandbox session not found")
 
+type ToolExecutionError struct {
+	Err error
+}
+
+func (e *ToolExecutionError) Error() string {
+	if e == nil || e.Err == nil {
+		return "sandbox tool execution failed"
+	}
+	return e.Err.Error()
+}
+
+func (e *ToolExecutionError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
+func IsToolExecutionError(err error) bool {
+	var toolErr *ToolExecutionError
+	return errors.As(err, &toolErr)
+}
+
 type Backend interface {
 	Kind() string
 	CreateSession(ctx context.Context, req CreateSessionRequest) error
@@ -189,7 +212,7 @@ func (b UnsafeHostBackend) ExecutePython(ctx context.Context, req ExecuteRequest
 		if execCtx.Err() == context.DeadlineExceeded {
 			return ExecuteResult{Logs: logs.String()}, fmt.Errorf("sandbox execution timed out: %w", execCtx.Err())
 		}
-		return ExecuteResult{Logs: logs.String()}, fmt.Errorf("execute python: %w", err)
+		return ExecuteResult{Logs: logs.String()}, &ToolExecutionError{Err: fmt.Errorf("execute python: %w", err)}
 	}
 
 	return ExecuteResult{Logs: logs.String()}, nil
@@ -416,7 +439,7 @@ func (b DockerBackend) ExecutePython(ctx context.Context, req ExecuteRequest) (E
 		if execCtx.Err() == context.DeadlineExceeded {
 			return ExecuteResult{Logs: logs.String()}, fmt.Errorf("docker sandbox execution timed out: %w", execCtx.Err())
 		}
-		return ExecuteResult{Logs: logs.String()}, fmt.Errorf("docker sandbox failed: %w", err)
+		return ExecuteResult{Logs: logs.String()}, &ToolExecutionError{Err: fmt.Errorf("docker sandbox failed: %w", err)}
 	}
 
 	return ExecuteResult{Logs: logs.String()}, nil

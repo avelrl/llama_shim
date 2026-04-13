@@ -145,16 +145,16 @@ paths:
           transient runtime loss
         - generated files from the local sandbox are captured in a bounded
           shim-owned subset: small new/changed workspace files are saved into
-          local `/v1/files`, mirrored into local container files, surfaced in
-          local `code_interpreter_call.outputs` as same-origin `type=image`
-          URLs for generated image artifacts plus shim-local `type=file`
-          descriptors (`file_id`, `filename`, `bytes`, `backing_file_id`)
-          for other generated files, and made visible to the final local
-          assistant turn
-        - when generated files exist, the final local assistant message adds a
-          shim-owned `Generated files:` appendix and attaches pragmatic
+          local `/v1/files`, mirrored into local container files, exposed
+          through local `/v1/containers/{container_id}/files*`, and made
+          visible to the final local assistant turn; the current local
+          `include=["code_interpreter_call.outputs"]` subset is logs-only
+        - when generated files exist, the final local assistant message
+          prefers inline exact-filename mentions for pragmatic
           `container_file_citation` annotations using shim-owned `cfile_*`
-          container file identifiers over those filenames
+          container file identifiers; for unmentioned files, the shim appends
+          a fallback `Generated files:` appendix and annotates those
+          filenames there
         - `backend=docker` uses a hardened reusable session-container boundary;
           `backend=unsafe_host` remains a development fallback and legacy
           compatibility path
@@ -167,24 +167,28 @@ paths:
           `allowlist` or `unsafe_allow_http_https`
         - stored/local streaming replay now synthesize generic
           `response.output_text.annotation.added` events when the final
-          assistant message contains annotations, but local generated-file
-          citations still land on the shim-added `Generated files:` appendix
-          rather than hosted model-chosen spans
-        - runtime execution failures in the shim-local subset now return
-          HTTP 200 Responses objects with `status=failed`, top-level
-          `response.error.code/message`, a failed `code_interpreter_call`
-          output item, and terminal `response.failed` replay for create and
-          retrieve streaming; this remains a shim-local subset, not exact
-          hosted failure parity
+          assistant message contains annotations; this is a pragmatic replay
+          subset, not a claim of exact hosted annotation placement parity
+        - live upstream traces now confirm that ordinary Python/tool errors in
+          Code Interpreter complete as `response.status=completed` with
+          `code_interpreter_call.status=completed`, empty `outputs`, no
+          top-level `response.error`, and a final assistant message; the shim
+          mirrors that captured subset locally
+        - shim-local infrastructure/runtime failures such as timeout or lost
+          session still return a pragmatic `response.status=failed` subset
+          with `response.error.code/message` and terminal `response.failed`
         - expired shim-managed containers are now swept in the background using
           `responses.code_interpreter.cleanup_interval`; local container
           metadata stays visible as `status=expired`, while local
           `/v1/containers/{container_id}/files*` access is removed after
-          expiry
+          expiry; shim-owned mirrored backing `/v1/files` for generated and
+          container-owned uploaded files are garbage-collected on replace,
+          delete, delete-container, and expiry
         - the local subset does not yet claim full hosted sandbox/container
-          lifecycle parity, exact non-image `code_interpreter_call.outputs`
-          parity, exact hosted status/failure surface, or richer hosted
-          failure/artifact semantics
+          lifecycle parity, broader hosted `code_interpreter_call.outputs`
+          parity beyond the currently verified logs-only subset, exact hosted
+          citation placement parity, broader hosted infra/status surface, or
+          richer hosted failure/artifact semantics
 
         Retention semantics:
         - standalone responses follow the outward `store` contract returned on
@@ -2067,21 +2071,30 @@ components:
         files into the hardened Docker workspace when a reusable local runtime
         disappears. Small new/changed generated files are persisted as
         shim-owned `/v1/files`, mirrored into shim-owned container files, and
-        exposed through the local `code_interpreter_call.outputs` subset as
-        same-origin `type=image` URLs for image artifacts plus shim-local
-        `type=file` descriptors for other generated files.
-        When generated files exist, the final local assistant message adds a
-        shim-owned `Generated files:` appendix and annotates those filenames
-        with pragmatic `container_file_citation` metadata using shim-owned
-        `cfile_*` ids; stored/local streaming replay now synthesize generic
-        `response.output_text.annotation.added` events for those final
-        annotations. Expired shim-managed containers are swept in the
+        exposed through local `/v1/containers/{container_id}/files*`. The
+        current local `include=["code_interpreter_call.outputs"]` subset is
+        logs-only. When generated files exist, the final local assistant
+        message prefers inline exact-filename mentions for pragmatic
+        `container_file_citation` metadata using shim-owned `cfile_*` ids;
+        for unmentioned files the shim appends a fallback `Generated files:`
+        appendix and annotates those filenames there. Stored/local streaming
+        replay now synthesize generic `response.output_text.annotation.added`
+        events for those final annotations. Live upstream traces confirm that
+        ordinary Python/tool errors still complete the response with
+        `code_interpreter_call.status=completed`, empty `outputs`, no
+        top-level `response.error`, and a final assistant message; shim-local
+        infra/runtime failures like timeout remain a pragmatic
+        `response.status=failed` subset. Expired shim-managed containers
+        are swept in the
         background using `responses.code_interpreter.cleanup_interval`,
         clearing local container-file access while keeping container metadata as
-        `status=expired`. The shim does not yet claim hosted
-        sandbox/container parity, exact non-image
-        `code_interpreter_call.outputs` parity, or richer hosted
-        failure/artifact semantics.
+        `status=expired`; shim-owned mirrored backing `/v1/files` for
+        generated and container-owned uploaded files are garbage-collected on
+        replace, delete, delete-container, and expiry. The shim does not yet
+        claim hosted sandbox/container parity, broader hosted
+        `code_interpreter_call.outputs` parity beyond the currently verified
+        logs-only subset, exact hosted citation placement parity, or richer
+        hosted failure/artifact semantics.
 
         `background` is forwarded upstream for long-running responses and is not
         executed locally by the shim.

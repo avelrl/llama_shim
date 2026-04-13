@@ -1,0 +1,18 @@
+{
+  "model": "gpt-5",
+  "stream": true,
+  "store": true,
+  "include": [
+    "code_interpreter_call.outputs"
+  ],
+  "tool_choice": "required",
+  "tools": [
+    {
+      "type": "code_interpreter",
+      "container": {
+        "type": "auto"
+      }
+    }
+  ],
+  "input": "Use the python tool. Run code that immediately raises RuntimeError('fixture boom'). After that, answer in one short sentence explaining the failure."
+}

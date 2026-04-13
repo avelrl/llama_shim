@@ -639,6 +639,8 @@ func fakeLocalCodeInterpreterFinalOutput(last, joined string) (string, bool) {
 		return "Created report.txt.", true
 	case strings.Contains(joined, "generated files saved by the shim") && strings.Contains(joined, "plot.png"):
 		return "Created plot.png.", true
+	case strings.Contains(joined, "runtime/tool error") && strings.Contains(joined, "fixture boom"):
+		return `The run failed because the code deliberately raised a RuntimeError with the message "fixture boom."`, true
 	case hasFakeCode777Context(joined):
 		return "777", true
 	case strings.Contains(joined, "execution logs:\nresult=2.0"):

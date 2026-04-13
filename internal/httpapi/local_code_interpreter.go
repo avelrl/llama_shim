@@ -127,14 +127,17 @@ type LocalCodeInterpreterSessionStore interface {
 	TouchCodeInterpreterSession(ctx context.Context, id string, lastActiveAt string) error
 	DeleteCodeInterpreterSession(ctx context.Context, id string) error
 	GetCodeInterpreterContainerFile(ctx context.Context, containerID string, id string) (domain.CodeInterpreterContainerFile, error)
+	GetCodeInterpreterContainerFileByPath(ctx context.Context, containerID string, containerPath string) (domain.CodeInterpreterContainerFile, error)
 	ListCodeInterpreterContainerFiles(ctx context.Context, query domain.ListCodeInterpreterContainerFilesQuery) (domain.CodeInterpreterContainerFilePage, error)
 	SaveCodeInterpreterContainerFile(ctx context.Context, file domain.CodeInterpreterContainerFile) (domain.CodeInterpreterContainerFile, error)
 	DeleteCodeInterpreterContainerFile(ctx context.Context, containerID string, id string) error
+	CountCodeInterpreterContainerFileBackingReferences(ctx context.Context, backingFileID string) (int, error)
 }
 
 type LocalCodeInterpreterFileStore interface {
 	GetFile(ctx context.Context, id string) (domain.StoredFile, error)
 	SaveFile(ctx context.Context, file domain.StoredFile) error
+	DeleteFile(ctx context.Context, id string) error
 }
 
 type localCodeInterpreterConfig struct {
@@ -151,10 +154,11 @@ type localCodeInterpreterContainerConfig struct {
 }
 
 type localCodeInterpreterInputFile struct {
-	Content       []byte
-	FileID        string
-	Filename      string
-	WorkspaceName string
+	Content           []byte
+	DeleteBackingFile bool
+	FileID            string
+	Filename          string
+	WorkspaceName     string
 }
 
 type localCodeInterpreterGeneratedFile struct {
@@ -171,12 +175,18 @@ type localCodeInterpreterExecutionResult struct {
 	ContainerID    string
 	GeneratedFiles []localCodeInterpreterGeneratedFile
 	Logs           string
+	ToolError      bool
 }
 
 type localCodeInterpreterExecutionFailure struct {
 	ContainerID string
 	Logs        string
 	Message     string
+}
+
+type localCodeInterpreterAnnotationRange struct {
+	Start int
+	End   int
 }
 
 func (f *localCodeInterpreterExecutionFailure) Error() string {
@@ -284,7 +294,7 @@ func (h *responseHandler) createLocalCodeInterpreterResponse(ctx context.Context
 		return domain.Response{}, err
 	}
 
-	generationContext, err := buildLocalCodeInterpreterExecutionContext(prepared, plan.Code, execution.Logs, execution.GeneratedFiles)
+	generationContext, err := buildLocalCodeInterpreterExecutionContext(prepared, plan.Code, execution.Logs, execution.GeneratedFiles, execution.ToolError)
 	if err != nil {
 		return domain.Response{}, err
 	}
@@ -309,7 +319,7 @@ func (h *responseHandler) createLocalCodeInterpreterResponse(ctx context.Context
 	createdAt := domain.NowUTC().Unix()
 	response := domain.NewResponse(responseID, input.Model, finalOutputText, input.PreviousResponseID, input.ConversationID, createdAt)
 
-	codeInterpreterItem, err := buildLocalCodeInterpreterCallItem(plan.Code, execution.ContainerID, execution.Logs, execution.GeneratedFiles, config.IncludeOutputs)
+	codeInterpreterItem, err := buildLocalCodeInterpreterCallItem(plan.Code, execution.ContainerID, execution.Logs, execution.GeneratedFiles, config.IncludeOutputs, execution.ToolError)
 	if err != nil {
 		return domain.Response{}, err
 	}
@@ -325,7 +335,7 @@ func (h *responseHandler) createLocalCodeInterpreterResponse(ctx context.Context
 }
 
 func (h *responseHandler) buildLocalCodeInterpreterFailedResponse(ctx context.Context, prepared service.PreparedResponseContext, input service.CreateResponseInput, config localCodeInterpreterConfig, code string, failure *localCodeInterpreterExecutionFailure) (domain.Response, error) {
-	generationContext, err := buildLocalCodeInterpreterExecutionContext(prepared, code, failure.Logs, nil)
+	generationContext, err := buildLocalCodeInterpreterExecutionContext(prepared, code, failure.Logs, nil, false)
 	if err != nil {
 		return domain.Response{}, err
 	}
@@ -341,7 +351,7 @@ func (h *responseHandler) buildLocalCodeInterpreterFailedResponse(ctx context.Co
 	if err != nil {
 		return domain.Response{}, err
 	}
-	codeInterpreterItem, err := buildLocalCodeInterpreterCallItemWithStatus(code, failure.ContainerID, failure.Logs, nil, config.IncludeOutputs, "failed")
+	codeInterpreterItem, err := buildLocalCodeInterpreterCallItemWithStatus(code, failure.ContainerID, failure.Logs, nil, config.IncludeOutputs, false, "failed")
 	if err != nil {
 		return domain.Response{}, err
 	}
@@ -781,7 +791,8 @@ func (h *responseHandler) executeLocalCodeInterpreterSession(ctx context.Context
 		SessionID: sessionID,
 		Code:      code,
 	})
-	if err != nil {
+	toolError := sandbox.IsToolExecutionError(err)
+	if err != nil && !toolError {
 		return localCodeInterpreterExecutionResult{Logs: execResult.Logs}, err
 	}
 
@@ -798,6 +809,7 @@ func (h *responseHandler) executeLocalCodeInterpreterSession(ctx context.Context
 	return localCodeInterpreterExecutionResult{
 		GeneratedFiles: generatedFiles,
 		Logs:           execResult.Logs,
+		ToolError:      toolError,
 	}, nil
 }
 
@@ -1213,7 +1225,7 @@ func (h *responseHandler) persistLocalCodeInterpreterGeneratedFiles(ctx context.
 	return saved, nil
 }
 
-func buildLocalCodeInterpreterExecutionContext(prepared service.PreparedResponseContext, code string, logs string, generatedFiles []localCodeInterpreterGeneratedFile) ([]domain.Item, error) {
+func buildLocalCodeInterpreterExecutionContext(prepared service.PreparedResponseContext, code string, logs string, generatedFiles []localCodeInterpreterGeneratedFile, toolError bool) ([]domain.Item, error) {
 	prefixItems := prepared.ContextItems
 	if len(prepared.NormalizedInput) <= len(prefixItems) {
 		prefixItems = prefixItems[:len(prefixItems)-len(prepared.NormalizedInput)]
@@ -1228,7 +1240,7 @@ func buildLocalCodeInterpreterExecutionContext(prepared service.PreparedResponse
 		return nil, err
 	}
 
-	executionPrompt := domain.NewInputTextMessage("system", buildLocalCodeInterpreterExecutionPrompt(code, logs, generatedFiles))
+	executionPrompt := domain.NewInputTextMessage("system", buildLocalCodeInterpreterExecutionPrompt(code, logs, generatedFiles, toolError))
 	out := make([]domain.Item, 0, len(prefix)+len(currentInput)+1)
 	out = append(out, prefix...)
 	out = append(out, executionPrompt)
@@ -1236,11 +1248,16 @@ func buildLocalCodeInterpreterExecutionContext(prepared service.PreparedResponse
 	return out, nil
 }
 
-func buildLocalCodeInterpreterExecutionPrompt(code string, logs string, generatedFiles []localCodeInterpreterGeneratedFile) string {
+func buildLocalCodeInterpreterExecutionPrompt(code string, logs string, generatedFiles []localCodeInterpreterGeneratedFile, toolError bool) string {
 	var builder strings.Builder
 	builder.WriteString("A shim-local code interpreter already ran for this turn.\n")
 	builder.WriteString("Use only the execution result below as the tool output.\n")
-	builder.WriteString("If the execution result does not answer the request, say so plainly.\n")
+	if toolError {
+		builder.WriteString("The code interpreter run ended with a runtime/tool error.\n")
+		builder.WriteString("Explain the failure plainly using the execution result below.\n")
+	} else {
+		builder.WriteString("If the execution result does not answer the request, say so plainly.\n")
+	}
 	builder.WriteString("Executed Python code:\n")
 	builder.WriteString(code)
 	builder.WriteString("\n")
@@ -1259,6 +1276,7 @@ func buildLocalCodeInterpreterExecutionPrompt(code string, logs string, generate
 	}
 
 	builder.WriteString("Generated files saved by the shim and available via /v1/containers/{container_id}/files/{file_id}/content:\n")
+	builder.WriteString("If you mention a generated file in the answer, use its exact filename verbatim.\n")
 	for _, generatedFile := range generatedFiles {
 		builder.WriteString("- ")
 		builder.WriteString(generatedFile.Filename)
@@ -1305,10 +1323,33 @@ func buildLocalCodeInterpreterAssistantTextAnnotations(text string, containerID 
 		return text, nil
 	}
 
+	annotations := make([]any, 0, len(generatedFiles))
+	usedRanges := make([]localCodeInterpreterAnnotationRange, 0, len(generatedFiles))
+	missing := make([]localCodeInterpreterGeneratedFile, 0, len(generatedFiles))
+	for _, generatedFile := range generatedFiles {
+		startIndex, endIndex, ok := localCodeInterpreterFilenameMentionRange(text, generatedFile.Filename, usedRanges)
+		if !ok {
+			missing = append(missing, generatedFile)
+			continue
+		}
+		annotations = append(annotations, map[string]any{
+			"type":         "container_file_citation",
+			"container_id": containerID,
+			"file_id":      generatedFile.FileID,
+			"filename":     generatedFile.Filename,
+			"start_index":  startIndex,
+			"end_index":    endIndex,
+		})
+		usedRanges = append(usedRanges, localCodeInterpreterAnnotationRange{Start: startIndex, End: endIndex})
+	}
+
+	if len(missing) == 0 {
+		return text, annotations
+	}
+
 	var (
-		builder     strings.Builder
-		annotations = make([]any, 0, len(generatedFiles))
-		runeIndex   int
+		builder   strings.Builder
+		runeIndex = 0
 	)
 	appendText := func(value string) {
 		builder.WriteString(value)
@@ -1327,12 +1368,11 @@ func buildLocalCodeInterpreterAssistantTextAnnotations(text string, containerID 
 	}
 	appendText("Generated files:\n")
 
-	for index, generatedFile := range generatedFiles {
+	for index, generatedFile := range missing {
 		appendText("- ")
 		startIndex := runeIndex
 		appendText(generatedFile.Filename)
 		endIndex := runeIndex
-
 		annotations = append(annotations, map[string]any{
 			"type":         "container_file_citation",
 			"container_id": containerID,
@@ -1341,20 +1381,53 @@ func buildLocalCodeInterpreterAssistantTextAnnotations(text string, containerID 
 			"start_index":  startIndex,
 			"end_index":    endIndex,
 		})
-
-		if index+1 < len(generatedFiles) {
+		if index+1 < len(missing) {
 			appendText("\n")
 		}
 	}
-
 	return builder.String(), annotations
 }
 
-func buildLocalCodeInterpreterCallItem(code string, containerID string, logs string, generatedFiles []localCodeInterpreterGeneratedFile, includeOutputs bool) (domain.Item, error) {
-	return buildLocalCodeInterpreterCallItemWithStatus(code, containerID, logs, generatedFiles, includeOutputs, "completed")
+func localCodeInterpreterFilenameMentionRange(text string, filename string, used []localCodeInterpreterAnnotationRange) (int, int, bool) {
+	trimmedText := strings.TrimSpace(text)
+	trimmedFilename := strings.TrimSpace(filename)
+	if trimmedText == "" || trimmedFilename == "" {
+		return 0, 0, false
+	}
+
+	lowerText := strings.ToLower(text)
+	lowerFilename := strings.ToLower(trimmedFilename)
+	searchOffset := 0
+	for {
+		idx := strings.Index(lowerText[searchOffset:], lowerFilename)
+		if idx < 0 {
+			return 0, 0, false
+		}
+		startByte := searchOffset + idx
+		endByte := startByte + len(lowerFilename)
+		startRune := utf8.RuneCountInString(text[:startByte])
+		endRune := startRune + utf8.RuneCountInString(text[startByte:endByte])
+		if !localCodeInterpreterAnnotationRangeOverlaps(startRune, endRune, used) {
+			return startRune, endRune, true
+		}
+		searchOffset = endByte
+	}
 }
 
-func buildLocalCodeInterpreterCallItemWithStatus(code string, containerID string, logs string, generatedFiles []localCodeInterpreterGeneratedFile, includeOutputs bool, status string) (domain.Item, error) {
+func localCodeInterpreterAnnotationRangeOverlaps(start int, end int, used []localCodeInterpreterAnnotationRange) bool {
+	for _, candidate := range used {
+		if start < candidate.End && end > candidate.Start {
+			return true
+		}
+	}
+	return false
+}
+
+func buildLocalCodeInterpreterCallItem(code string, containerID string, logs string, generatedFiles []localCodeInterpreterGeneratedFile, includeOutputs bool, suppressLogOutputs bool) (domain.Item, error) {
+	return buildLocalCodeInterpreterCallItemWithStatus(code, containerID, logs, generatedFiles, includeOutputs, suppressLogOutputs, "completed")
+}
+
+func buildLocalCodeInterpreterCallItemWithStatus(code string, containerID string, logs string, generatedFiles []localCodeInterpreterGeneratedFile, includeOutputs bool, suppressLogOutputs bool, status string) (domain.Item, error) {
 	normalizedStatus := strings.TrimSpace(status)
 	if normalizedStatus == "" {
 		normalizedStatus = "completed"
@@ -1369,30 +1442,11 @@ func buildLocalCodeInterpreterCallItemWithStatus(code string, containerID string
 		payload["container_id"] = strings.TrimSpace(containerID)
 	}
 	if includeOutputs {
-		outputs := make([]map[string]any, 0, 1+len(generatedFiles))
-		if logs != "" {
+		outputs := make([]map[string]any, 0, 1)
+		if logs != "" && !suppressLogOutputs {
 			outputs = append(outputs, map[string]any{
 				"type": "logs",
 				"logs": logs,
-			})
-		}
-		for _, generatedFile := range generatedFiles {
-			if isLocalCodeInterpreterImageArtifact(generatedFile.Filename) && strings.TrimSpace(generatedFile.ContainerID) != "" && strings.TrimSpace(generatedFile.FileID) != "" {
-				outputs = append(outputs, map[string]any{
-					"type": "image",
-					"url":  localCodeInterpreterGeneratedFileContentURL(generatedFile.ContainerID, generatedFile.FileID),
-				})
-				continue
-			}
-			outputs = append(outputs, map[string]any{
-				"type":             "file",
-				"file_id":          generatedFile.FileID,
-				"filename":         generatedFile.Filename,
-				"bytes":            generatedFile.Bytes,
-				"backing_file_id":  generatedFile.BackingFileID,
-				"container_id":     generatedFile.ContainerID,
-				"container_path":   generatedFile.ContainerPath,
-				"container_source": generatedFile.ContainerSource,
 			})
 		}
 		payload["outputs"] = outputs
@@ -1403,19 +1457,6 @@ func buildLocalCodeInterpreterCallItemWithStatus(code string, containerID string
 		return domain.Item{}, err
 	}
 	return domain.NewItem(raw)
-}
-
-func isLocalCodeInterpreterImageArtifact(filename string) bool {
-	switch strings.ToLower(filepath.Ext(strings.TrimSpace(filename))) {
-	case ".png", ".jpg", ".jpeg", ".gif", ".webp":
-		return true
-	default:
-		return false
-	}
-}
-
-func localCodeInterpreterGeneratedFileContentURL(containerID string, fileID string) string {
-	return "/v1/containers/" + strings.TrimSpace(containerID) + "/files/" + strings.TrimSpace(fileID) + "/content"
 }
 
 func cloneGenerationOptions(options map[string]json.RawMessage) map[string]json.RawMessage {

@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -87,4 +88,12 @@ func TestListSessionFilesFromDirReturnsSortedRelativeFiles(t *testing.T) {
 	require.Equal(t, "B", string(files[0].Content))
 	require.Equal(t, "nested/a.txt", files[1].Name)
 	require.Equal(t, "A", string(files[1].Content))
+}
+
+func TestIsToolExecutionError(t *testing.T) {
+	t.Parallel()
+
+	err := &ToolExecutionError{Err: errors.New("exit status 1")}
+	require.True(t, IsToolExecutionError(err))
+	require.False(t, IsToolExecutionError(errors.New("plain error")))
 }

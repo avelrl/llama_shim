@@ -44,9 +44,9 @@ func (s *Store) SaveCodeInterpreterContainerFile(ctx context.Context, file domai
 
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO code_interpreter_container_files (
-			id, container_id, backing_file_id, path, source, bytes, created_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, file.ID, file.ContainerID, file.BackingFileID, file.Path, file.Source, file.Bytes, file.CreatedAt); err != nil {
+			id, container_id, backing_file_id, delete_backing_file, path, source, bytes, created_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`, file.ID, file.ContainerID, file.BackingFileID, boolToInt(file.DeleteBackingFile), file.Path, file.Source, file.Bytes, file.CreatedAt); err != nil {
 		return domain.CodeInterpreterContainerFile{}, fmt.Errorf("insert code interpreter container file: %w", err)
 	}
 
@@ -58,18 +58,39 @@ func (s *Store) SaveCodeInterpreterContainerFile(ctx context.Context, file domai
 
 func (s *Store) GetCodeInterpreterContainerFile(ctx context.Context, containerID string, id string) (domain.CodeInterpreterContainerFile, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, container_id, backing_file_id, path, source, bytes, created_at
+		SELECT id, container_id, backing_file_id, delete_backing_file, path, source, bytes, created_at
 		FROM code_interpreter_container_files
 		WHERE container_id = ? AND id = ?
 	`, containerID, id)
 
 	var file domain.CodeInterpreterContainerFile
-	if err := row.Scan(&file.ID, &file.ContainerID, &file.BackingFileID, &file.Path, &file.Source, &file.Bytes, &file.CreatedAt); err != nil {
+	var deleteBackingFile int
+	if err := row.Scan(&file.ID, &file.ContainerID, &file.BackingFileID, &deleteBackingFile, &file.Path, &file.Source, &file.Bytes, &file.CreatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return domain.CodeInterpreterContainerFile{}, ErrNotFound
 		}
 		return domain.CodeInterpreterContainerFile{}, fmt.Errorf("get code interpreter container file: %w", err)
 	}
+	file.DeleteBackingFile = deleteBackingFile != 0
+	return file, nil
+}
+
+func (s *Store) GetCodeInterpreterContainerFileByPath(ctx context.Context, containerID string, containerPath string) (domain.CodeInterpreterContainerFile, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, container_id, backing_file_id, delete_backing_file, path, source, bytes, created_at
+		FROM code_interpreter_container_files
+		WHERE container_id = ? AND path = ?
+	`, containerID, containerPath)
+
+	var file domain.CodeInterpreterContainerFile
+	var deleteBackingFile int
+	if err := row.Scan(&file.ID, &file.ContainerID, &file.BackingFileID, &deleteBackingFile, &file.Path, &file.Source, &file.Bytes, &file.CreatedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.CodeInterpreterContainerFile{}, ErrNotFound
+		}
+		return domain.CodeInterpreterContainerFile{}, fmt.Errorf("get code interpreter container file by path: %w", err)
+	}
+	file.DeleteBackingFile = deleteBackingFile != 0
 	return file, nil
 }
 
@@ -80,7 +101,7 @@ func (s *Store) ListCodeInterpreterContainerFiles(ctx context.Context, query dom
 	}
 
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, container_id, backing_file_id, path, source, bytes, created_at
+		SELECT id, container_id, backing_file_id, delete_backing_file, path, source, bytes, created_at
 		FROM code_interpreter_container_files
 		WHERE container_id = ?
 		ORDER BY created_at `+orderDir+`, id `+orderDir, query.ContainerID)
@@ -92,9 +113,11 @@ func (s *Store) ListCodeInterpreterContainerFiles(ctx context.Context, query dom
 	files := make([]domain.CodeInterpreterContainerFile, 0, query.Limit+1)
 	for rows.Next() {
 		var file domain.CodeInterpreterContainerFile
-		if err := rows.Scan(&file.ID, &file.ContainerID, &file.BackingFileID, &file.Path, &file.Source, &file.Bytes, &file.CreatedAt); err != nil {
+		var deleteBackingFile int
+		if err := rows.Scan(&file.ID, &file.ContainerID, &file.BackingFileID, &deleteBackingFile, &file.Path, &file.Source, &file.Bytes, &file.CreatedAt); err != nil {
 			return domain.CodeInterpreterContainerFilePage{}, fmt.Errorf("scan code interpreter container file: %w", err)
 		}
+		file.DeleteBackingFile = deleteBackingFile != 0
 		files = append(files, file)
 	}
 	if err := rows.Err(); err != nil {
@@ -124,6 +147,20 @@ func (s *Store) DeleteCodeInterpreterContainerFile(ctx context.Context, containe
 		return ErrNotFound
 	}
 	return nil
+}
+
+func (s *Store) CountCodeInterpreterContainerFileBackingReferences(ctx context.Context, backingFileID string) (int, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM code_interpreter_container_files
+		WHERE backing_file_id = ?
+	`, backingFileID)
+
+	var count int
+	if err := row.Scan(&count); err != nil {
+		return 0, fmt.Errorf("count code interpreter container file backing references: %w", err)
+	}
+	return count, nil
 }
 
 func paginateCodeInterpreterContainerFiles(files []domain.CodeInterpreterContainerFile, after string, limit int) ([]domain.CodeInterpreterContainerFile, bool, error) {

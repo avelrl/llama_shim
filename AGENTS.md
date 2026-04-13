@@ -8,7 +8,7 @@ This repository is an OpenAI-compatible shim. Any task that touches `/v1/respons
 
 Use this order every time:
 
-1. Start with the local docs index at [`openapi/llms.txt`](/Users/avel/Projects/llama_shim/openapi/llms.txt).
+1. Start with the local docs index at [`openapi/llms.txt`](openapi/llms.txt).
    Use it as a map of relevant official pages only.
    It is not the source of truth for exact request or response contracts.
 2. Use OpenAI Docs MCP tools against `developers.openai.com` and `platform.openai.com`.
@@ -34,9 +34,55 @@ For any OpenAI-surface task, verify all of these that apply:
 
 Do not mark a task done if only the route exists but the documented semantics still differ.
 
+## When fixtures are mandatory
+
+Use a real upstream fixture before closing parity work when any of the
+following is true:
+
+- the task depends on exact SSE choreography rather than only final JSON shape
+- the public docs confirm an item family exists but do not fully specify event
+  order or event payload fields
+- the task changes stored replay or retrieve streaming fidelity for hosted or
+  native tools
+- the task depends on exact artifact placement, annotation placement, or
+  intermediate tool-progress events
+- the task depends on exact failure/status semantics and the docs do not pin
+  down whether the upstream surface completes, fails, or returns partial data
+- MCP/OpenAI docs search, API reference, and the live public site disagree or
+  leave a material ambiguity about observable wire behavior
+
+In those cases:
+
+1. Add or reuse a request template under
+   `internal/httpapi/testdata/upstream/`.
+2. Capture a real upstream trace with `cmd/upstream-sse-capture`.
+3. Commit the sanitized request, raw SSE, and parsed fixture when they are
+   needed to justify the implementation.
+4. Keep backlog/spec wording conservative until the fixture-backed behavior is
+   implemented and tested.
+
+Typical examples where fixtures are expected:
+
+- tool-specific `response.*` SSE families
+- hosted/native tool replay parity
+- `code_interpreter_call.outputs` or artifact/citation behavior
+- `response.failed` vs `response.completed` ambiguity
+- image-generation partial events
+
+Fixtures are not mandatory when the public docs and reference already define
+the relevant contract well enough and the shim is only implementing a
+generic/docs-backed subset without claiming exact hosted choreography.
+
+## Path hygiene
+
+- In committed repo files, use repo-relative paths only.
+- Do not add absolute local filesystem paths to docs, backlog items, comments,
+  or examples.
+- When linking to files from repo markdown, prefer relative markdown links.
+
 ## Backlog rules
 
-When updating [`backlog-v2.md`](/Users/avel/Projects/llama_shim/backlog-v2.md):
+When updating [`backlog-v2.md`](backlog-v2.md):
 
 - Keep the top-level baseline and “current patch” sections in sync with the actual router and handlers.
 - A checked box means the implementation, OpenAPI, tests, and docs-aware behavior are aligned closely enough for that task’s stated scope.
@@ -63,7 +109,7 @@ When updating [`backlog-v2.md`](/Users/avel/Projects/llama_shim/backlog-v2.md):
 Confirm all of the following:
 
 - router/handler/service/storage behavior matches the intended scope
-- [`openapi/openapi.yaml`](/Users/avel/Projects/llama_shim/openapi/openapi.yaml) matches the implementation
+- [`openapi/openapi.yaml`](openapi/openapi.yaml) matches the implementation
 - integration tests cover the happy path and the main contract edges
 - `go test ./...` passes
 - backlog wording does not overclaim beyond what the code and docs actually support
