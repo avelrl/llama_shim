@@ -165,6 +165,14 @@ The shim can run local semantic retrieval without an external OpenAI embeddings 
 - local `/v1/responses` `file_search` reuses that rewrite core and can fan a
   complex prompt out into several rewritten search queries before retrieval;
   this is a pragmatic local subset, not exact hosted planner parity
+- raw search results now retain a small per-file multi-snippet subset instead
+  of collapsing every file to one best chunk immediately, and local
+  `/v1/responses` `file_search` injects only a bounded 20-chunk grounding
+  subset before final answer generation
+- final local assistant messages now carry a pragmatic shim-local
+  `file_citation` subset using `{type,index,file_id,filename}` for
+  top-ranked retrieved files; exact hosted file-citation placement/selection
+  parity remains open
 - when the configured embedder model or embedding dimensions change, the
   `sqlite_vec` path lazily reindexes stale chunks in the queried vector store
   before semantic search so the shim does not mix incompatible embedding spaces

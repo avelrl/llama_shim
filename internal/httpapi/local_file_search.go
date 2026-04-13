@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"llama_shim/internal/domain"
 	"llama_shim/internal/retrieval"
@@ -14,6 +15,8 @@ import (
 )
 
 const defaultLocalFileSearchResultsLimit = 20
+const localFileSearchCitationLimit = 3
+const localFileSearchMaxChunksInContext = 20
 
 var shimLocalFileSearchFields = map[string]struct{}{
 	"tools":               {},
@@ -37,8 +40,14 @@ type localFileSearchResult struct {
 	FileID        string
 	Filename      string
 	Score         float64
+	Snippets      []string
 	Text          string
 	VectorStoreID string
+}
+
+type localFileSearchAnnotationRange struct {
+	Start int
+	End   int
 }
 
 func supportsLocalFileSearch(rawFields map[string]json.RawMessage) bool {
@@ -123,12 +132,12 @@ func (h *responseHandler) createLocalFileSearchResponse(ctx context.Context, req
 	if err != nil {
 		return domain.Response{}, err
 	}
-	messageItem, err := buildCompletedAssistantMessage(outputText)
+	messageItem, finalText, err := buildLocalFileSearchAssistantMessage(outputText, results)
 	if err != nil {
 		return domain.Response{}, err
 	}
 	response.Output = []domain.Item{fileSearchItem, messageItem}
-	response.OutputText = outputText
+	response.OutputText = finalText
 
 	response, err = h.service.FinalizeLocalResponse(input, generationContext, response)
 	if err != nil {
@@ -423,6 +432,7 @@ func (h *responseHandler) searchLocalFileSearchResults(ctx context.Context, conf
 				FileID:        result.FileID,
 				Filename:      result.Filename,
 				Score:         result.Score,
+				Snippets:      localFileSearchSnippets(result.Content),
 				Text:          joinLocalFileSearchContent(result.Content),
 				VectorStoreID: vectorStoreID,
 			}
@@ -499,7 +509,23 @@ func buildLocalFileSearchContextPrompt(query string, searchQueries []string, res
 		return builder.String()
 	}
 
+	remainingChunks := localFileSearchMaxChunksInContext
+	omittedChunks := 0
 	for idx, result := range results {
+		snippets := localFileSearchContextSnippets(result)
+		if len(snippets) == 0 {
+			continue
+		}
+		if remainingChunks <= 0 {
+			omittedChunks += len(snippets)
+			continue
+		}
+		if len(snippets) > remainingChunks {
+			omittedChunks += len(snippets) - remainingChunks
+			snippets = snippets[:remainingChunks]
+		}
+		remainingChunks -= len(snippets)
+
 		builder.WriteString("\n[")
 		builder.WriteString(fmt.Sprintf("%d", idx+1))
 		builder.WriteString("] filename=")
@@ -511,8 +537,16 @@ func buildLocalFileSearchContextPrompt(query string, searchQueries []string, res
 		builder.WriteString(" score=")
 		builder.WriteString(fmt.Sprintf("%.4f", result.Score))
 		builder.WriteString("\n")
-		builder.WriteString(result.Text)
-		builder.WriteString("\n")
+		for snippetIndex, snippet := range snippets {
+			builder.WriteString("snippet ")
+			builder.WriteString(fmt.Sprintf("%d", snippetIndex+1))
+			builder.WriteString(":\n")
+			builder.WriteString(snippet)
+			builder.WriteString("\n")
+		}
+	}
+	if omittedChunks > 0 {
+		builder.WriteString("\nAdditional local search chunks were omitted to stay within the grounding context budget.\n")
 	}
 	return builder.String()
 }
@@ -549,6 +583,44 @@ func buildCompletedAssistantMessage(text string) (domain.Item, error) {
 	return buildCompletedAssistantMessageWithAnnotations(text, nil)
 }
 
+func buildLocalFileSearchAssistantMessage(text string, results []localFileSearchResult) (domain.Item, string, error) {
+	finalText, annotations := buildLocalFileSearchAssistantTextAnnotations(text, results)
+	item, err := buildCompletedAssistantMessageWithAnnotations(finalText, annotations)
+	if err != nil {
+		return domain.Item{}, "", err
+	}
+	return item, finalText, nil
+}
+
+func buildLocalFileSearchAssistantTextAnnotations(text string, results []localFileSearchResult) (string, []any) {
+	citedFiles := topLocalFileSearchCitationResults(results, localFileSearchCitationLimit)
+	if len(citedFiles) == 0 {
+		return text, nil
+	}
+
+	annotations := make([]any, 0, len(citedFiles))
+	usedRanges := make([]localFileSearchAnnotationRange, 0, len(citedFiles))
+	fallbackIndex := utf8.RuneCountInString(text)
+	for _, result := range citedFiles {
+		index, ok := localFileSearchFilenameMentionIndex(text, result.Filename, usedRanges)
+		if !ok {
+			index = fallbackIndex
+		} else {
+			usedRanges = append(usedRanges, localFileSearchAnnotationRange{
+				Start: index,
+				End:   index + utf8.RuneCountInString(strings.TrimSpace(result.Filename)),
+			})
+		}
+		annotations = append(annotations, map[string]any{
+			"type":     "file_citation",
+			"index":    index,
+			"file_id":  result.FileID,
+			"filename": result.Filename,
+		})
+	}
+	return text, annotations
+}
+
 func buildCompletedAssistantMessageWithAnnotations(text string, annotations []any) (domain.Item, error) {
 	if annotations == nil {
 		annotations = []any{}
@@ -583,13 +655,90 @@ func cloneLocalFileSearchAttributes(attributes map[string]any) map[string]any {
 }
 
 func joinLocalFileSearchContent(content []domain.VectorStoreSearchResultContent) string {
+	return strings.Join(localFileSearchSnippets(content), "\n\n")
+}
+
+func localFileSearchSnippets(content []domain.VectorStoreSearchResultContent) []string {
 	parts := make([]string, 0, len(content))
 	for _, part := range content {
+		if part.Type != "text" {
+			continue
+		}
 		text := strings.TrimSpace(part.Text)
 		if text == "" {
 			continue
 		}
 		parts = append(parts, text)
 	}
-	return strings.Join(parts, "\n")
+	return parts
+}
+
+func localFileSearchContextSnippets(result localFileSearchResult) []string {
+	if len(result.Snippets) > 0 {
+		return result.Snippets
+	}
+	if text := strings.TrimSpace(result.Text); text != "" {
+		return []string{text}
+	}
+	return nil
+}
+
+func topLocalFileSearchCitationResults(results []localFileSearchResult, limit int) []localFileSearchResult {
+	if limit <= 0 || len(results) == 0 {
+		return nil
+	}
+
+	seen := make(map[string]struct{}, len(results))
+	out := make([]localFileSearchResult, 0, min(limit, len(results)))
+	for _, result := range results {
+		fileID := strings.TrimSpace(result.FileID)
+		filename := strings.TrimSpace(result.Filename)
+		if fileID == "" || filename == "" {
+			continue
+		}
+		if _, ok := seen[fileID]; ok {
+			continue
+		}
+		seen[fileID] = struct{}{}
+		out = append(out, result)
+		if len(out) == limit {
+			break
+		}
+	}
+	return out
+}
+
+func localFileSearchFilenameMentionIndex(text string, filename string, used []localFileSearchAnnotationRange) (int, bool) {
+	trimmedText := strings.TrimSpace(text)
+	trimmedFilename := strings.TrimSpace(filename)
+	if trimmedText == "" || trimmedFilename == "" {
+		return 0, false
+	}
+
+	lowerText := strings.ToLower(text)
+	lowerFilename := strings.ToLower(trimmedFilename)
+	searchOffset := 0
+	for {
+		idx := strings.Index(lowerText[searchOffset:], lowerFilename)
+		if idx < 0 {
+			return 0, false
+		}
+		startByte := searchOffset + idx
+		endByte := startByte + len(lowerFilename)
+		startRune := utf8.RuneCountInString(text[:startByte])
+		endRune := startRune + utf8.RuneCountInString(text[startByte:endByte])
+		if !localFileSearchAnnotationRangeOverlaps(startRune, endRune, used) {
+			return startRune, true
+		}
+		searchOffset = endByte
+	}
+}
+
+func localFileSearchAnnotationRangeOverlaps(start int, end int, used []localFileSearchAnnotationRange) bool {
+	for _, candidate := range used {
+		if start < candidate.End && end > candidate.Start {
+			return true
+		}
+	}
+	return false
 }

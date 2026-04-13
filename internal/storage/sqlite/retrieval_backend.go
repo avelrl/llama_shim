@@ -43,6 +43,7 @@ type sqliteVecRetrievalBackend struct {
 
 const hybridRRFK = 60.0
 const retrievalEmbedBatchSize = 128
+const retrievalMaxContentItemsPerResult = 3
 
 type vectorStoreChunk struct {
 	ID      int64
@@ -58,6 +59,20 @@ type localRerankProfile struct {
 	keywordWeight  float64
 	phraseWeight   float64
 	filenameWeight float64
+}
+
+type rankedSearchContent struct {
+	text  string
+	score float64
+	order int
+}
+
+type aggregatedSearchResult struct {
+	domain.VectorStoreSearchResult
+	bestDistance    float64
+	contentRanks    []rankedSearchContent
+	seenContentText map[string]struct{}
+	nextContentOrder int
 }
 
 var (
@@ -130,6 +145,61 @@ func newRetrievalBackendWithOptions(cfg retrieval.Config, embedder retrieval.Emb
 	default:
 		return nil, fmt.Errorf("unsupported retrieval index backend %q", cfg.IndexBackend)
 	}
+}
+
+func newAggregatedSearchResult(fileID, filename string, attributes map[string]any) aggregatedSearchResult {
+	return aggregatedSearchResult{
+		VectorStoreSearchResult: domain.VectorStoreSearchResult{
+			FileID:     fileID,
+			Filename:   filename,
+			Attributes: attributes,
+			Content:    []domain.VectorStoreSearchResultContent{},
+		},
+		bestDistance:    math.MaxFloat64,
+		contentRanks:    []rankedSearchContent{},
+		seenContentText: map[string]struct{}{},
+	}
+}
+
+func (r *aggregatedSearchResult) addContent(text string, score float64) {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return
+	}
+	if _, exists := r.seenContentText[trimmed]; exists {
+		return
+	}
+	r.seenContentText[trimmed] = struct{}{}
+	r.contentRanks = append(r.contentRanks, rankedSearchContent{
+		text:  trimmed,
+		score: score,
+		order: r.nextContentOrder,
+	})
+	r.nextContentOrder++
+	sort.Slice(r.contentRanks, func(i, j int) bool {
+		if r.contentRanks[i].score == r.contentRanks[j].score {
+			return r.contentRanks[i].order < r.contentRanks[j].order
+		}
+		return r.contentRanks[i].score > r.contentRanks[j].score
+	})
+	if len(r.contentRanks) > retrievalMaxContentItemsPerResult {
+		r.contentRanks = r.contentRanks[:retrievalMaxContentItemsPerResult]
+	}
+}
+
+func (r *aggregatedSearchResult) finalizeContent() {
+	if len(r.contentRanks) == 0 {
+		r.Content = []domain.VectorStoreSearchResultContent{}
+		return
+	}
+	content := make([]domain.VectorStoreSearchResultContent, 0, len(r.contentRanks))
+	for _, candidate := range r.contentRanks {
+		content = append(content, domain.VectorStoreSearchResultContent{
+			Type: "text",
+			Text: candidate.text,
+		})
+	}
+	r.Content = content
 }
 
 func (sqliteVecRetrievalBackend) Name() string {
@@ -247,12 +317,7 @@ func (b sqliteVecRetrievalBackend) searchVectorStoreSemanticResults(ctx context.
 		return []domain.VectorStoreSearchResult{}, nil
 	}
 
-	type scoredResult struct {
-		domain.VectorStoreSearchResult
-		bestDistance float64
-	}
-
-	bestByFile := map[string]scoredResult{}
+	bestByFile := map[string]aggregatedSearchResult{}
 	for _, queryEmbedding := range queryEmbeddings {
 		queryBlob, _, err := encodeFloat32Vector(queryEmbedding)
 		if err != nil {
@@ -275,7 +340,7 @@ func (b sqliteVecRetrievalBackend) searchVectorStoreSemanticResults(ctx context.
 			  AND k = ?
 			  AND c.vector_store_id = ?
 			  AND v.status = 'completed'
-			ORDER BY t.distance ASC
+			ORDER BY t.distance ASC, c.id ASC
 		`, queryBlob, chunkCount, query.VectorStoreID)
 		if err != nil {
 			return nil, fmt.Errorf("query semantic vector store search: %w", err)
@@ -319,21 +384,15 @@ func (b sqliteVecRetrievalBackend) searchVectorStoreSemanticResults(ctx context.
 			}
 
 			current, exists := bestByFile[fileID]
-			if exists && current.bestDistance <= distance {
-				continue
+			if !exists {
+				current = newAggregatedSearchResult(fileID, filename, attributes)
 			}
-			bestByFile[fileID] = scoredResult{
-				VectorStoreSearchResult: domain.VectorStoreSearchResult{
-					FileID:     fileID,
-					Filename:   filename,
-					Score:      score,
-					Attributes: attributes,
-					Content: []domain.VectorStoreSearchResultContent{
-						{Type: "text", Text: content},
-					},
-				},
-				bestDistance: distance,
+			if !exists || current.bestDistance > distance {
+				current.bestDistance = distance
+				current.Score = score
 			}
+			current.addContent(content, score)
+			bestByFile[fileID] = current
 		}
 		if err := rows.Err(); err != nil {
 			rows.Close()
@@ -344,6 +403,7 @@ func (b sqliteVecRetrievalBackend) searchVectorStoreSemanticResults(ctx context.
 
 	results := make([]domain.VectorStoreSearchResult, 0, len(bestByFile))
 	for _, result := range bestByFile {
+		result.finalizeContent()
 		results = append(results, result.VectorStoreSearchResult)
 	}
 	sort.Slice(results, func(i, j int) bool {
@@ -788,7 +848,7 @@ func rerankVectorStoreResults(results []domain.VectorStoreSearchResult, queries 
 
 	reranked := make([]rerankedResult, 0, len(results))
 	for _, result := range results {
-		contentText := firstSearchResultText(result.Content)
+		contentText := joinedSearchResultText(result.Content)
 		keywordScore := chunkScore(contentText, queries)
 		phraseScore := queryPhraseMatchScore(contentText, queries)
 		filenameScore := queryFilenameMatchScore(result.Filename, queries)
@@ -826,13 +886,17 @@ func rerankVectorStoreResults(results []domain.VectorStoreSearchResult, queries 
 	return out
 }
 
-func firstSearchResultText(content []domain.VectorStoreSearchResultContent) string {
+func joinedSearchResultText(content []domain.VectorStoreSearchResultContent) string {
+	parts := make([]string, 0, len(content))
 	for _, item := range content {
 		if item.Type == "text" {
-			return item.Text
+			text := strings.TrimSpace(item.Text)
+			if text != "" {
+				parts = append(parts, text)
+			}
 		}
 	}
-	return ""
+	return strings.Join(parts, "\n")
 }
 
 func queryPhraseMatchScore(content string, queries []string) float64 {

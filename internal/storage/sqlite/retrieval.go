@@ -535,18 +535,14 @@ func (s *Store) searchVectorStoreLexicalResults(ctx context.Context, query domai
 		JOIN files f ON f.id = c.file_id
 		JOIN vector_store_files v ON v.vector_store_id = c.vector_store_id AND v.file_id = c.file_id
 		WHERE c.vector_store_id = ? AND v.status = 'completed'
+		ORDER BY c.id ASC
 	`, query.VectorStoreID)
 	if err != nil {
 		return nil, fmt.Errorf("query vector store chunks: %w", err)
 	}
 	defer rows.Close()
 
-	type scoredResult struct {
-		domain.VectorStoreSearchResult
-		ChunkIndex int
-	}
-
-	bestByFile := map[string]scoredResult{}
+	bestByFile := map[string]aggregatedSearchResult{}
 	for rows.Next() {
 		var (
 			fileID         string
@@ -577,20 +573,14 @@ func (s *Store) searchVectorStoreLexicalResults(ctx context.Context, query domai
 		}
 
 		current, exists := bestByFile[fileID]
-		if exists && current.Score >= score {
-			continue
+		if !exists {
+			current = newAggregatedSearchResult(fileID, filename, attributes)
 		}
-		bestByFile[fileID] = scoredResult{
-			VectorStoreSearchResult: domain.VectorStoreSearchResult{
-				FileID:     fileID,
-				Filename:   filename,
-				Score:      score,
-				Attributes: attributes,
-				Content: []domain.VectorStoreSearchResultContent{
-					{Type: "text", Text: content},
-				},
-			},
+		if !exists || current.Score < score {
+			current.Score = score
 		}
+		current.addContent(content, score)
+		bestByFile[fileID] = current
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate vector store chunks: %w", err)
@@ -598,6 +588,7 @@ func (s *Store) searchVectorStoreLexicalResults(ctx context.Context, query domai
 
 	results := make([]domain.VectorStoreSearchResult, 0, len(bestByFile))
 	for _, result := range bestByFile {
+		result.finalizeContent()
 		results = append(results, result.VectorStoreSearchResult)
 	}
 	sort.Slice(results, func(i, j int) bool {

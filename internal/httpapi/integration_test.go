@@ -18,6 +18,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/require"
 
@@ -4942,11 +4943,105 @@ func TestResponsesCreateExecutesLocalFileSearch(t *testing.T) {
 	require.Equal(t, []any{"code"}, fileSearchPayload["queries"].([]any))
 	require.Nil(t, fileSearchPayload["results"])
 
+	messagePayload := response.Output[1].Map()
+	content, ok := messagePayload["content"].([]any)
+	require.True(t, ok)
+	require.Len(t, content, 1)
+	textPart, ok := content[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "777", asStringAny(textPart["text"]))
+	annotations, ok := textPart["annotations"].([]any)
+	require.True(t, ok)
+	require.Len(t, annotations, 1)
+	annotation, ok := annotations[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "file_citation", asStringAny(annotation["type"]))
+	require.Equal(t, fileID, asStringAny(annotation["file_id"]))
+	require.Equal(t, "codes.txt", asStringAny(annotation["filename"]))
+	require.EqualValues(t, utf8.RuneCountInString("777"), annotation["index"])
+
 	got := getResponse(t, app, response.ID)
 	require.Equal(t, "777", got.OutputText)
 	require.Len(t, got.Output, 2)
 	require.Equal(t, "file_search_call", got.Output[0].Type)
 	require.Equal(t, "message", got.Output[1].Type)
+	gotContent, ok := got.Output[1].Map()["content"].([]any)
+	require.True(t, ok)
+	require.Len(t, gotContent, 1)
+	gotAnnotations, ok := gotContent[0].(map[string]any)["annotations"].([]any)
+	require.True(t, ok)
+	require.Len(t, gotAnnotations, 1)
+	gotAnnotation, ok := gotAnnotations[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "file_citation", asStringAny(gotAnnotation["type"]))
+	require.Equal(t, fileID, asStringAny(gotAnnotation["file_id"]))
+}
+
+func TestResponsesCreateLocalFileSearchUsesMultipleChunksFromSameFile(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	firstChunk := strings.TrimSpace(strings.Repeat("code decoy placeholder ", 33))
+	secondChunk := strings.TrimSpace(strings.Repeat("actual code 777 ", 33))
+	fileContent := []byte(firstChunk + " " + secondChunk)
+
+	status, uploaded := uploadFile(t, app, "codes.txt", "assistants", fileContent, nil)
+	require.Equal(t, http.StatusOK, status)
+	fileID := asStringAny(uploaded["id"])
+
+	status, created := rawRequest(t, app, http.MethodPost, "/v1/vector_stores", map[string]any{
+		"name": "Codes",
+	})
+	require.Equal(t, http.StatusOK, status)
+	vectorStoreID := asStringAny(created["id"])
+
+	status, attached := rawRequest(t, app, http.MethodPost, "/v1/vector_stores/"+vectorStoreID+"/files", map[string]any{
+		"file_id": fileID,
+		"chunking_strategy": map[string]any{
+			"type": "static",
+			"static": map[string]any{
+				"max_chunk_size_tokens": 100,
+				"chunk_overlap_tokens":  0,
+			},
+		},
+	})
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, "completed", asStringAny(attached["status"]))
+
+	status, search := rawRequest(t, app, http.MethodPost, "/v1/vector_stores/"+vectorStoreID+"/search", map[string]any{
+		"query": "code",
+	})
+	require.Equal(t, http.StatusOK, status)
+	require.Len(t, search["data"].([]any), 1)
+	searchResult := search["data"].([]any)[0].(map[string]any)
+	content, ok := searchResult["content"].([]any)
+	require.True(t, ok)
+	require.Len(t, content, 2)
+	require.Contains(t, asStringAny(content[0].(map[string]any)["text"]), "code decoy placeholder")
+	require.Contains(t, asStringAny(content[1].(map[string]any)["text"]), "actual code 777")
+
+	response := postResponse(t, app, map[string]any{
+		"model":   "test-model",
+		"store":   true,
+		"include": []string{"file_search_call.results"},
+		"input":   "What is the code?",
+		"tools": []map[string]any{
+			{
+				"type":             "file_search",
+				"vector_store_ids": []string{vectorStoreID},
+			},
+		},
+		"tool_choice": "required",
+	})
+
+	require.Equal(t, "completed", response.Status)
+	require.Equal(t, "777", response.OutputText)
+	fileSearchPayload := response.Output[0].Map()
+	require.Equal(t, []any{"code"}, fileSearchPayload["queries"].([]any))
+	results, ok := fileSearchPayload["results"].([]any)
+	require.True(t, ok)
+	require.Len(t, results, 1)
+	require.Contains(t, asStringAny(results[0].(map[string]any)["text"]), "code decoy placeholder")
+	require.Contains(t, asStringAny(results[0].(map[string]any)["text"]), "actual code 777")
 }
 
 func TestResponsesCreateLocalFileSearchPlansMultipleQueries(t *testing.T) {
@@ -5037,11 +5132,32 @@ func TestResponsesCreateLocalFileSearchStreamReplaysToolEvents(t *testing.T) {
 	require.Contains(t, eventTypes(events), "response.file_search_call.searching")
 	require.Contains(t, eventTypes(events), "response.file_search_call.completed")
 	require.Contains(t, eventTypes(events), "response.output_text.delta")
+	require.Contains(t, eventTypes(events), "response.output_text.annotation.added")
 
 	added := findEvents(events, "response.output_item.added")
 	require.Len(t, added, 2)
 	require.Equal(t, "file_search_call", asStringAny(added[0].Data["item"].(map[string]any)["type"]))
 	require.Equal(t, "message", asStringAny(added[1].Data["item"].(map[string]any)["type"]))
+
+	annotationEvents := findEvents(events, "response.output_text.annotation.added")
+	require.Len(t, annotationEvents, 1)
+	streamAnnotation, ok := annotationEvents[0].Data["annotation"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "file_citation", asStringAny(streamAnnotation["type"]))
+	require.Equal(t, fileID, asStringAny(streamAnnotation["file_id"]))
+	require.Equal(t, "codes.txt", asStringAny(streamAnnotation["filename"]))
+	require.EqualValues(t, utf8.RuneCountInString("777"), streamAnnotation["index"])
+
+	outputDoneEvents := findEvents(events, "response.output_item.done")
+	require.Len(t, outputDoneEvents, 2)
+	doneItem, ok := outputDoneEvents[1].Data["item"].(map[string]any)
+	require.True(t, ok)
+	doneContent, ok := doneItem["content"].([]any)
+	require.True(t, ok)
+	require.Len(t, doneContent, 1)
+	doneAnnotations, ok := doneContent[0].(map[string]any)["annotations"].([]any)
+	require.True(t, ok)
+	require.Len(t, doneAnnotations, 1)
 
 	completed := findEvent(t, events, "response.completed").Data
 	responsePayload, ok := completed["response"].(map[string]any)

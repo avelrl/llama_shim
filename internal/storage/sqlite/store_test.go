@@ -1042,6 +1042,63 @@ func TestStoreAttachBinaryFileToVectorStoreFailsIndexing(t *testing.T) {
 	require.Empty(t, searchPage.Results)
 }
 
+func TestStoreSearchVectorStoreReturnsMultipleTopChunksPerFile(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store := openTestStore(t, ctx)
+
+	file := domain.StoredFile{
+		ID:        "file_codes",
+		Filename:  "codes.txt",
+		Purpose:   "assistants",
+		Bytes:     int64(len("code decoy placeholder actual code 777 backup code note")),
+		CreatedAt: 1712059303,
+		Status:    "processed",
+		Content:   []byte("code decoy placeholder actual code 777 backup code note"),
+	}
+	require.NoError(t, store.SaveFile(ctx, file))
+
+	vectorStore := domain.StoredVectorStore{
+		ID:           "vs_codes",
+		Name:         "Codes Search",
+		Metadata:     map[string]string{},
+		CreatedAt:    1712059304,
+		LastActiveAt: 1712059304,
+	}
+	require.NoError(t, store.SaveVectorStore(ctx, vectorStore))
+
+	_, err := store.AttachFileToVectorStore(
+		ctx,
+		vectorStore.ID,
+		file.ID,
+		map[string]any{},
+		domain.FileChunkingStrategy{
+			Type: "static",
+			Static: &domain.StaticChunkingStrategy{
+				MaxChunkSizeTokens: 3,
+				ChunkOverlapTokens: 0,
+			},
+		},
+		1712059305,
+	)
+	require.NoError(t, err)
+
+	searchPage, err := store.SearchVectorStore(ctx, domain.VectorStoreSearchQuery{
+		VectorStoreID:  vectorStore.ID,
+		Queries:        []string{"code"},
+		MaxNumResults:  5,
+		RawSearchQuery: "code",
+	})
+	require.NoError(t, err)
+	require.Len(t, searchPage.Results, 1)
+	require.Equal(t, file.ID, searchPage.Results[0].FileID)
+	require.Len(t, searchPage.Results[0].Content, 3)
+	require.Equal(t, "code decoy placeholder", searchPage.Results[0].Content[0].Text)
+	require.Equal(t, "actual code 777", searchPage.Results[0].Content[1].Text)
+	require.Equal(t, "backup code note", searchPage.Results[0].Content[2].Text)
+}
+
 func openTestStore(t *testing.T, ctx context.Context) *sqlite.Store {
 	t.Helper()
 

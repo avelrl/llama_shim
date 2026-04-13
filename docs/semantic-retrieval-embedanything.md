@@ -113,6 +113,9 @@ What is implemented now:
   `/v1/vector_stores/{id}/search`
 - a small deterministic rewrite + multi-search planning subset for local
   `/v1/responses` `file_search`
+- raw search results retain a small per-file multi-snippet subset, and local
+  `/v1/responses` `file_search` injects only a bounded 20-chunk grounding
+  subset before final answer generation
 - lazy stale-chunk reindex inside the queried `vector_store` when the
   configured embedder model or embedding dimensions change, so semantic search
   only compares chunks in the current embedding space
@@ -126,4 +129,6 @@ What is still open:
 - ANN indexing beyond exact dense scan
 - hosted-grade reranking parity
 - hosted-grade query-rewrite / multi-search planner parity
-- hosted `file_citation` parity in final assistant messages
+- exact hosted `file_citation` placement/selection parity in final assistant
+  messages; the current local subset now emits pragmatic shim-local
+  `{type,index,file_id,filename}` annotations for top-ranked retrieved files

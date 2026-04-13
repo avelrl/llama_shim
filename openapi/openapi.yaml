@@ -134,9 +134,16 @@ paths:
           query-rewrite pass and can fan a complex prompt out into several
           rewritten search queries; this is a pragmatic local planning subset,
           not exact hosted `file_search` planner parity
+        - raw search results retain a small per-file multi-snippet subset
+          instead of collapsing each file to one best chunk immediately, and
+          local `/v1/responses` `file_search` injects only a bounded 20-chunk
+          grounding subset before final answer generation
         - the shim returns `file_search_call` output items and stored/streaming
-          replay, but does not currently synthesize hosted `file_citation`
-          annotations in assistant messages
+          replay, and the final local assistant `message` now carries a
+          pragmatic shim-local `file_citation` subset using
+          `{type,index,file_id,filename}` annotations for top-ranked retrieved
+          files; exact hosted file-citation placement/selection parity remains
+          open
 
         Notes for the local `code_interpreter` subset:
         - the shim executes one `code_interpreter` tool locally only when
@@ -2077,8 +2084,15 @@ components:
         reindexes stale chunks in the queried `vector_store` before semantic
         search. Before local retrieval, the shim also applies a small
         deterministic query-rewrite pass and can fan a complex prompt out into
-        several rewritten search queries. The shim does not claim hosted
-        reranking, hosted query-planning, or `file_citation` annotation
+        several rewritten search queries. Raw search results retain a small
+        per-file multi-snippet subset instead of collapsing each file to one
+        best chunk immediately, and local `/v1/responses` `file_search`
+        injects only a bounded 20-chunk grounding subset before final answer
+        generation. The final local assistant `message` now carries a
+        pragmatic shim-local `file_citation` subset using
+        `{type,index,file_id,filename}` annotations for top-ranked retrieved
+        files, but the shim does not claim hosted reranking, hosted
+        query-planning, or exact hosted file-citation placement/selection
         parity.
 
         The local `code_interpreter` subset is guarded by

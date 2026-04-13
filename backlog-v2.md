@@ -100,10 +100,12 @@
 - local `/v1/responses` теперь умеет shim-owned `file_search` execution over
   local `vector_stores` в pragmatic subset:
   один `file_search` tool, deterministic query rewriting + small multi-search
-  planning subset, local lexical/semantic retrieval, stored/streaming
+  planning subset, local lexical/semantic retrieval, per-file multi-chunk
+  grounding subset with a local 20-chunk context budget, stored/streaming
   `file_search_call` output item, optional
-  `include=["file_search_call.results"]`, и follow-up turns не ломаются из-за
-  stored tool items в локальном generation context
+  `include=["file_search_call.results"]`, pragmatic final `file_citation`
+  subset, и follow-up turns не ломаются из-за stored tool items в локальном
+  generation context
 - local `/v1/responses` теперь умеет dev-only shim-local `code_interpreter`
   execution в pragmatic subset:
   один `code_interpreter` tool с `container.type=auto` или explicit
@@ -980,13 +982,19 @@ Definition of done:
   существующую tool-specific SSE family
 - `include=["file_search_call.results"]` теперь реально меняет stored/local
   response payload, а не принимается как no-op
+- local retrieval больше не теряет полезный intra-file context сразу после
+  ranking: raw search results now keep several top-ranked chunks/snippets per
+  file in `content[]`, and local `/v1/responses` `file_search` injects only a
+  bounded 20-chunk subset of those snippets into the generation context
 - follow-up local turns по `previous_response_id` после stored
   `file_search_call` не ломаются из-за tool items в generation context
 
 Что осталось открытым:
 
-- hosted citations/annotations parity: local subset не синтезирует
-  OpenAI-shaped `file_citation` annotations в final assistant `message`
+- hosted citations/annotations parity: local subset теперь синтезирует
+  pragmatic shim-local `file_citation` annotations in the final assistant
+  `message` using `{type,index,file_id,filename}` for top-ranked retrieved
+  files, but exact hosted placement/selection parity remains open
 - hosted ranking parity: локальный path делает deterministic lexical search и
   возвращает normalized snippets, а не managed semantic ranking/embedding
   results OpenAI
@@ -1048,6 +1056,10 @@ Definition of done:
 - shim-local `file_search` now reuses the same rewrite core and adds a small
   deterministic multi-search decomposition pass for complex prompts before
   dense/lexical retrieval
+- raw `vector_stores/{id}/search` and shim-local `file_search` now retain a
+  small per-file multi-snippet subset instead of dropping every file down to a
+  single best chunk immediately; local `/v1/responses` then injects only a
+  bounded 20-chunk grounding subset before answer generation
 - embeddings generation тоже стала explicit backend choice:
   `retrieval.embedder.backend=openai_compatible|embedanything`
   с shared OpenAI-compatible `/v1/embeddings` surface, so a future local
@@ -1077,7 +1089,9 @@ Definition of done:
   they do not claim exact hosted OpenAI planner/query-rewrite parity
 - current semantic subset зависит от configured embedder backend; без него
   `sqlite_vec` backend intentionally does not start
-- final assistant `message` не претендует на hosted `file_citation` parity
+- final assistant `message` теперь carries a pragmatic shim-local
+  `file_citation` subset for top-ranked retrieved files, but it does not claim
+  exact hosted file-citation placement/selection parity
 
 Definition of done:
 
