@@ -82,6 +82,11 @@
 - docs-backed `tool_search` passthrough contract now preserves hosted/client
   `tool_search_call` / `tool_search_output` items and generic stored replay
   without inventing unsupported `response.tool_search.*` SSE events
+- shim-local `tool_search` now supports a hosted/server subset in
+  `responses.mode=prefer_local|local_only`: deterministic search over deferred
+  top-level functions and all-deferred namespaces, generic create/retrieve
+  replay, and lineage-safe follow-up local tool loops; client execution stays
+  proxy-only
 - `/readyz` теперь реально проверяет SQLite и upstream llama backend, а при
   `sqlite_vec` + readiness-aware embedder ещё и retrieval embedder, а не просто
   отвечает `200`
@@ -162,6 +167,7 @@
 - [x] - docs-backed `mcp_approval_request` generic SSE replay for stored Responses items ([детали](#task-streaming-replay-mcp-approval-request))
 - [x] - docs-backed `mcp_list_tools` generic SSE replay for stored Responses items ([детали](#task-streaming-replay-mcp-list-tools))
 - [x] - docs-backed `tool_search` passthrough contract and generic SSE replay for stored Responses items ([детали](#task-streaming-replay-tool-search))
+- [x] - shim-local hosted/server `tool_search` runtime subset ([детали](#task-local-tool-search-runtime))
 - [ ] - hosted/native tool-specific SSE replay beyond core shim item families ([детали](#task-streaming-replay-hosted))
 - [x] - compatibility для `/responses/compact` и `/responses/input_tokens` ([детали](#task-compaction-and-token-counting))
 - [x] - local retrieval substrate: files + vector stores + lexical search ([детали](#task-retrieval-substrate-local))
@@ -895,8 +901,69 @@ Definition of done:
   passthrough and client `tool_search_output` follow-up
 - stored retrieve replay does not lose `tool_search_call` /
   `tool_search_output`
-- backlog/OpenAPI wording stays conservative and does not claim shim-local
-  runtime or dedicated `response.tool_search.*` events
+- backlog/OpenAPI wording stays conservative and, within this passthrough/store
+  slice, does not claim dedicated `response.tool_search.*` events; shim-local
+  runtime is tracked separately below
+
+## <a id="task-local-tool-search-runtime"></a>Shim-local hosted/server `tool_search` runtime subset
+
+Почему это отдельно:
+
+- public Tool Search guide на 13 апреля 2026 описывает hosted/server
+  `tool_search` как same-response load step, но не задаёт отдельную
+  `response.tool_search.*` SSE family
+- contract slice выше уже закрывает proxy/store/retrieve semantics, а local
+  runtime здесь — отдельный useful subset поверх `responses.mode`
+- полезный прагматичный шаг — поддержать hosted/server `tool_search` для уже
+  объявленных deferred functions / namespaces, не claim-я client runtime,
+  MCP/server discovery, или exact hosted planner parity
+
+Что входит:
+
+- shim-local `responses.mode=prefer_local|local_only` accepts one
+  `tool_search` tool plus deferred top-level functions and all-deferred
+  namespaces
+- shim builds deterministic search queries from current input, loads a bounded
+  subset of matching deferred tools, emits `tool_search_call` and
+  `tool_search_output`, and then continues the same turn through the existing
+  local tool loop
+- created/stored stream replay remains generic-only through
+  `response.output_item.*`; shim does not invent unsupported
+  `response.tool_search.*`
+- previous local responses that contain `tool_search_call` /
+  `tool_search_output` no longer break follow-up local tool-loop requests;
+  those items are ignored when projecting chat-completions messages
+
+Что не входит:
+
+- client-executed `tool_search` runtime
+- shim-local MCP/server discovery or loading arbitrary tools not declared in
+  the request
+- mixed namespace subsets where some nested functions are immediately callable
+  and others are deferred
+- exact hosted planner/ranking parity or dedicated `response.tool_search.*`
+  SSE events
+
+Статус на 13 апреля 2026:
+
+- закрыт narrow hosted/server local subset for deferred top-level functions and
+  all-deferred namespaces
+- client execution remains proxy-only
+- coverage есть на local non-streaming create, namespace loading, follow-up
+  lineage safety via `previous_response_id`, and local create-stream generic
+  replay
+
+Definition of done:
+
+- local create emits `tool_search_call`, `tool_search_output`, and then loaded
+  `function_call` items when the deterministic planner finds matching deferred
+  tools
+- local namespace path preserves namespace-shaped `tool_search_output` and
+  annotates resulting `function_call.namespace`
+- previous local responses containing `tool_search_*` do not break follow-up
+  local tool-loop turns
+- backlog/OpenAPI wording stays conservative about client mode, mixed
+  namespaces, and dedicated SSE families
 
 ## <a id="task-streaming-replay-hosted"></a>Hosted/native tool-specific SSE replay beyond core shim item families
 

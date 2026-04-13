@@ -199,10 +199,12 @@ paths:
           subset, not a claim of exact hosted annotation placement parity
         - docs-backed proxy/upstream contract accepts hosted and client
           `tool_search`; client follow-up may send `tool_search_output`
-          items in `input`, and upstream-returned `tool_search_call` /
-          `tool_search_output` items are preserved as typed response items;
-          shim does not yet claim a shim-local `tool_search` runtime in
-          `responses.mode=local_only`
+          items in `input`, upstream-returned `tool_search_call` /
+          `tool_search_output` items are preserved as typed response items,
+          and shim-local `responses.mode=prefer_local|local_only` now
+          supports a hosted/server `tool_search` subset over deferred
+          top-level functions and all-deferred namespaces while client
+          execution remains proxy-only
         - live upstream traces now confirm that ordinary Python/tool errors in
           Code Interpreter complete as `response.status=completed` with
           `code_interpreter_call.status=completed`, empty `outputs`, no

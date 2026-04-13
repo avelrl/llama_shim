@@ -1428,6 +1428,274 @@ func TestResponsesGetStreamReplaysToolSearchAsGenericOutputItemReplay(t *testing
 	require.Equal(t, "completed", asStringAny(done[1].Data["item"].(map[string]any)["status"]))
 }
 
+func TestResponsesCreateLocalToolSearchLoadsDeferredFunctionAndCallsIt(t *testing.T) {
+	app := testutil.NewTestAppWithResponsesMode(t, config.ResponsesModeLocalOnly)
+
+	response := postResponse(t, app, map[string]any{
+		"model": "test-model",
+		"store": true,
+		"input": "Find the shipping ETA tool and use it for order_42.",
+		"tools": []map[string]any{
+			{
+				"type":        "tool_search",
+				"description": "Search deferred project tools.",
+			},
+			{
+				"type":          "function",
+				"name":          "get_shipping_eta",
+				"description":   "Look up shipping ETA details for an order.",
+				"defer_loading": true,
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"order_id": map[string]any{"type": "string"},
+					},
+					"required":             []string{"order_id"},
+					"additionalProperties": false,
+				},
+			},
+			{
+				"type":          "function",
+				"name":          "lookup_exchange_rate",
+				"description":   "Look up currency exchange rates for a given pair.",
+				"defer_loading": true,
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"pair": map[string]any{"type": "string"},
+					},
+					"required":             []string{"pair"},
+					"additionalProperties": false,
+				},
+			},
+		},
+		"tool_choice": "required",
+	})
+
+	require.Len(t, response.Output, 3)
+	require.Equal(t, "tool_search_call", response.Output[0].Type)
+	require.Equal(t, "tool_search_output", response.Output[1].Type)
+	require.Equal(t, "function_call", response.Output[2].Type)
+
+	searchCall := response.Output[0].Map()
+	require.Equal(t, "server", asStringAny(searchCall["execution"]))
+	require.Nil(t, searchCall["call_id"])
+	arguments, ok := searchCall["arguments"].(map[string]any)
+	require.True(t, ok)
+	paths, ok := arguments["paths"].([]any)
+	require.True(t, ok)
+	require.Len(t, paths, 1)
+	require.Equal(t, "get_shipping_eta", asStringAny(paths[0]))
+	queries, ok := arguments["queries"].([]any)
+	require.True(t, ok)
+	require.NotEmpty(t, queries)
+
+	searchOutput := response.Output[1].Map()
+	require.Equal(t, "server", asStringAny(searchOutput["execution"]))
+	loadedTools, ok := searchOutput["tools"].([]any)
+	require.True(t, ok)
+	require.Len(t, loadedTools, 1)
+	firstTool, ok := loadedTools[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "function", asStringAny(firstTool["type"]))
+	require.Equal(t, "get_shipping_eta", asStringAny(firstTool["name"]))
+
+	functionCall := response.Output[2].Map()
+	require.Equal(t, "get_shipping_eta", asStringAny(functionCall["name"]))
+	require.Equal(t, `{"order_id":"order_42"}`, asStringAny(functionCall["arguments"]))
+}
+
+func TestResponsesCreateLocalToolSearchNamespaceLoadsDeferredFunction(t *testing.T) {
+	app := testutil.NewTestAppWithResponsesMode(t, config.ResponsesModeLocalOnly)
+
+	response := postResponse(t, app, map[string]any{
+		"model": "test-model",
+		"store": true,
+		"input": "Find the shipping ETA namespace tool and use it for order_42.",
+		"tools": []map[string]any{
+			{
+				"type":        "tool_search",
+				"description": "Search deferred project tools.",
+			},
+			{
+				"type":        "namespace",
+				"name":        "shipping_ops",
+				"description": "Tools for shipping ETA and tracking lookups.",
+				"tools": []map[string]any{
+					{
+						"type":          "function",
+						"name":          "get_shipping_eta",
+						"description":   "Look up shipping ETA details for an order.",
+						"defer_loading": true,
+						"parameters": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"order_id": map[string]any{"type": "string"},
+							},
+							"required":             []string{"order_id"},
+							"additionalProperties": false,
+						},
+					},
+					{
+						"type":          "function",
+						"name":          "get_tracking_events",
+						"description":   "List tracking events for an order.",
+						"defer_loading": true,
+						"parameters": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"order_id": map[string]any{"type": "string"},
+							},
+							"required":             []string{"order_id"},
+							"additionalProperties": false,
+						},
+					},
+				},
+			},
+		},
+		"tool_choice": map[string]any{"type": "tool_search"},
+	})
+
+	require.Len(t, response.Output, 3)
+	require.Equal(t, "tool_search_call", response.Output[0].Type)
+	require.Equal(t, "tool_search_output", response.Output[1].Type)
+	require.Equal(t, "function_call", response.Output[2].Type)
+
+	searchOutput := response.Output[1].Map()
+	loadedTools, ok := searchOutput["tools"].([]any)
+	require.True(t, ok)
+	require.Len(t, loadedTools, 1)
+	namespace, ok := loadedTools[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "namespace", asStringAny(namespace["type"]))
+	require.Equal(t, "shipping_ops", asStringAny(namespace["name"]))
+	nested, ok := namespace["tools"].([]any)
+	require.True(t, ok)
+	require.Len(t, nested, 2)
+
+	functionCall := response.Output[2].Map()
+	require.Equal(t, "get_shipping_eta", asStringAny(functionCall["name"]))
+	require.Equal(t, "shipping_ops", asStringAny(functionCall["namespace"]))
+	require.Equal(t, `{"order_id":"order_42"}`, asStringAny(functionCall["arguments"]))
+}
+
+func TestResponsesCreateLocalToolSearchFollowupSkipsPriorToolSearchItemsInLocalToolLoop(t *testing.T) {
+	app := testutil.NewTestAppWithResponsesMode(t, config.ResponsesModeLocalOnly)
+
+	first := postResponse(t, app, map[string]any{
+		"model": "test-model",
+		"store": true,
+		"input": "Find the shipping ETA tool and use it for order_42.",
+		"tools": []map[string]any{
+			{
+				"type":        "tool_search",
+				"description": "Search deferred project tools.",
+			},
+			{
+				"type":          "function",
+				"name":          "get_shipping_eta",
+				"description":   "Look up shipping ETA details for an order.",
+				"defer_loading": true,
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"order_id": map[string]any{"type": "string"},
+					},
+					"required":             []string{"order_id"},
+					"additionalProperties": false,
+				},
+			},
+		},
+		"tool_choice": "required",
+	})
+
+	require.Len(t, first.Output, 3)
+	callID := asStringAny(first.Output[2].Map()["call_id"])
+	require.NotEmpty(t, callID)
+
+	second := postResponse(t, app, map[string]any{
+		"model":                "test-model",
+		"store":                true,
+		"previous_response_id": first.ID,
+		"input": []map[string]any{
+			{
+				"type":    "function_call_output",
+				"call_id": callID,
+				"output":  "ETA tomorrow",
+			},
+		},
+	})
+
+	require.Equal(t, "ETA tomorrow", second.OutputText)
+	require.Len(t, second.Output, 1)
+	require.Equal(t, "message", second.Output[0].Type)
+}
+
+func TestResponsesCreateLocalToolSearchStreamUsesGenericReplay(t *testing.T) {
+	app := testutil.NewTestAppWithResponsesMode(t, config.ResponsesModeLocalOnly)
+
+	req, err := http.NewRequest(http.MethodPost, app.Server.URL+"/v1/responses", bytes.NewReader(mustJSON(t, map[string]any{
+		"model":  "test-model",
+		"store":  true,
+		"stream": true,
+		"input":  "Find the shipping ETA tool and use it for order_42.",
+		"tools": []map[string]any{
+			{
+				"type":        "tool_search",
+				"description": "Search deferred project tools.",
+			},
+			{
+				"type":          "function",
+				"name":          "get_shipping_eta",
+				"description":   "Look up shipping ETA details for an order.",
+				"defer_loading": true,
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"order_id": map[string]any{"type": "string"},
+					},
+					"required":             []string{"order_id"},
+					"additionalProperties": false,
+				},
+			},
+		},
+		"tool_choice": "required",
+	})))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Contains(t, resp.Header.Get("Content-Type"), "text/event-stream")
+
+	events := readSSEEvents(t, resp.Body)
+	require.Contains(t, eventTypes(events), "response.output_item.added")
+	require.Contains(t, eventTypes(events), "response.output_item.done")
+	require.Contains(t, eventTypes(events), "response.function_call_arguments.done")
+	for _, eventType := range eventTypes(events) {
+		require.NotContains(t, eventType, "response.tool_search")
+	}
+
+	added := findEvents(events, "response.output_item.added")
+	require.Len(t, added, 3)
+	require.Equal(t, "tool_search_call", asStringAny(added[0].Data["item"].(map[string]any)["type"]))
+	require.Equal(t, "tool_search_output", asStringAny(added[1].Data["item"].(map[string]any)["type"]))
+	require.Equal(t, "function_call", asStringAny(added[2].Data["item"].(map[string]any)["type"]))
+
+	completed := findEvent(t, events, "response.completed").Data
+	responsePayload, ok := completed["response"].(map[string]any)
+	require.True(t, ok)
+	output, ok := responsePayload["output"].([]any)
+	require.True(t, ok)
+	require.Len(t, output, 3)
+	require.Equal(t, "tool_search_call", asStringAny(output[0].(map[string]any)["type"]))
+	require.Equal(t, "tool_search_output", asStringAny(output[1].(map[string]any)["type"]))
+	require.Equal(t, "function_call", asStringAny(output[2].(map[string]any)["type"]))
+}
+
 func TestResponsesGetStreamSupportsStartingAfter(t *testing.T) {
 	app := testutil.NewTestApp(t)
 

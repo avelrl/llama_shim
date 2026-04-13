@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 
@@ -135,49 +134,15 @@ func (h *responseHandler) createLocalToolLoopResponse(ctx context.Context, reque
 	if err != nil {
 		return domain.Response{}, err
 	}
-	if _, err := h.service.PrepareLocalResponseText(input, prepared.ContextItems); err != nil {
-		return domain.Response{}, err
-	}
-
-	responseID, err := domain.NewPrefixedID("resp")
+	response, err := h.runPreparedLocalToolLoopResponse(ctx, input, prepared, rawFields)
 	if err != nil {
-		return domain.Response{}, fmt.Errorf("generate response id: %w", err)
-	}
-
-	repairPrompt := ""
-	for attempt := 1; ; attempt++ {
-		chatBody, plan, err := buildLocalToolLoopChatCompletionBody(rawFields, prepared.ContextItems, prepared.NormalizedInput, prepared.ToolCallRefs, h.customToolsMode, h.codexCompatibilityEnabled, h.forceCodexToolChoiceRequired, repairPrompt)
-		if err != nil {
-			return domain.Response{}, err
-		}
-
-		rawResponse, err := h.proxy.client.CreateChatCompletion(ctx, chatBody)
-		if err != nil {
-			return domain.Response{}, err
-		}
-
-		response, err := parseLocalToolLoopChatCompletion(rawResponse, responseID, input.Model, input.PreviousResponseID, input.ConversationID, plan)
-		if err == nil {
-			if err := enforceToolChoiceContract(response, plan.ToolChoiceContract); err != nil {
-				return domain.Response{}, err
-			}
-			response, err = h.service.FinalizeLocalResponse(input, prepared.ContextItems, response)
-			if err != nil {
-				return domain.Response{}, err
-			}
-			return h.service.SaveExternalResponse(ctx, prepared, input, response)
-		}
-
-		var validationErr *constrainedCustomToolValidationError
-		if errors.As(err, &validationErr) && hasConstrainedCustomTools(plan.Bridge) && attempt < maxLocalConstrainedCustomToolRepairAttempts {
-			repairPrompt = buildConstrainedCustomToolRepairPrompt(validationErr)
-			continue
-		}
-		if errors.As(err, &validationErr) {
-			return domain.Response{}, buildConstrainedCustomToolRepairExhaustedError(validationErr, attempt)
-		}
 		return domain.Response{}, err
 	}
+	response, err = h.service.FinalizeLocalResponse(input, prepared.ContextItems, response)
+	if err != nil {
+		return domain.Response{}, err
+	}
+	return h.service.SaveExternalResponse(ctx, prepared, input, response)
 }
 
 func buildLocalToolLoopChatCompletionBody(rawFields map[string]json.RawMessage, contextItems []domain.Item, currentInput []domain.Item, refs map[string]domain.ToolCallReference, customToolsMode string, codexCompatibilityEnabled bool, forceCodexToolChoiceRequired bool, repairPrompt string) ([]byte, customToolTransportPlan, error) {
@@ -350,6 +315,8 @@ func buildChatCompletionMessagesFromItems(items []domain.Item) ([]map[string]any
 				"content":      output,
 			})
 			lastTextMessage = -1
+		case "tool_search_call", "tool_search_output":
+			continue
 		default:
 			return nil, domain.ErrUnsupportedShape
 		}
