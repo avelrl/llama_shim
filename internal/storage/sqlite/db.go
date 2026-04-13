@@ -15,6 +15,7 @@ import (
 	"llama_shim/internal/storage/migrations"
 
 	_ "modernc.org/sqlite"
+	_ "modernc.org/sqlite/vec"
 )
 
 const defaultBusyTimeout = 5 * time.Second
@@ -40,7 +41,7 @@ func OpenWithOptions(ctx context.Context, path string, options OpenOptions) (*St
 	if err != nil {
 		return nil, fmt.Errorf("normalize open options: %w", err)
 	}
-	retrievalBackend, err := newRetrievalBackend(options.Retrieval)
+	retrievalBackend, err := newRetrievalBackendWithOptions(options.Retrieval, options.Embedder)
 	if err != nil {
 		return nil, fmt.Errorf("build retrieval backend: %w", err)
 	}

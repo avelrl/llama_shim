@@ -2,6 +2,7 @@ package sqlite_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -11,6 +12,24 @@ import (
 	"llama_shim/internal/storage/sqlite"
 	"llama_shim/internal/testutil"
 )
+
+type fakeEmbedder struct{}
+
+func (fakeEmbedder) EmbedTexts(_ context.Context, texts []string) ([][]float32, error) {
+	out := make([][]float32, 0, len(texts))
+	for _, text := range texts {
+		lower := strings.ToLower(text)
+		switch {
+		case strings.Contains(lower, "banana"):
+			out = append(out, []float32{1, 0, 0})
+		case strings.Contains(lower, "ocean"):
+			out = append(out, []float32{0, 1, 0})
+		default:
+			out = append(out, []float32{0, 0, 1})
+		}
+	}
+	return out, nil
+}
 
 func TestStoreSaveResponseRoundTripAndLineage(t *testing.T) {
 	t.Parallel()
@@ -88,7 +107,7 @@ func TestOpenWithOptionsRejectsUnsupportedRetrievalBackend(t *testing.T) {
 	require.ErrorContains(t, err, `unsupported retrieval index backend "bogus"`)
 }
 
-func TestOpenWithOptionsRejectsUnimplementedSQLiteVecBackend(t *testing.T) {
+func TestOpenWithOptionsRejectsSQLiteVecBackendWithoutEmbedder(t *testing.T) {
 	t.Parallel()
 
 	_, err := sqlite.OpenWithOptions(context.Background(), testutil.TempDBPath(t), sqlite.OpenOptions{
@@ -97,7 +116,70 @@ func TestOpenWithOptionsRejectsUnimplementedSQLiteVecBackend(t *testing.T) {
 		},
 	})
 	require.Error(t, err)
-	require.ErrorContains(t, err, `retrieval index backend "sqlite_vec" is not implemented yet`)
+	require.ErrorContains(t, err, `retrieval index backend "sqlite_vec" requires a configured embedder backend`)
+}
+
+func TestStoreSearchVectorStoreSQLiteVecBackend(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store, err := sqlite.OpenWithOptions(ctx, testutil.TempDBPath(t), sqlite.OpenOptions{
+		Retrieval: retrieval.Config{
+			IndexBackend: retrieval.IndexBackendSQLiteVec,
+		},
+		Embedder: fakeEmbedder{},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+
+	fileBanana := domain.StoredFile{
+		ID:        "file_banana",
+		Filename:  "banana.txt",
+		Purpose:   "assistants",
+		Bytes:     int64(len("Banana smoothie recipe with ripe banana and yogurt.")),
+		CreatedAt: 1712059200,
+		Status:    "processed",
+		Content:   []byte("Banana smoothie recipe with ripe banana and yogurt."),
+	}
+	fileOcean := domain.StoredFile{
+		ID:        "file_ocean",
+		Filename:  "ocean.txt",
+		Purpose:   "assistants",
+		Bytes:     int64(len("Ocean tides and marine currents reference.")),
+		CreatedAt: 1712059201,
+		Status:    "processed",
+		Content:   []byte("Ocean tides and marine currents reference."),
+	}
+	require.NoError(t, store.SaveFile(ctx, fileBanana))
+	require.NoError(t, store.SaveFile(ctx, fileOcean))
+
+	vectorStore := domain.StoredVectorStore{
+		ID:           "vs_semantic",
+		Name:         "Semantic Store",
+		Metadata:     map[string]string{},
+		CreatedAt:    1712059202,
+		LastActiveAt: 1712059202,
+	}
+	require.NoError(t, store.SaveVectorStore(ctx, vectorStore))
+
+	_, err = store.AttachFileToVectorStore(ctx, vectorStore.ID, fileBanana.ID, map[string]any{}, domain.DefaultFileChunkingStrategy(), 1712059203)
+	require.NoError(t, err)
+	_, err = store.AttachFileToVectorStore(ctx, vectorStore.ID, fileOcean.ID, map[string]any{}, domain.DefaultFileChunkingStrategy(), 1712059204)
+	require.NoError(t, err)
+
+	page, err := store.SearchVectorStore(ctx, domain.VectorStoreSearchQuery{
+		VectorStoreID:  vectorStore.ID,
+		Queries:        []string{"banana nutrition"},
+		MaxNumResults:  5,
+		RawSearchQuery: "banana nutrition",
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, page.Results)
+	require.Equal(t, fileBanana.ID, page.Results[0].FileID)
+	require.Equal(t, "banana.txt", page.Results[0].Filename)
+	require.Greater(t, page.Results[0].Score, 0.9)
 }
 
 func TestStoreSaveChatCompletionRoundTripAndList(t *testing.T) {

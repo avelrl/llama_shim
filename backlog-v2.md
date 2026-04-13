@@ -90,7 +90,10 @@
   `POST /v1/vector_stores/{id}/search`
 - local `vector_stores` search уже usable end-to-end без upstream storage:
   UTF-8 text files chunk-ятся и индексируются локально, search поддерживает
-  attribute filters и deterministic lexical ranking
+  attribute filters, deterministic lexical ranking by default, и optional
+  exact dense semantic ranking when
+  `retrieval.index.backend=sqlite_vec` plus a configured embedder backend are
+  enabled
 - local `/v1/responses` теперь умеет shim-owned `file_search` execution over
   local `vector_stores` в pragmatic subset:
   один `file_search` tool, local lexical retrieval, stored/streaming
@@ -153,7 +156,8 @@
 - [x] - local retrieval substrate: files + vector stores + lexical search ([детали](#task-retrieval-substrate-local))
 - [x] - retrieval-compatible local `file_search` execution inside `/v1/responses` ([детали](#task-retrieval-layer))
 - [x] - dev-only local `code_interpreter` execution inside `/v1/responses` ([детали](#task-local-code-interpreter-runtime))
-- [ ] - true semantic/vector retrieval backend behind local `vector_stores` ([детали](#task-retrieval-semantic-backend))
+- [x] - exact dense semantic/vector retrieval subset behind local `vector_stores` ([детали](#task-retrieval-semantic-backend))
+- [ ] - hybrid/reranked retrieval parity behind local `vector_stores` ([детали](#task-retrieval-semantic-backend))
 - [ ] - parity для hosted/native Responses tools (`web_search`, `computer_use`, `code_interpreter`, `image_generation`, `remote MCP`, `tool_search`) ([детали](#task-hosted-tools-parity))
 - [x] - local stored Chat Completions read surface for explicit `store=true` non-streaming proxy completions ([детали](#task-chat-stored-surface-local))
 - [x] - `/readyz` checks SQLite and upstream llama backend readiness ([детали](#task-ops-hardening))
@@ -1005,47 +1009,47 @@ Definition of done:
   scoring, но и ingestion/indexing/runtime architecture
 - это уже не “дожать пару полей”, а отдельная backend-capability milestone
 
-Что должно появиться:
+Что закрыто сейчас:
 
-- настоящая embedding/vector indexing pipeline за local `vector_stores`
-- retrieval path, который ищет по embeddings similarity, а не только по
-  tokenized lexical chunks
-- optional reranking layer поверх dense/sparse retrieval, если она окупается
-- migration path, при котором внешний OpenAI-shaped surface не меняется:
+- phase 0 seam теперь реально заведён:
+  `Embedder` отделён от retrieval/index backend, чтобы можно было начать со
+  SQLite-first implementation и потом отдельно подменять generation и search
+  engine
+- local store теперь умеет optional exact dense semantic retrieval subset:
+  `retrieval.index.backend=sqlite_vec` включает persisted chunk embeddings и
+  cosine-similarity ranking через SQLite-native vector functions
+- embeddings generation тоже стала explicit backend choice:
+  `retrieval.embedder.backend=openai_compatible|embedanything`
+  с shared OpenAI-compatible `/v1/embeddings` surface, so a future local
+  sidecar/server can be swapped in without changing the retrieval contract
+- lexical retrieval остаётся default и fallback backend, так что migration не
+  ломает текущий external OpenAI-shaped surface:
   `files`, `vector_stores`, `vector_store.search`, `file_search`
   остаются теми же, меняется только engine под ними
 
 Что уже зафиксировано как сознательное ограничение текущего state:
 
-- local `vector_stores` сейчас contract-shaped, но не являются настоящим
-  managed vector database
-- local `file_search` использует deterministic lexical retrieval over
-  normalized UTF-8 chunks
+- current semantic subset это exact dense search, не ANN/hybrid/reranked
+  pipeline уровня hosted OpenAI file search
+- local `file_search` по умолчанию всё ещё lexical; semantic path включается
+  только explicit retrieval config
+- current semantic subset зависит от configured embedder backend; без него
+  `sqlite_vec` backend intentionally does not start
 - final assistant `message` не претендует на hosted `file_citation` parity
 
 Definition of done:
 
-- local `vector_stores` используют реальный semantic/vector search backend
-- backlog/OpenAPI wording можно ужесточить с “lexical MVP” до
-  “semantic retrieval subset” без overclaim про full OpenAI hosted parity
-- migration не ломает уже существующий external shim contract
+- local `vector_stores` уже используют реальный semantic/vector search backend
+  в exact-dense subset, without breaking the external shim contract
+- remaining open work теперь отдельная задача качества, а не “semantic backend
+  отсутствует вообще”
 
 Практический decomposition, когда вернемся:
 
-- phase 0: split the architecture into two explicit seams:
-  `Embedder` for vector generation and `VectorIndex` / retrieval backend for
-  storage and search, so we can start with one local engine and swap either
-  side later without changing the OpenAI-shaped external contract
-- phase 1: embeddings generation + local chunk/index schema
-- phase 1a: first concrete target is a SQLite-native vector index
-  (`sqlite-vec` or equivalent) behind the existing SQLite store, because the
-  current lexical MVP already lives in SQLite and this is the smallest
-  architectural step forward
-- phase 1b: keep embeddings generation pluggable from day one, so a future
-  local sidecar/server such as EmbedAnything can be added as an embedder
-  backend without forcing a storage rewrite
-- phase 2: search path switch from lexical-only to dense or hybrid retrieval
-- phase 3: optional reranking and better result shaping for `file_search_call`
+- phase 2: move from exact dense scan to indexed ANN path where it is worth
+  the complexity
+- phase 3: hybrid retrieval and/or reranking instead of pure dense cosine
+  ranking
 - phase 4: revisit citations/annotations parity for final assistant messages
 
 ## <a id="task-local-code-interpreter-runtime"></a>Dev-only local `code_interpreter` execution inside `/v1/responses`

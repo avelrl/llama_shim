@@ -23,10 +23,29 @@ import (
 
 	"llama_shim/internal/config"
 	"llama_shim/internal/domain"
+	"llama_shim/internal/retrieval"
 	"llama_shim/internal/sandbox"
 	"llama_shim/internal/storage/sqlite"
 	"llama_shim/internal/testutil"
 )
+
+type semanticTestEmbedder struct{}
+
+func (semanticTestEmbedder) EmbedTexts(_ context.Context, texts []string) ([][]float32, error) {
+	out := make([][]float32, 0, len(texts))
+	for _, text := range texts {
+		lower := strings.ToLower(text)
+		switch {
+		case strings.Contains(lower, "banana"):
+			out = append(out, []float32{1, 0, 0})
+		case strings.Contains(lower, "ocean"):
+			out = append(out, []float32{0, 1, 0})
+		default:
+			out = append(out, []float32{0, 0, 1})
+		}
+	}
+	return out, nil
+}
 
 func TestResponsesStoreAndGet(t *testing.T) {
 	app := testutil.NewTestApp(t)
@@ -4550,6 +4569,42 @@ func TestVectorStoreAttachBinaryFileReturnsFailedStatus(t *testing.T) {
 	})
 	require.Equal(t, http.StatusOK, status)
 	require.Empty(t, search["data"].([]any))
+}
+
+func TestVectorStoreSearchUsesSQLiteVecSemanticBackend(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		RetrievalConfig: retrieval.Config{
+			IndexBackend: retrieval.IndexBackendSQLiteVec,
+		},
+		RetrievalEmbedder: semanticTestEmbedder{},
+	})
+
+	status, uploadedBanana := uploadFile(t, app, "banana.txt", "assistants", []byte("Banana smoothie recipe and ripe banana notes."), nil)
+	require.Equal(t, http.StatusOK, status)
+	fileBananaID := asStringAny(uploadedBanana["id"])
+
+	status, uploadedOcean := uploadFile(t, app, "ocean.txt", "assistants", []byte("Ocean tides and marine currents reference."), nil)
+	require.Equal(t, http.StatusOK, status)
+	fileOceanID := asStringAny(uploadedOcean["id"])
+
+	status, created := rawRequest(t, app, http.MethodPost, "/v1/vector_stores", map[string]any{
+		"name":     "Semantic",
+		"file_ids": []string{fileBananaID, fileOceanID},
+	})
+	require.Equal(t, http.StatusOK, status)
+	vectorStoreID := asStringAny(created["id"])
+
+	status, search := rawRequest(t, app, http.MethodPost, "/v1/vector_stores/"+vectorStoreID+"/search", map[string]any{
+		"query":           "banana nutrition",
+		"max_num_results": 5,
+	})
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, "vector_store.search_results.page", asStringAny(search["object"]))
+	require.NotEmpty(t, search["data"].([]any))
+	result := search["data"].([]any)[0].(map[string]any)
+	require.Equal(t, fileBananaID, asStringAny(result["file_id"]))
+	require.Equal(t, "banana.txt", asStringAny(result["filename"]))
+	require.Greater(t, result["score"].(float64), 0.9)
 }
 
 func TestResponsesCreateExecutesLocalFileSearch(t *testing.T) {

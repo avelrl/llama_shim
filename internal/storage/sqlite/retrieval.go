@@ -336,6 +336,7 @@ func (s *Store) SaveVectorStoreFile(ctx context.Context, file domain.StoredVecto
 	if err := s.retrieval.IndexVectorStoreFile(ctx, tx, indexVectorStoreFileParams{
 		VectorStoreID: file.VectorStoreID,
 		FileID:        file.ID,
+		CreatedAt:     file.CreatedAt,
 	}); err != nil {
 		return fmt.Errorf("index vector store file: %w", err)
 	}

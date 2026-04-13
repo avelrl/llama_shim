@@ -12,6 +12,7 @@ import (
 	"llama_shim/internal/config"
 	"llama_shim/internal/httpapi"
 	"llama_shim/internal/llama"
+	"llama_shim/internal/retrieval"
 	"llama_shim/internal/sandbox"
 	"llama_shim/internal/service"
 	"llama_shim/internal/storage/sqlite"
@@ -58,6 +59,8 @@ type TestAppOptions struct {
 	CodexCompatibilityEnabled             bool
 	ForceToolChoiceRequired               bool
 	LlamaBaseURL                          string
+	RetrievalConfig                       retrieval.Config
+	RetrievalEmbedder                     retrieval.Embedder
 	CodeInterpreterBackend                sandbox.Backend
 	CodeInterpreterInputFileURLPolicy     string
 	CodeInterpreterInputFileURLAllowHosts []string
@@ -73,7 +76,10 @@ func NewTestAppWithOptions(t *testing.T, options TestAppOptions) *TestApp {
 		llamaServer = NewFakeLlamaServer(t)
 		llamaBaseURL = llamaServer.URL
 	}
-	store, err := sqlite.Open(context.Background(), TempDBPath(t))
+	store, err := sqlite.OpenWithOptions(context.Background(), TempDBPath(t), sqlite.OpenOptions{
+		Retrieval: options.RetrievalConfig,
+		Embedder:  options.RetrievalEmbedder,
+	})
 	if err != nil {
 		t.Fatalf("open test sqlite: %v", err)
 	}
