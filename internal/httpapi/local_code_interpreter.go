@@ -173,6 +173,19 @@ type localCodeInterpreterExecutionResult struct {
 	Logs           string
 }
 
+type localCodeInterpreterExecutionFailure struct {
+	ContainerID string
+	Logs        string
+	Message     string
+}
+
+func (f *localCodeInterpreterExecutionFailure) Error() string {
+	if f == nil {
+		return ""
+	}
+	return strings.TrimSpace(f.Message)
+}
+
 type localCodeInterpreterPlan struct {
 	UseCodeInterpreter bool   `json:"use_code_interpreter"`
 	Code               string `json:"code"`
@@ -264,6 +277,10 @@ func (h *responseHandler) createLocalCodeInterpreterResponse(ctx context.Context
 
 	execution, err := h.executeLocalCodeInterpreter(ctx, prepared, config.Container, inputFiles, plan.Code)
 	if err != nil {
+		var execFailure *localCodeInterpreterExecutionFailure
+		if errors.As(err, &execFailure) {
+			return h.buildLocalCodeInterpreterFailedResponse(ctx, prepared, input, config, plan.Code, execFailure)
+		}
 		return domain.Response{}, err
 	}
 
@@ -304,6 +321,47 @@ func (h *responseHandler) createLocalCodeInterpreterResponse(ctx context.Context
 		return domain.Response{}, err
 	}
 
+	return h.service.SaveExternalResponse(ctx, prepared, input, response)
+}
+
+func (h *responseHandler) buildLocalCodeInterpreterFailedResponse(ctx context.Context, prepared service.PreparedResponseContext, input service.CreateResponseInput, config localCodeInterpreterConfig, code string, failure *localCodeInterpreterExecutionFailure) (domain.Response, error) {
+	generationContext, err := buildLocalCodeInterpreterExecutionContext(prepared, code, failure.Logs, nil)
+	if err != nil {
+		return domain.Response{}, err
+	}
+	if _, err := h.service.PrepareLocalResponseText(input, generationContext); err != nil {
+		return domain.Response{}, err
+	}
+
+	responseID, err := domain.NewPrefixedID("resp")
+	if err != nil {
+		return domain.Response{}, fmt.Errorf("generate response id: %w", err)
+	}
+	errorPayload, err := marshalLocalCodeInterpreterResponseError(failure.Message)
+	if err != nil {
+		return domain.Response{}, err
+	}
+	codeInterpreterItem, err := buildLocalCodeInterpreterCallItemWithStatus(code, failure.ContainerID, failure.Logs, nil, config.IncludeOutputs, "failed")
+	if err != nil {
+		return domain.Response{}, err
+	}
+
+	response := domain.Response{
+		ID:         responseID,
+		Object:     "response",
+		CreatedAt:  domain.NowUTC().Unix(),
+		Status:     "failed",
+		Error:      errorPayload,
+		Model:      input.Model,
+		Output:     []domain.Item{codeInterpreterItem},
+		Metadata:   map[string]string{},
+		OutputText: "",
+	}
+
+	response, err = h.service.FinalizeLocalResponse(input, generationContext, response)
+	if err != nil {
+		return domain.Response{}, err
+	}
 	return h.service.SaveExternalResponse(ctx, prepared, input, response)
 }
 
@@ -590,14 +648,21 @@ func (h *responseHandler) executeLocalCodeInterpreter(ctx context.Context, prepa
 	case "explicit":
 		session, err := manager.ensureContainerSession(ctx, container.SessionID)
 		if err != nil {
-			return localCodeInterpreterExecutionResult{}, err
+			if errors.Is(err, sandbox.ErrDisabled) {
+				return localCodeInterpreterExecutionResult{}, localCodeInterpreterDisabledError()
+			}
+			var validationErr *domain.ValidationError
+			if errors.As(err, &validationErr) {
+				return localCodeInterpreterExecutionResult{}, err
+			}
+			return localCodeInterpreterExecutionResult{}, newLocalCodeInterpreterExecutionFailure(container.SessionID, "", err)
 		}
 		result, err := h.executeLocalCodeInterpreterSession(ctx, session.ID, inputFiles, code)
 		if err != nil {
 			if errors.Is(err, sandbox.ErrDisabled) {
 				return localCodeInterpreterExecutionResult{}, localCodeInterpreterDisabledError()
 			}
-			return localCodeInterpreterExecutionResult{}, fmt.Errorf("execute shim-local code_interpreter via %s backend: %w", h.localCodeInterpreter.Backend.Kind(), err)
+			return localCodeInterpreterExecutionResult{}, newLocalCodeInterpreterExecutionFailure(session.ID, result.Logs, err)
 		}
 		if touchErr := h.localCodeInterpreterSessions.TouchCodeInterpreterSession(ctx, session.ID, domain.FormatTime(domain.NowUTC())); touchErr != nil {
 			return localCodeInterpreterExecutionResult{}, touchErr
@@ -627,19 +692,24 @@ func (h *responseHandler) executeLocalCodeInterpreter(ctx context.Context, prepa
 			if errors.Is(execErr, sandbox.ErrDisabled) {
 				return localCodeInterpreterExecutionResult{}, localCodeInterpreterDisabledError()
 			}
-			return localCodeInterpreterExecutionResult{}, fmt.Errorf("execute shim-local code_interpreter via %s backend: %w", h.localCodeInterpreter.Backend.Kind(), execErr)
+			return localCodeInterpreterExecutionResult{}, newLocalCodeInterpreterExecutionFailure(session.ID, result.Logs, execErr)
 		}
 		var validationErr *domain.ValidationError
 		if errors.As(err, &validationErr) {
 			canReuse = false
+		} else if errors.Is(err, sandbox.ErrDisabled) {
+			return localCodeInterpreterExecutionResult{}, localCodeInterpreterDisabledError()
 		} else {
-			return localCodeInterpreterExecutionResult{}, err
+			return localCodeInterpreterExecutionResult{}, newLocalCodeInterpreterExecutionFailure(sessionID, "", err)
 		}
 	}
 
 	session, err := manager.createContainer(ctx, "Auto container", container.MemoryLimit, defaultLocalCodeInterpreterContainerExpiryMins)
 	if err != nil {
-		return localCodeInterpreterExecutionResult{}, err
+		if errors.Is(err, sandbox.ErrDisabled) {
+			return localCodeInterpreterExecutionResult{}, localCodeInterpreterDisabledError()
+		}
+		return localCodeInterpreterExecutionResult{}, newLocalCodeInterpreterExecutionFailure("", "", err)
 	}
 	result, err := h.executeLocalCodeInterpreterSession(ctx, session.ID, inputFiles, code)
 	if err != nil {
@@ -647,10 +717,53 @@ func (h *responseHandler) executeLocalCodeInterpreter(ctx context.Context, prepa
 		if errors.Is(err, sandbox.ErrDisabled) {
 			return localCodeInterpreterExecutionResult{}, localCodeInterpreterDisabledError()
 		}
-		return localCodeInterpreterExecutionResult{}, fmt.Errorf("execute shim-local code_interpreter via %s backend: %w", h.localCodeInterpreter.Backend.Kind(), err)
+		return localCodeInterpreterExecutionResult{}, newLocalCodeInterpreterExecutionFailure(session.ID, result.Logs, err)
 	}
 	result.ContainerID = session.ID
 	return result, nil
+}
+
+func newLocalCodeInterpreterExecutionFailure(containerID string, logs string, err error) error {
+	if err == nil {
+		return nil
+	}
+	var failure *localCodeInterpreterExecutionFailure
+	if errors.As(err, &failure) {
+		return failure
+	}
+	return &localCodeInterpreterExecutionFailure{
+		ContainerID: strings.TrimSpace(containerID),
+		Logs:        logs,
+		Message:     localCodeInterpreterExecutionFailureMessage(err),
+	}
+}
+
+func localCodeInterpreterExecutionFailureMessage(err error) string {
+	switch {
+	case err == nil:
+		return "shim-local code_interpreter execution failed"
+	case errors.Is(err, context.DeadlineExceeded), strings.Contains(strings.ToLower(strings.TrimSpace(err.Error())), "timed out"):
+		return "shim-local code_interpreter execution timed out"
+	case errors.Is(err, sandbox.ErrSessionNotFound):
+		return "shim-local code_interpreter container runtime was unavailable"
+	default:
+		return "shim-local code_interpreter execution failed"
+	}
+}
+
+func marshalLocalCodeInterpreterResponseError(message string) (json.RawMessage, error) {
+	payload := map[string]any{
+		"code":    "server_error",
+		"message": strings.TrimSpace(message),
+	}
+	if payload["message"] == "" {
+		payload["message"] = "shim-local code_interpreter execution failed"
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	return raw, nil
 }
 
 func (h *responseHandler) executeLocalCodeInterpreterSession(ctx context.Context, sessionID string, inputFiles []localCodeInterpreterInputFile, code string) (localCodeInterpreterExecutionResult, error) {
@@ -1238,12 +1351,22 @@ func buildLocalCodeInterpreterAssistantTextAnnotations(text string, containerID 
 }
 
 func buildLocalCodeInterpreterCallItem(code string, containerID string, logs string, generatedFiles []localCodeInterpreterGeneratedFile, includeOutputs bool) (domain.Item, error) {
+	return buildLocalCodeInterpreterCallItemWithStatus(code, containerID, logs, generatedFiles, includeOutputs, "completed")
+}
+
+func buildLocalCodeInterpreterCallItemWithStatus(code string, containerID string, logs string, generatedFiles []localCodeInterpreterGeneratedFile, includeOutputs bool, status string) (domain.Item, error) {
+	normalizedStatus := strings.TrimSpace(status)
+	if normalizedStatus == "" {
+		normalizedStatus = "completed"
+	}
 	payload := map[string]any{
-		"type":         "code_interpreter_call",
-		"status":       "completed",
-		"container_id": containerID,
-		"code":         code,
-		"outputs":      nil,
+		"type":    "code_interpreter_call",
+		"status":  normalizedStatus,
+		"code":    code,
+		"outputs": nil,
+	}
+	if strings.TrimSpace(containerID) != "" {
+		payload["container_id"] = strings.TrimSpace(containerID)
 	}
 	if includeOutputs {
 		outputs := make([]map[string]any, 0, 1+len(generatedFiles))

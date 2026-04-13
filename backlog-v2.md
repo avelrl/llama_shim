@@ -1117,6 +1117,12 @@ Definition of done:
 - появился background cleanup sweep для expired shim-managed containers:
   session runtime уничтожается, local container-file access убирается,
   metadata snapshot остаётся видимым как `status=expired`
+- runtime execution failures в shim-local subset теперь не валятся только в
+  transport/request error path: create и retrieve/stream replay возвращают
+  stored `response.status=failed` с top-level `response.error.code/message`,
+  failed `code_interpreter_call` output item и terminal `response.failed`
+  event; это pragmatic shim-local subset, а не claim про exact hosted
+  failure parity
 
 Что осталось открытым:
 
@@ -1125,7 +1131,7 @@ Definition of done:
   считаться production-grade boundary
 - нет полного hosted container/file/artifact parity:
   richer hosted container lifecycle (`skills`, `network_policy`,
-  hosted status/failure surface) и exact non-image
+  exact hosted status/failure surface) и exact non-image
   `code_interpreter_call.outputs` semantics
 - нет hosted citation placement parity:
   annotations теперь replay-ятся отдельными

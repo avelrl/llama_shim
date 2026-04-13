@@ -260,6 +260,8 @@ func responseReplaySnapshot(response domain.Response, status string, completed b
 	snapshot.Status = status
 	if !completed {
 		snapshot.CompletedAt = nil
+		snapshot.Error = nil
+		snapshot.IncompleteDetails = nil
 		snapshot.Output = []domain.Item{}
 		snapshot.OutputText = ""
 	}

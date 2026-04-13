@@ -5140,6 +5140,80 @@ func TestResponsesCreateExecutesLocalCodeInterpreter(t *testing.T) {
 	require.Equal(t, "code_interpreter_call", got.Output[0].Type)
 }
 
+func TestResponsesCreateLocalCodeInterpreterReturnsFailedResponseOnExecutionTimeout(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		CodeInterpreterBackend: testutil.FakeSandboxBackend{
+			KindValue: "docker",
+			ExecuteFunc: func(_ context.Context, _ sandbox.ExecuteRequest) (sandbox.ExecuteResult, error) {
+				return sandbox.ExecuteResult{Logs: "Traceback: sandbox execution timed out\n"}, context.DeadlineExceeded
+			},
+		},
+	})
+
+	response := postResponse(t, app, map[string]any{
+		"model":   "test-model",
+		"store":   true,
+		"input":   "Use Python to calculate 2+2. Return only the numeric result.",
+		"include": []string{"code_interpreter_call.outputs"},
+		"tools": []map[string]any{
+			{
+				"type": "code_interpreter",
+				"container": map[string]any{
+					"type": "auto",
+				},
+			},
+		},
+		"tool_choice": "required",
+	})
+
+	require.Equal(t, "failed", response.Status)
+	require.Nil(t, response.CompletedAt)
+	require.Empty(t, response.OutputText)
+	require.JSONEq(t, `{"code":"server_error","message":"shim-local code_interpreter execution timed out"}`, string(response.Error))
+	require.Len(t, response.Output, 1)
+	require.Equal(t, "code_interpreter_call", response.Output[0].Type)
+
+	callItem := response.Output[0].Map()
+	require.Equal(t, "failed", asStringAny(callItem["status"]))
+	require.Equal(t, "print(2+2)", asStringAny(callItem["code"]))
+	require.NotEmpty(t, asStringAny(callItem["container_id"]))
+
+	outputs, ok := callItem["outputs"].([]any)
+	require.True(t, ok)
+	require.Len(t, outputs, 1)
+	logEntry, ok := outputs[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "logs", asStringAny(logEntry["type"]))
+	require.Equal(t, "Traceback: sandbox execution timed out\n", asStringAny(logEntry["logs"]))
+
+	got := getResponse(t, app, response.ID)
+	require.Equal(t, "failed", got.Status)
+	require.JSONEq(t, `{"code":"server_error","message":"shim-local code_interpreter execution timed out"}`, string(got.Error))
+	require.Len(t, got.Output, 1)
+	require.Equal(t, "failed", asStringAny(got.Output[0].Map()["status"]))
+
+	req, err := http.NewRequest(http.MethodGet, app.Server.URL+"/v1/responses/"+response.ID+"?stream=true", nil)
+	require.NoError(t, err)
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	events := readSSEEvents(t, resp.Body)
+	require.Contains(t, eventTypes(events), "response.failed")
+	require.NotContains(t, eventTypes(events), "response.completed")
+	require.NotContains(t, eventTypes(events), "response.code_interpreter_call.completed")
+
+	failed := findEvent(t, events, "response.failed").Data
+	responsePayload, ok := failed["response"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "failed", asStringAny(responsePayload["status"]))
+	errorPayload, ok := responsePayload["error"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "server_error", asStringAny(errorPayload["code"]))
+	require.Equal(t, "shim-local code_interpreter execution timed out", asStringAny(errorPayload["message"]))
+}
+
 func TestResponsesCreateLocalCodeInterpreterStagesContainerFileIDs(t *testing.T) {
 	var (
 		mu             sync.Mutex
@@ -5895,6 +5969,71 @@ func TestResponsesCreateLocalCodeInterpreterStreamReplaysToolEvents(t *testing.T
 	require.True(t, ok)
 	require.Equal(t, "logs", asStringAny(logEntry["type"]))
 	require.Equal(t, "4\n", asStringAny(logEntry["logs"]))
+}
+
+func TestResponsesCreateLocalCodeInterpreterStreamReturnsFailedResponseOnExecutionTimeout(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		CodeInterpreterBackend: testutil.FakeSandboxBackend{
+			KindValue: "docker",
+			ExecuteFunc: func(_ context.Context, _ sandbox.ExecuteRequest) (sandbox.ExecuteResult, error) {
+				return sandbox.ExecuteResult{Logs: "Traceback: sandbox execution timed out\n"}, context.DeadlineExceeded
+			},
+		},
+	})
+
+	req, err := http.NewRequest(http.MethodPost, app.Server.URL+"/v1/responses", bytes.NewReader(mustJSON(t, map[string]any{
+		"model":   "test-model",
+		"store":   true,
+		"stream":  true,
+		"input":   "Use Python to calculate 2+2. Return only the numeric result.",
+		"include": []string{"code_interpreter_call.outputs"},
+		"tools": []map[string]any{
+			{
+				"type": "code_interpreter",
+				"container": map[string]any{
+					"type": "auto",
+				},
+			},
+		},
+		"tool_choice": "required",
+	})))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Contains(t, resp.Header.Get("Content-Type"), "text/event-stream")
+
+	events := readSSEEvents(t, resp.Body)
+	require.Contains(t, eventTypes(events), "response.failed")
+	require.NotContains(t, eventTypes(events), "response.completed")
+	require.NotContains(t, eventTypes(events), "response.code_interpreter_call.completed")
+
+	added := findEvents(events, "response.output_item.added")
+	require.Len(t, added, 1)
+	require.Equal(t, "code_interpreter_call", asStringAny(added[0].Data["item"].(map[string]any)["type"]))
+
+	failed := findEvent(t, events, "response.failed").Data
+	responsePayload, ok := failed["response"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "failed", asStringAny(responsePayload["status"]))
+	require.Empty(t, asStringAny(responsePayload["output_text"]))
+
+	output, ok := responsePayload["output"].([]any)
+	require.True(t, ok)
+	require.Len(t, output, 1)
+	callItem, ok := output[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "failed", asStringAny(callItem["status"]))
+	require.Equal(t, "print(2+2)", asStringAny(callItem["code"]))
+
+	errorPayload, ok := responsePayload["error"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "server_error", asStringAny(errorPayload["code"]))
+	require.Equal(t, "shim-local code_interpreter execution timed out", asStringAny(errorPayload["message"]))
 }
 
 func TestResponsesCreateLocalCodeInterpreterRejectsUnknownContainerFileID(t *testing.T) {

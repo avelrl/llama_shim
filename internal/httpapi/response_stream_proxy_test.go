@@ -179,6 +179,47 @@ func TestWriteCompletedResponseAsSSEReplaysOutputTextAnnotations(t *testing.T) {
 	require.Contains(t, body, `"annotations":[]`)
 }
 
+func TestWriteCompletedResponseAsSSEReplaysFailedResponseWithoutPrematureError(t *testing.T) {
+	recorder := httptest.NewRecorder()
+
+	err := writeCompletedResponseAsSSE(context.Background(), nil, recorder, []byte(`{
+		"id":"resp_test_failed",
+		"object":"response",
+		"created_at":1741900000,
+		"status":"failed",
+		"error":{"code":"server_error","message":"shim-local code_interpreter execution failed"},
+		"model":"test-model",
+		"background":false,
+		"store":true,
+		"text":{"format":{"type":"text"}},
+		"usage":null,
+		"metadata":{},
+		"output_text":"",
+		"output":[
+			{
+				"id":"ci_test_failed",
+				"type":"code_interpreter_call",
+				"status":"failed",
+				"container_id":"cntr_test",
+				"code":"print(2+2)",
+				"outputs":[{"type":"logs","logs":"Traceback"}]
+			}
+		]
+	}`), customToolTransportPlan{}, true)
+	require.NoError(t, err)
+
+	body := recorder.Body.String()
+	require.Contains(t, body, "event: response.created\n")
+	require.Contains(t, body, `"status":"in_progress","completed_at":null,"error":null,"incomplete_details":null`)
+	require.Contains(t, body, "event: response.output_item.added\n")
+	require.Contains(t, body, "event: response.output_item.done\n")
+	require.Contains(t, body, `"status":"failed"`)
+	require.Contains(t, body, "event: response.failed\n")
+	require.NotContains(t, body, "event: response.completed\n")
+	require.NotContains(t, body, "event: response.code_interpreter_call.completed\n")
+	require.Contains(t, body, `"error":{"code":"server_error","message":"shim-local code_interpreter execution failed"}`)
+}
+
 func TestShouldIgnoreStreamProxyError(t *testing.T) {
 	require.True(t, shouldIgnoreStreamProxyError(context.Canceled))
 	require.False(t, shouldIgnoreStreamProxyError(io.EOF))

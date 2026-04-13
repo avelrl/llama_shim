@@ -170,6 +170,12 @@ paths:
           assistant message contains annotations, but local generated-file
           citations still land on the shim-added `Generated files:` appendix
           rather than hosted model-chosen spans
+        - runtime execution failures in the shim-local subset now return
+          HTTP 200 Responses objects with `status=failed`, top-level
+          `response.error.code/message`, a failed `code_interpreter_call`
+          output item, and terminal `response.failed` replay for create and
+          retrieve streaming; this remains a shim-local subset, not exact
+          hosted failure parity
         - expired shim-managed containers are now swept in the background using
           `responses.code_interpreter.cleanup_interval`; local container
           metadata stays visible as `status=expired`, while local
@@ -177,7 +183,8 @@ paths:
           expiry
         - the local subset does not yet claim full hosted sandbox/container
           lifecycle parity, exact non-image `code_interpreter_call.outputs`
-          parity, or richer hosted failure/artifact semantics
+          parity, exact hosted status/failure surface, or richer hosted
+          failure/artifact semantics
 
         Retention semantics:
         - standalone responses follow the outward `store` contract returned on
