@@ -115,14 +115,17 @@ paths:
         - the shim executes one `file_search` tool locally against shim-owned
           `vector_store_ids`
         - supported local knobs are `filters`, `max_num_results`,
+          `ranking_options.ranker`,
           `ranking_options.score_threshold`,
           `ranking_options.hybrid_search`, and
           `include=["file_search_call.results"]`
         - search uses deterministic local lexical retrieval by default and can
-          use exact dense semantic search plus weighted hybrid ranking when
-          `retrieval.index.backend=sqlite_vec` and a retrieval embedder are
-          configured; it still does not claim hosted reranking or full hosted
-          semantic-search parity
+          use exact dense semantic search plus weighted hybrid ranking and a
+          shim-local rerank stage when `retrieval.index.backend=sqlite_vec`
+          and a retrieval embedder are configured; omitted
+          `ranking_options.ranker` defaults to local `auto`, and
+          `ranker=none` disables that local rerank stage; the shim still does
+          not claim hosted reranking or full hosted semantic-search parity
         - the shim returns `file_search_call` output items and stored/streaming
           replay, but does not currently synthesize hosted `file_citation`
           annotations in assistant messages
@@ -2057,9 +2060,11 @@ components:
 
         The local `file_search` subset uses deterministic lexical retrieval by
         default and can use exact dense semantic search plus weighted hybrid
-        ranking when `retrieval.index.backend=sqlite_vec` and a retrieval
-        embedder are configured. It does not claim hosted reranking or
-        `file_citation` annotation parity.
+        ranking and a local rerank layer when
+        `retrieval.index.backend=sqlite_vec` and a retrieval embedder are
+        configured. Omitted `ranking_options.ranker` defaults to local
+        `auto`; `ranker=none` disables that local rerank stage. The shim does
+        not claim hosted reranking or `file_citation` annotation parity.
 
         The local `code_interpreter` subset is guarded by
         `responses.code_interpreter.backend`. `backend=docker` uses a hardened
@@ -3070,6 +3075,12 @@ components:
               type: string
               enum:
                 [none, auto, default-2024-11-15, default_2024_08_21, default-2024-08-21]
+              description: |
+                Local retrieval ranker selection. In shim-local `sqlite_vec`
+                mode, omitted `ranker` behaves like `auto`, `none` disables
+                the local rerank stage, and the dated values select
+                shim-owned local rerank profiles. Exact hosted ranker parity
+                is not claimed.
             score_threshold:
               type: number
               minimum: 0
@@ -3079,11 +3090,16 @@ components:
       description: |
         Local vector store search request.
 
-        `rewrite_query` and `ranking_options.ranker` are accepted for
-        compatibility. `ranking_options.hybrid_search` is honored when the
-        semantic retrieval backend (`sqlite_vec`) is enabled; otherwise the
-        local implementation falls back to deterministic lexical search plus
-        optional score-threshold filtering.
+        `rewrite_query` is accepted as a compatibility no-op. When the
+        semantic retrieval backend (`sqlite_vec`) is enabled,
+        `ranking_options.ranker` controls a shim-local rerank layer:
+        omitted `ranker` defaults to local `auto`,
+        `default_2024_08_21` / `default-2024-08-21` select a conservative
+        legacy local profile, and `none` disables local reranking.
+        `ranking_options.hybrid_search` is also honored in that
+        `sqlite_vec` path. Without `sqlite_vec`, the local implementation
+        falls back to deterministic lexical search plus optional
+        score-threshold filtering.
     VectorStoreHybridSearchOptions:
       type: object
       properties:

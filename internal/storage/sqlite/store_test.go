@@ -47,6 +47,24 @@ func (hybridTestEmbedder) EmbedTexts(_ context.Context, texts []string) ([][]flo
 	return out, nil
 }
 
+type rerankingTestEmbedder struct{}
+
+func (rerankingTestEmbedder) EmbedTexts(_ context.Context, texts []string) ([][]float32, error) {
+	out := make([][]float32, 0, len(texts))
+	for _, text := range texts {
+		lower := strings.TrimSpace(strings.ToLower(text))
+		switch {
+		case lower == "banana nutrition", strings.Contains(lower, "semanticwinner"):
+			out = append(out, []float32{1, 0})
+		case strings.Contains(lower, "banana nutrition exact phrase"):
+			out = append(out, []float32{0.8, 0.6})
+		default:
+			out = append(out, []float32{0, 1})
+		}
+	}
+	return out, nil
+}
+
 func TestStoreSaveResponseRoundTripAndLineage(t *testing.T) {
 	t.Parallel()
 
@@ -195,7 +213,7 @@ func TestStoreSearchVectorStoreSQLiteVecBackend(t *testing.T) {
 	require.NotEmpty(t, page.Results)
 	require.Equal(t, fileBanana.ID, page.Results[0].FileID)
 	require.Equal(t, "banana.txt", page.Results[0].Filename)
-	require.Greater(t, page.Results[0].Score, 0.9)
+	require.Greater(t, page.Results[0].Score, 0.7)
 }
 
 func TestStoreSearchVectorStoreSQLiteVecHybridRanking(t *testing.T) {
@@ -252,6 +270,7 @@ func TestStoreSearchVectorStoreSQLiteVecHybridRanking(t *testing.T) {
 		VectorStoreID: vectorStore.ID,
 		Queries:       []string{"banana nutrition"},
 		MaxNumResults: 5,
+		Ranker:        "none",
 		HybridSearch: &domain.VectorStoreHybridSearchOptions{
 			EmbeddingWeight: 10,
 			TextWeight:      1,
@@ -267,6 +286,7 @@ func TestStoreSearchVectorStoreSQLiteVecHybridRanking(t *testing.T) {
 		VectorStoreID: vectorStore.ID,
 		Queries:       []string{"banana nutrition"},
 		MaxNumResults: 5,
+		Ranker:        "none",
 		HybridSearch: &domain.VectorStoreHybridSearchOptions{
 			EmbeddingWeight: 1,
 			TextWeight:      10,
@@ -277,6 +297,80 @@ func TestStoreSearchVectorStoreSQLiteVecHybridRanking(t *testing.T) {
 	require.NotEmpty(t, page.Results)
 	require.Equal(t, fileLexical.ID, page.Results[0].FileID)
 	require.Equal(t, "lexical.txt", page.Results[0].Filename)
+}
+
+func TestStoreSearchVectorStoreSQLiteVecReranking(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store, err := sqlite.OpenWithOptions(ctx, testutil.TempDBPath(t), sqlite.OpenOptions{
+		Retrieval: retrieval.Config{
+			IndexBackend: retrieval.IndexBackendSQLiteVec,
+		},
+		Embedder: rerankingTestEmbedder{},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+
+	fileSemantic := domain.StoredFile{
+		ID:        "file_semantic_rerank",
+		Filename:  "semantic.txt",
+		Purpose:   "assistants",
+		Bytes:     int64(len("semanticwinner banana orchard notes")),
+		CreatedAt: 1712059300,
+		Status:    "processed",
+		Content:   []byte("semanticwinner banana orchard notes"),
+	}
+	fileReranked := domain.StoredFile{
+		ID:        "file_reranked",
+		Filename:  "banana-nutrition.txt",
+		Purpose:   "assistants",
+		Bytes:     int64(len("banana nutrition exact phrase and calories")),
+		CreatedAt: 1712059301,
+		Status:    "processed",
+		Content:   []byte("banana nutrition exact phrase and calories"),
+	}
+	require.NoError(t, store.SaveFile(ctx, fileSemantic))
+	require.NoError(t, store.SaveFile(ctx, fileReranked))
+
+	vectorStore := domain.StoredVectorStore{
+		ID:           "vs_rerank",
+		Name:         "Rerank Store",
+		Metadata:     map[string]string{},
+		CreatedAt:    1712059302,
+		LastActiveAt: 1712059302,
+	}
+	require.NoError(t, store.SaveVectorStore(ctx, vectorStore))
+
+	_, err = store.AttachFileToVectorStore(ctx, vectorStore.ID, fileSemantic.ID, map[string]any{}, domain.DefaultFileChunkingStrategy(), 1712059303)
+	require.NoError(t, err)
+	_, err = store.AttachFileToVectorStore(ctx, vectorStore.ID, fileReranked.ID, map[string]any{}, domain.DefaultFileChunkingStrategy(), 1712059304)
+	require.NoError(t, err)
+
+	page, err := store.SearchVectorStore(ctx, domain.VectorStoreSearchQuery{
+		VectorStoreID:  vectorStore.ID,
+		Queries:        []string{"banana nutrition"},
+		MaxNumResults:  5,
+		Ranker:         "none",
+		RawSearchQuery: "banana nutrition",
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, page.Results)
+	require.Equal(t, fileSemantic.ID, page.Results[0].FileID)
+
+	page, err = store.SearchVectorStore(ctx, domain.VectorStoreSearchQuery{
+		VectorStoreID:  vectorStore.ID,
+		Queries:        []string{"banana nutrition"},
+		MaxNumResults:  5,
+		Ranker:         "auto",
+		RawSearchQuery: "banana nutrition",
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, page.Results)
+	require.Equal(t, fileReranked.ID, page.Results[0].FileID)
+	require.Greater(t, page.Results[0].Score, page.Results[1].Score)
 }
 
 func TestStoreSaveChatCompletionRoundTripAndList(t *testing.T) {

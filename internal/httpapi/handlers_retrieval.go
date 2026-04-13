@@ -516,6 +516,7 @@ func (h *retrievalHandler) searchVectorStore(w http.ResponseWriter, r *http.Requ
 		Queries:        queries,
 		Filters:        filters,
 		MaxNumResults:  maxNumResults,
+		Ranker:         strings.TrimSpace(request.RankingOptions.Ranker),
 		ScoreThreshold: request.RankingOptions.ScoreThreshold,
 		HybridSearch:   hybridSearch,
 		RawSearchQuery: rawSearchQuery,

@@ -39,6 +39,28 @@ type sqliteVecRetrievalBackend struct {
 
 const hybridRRFK = 60.0
 
+type localRerankProfile struct {
+	baseWeight     float64
+	keywordWeight  float64
+	phraseWeight   float64
+	filenameWeight float64
+}
+
+var (
+	latestLocalRerankProfile = localRerankProfile{
+		baseWeight:     0.75,
+		keywordWeight:  0.15,
+		phraseWeight:   0.07,
+		filenameWeight: 0.03,
+	}
+	legacyLocalRerankProfile = localRerankProfile{
+		baseWeight:     0.82,
+		keywordWeight:  0.12,
+		phraseWeight:   0.04,
+		filenameWeight: 0.02,
+	}
+)
+
 func (lexicalRetrievalBackend) Name() string {
 	return retrieval.IndexBackendLexical
 }
@@ -158,13 +180,26 @@ func (b sqliteVecRetrievalBackend) IndexVectorStoreFile(ctx context.Context, tx 
 }
 
 func (b sqliteVecRetrievalBackend) SearchVectorStore(ctx context.Context, store *Store, query domain.VectorStoreSearchQuery) (domain.VectorStoreSearchPage, error) {
-	if query.HybridSearch != nil {
-		return b.searchVectorStoreHybrid(ctx, store, query)
+	rerankProfile := localRerankProfileForRanker(query.Ranker)
+	scoreThreshold := query.ScoreThreshold
+	if rerankProfile != nil {
+		scoreThreshold = nil
 	}
 
-	results, err := b.searchVectorStoreSemanticResults(ctx, store, query, query.ScoreThreshold)
+	var (
+		results []domain.VectorStoreSearchResult
+		err     error
+	)
+	if query.HybridSearch != nil {
+		results, err = b.searchVectorStoreHybridResults(ctx, store, query, scoreThreshold)
+	} else {
+		results, err = b.searchVectorStoreSemanticResults(ctx, store, query, scoreThreshold)
+	}
 	if err != nil {
 		return domain.VectorStoreSearchPage{}, err
+	}
+	if rerankProfile != nil {
+		results = rerankVectorStoreResults(results, query.Queries, *rerankProfile, query.ScoreThreshold)
 	}
 	if len(results) > query.MaxNumResults {
 		results = results[:query.MaxNumResults]
@@ -309,31 +344,17 @@ func encodeFloat32Vector(vector []float32) ([]byte, int, error) {
 	return buf, len(vector), nil
 }
 
-func (b sqliteVecRetrievalBackend) searchVectorStoreHybrid(ctx context.Context, store *Store, query domain.VectorStoreSearchQuery) (domain.VectorStoreSearchPage, error) {
+func (b sqliteVecRetrievalBackend) searchVectorStoreHybridResults(ctx context.Context, store *Store, query domain.VectorStoreSearchQuery, scoreThreshold *float64) ([]domain.VectorStoreSearchResult, error) {
 	semanticResults, err := b.searchVectorStoreSemanticResults(ctx, store, query, nil)
 	if err != nil {
-		return domain.VectorStoreSearchPage{}, err
+		return nil, err
 	}
 	lexicalResults, err := store.searchVectorStoreLexicalResults(ctx, query, nil)
 	if err != nil {
-		return domain.VectorStoreSearchPage{}, err
+		return nil, err
 	}
 
-	results := fuseHybridSearchResults(semanticResults, lexicalResults, query.HybridSearch, query.ScoreThreshold)
-	if len(results) > query.MaxNumResults {
-		results = results[:query.MaxNumResults]
-	}
-
-	if err := store.touchVectorStoreSearchActivity(ctx, query.VectorStoreID); err != nil {
-		return domain.VectorStoreSearchPage{}, err
-	}
-
-	return domain.VectorStoreSearchPage{
-		SearchQuery: query.RawSearchQuery,
-		Results:     results,
-		HasMore:     false,
-		NextPage:    nil,
-	}, nil
+	return fuseHybridSearchResults(semanticResults, lexicalResults, query.HybridSearch, scoreThreshold), nil
 }
 
 func fuseHybridSearchResults(semanticResults, lexicalResults []domain.VectorStoreSearchResult, hybrid *domain.VectorStoreHybridSearchOptions, scoreThreshold *float64) []domain.VectorStoreSearchResult {
@@ -431,4 +452,167 @@ func fuseHybridSearchResults(semanticResults, lexicalResults []domain.VectorStor
 		return results[i].Score > results[j].Score
 	})
 	return results
+}
+
+func localRerankProfileForRanker(ranker string) *localRerankProfile {
+	switch strings.TrimSpace(ranker) {
+	case "none":
+		return nil
+	case "", "auto", "default-2024-11-15":
+		profile := latestLocalRerankProfile
+		return &profile
+	case "default_2024_08_21", "default-2024-08-21":
+		profile := legacyLocalRerankProfile
+		return &profile
+	default:
+		return nil
+	}
+}
+
+func rerankVectorStoreResults(results []domain.VectorStoreSearchResult, queries []string, profile localRerankProfile, scoreThreshold *float64) []domain.VectorStoreSearchResult {
+	if len(results) == 0 {
+		return nil
+	}
+
+	type rerankedResult struct {
+		domain.VectorStoreSearchResult
+		score float64
+	}
+
+	reranked := make([]rerankedResult, 0, len(results))
+	for _, result := range results {
+		contentText := firstSearchResultText(result.Content)
+		keywordScore := chunkScore(contentText, queries)
+		phraseScore := queryPhraseMatchScore(contentText, queries)
+		filenameScore := queryFilenameMatchScore(result.Filename, queries)
+
+		score := (profile.baseWeight * clamp01(result.Score)) +
+			(profile.keywordWeight * keywordScore) +
+			(profile.phraseWeight * phraseScore) +
+			(profile.filenameWeight * filenameScore)
+		score = clamp01(score)
+		if scoreThreshold != nil && score < *scoreThreshold {
+			continue
+		}
+
+		result.Score = score
+		reranked = append(reranked, rerankedResult{
+			VectorStoreSearchResult: result,
+			score:                   score,
+		})
+	}
+
+	sort.Slice(reranked, func(i, j int) bool {
+		if reranked[i].score == reranked[j].score {
+			if reranked[i].Filename == reranked[j].Filename {
+				return reranked[i].FileID < reranked[j].FileID
+			}
+			return reranked[i].Filename < reranked[j].Filename
+		}
+		return reranked[i].score > reranked[j].score
+	})
+
+	out := make([]domain.VectorStoreSearchResult, 0, len(reranked))
+	for _, result := range reranked {
+		out = append(out, result.VectorStoreSearchResult)
+	}
+	return out
+}
+
+func firstSearchResultText(content []domain.VectorStoreSearchResultContent) string {
+	for _, item := range content {
+		if item.Type == "text" {
+			return item.Text
+		}
+	}
+	return ""
+}
+
+func queryPhraseMatchScore(content string, queries []string) float64 {
+	normalizedContent := normalizeSearchText(content)
+	if normalizedContent == "" {
+		return 0
+	}
+	best := 0.0
+	for _, query := range queries {
+		normalizedQuery := normalizeSearchText(query)
+		if normalizedQuery == "" {
+			continue
+		}
+		if strings.Contains(normalizedContent, normalizedQuery) {
+			best = 1
+			continue
+		}
+		queryTerms := tokenizeTerms(normalizedQuery)
+		if len(queryTerms) == 0 {
+			continue
+		}
+		adjacentMatches := 0
+		for i := 0; i < len(queryTerms)-1; i++ {
+			needle := queryTerms[i] + " " + queryTerms[i+1]
+			if strings.Contains(normalizedContent, needle) {
+				adjacentMatches++
+			}
+		}
+		score := float64(adjacentMatches) / float64(maxInt(1, len(queryTerms)-1))
+		if score > best {
+			best = score
+		}
+	}
+	return clamp01(best)
+}
+
+func queryFilenameMatchScore(filename string, queries []string) float64 {
+	normalizedFilename := normalizeSearchText(filename)
+	if normalizedFilename == "" {
+		return 0
+	}
+	best := 0.0
+	for _, query := range queries {
+		queryTerms := tokenizeTerms(query)
+		if len(queryTerms) == 0 {
+			continue
+		}
+		matches := 0
+		unique := map[string]struct{}{}
+		for _, term := range queryTerms {
+			if _, ok := unique[term]; ok {
+				continue
+			}
+			unique[term] = struct{}{}
+			if strings.Contains(normalizedFilename, term) {
+				matches++
+			}
+		}
+		if len(unique) == 0 {
+			continue
+		}
+		score := float64(matches) / float64(len(unique))
+		if score > best {
+			best = score
+		}
+	}
+	return clamp01(best)
+}
+
+func normalizeSearchText(text string) string {
+	return strings.Join(tokenizeTerms(text), " ")
+}
+
+func clamp01(value float64) float64 {
+	switch {
+	case value < 0:
+		return 0
+	case value > 1:
+		return 1
+	default:
+		return value
+	}
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }

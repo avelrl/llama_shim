@@ -130,6 +130,7 @@ type VectorStoreSearchQuery struct {
 	Queries        []string
 	Filters        *VectorStoreSearchFilter
 	MaxNumResults  int
+	Ranker         string
 	ScoreThreshold *float64
 	HybridSearch   *VectorStoreHybridSearchOptions
 	RawSearchQuery any

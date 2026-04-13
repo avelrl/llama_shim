@@ -94,9 +94,9 @@
 - local `vector_stores` search уже usable end-to-end без upstream storage:
   UTF-8 text files chunk-ятся и индексируются локально, search поддерживает
   attribute filters, deterministic lexical ranking by default, optional
-  exact dense semantic ranking, и weighted hybrid dense+text ranking when
-  `retrieval.index.backend=sqlite_vec` plus a configured embedder backend are
-  enabled
+  exact dense semantic ranking, weighted hybrid dense+text ranking, and
+  shim-local reranking when `retrieval.index.backend=sqlite_vec` plus a
+  configured embedder backend are enabled
 - local `/v1/responses` теперь умеет shim-owned `file_search` execution over
   local `vector_stores` в pragmatic subset:
   один `file_search` tool, local lexical retrieval, stored/streaming
@@ -161,7 +161,8 @@
 - [x] - dev-only local `code_interpreter` execution inside `/v1/responses` ([детали](#task-local-code-interpreter-runtime))
 - [x] - exact dense semantic/vector retrieval subset behind local `vector_stores` ([детали](#task-retrieval-semantic-backend))
 - [x] - weighted hybrid retrieval subset behind local `vector_stores` ([детали](#task-retrieval-semantic-backend))
-- [ ] - reranked retrieval parity behind local `vector_stores` ([детали](#task-retrieval-semantic-backend))
+- [x] - local reranked retrieval subset behind local `vector_stores` ([детали](#task-retrieval-semantic-backend))
+- [ ] - hosted reranked retrieval parity behind local `vector_stores` ([детали](#task-retrieval-semantic-backend))
 - [ ] - parity для hosted/native Responses tools (`web_search`, `computer_use`, `code_interpreter`, `image_generation`, `remote MCP`, `tool_search`) ([детали](#task-hosted-tools-parity))
 - [x] - local stored Chat Completions read surface for explicit `store=true` non-streaming proxy completions ([детали](#task-chat-stored-surface-local))
 - [x] - `/readyz` checks SQLite, upstream llama backend, and configured retrieval embedder readiness ([детали](#task-ops-hardening))
@@ -1026,6 +1027,12 @@ Definition of done:
   `ranking_options.hybrid_search.embedding_weight|text_weight` включают
   reciprocal-rank-fusion between dense semantic and sparse lexical matches
   both for raw `vector_stores/{id}/search` and shim-local `file_search`
+- поверх dense/hybrid candidate set теперь есть local reranking subset:
+  when `retrieval.index.backend=sqlite_vec` is active, shim-local retrieval
+  treats omitted `ranking_options.ranker` as `auto`, applies a small local
+  rerank stage by default, supports `default_2024_08_21` /
+  `default-2024-08-21` as a conservative legacy profile, and accepts
+  `ranker=none` as a shim-local escape hatch to disable reranking
 - embeddings generation тоже стала explicit backend choice:
   `retrieval.embedder.backend=openai_compatible|embedanything`
   с shared OpenAI-compatible `/v1/embeddings` surface, so a future local
@@ -1038,11 +1045,14 @@ Definition of done:
 Что уже зафиксировано как сознательное ограничение текущего state:
 
 - current semantic subset теперь это exact dense search plus weighted hybrid
-  dense+text fusion, but not ANN or hosted reranked pipeline уровня OpenAI
-  file search
+  dense+text fusion plus a local rerank layer, but not ANN or hosted reranked
+  pipeline уровня OpenAI file search
 - local `file_search` по умолчанию всё ещё lexical; semantic path включается
   только explicit retrieval config, а hybrid tuning работает только when
   `sqlite_vec` backend is active
+- local reranking is intentionally a shim-owned heuristic subset; it uses the
+  documented `ranker` knobs and default-auto behavior, but it does not claim
+  exact hosted OpenAI reranker parity
 - current semantic subset зависит от configured embedder backend; без него
   `sqlite_vec` backend intentionally does not start
 - final assistant `message` не претендует на hosted `file_citation` parity
@@ -1050,8 +1060,8 @@ Definition of done:
 Definition of done:
 
 - local `vector_stores` уже используют реальный semantic/vector search backend
-  в exact-dense plus weighted-hybrid subset, without breaking the external
-  shim contract
+  в exact-dense plus weighted-hybrid-plus-rerank subset, without breaking the
+  external shim contract
 - remaining open work теперь отдельная задача качества, а не “semantic backend
   отсутствует вообще”
 
@@ -1059,7 +1069,8 @@ Definition of done:
 
 - phase 2: move from exact dense scan to indexed ANN path where it is worth
   the complexity
-- phase 3: reranking on top of the current dense+hybrid retrieval stack
+- phase 3: move from the current local reranker to a stronger hosted-grade
+  reranking pipeline where it is worth the complexity
 - phase 4: revisit citations/annotations parity for final assistant messages
 
 ## <a id="task-local-code-interpreter-runtime"></a>Dev-only local `code_interpreter` execution inside `/v1/responses`
