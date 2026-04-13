@@ -119,6 +119,9 @@ paths:
           `ranking_options.score_threshold`,
           `ranking_options.hybrid_search`, and
           `include=["file_search_call.results"]`
+        - when `include=["file_search_call.results"]` is used, local result
+          entries carry snippet `content[]` arrays rather than only a
+          flattened shim-local text field
         - search uses deterministic local lexical retrieval by default and can
           use exact dense semantic search via per-store `sqlite-vec` `vec0`
           KNN tables plus weighted hybrid ranking and a shim-local rerank

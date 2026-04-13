@@ -5040,8 +5040,11 @@ func TestResponsesCreateLocalFileSearchUsesMultipleChunksFromSameFile(t *testing
 	results, ok := fileSearchPayload["results"].([]any)
 	require.True(t, ok)
 	require.Len(t, results, 1)
-	require.Contains(t, asStringAny(results[0].(map[string]any)["text"]), "code decoy placeholder")
-	require.Contains(t, asStringAny(results[0].(map[string]any)["text"]), "actual code 777")
+	resultContent, ok := results[0].(map[string]any)["content"].([]any)
+	require.True(t, ok)
+	require.Len(t, resultContent, 2)
+	require.Contains(t, asStringAny(resultContent[0].(map[string]any)["text"]), "code decoy placeholder")
+	require.Contains(t, asStringAny(resultContent[1].(map[string]any)["text"]), "actual code 777")
 }
 
 func TestResponsesCreateLocalFileSearchPlansMultipleQueries(t *testing.T) {
@@ -5216,8 +5219,11 @@ func TestResponsesCreateLocalFileSearchIncludeResults(t *testing.T) {
 	require.Equal(t, fileID, asStringAny(result["file_id"]))
 	require.Equal(t, "codes.txt", asStringAny(result["filename"]))
 	require.Equal(t, vectorStoreID, asStringAny(result["vector_store_id"]))
-	require.Contains(t, asStringAny(result["text"]), "code")
-	require.Contains(t, asStringAny(result["text"]), "777")
+	content, ok := result["content"].([]any)
+	require.True(t, ok)
+	require.NotEmpty(t, content)
+	require.Contains(t, asStringAny(content[0].(map[string]any)["text"]), "code")
+	require.Contains(t, asStringAny(content[0].(map[string]any)["text"]), "777")
 	require.Equal(t, "alpha", asStringAny(result["attributes"].(map[string]any)["tenant"]))
 }
 

@@ -169,6 +169,8 @@ The shim can run local semantic retrieval without an external OpenAI embeddings 
   of collapsing every file to one best chunk immediately, and local
   `/v1/responses` `file_search` injects only a bounded 20-chunk grounding
   subset before final answer generation
+- when `include=["file_search_call.results"]` is used, local result entries
+  now expose snippet `content[]` arrays instead of only a flattened text blob
 - final local assistant messages now carry a pragmatic shim-local
   `file_citation` subset using `{type,index,file_id,filename}` for
   top-ranked retrieved files; exact hosted file-citation placement/selection

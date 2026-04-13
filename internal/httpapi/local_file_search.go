@@ -561,12 +561,19 @@ func buildLocalFileSearchCallItem(queries []string, results []localFileSearchRes
 	if includeResults {
 		encodedResults := make([]map[string]any, 0, len(results))
 		for _, result := range results {
+			content := make([]map[string]any, 0, len(result.Snippets))
+			for _, snippet := range localFileSearchContextSnippets(result) {
+				content = append(content, map[string]any{
+					"type": "text",
+					"text": snippet,
+				})
+			}
 			encodedResults = append(encodedResults, map[string]any{
 				"attributes":      cloneLocalFileSearchAttributes(result.Attributes),
+				"content":         content,
 				"file_id":         result.FileID,
 				"filename":        result.Filename,
 				"score":           result.Score,
-				"text":            result.Text,
 				"vector_store_id": result.VectorStoreID,
 			})
 		}

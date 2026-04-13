@@ -981,7 +981,8 @@ Definition of done:
   `file_search_call` + assistant `message`, а streaming replay использует уже
   существующую tool-specific SSE family
 - `include=["file_search_call.results"]` теперь реально меняет stored/local
-  response payload, а не принимается как no-op
+  response payload, а не принимается как no-op; local result entries now carry
+  snippet `content[]` instead of only a flattened shim-local text blob
 - local retrieval больше не теряет полезный intra-file context сразу после
   ranking: raw search results now keep several top-ranked chunks/snippets per
   file in `content[]`, and local `/v1/responses` `file_search` injects only a

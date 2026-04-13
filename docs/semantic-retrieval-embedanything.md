@@ -116,6 +116,8 @@ What is implemented now:
 - raw search results retain a small per-file multi-snippet subset, and local
   `/v1/responses` `file_search` injects only a bounded 20-chunk grounding
   subset before final answer generation
+- when `include=["file_search_call.results"]` is used, local result entries
+  now expose snippet `content[]` arrays instead of only a flattened text blob
 - lazy stale-chunk reindex inside the queried `vector_store` when the
   configured embedder model or embedding dimensions change, so semantic search
   only compares chunks in the current embedding space
