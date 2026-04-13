@@ -13,6 +13,7 @@ import (
 	"llama_shim/internal/config"
 	"llama_shim/internal/httpapi"
 	"llama_shim/internal/llama"
+	"llama_shim/internal/retrieval"
 	"llama_shim/internal/sandbox"
 	"llama_shim/internal/service"
 	"llama_shim/internal/storage/sqlite"
@@ -43,7 +44,16 @@ func main() {
 	processCtx, processCancel := context.WithCancel(context.Background())
 	defer processCancel()
 
-	store, err := sqlite.Open(processCtx, cfg.SQLitePath)
+	store, err := sqlite.OpenWithOptions(processCtx, cfg.SQLitePath, sqlite.OpenOptions{
+		Retrieval: retrieval.Config{
+			IndexBackend: cfg.RetrievalIndexBackend,
+			Embedder: retrieval.EmbedderConfig{
+				Backend: cfg.RetrievalEmbedderBackend,
+				BaseURL: cfg.RetrievalEmbedderBaseURL,
+				Model:   cfg.RetrievalEmbedderModel,
+			},
+		},
+	})
 	if err != nil {
 		logger.Error("open sqlite", "err", err)
 		os.Exit(1)
@@ -86,6 +96,10 @@ func main() {
 		"sqlite_path", cfg.SQLitePath,
 		"config_file", cfg.ConfigFile,
 		"log_file_path", cfg.LogFilePath,
+		"retrieval_index_backend", cfg.RetrievalIndexBackend,
+		"retrieval_embedder_backend", cfg.RetrievalEmbedderBackend,
+		"retrieval_embedder_base_url", cfg.RetrievalEmbedderBaseURL,
+		"retrieval_embedder_model", cfg.RetrievalEmbedderModel,
 		"responses_mode", cfg.ResponsesMode,
 		"responses_custom_tools_mode", cfg.ResponsesCustomToolsMode,
 		"responses_codex_enable_compatibility", cfg.ResponsesCodexEnableCompatibility,

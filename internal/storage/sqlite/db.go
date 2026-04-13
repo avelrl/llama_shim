@@ -20,15 +20,29 @@ import (
 const defaultBusyTimeout = 5 * time.Second
 
 type Store struct {
-	db *sql.DB
+	db        *sql.DB
+	retrieval retrievalBackend
 }
 
 var ErrNotFound = errors.New("not found")
 var ErrConflict = errors.New("conflict")
 
 func Open(ctx context.Context, path string) (*Store, error) {
+	return OpenWithOptions(ctx, path, OpenOptions{})
+}
+
+func OpenWithOptions(ctx context.Context, path string, options OpenOptions) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, fmt.Errorf("create sqlite dir: %w", err)
+	}
+
+	options, err := normalizeOpenOptions(options)
+	if err != nil {
+		return nil, fmt.Errorf("normalize open options: %w", err)
+	}
+	retrievalBackend, err := newRetrievalBackend(options.Retrieval)
+	if err != nil {
+		return nil, fmt.Errorf("build retrieval backend: %w", err)
 	}
 
 	db, err := sql.Open("sqlite", path)
@@ -36,7 +50,10 @@ func Open(ctx context.Context, path string) (*Store, error) {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
 
-	store := &Store{db: db}
+	store := &Store{
+		db:        db,
+		retrieval: retrievalBackend,
+	}
 	if err := store.configure(ctx); err != nil {
 		_ = db.Close()
 		return nil, err

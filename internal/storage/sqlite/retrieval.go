@@ -333,6 +333,13 @@ func (s *Store) SaveVectorStoreFile(ctx context.Context, file domain.StoredVecto
 		return fmt.Errorf("touch vector store activity: %w", err)
 	}
 
+	if err := s.retrieval.IndexVectorStoreFile(ctx, tx, indexVectorStoreFileParams{
+		VectorStoreID: file.VectorStoreID,
+		FileID:        file.ID,
+	}); err != nil {
+		return fmt.Errorf("index vector store file: %w", err)
+	}
+
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit vector store file tx: %w", err)
 	}
@@ -422,6 +429,10 @@ func (s *Store) DeleteVectorStoreFile(ctx context.Context, vectorStoreID, fileID
 }
 
 func (s *Store) SearchVectorStore(ctx context.Context, query domain.VectorStoreSearchQuery) (domain.VectorStoreSearchPage, error) {
+	return s.retrieval.SearchVectorStore(ctx, s, query)
+}
+
+func (s *Store) searchVectorStoreLexical(ctx context.Context, query domain.VectorStoreSearchQuery) (domain.VectorStoreSearchPage, error) {
 	store, err := s.GetVectorStore(ctx, query.VectorStoreID)
 	if err != nil {
 		return domain.VectorStoreSearchPage{}, err

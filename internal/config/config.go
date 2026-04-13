@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"llama_shim/internal/retrieval"
+
 	"github.com/spf13/viper"
 )
 
@@ -22,6 +24,10 @@ type Config struct {
 	IdleTimeout                                    time.Duration
 	LogLevel                                       slog.Level
 	LogFilePath                                    string
+	RetrievalIndexBackend                          string
+	RetrievalEmbedderBackend                       string
+	RetrievalEmbedderBaseURL                       string
+	RetrievalEmbedderModel                         string
 	ResponsesMode                                  string
 	ResponsesCustomToolsMode                       string
 	ResponsesCodexEnableCompatibility              bool
@@ -70,6 +76,10 @@ func Load(configPath string) (Config, error) {
 		ConfigFile:                                     v.ConfigFileUsed(),
 		LogLevel:                                       slog.LevelInfo,
 		LogFilePath:                                    strings.TrimSpace(v.GetString("log.file_path")),
+		RetrievalIndexBackend:                          strings.TrimSpace(v.GetString("retrieval.index.backend")),
+		RetrievalEmbedderBackend:                       strings.TrimSpace(v.GetString("retrieval.embedder.backend")),
+		RetrievalEmbedderBaseURL:                       strings.TrimSpace(v.GetString("retrieval.embedder.base_url")),
+		RetrievalEmbedderModel:                         strings.TrimSpace(v.GetString("retrieval.embedder.model")),
 		ResponsesMode:                                  strings.ToLower(strings.TrimSpace(v.GetString("responses.mode"))),
 		ResponsesCustomToolsMode:                       strings.ToLower(strings.TrimSpace(v.GetString("responses.custom_tools.mode"))),
 		ResponsesCodexEnableCompatibility:              v.GetBool("responses.codex.enable_compatibility"),
@@ -106,6 +116,21 @@ func Load(configPath string) (Config, error) {
 	if err := parseLogLevel(v.GetString("log.level"), &cfg.LogLevel); err != nil {
 		return Config{}, fmt.Errorf("parse log.level: %w", err)
 	}
+	normalizedRetrieval, err := retrieval.NormalizeConfig(retrieval.Config{
+		IndexBackend: cfg.RetrievalIndexBackend,
+		Embedder: retrieval.EmbedderConfig{
+			Backend: cfg.RetrievalEmbedderBackend,
+			BaseURL: cfg.RetrievalEmbedderBaseURL,
+			Model:   cfg.RetrievalEmbedderModel,
+		},
+	})
+	if err != nil {
+		return Config{}, fmt.Errorf("parse retrieval config: %w", err)
+	}
+	cfg.RetrievalIndexBackend = normalizedRetrieval.IndexBackend
+	cfg.RetrievalEmbedderBackend = normalizedRetrieval.Embedder.Backend
+	cfg.RetrievalEmbedderBaseURL = normalizedRetrieval.Embedder.BaseURL
+	cfg.RetrievalEmbedderModel = normalizedRetrieval.Embedder.Model
 	if err := parseResponsesMode(cfg.ResponsesMode); err != nil {
 		return Config{}, fmt.Errorf("parse responses.mode: %w", err)
 	}
@@ -158,6 +183,10 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("llama.timeout", "60s")
 	v.SetDefault("log.level", "info")
 	v.SetDefault("log.file_path", "")
+	v.SetDefault("retrieval.index.backend", retrieval.IndexBackendLexical)
+	v.SetDefault("retrieval.embedder.backend", retrieval.EmbedderBackendDisabled)
+	v.SetDefault("retrieval.embedder.base_url", "")
+	v.SetDefault("retrieval.embedder.model", "")
 	v.SetDefault("responses.mode", ResponsesModePreferLocal)
 	v.SetDefault("responses.custom_tools.mode", "auto")
 	v.SetDefault("responses.codex.enable_compatibility", true)

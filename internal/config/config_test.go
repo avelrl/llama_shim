@@ -28,6 +28,13 @@ llama:
 log:
   level: debug
   file_path: ./tmp/shim.log
+retrieval:
+  index:
+    backend: lexical
+  embedder:
+    backend: embedanything
+    base_url: http://127.0.0.1:9099
+    model: snowflake-arctic-embed-l-v2.0
 responses:
   mode: prefer_upstream
   custom_tools:
@@ -63,6 +70,10 @@ responses:
 	require.Equal(t, 45*time.Second, cfg.IdleTimeout)
 	require.Equal(t, slog.LevelDebug, cfg.LogLevel)
 	require.Equal(t, "./tmp/shim.log", cfg.LogFilePath)
+	require.Equal(t, "lexical", cfg.RetrievalIndexBackend)
+	require.Equal(t, "embedanything", cfg.RetrievalEmbedderBackend)
+	require.Equal(t, "http://127.0.0.1:9099", cfg.RetrievalEmbedderBaseURL)
+	require.Equal(t, "snowflake-arctic-embed-l-v2.0", cfg.RetrievalEmbedderModel)
 	require.Equal(t, config.ResponsesModePreferUpstream, cfg.ResponsesMode)
 	require.Equal(t, "bridge", cfg.ResponsesCustomToolsMode)
 	require.True(t, cfg.ResponsesCodexEnableCompatibility)
@@ -111,6 +122,10 @@ responses:
 	t.Setenv("LLAMA_TIMEOUT", "25s")
 	t.Setenv("LOG_LEVEL", "warn")
 	t.Setenv("LOG_FILE_PATH", "./override.log")
+	t.Setenv("RETRIEVAL_INDEX_BACKEND", "lexical")
+	t.Setenv("RETRIEVAL_EMBEDDER_BACKEND", "openai_compatible")
+	t.Setenv("RETRIEVAL_EMBEDDER_BASE_URL", "http://127.0.0.1:8082")
+	t.Setenv("RETRIEVAL_EMBEDDER_MODEL", "text-embedding-3-small")
 	t.Setenv("RESPONSES_MODE", "local_only")
 	t.Setenv("RESPONSES_CODEX_ENABLE_COMPATIBILITY", "true")
 	t.Setenv("RESPONSES_CODEX_FORCE_TOOL_CHOICE_REQUIRED", "true")
@@ -132,6 +147,10 @@ responses:
 	require.Equal(t, 25*time.Second, cfg.LlamaTimeout)
 	require.Equal(t, slog.LevelWarn, cfg.LogLevel)
 	require.Equal(t, "./override.log", cfg.LogFilePath)
+	require.Equal(t, "lexical", cfg.RetrievalIndexBackend)
+	require.Equal(t, "openai_compatible", cfg.RetrievalEmbedderBackend)
+	require.Equal(t, "http://127.0.0.1:8082", cfg.RetrievalEmbedderBaseURL)
+	require.Equal(t, "text-embedding-3-small", cfg.RetrievalEmbedderModel)
 	require.Equal(t, config.ResponsesModeLocalOnly, cfg.ResponsesMode)
 	require.True(t, cfg.ResponsesCodexEnableCompatibility)
 	require.True(t, cfg.ResponsesCodexForceToolChoiceRequired)
@@ -159,6 +178,10 @@ func TestLoadUsesCodexSafeDefaults(t *testing.T) {
 
 	cfg, err := config.Load("")
 	require.NoError(t, err)
+	require.Equal(t, "lexical", cfg.RetrievalIndexBackend)
+	require.Equal(t, "disabled", cfg.RetrievalEmbedderBackend)
+	require.Empty(t, cfg.RetrievalEmbedderBaseURL)
+	require.Empty(t, cfg.RetrievalEmbedderModel)
 	require.Equal(t, config.ResponsesModePreferLocal, cfg.ResponsesMode)
 	require.Equal(t, "auto", cfg.ResponsesCustomToolsMode)
 	require.True(t, cfg.ResponsesCodexEnableCompatibility)
@@ -187,4 +210,17 @@ responses:
 	cfg, err := config.Load(configPath)
 	require.NoError(t, err)
 	require.Equal(t, config.ResponsesCodeInterpreterBackendUnsafeHost, cfg.ResponsesCodeInterpreterBackend)
+}
+
+func TestLoadRejectsUnsupportedRetrievalBackend(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	writeFile(t, configPath, `
+retrieval:
+  index:
+    backend: bogus
+`)
+
+	_, err := config.Load(configPath)
+	require.Error(t, err)
+	require.ErrorContains(t, err, `unsupported retrieval index backend "bogus"`)
 }

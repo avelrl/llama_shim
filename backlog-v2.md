@@ -1032,7 +1032,18 @@ Definition of done:
 
 Практический decomposition, когда вернемся:
 
+- phase 0: split the architecture into two explicit seams:
+  `Embedder` for vector generation and `VectorIndex` / retrieval backend for
+  storage and search, so we can start with one local engine and swap either
+  side later without changing the OpenAI-shaped external contract
 - phase 1: embeddings generation + local chunk/index schema
+- phase 1a: first concrete target is a SQLite-native vector index
+  (`sqlite-vec` or equivalent) behind the existing SQLite store, because the
+  current lexical MVP already lives in SQLite and this is the smallest
+  architectural step forward
+- phase 1b: keep embeddings generation pluggable from day one, so a future
+  local sidecar/server such as EmbedAnything can be added as an embedder
+  backend without forcing a storage rewrite
 - phase 2: search path switch from lexical-only to dense or hybrid retrieval
 - phase 3: optional reranking and better result shaping for `file_search_call`
 - phase 4: revisit citations/annotations parity for final assistant messages

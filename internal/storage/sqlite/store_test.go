@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"llama_shim/internal/domain"
+	"llama_shim/internal/retrieval"
 	"llama_shim/internal/storage/sqlite"
 	"llama_shim/internal/testutil"
 )
@@ -73,6 +74,30 @@ func TestStoreSaveResponseRoundTripAndLineage(t *testing.T) {
 
 	_, err = store.GetResponse(ctx, "resp_missing")
 	require.ErrorIs(t, err, sqlite.ErrNotFound)
+}
+
+func TestOpenWithOptionsRejectsUnsupportedRetrievalBackend(t *testing.T) {
+	t.Parallel()
+
+	_, err := sqlite.OpenWithOptions(context.Background(), testutil.TempDBPath(t), sqlite.OpenOptions{
+		Retrieval: retrieval.Config{
+			IndexBackend: "bogus",
+		},
+	})
+	require.Error(t, err)
+	require.ErrorContains(t, err, `unsupported retrieval index backend "bogus"`)
+}
+
+func TestOpenWithOptionsRejectsUnimplementedSQLiteVecBackend(t *testing.T) {
+	t.Parallel()
+
+	_, err := sqlite.OpenWithOptions(context.Background(), testutil.TempDBPath(t), sqlite.OpenOptions{
+		Retrieval: retrieval.Config{
+			IndexBackend: retrieval.IndexBackendSQLiteVec,
+		},
+	})
+	require.Error(t, err)
+	require.ErrorContains(t, err, `retrieval index backend "sqlite_vec" is not implemented yet`)
 }
 
 func TestStoreSaveChatCompletionRoundTripAndList(t *testing.T) {
