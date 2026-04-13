@@ -120,9 +120,10 @@ paths:
           `ranking_options.hybrid_search`, and
           `include=["file_search_call.results"]`
         - search uses deterministic local lexical retrieval by default and can
-          use exact dense semantic search plus weighted hybrid ranking and a
-          shim-local rerank stage when `retrieval.index.backend=sqlite_vec`
-          and a retrieval embedder are configured; omitted
+          use exact dense semantic search via per-store `sqlite-vec` `vec0`
+          KNN tables plus weighted hybrid ranking and a shim-local rerank
+          stage when `retrieval.index.backend=sqlite_vec` and a retrieval
+          embedder are configured; omitted
           `ranking_options.ranker` defaults to local `auto`, and
           `ranker=none` disables that local rerank stage; the shim lazy
           reindexes stale chunks in the queried `vector_store` when the
@@ -2062,8 +2063,9 @@ components:
           `include=["code_interpreter_call.outputs"]`
 
         The local `file_search` subset uses deterministic lexical retrieval by
-        default and can use exact dense semantic search plus weighted hybrid
-        ranking and a local rerank layer when
+        default and can use exact dense semantic search via per-store
+        `sqlite-vec` `vec0` KNN tables plus weighted hybrid ranking and a
+        local rerank layer when
         `retrieval.index.backend=sqlite_vec` and a retrieval embedder are
         configured. Omitted `ranking_options.ranker` defaults to local
         `auto`; `ranker=none` disables that local rerank stage. When the

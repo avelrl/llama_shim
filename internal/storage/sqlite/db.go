@@ -163,3 +163,15 @@ func (s *Store) applyMigration(ctx context.Context, version, sqlBody string) err
 	}
 	return nil
 }
+
+func (s *Store) sqliteTableExists(ctx context.Context, name string) (bool, error) {
+	var count int
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(1)
+		FROM sqlite_master
+		WHERE type IN ('table', 'view') AND name = ?
+	`, name).Scan(&count); err != nil {
+		return false, fmt.Errorf("query sqlite_master for %q: %w", name, err)
+	}
+	return count > 0, nil
+}

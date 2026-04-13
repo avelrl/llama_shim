@@ -152,6 +152,8 @@ Response retention notes:
 The shim can run local semantic retrieval without an external OpenAI embeddings API:
 
 - `sqlite_vec` stores and searches embeddings inside the same SQLite database
+- exact semantic search uses per-store `sqlite-vec` `vec0` KNN tables; this is
+  still exact/brute-force today, not ANN
 - `EmbedAnything` runs as a local OpenAI-compatible `/v1/embeddings` sidecar
 - `ranking_options.hybrid_search` can blend dense semantic matches and lexical
   keyword matches when `sqlite_vec` is enabled

@@ -106,7 +106,38 @@ func (s *Store) ListFiles(ctx context.Context, query domain.ListFilesQuery) (dom
 }
 
 func (s *Store) DeleteFile(ctx context.Context, id string) error {
-	result, err := s.db.ExecContext(ctx, `DELETE FROM files WHERE id = ?`, id)
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT DISTINCT vector_store_id
+		FROM vector_store_files
+		WHERE file_id = ?
+	`, id)
+	if err != nil {
+		return fmt.Errorf("query vector stores for file delete: %w", err)
+	}
+	affectedStores := make([]string, 0, 4)
+	for rows.Next() {
+		var vectorStoreID string
+		if err := rows.Scan(&vectorStoreID); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan vector store for file delete: %w", err)
+		}
+		affectedStores = append(affectedStores, vectorStoreID)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("iterate vector stores for file delete: %w", err)
+	}
+	rows.Close()
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin delete file tx: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	result, err := tx.ExecContext(ctx, `DELETE FROM files WHERE id = ?`, id)
 	if err != nil {
 		return fmt.Errorf("delete file: %w", err)
 	}
@@ -116,6 +147,14 @@ func (s *Store) DeleteFile(ctx context.Context, id string) error {
 	}
 	if rowsAffected == 0 {
 		return ErrNotFound
+	}
+	for _, vectorStoreID := range affectedStores {
+		if err := s.retrieval.RefreshVectorStore(ctx, tx, vectorStoreID, domain.NowUTC().Unix()); err != nil {
+			return fmt.Errorf("refresh vector store after file delete: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit delete file tx: %w", err)
 	}
 	return nil
 }
@@ -240,7 +279,19 @@ func (s *Store) ListVectorStores(ctx context.Context, query domain.ListVectorSto
 }
 
 func (s *Store) DeleteVectorStore(ctx context.Context, id string) error {
-	result, err := s.db.ExecContext(ctx, `DELETE FROM vector_stores WHERE id = ?`, id)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin delete vector store tx: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	if err := s.retrieval.DeleteVectorStore(ctx, tx, id); err != nil {
+		return fmt.Errorf("delete vector store retrieval index: %w", err)
+	}
+
+	result, err := tx.ExecContext(ctx, `DELETE FROM vector_stores WHERE id = ?`, id)
 	if err != nil {
 		return fmt.Errorf("delete vector store: %w", err)
 	}
@@ -250,6 +301,9 @@ func (s *Store) DeleteVectorStore(ctx context.Context, id string) error {
 	}
 	if rowsAffected == 0 {
 		return ErrNotFound
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit delete vector store tx: %w", err)
 	}
 	return nil
 }
@@ -412,7 +466,15 @@ func (s *Store) ListVectorStoreFiles(ctx context.Context, query domain.ListVecto
 }
 
 func (s *Store) DeleteVectorStoreFile(ctx context.Context, vectorStoreID, fileID string) error {
-	result, err := s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin delete vector store file tx: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	result, err := tx.ExecContext(ctx, `
 		DELETE FROM vector_store_files
 		WHERE vector_store_id = ? AND file_id = ?
 	`, vectorStoreID, fileID)
@@ -425,6 +487,12 @@ func (s *Store) DeleteVectorStoreFile(ctx context.Context, vectorStoreID, fileID
 	}
 	if rowsAffected == 0 {
 		return ErrNotFound
+	}
+	if err := s.retrieval.RefreshVectorStore(ctx, tx, vectorStoreID, domain.NowUTC().Unix()); err != nil {
+		return fmt.Errorf("refresh vector store after file delete: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit delete vector store file tx: %w", err)
 	}
 	return nil
 }

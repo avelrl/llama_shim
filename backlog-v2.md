@@ -1022,7 +1022,7 @@ Definition of done:
   engine
 - local store теперь умеет optional exact dense semantic retrieval subset:
   `retrieval.index.backend=sqlite_vec` включает persisted chunk embeddings и
-  cosine-similarity ranking через SQLite-native vector functions
+  exact KNN query path через per-store `sqlite-vec` `vec0` tables
 - semantic `sqlite_vec` path теперь не смешивает несовместимые embedding
   spaces: search lazy-reindex-ит stale chunks в текущем `vector_store`, если
   configured embedder model или vector dimensions поменялись, и потом ищет
