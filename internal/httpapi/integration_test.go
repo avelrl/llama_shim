@@ -5079,6 +5079,103 @@ func TestChatCompletionsStoredListFiltersAndPaginates(t *testing.T) {
 	require.Equal(t, third, asStringAny(page2.Data[0]["id"]))
 }
 
+func TestChatCompletionsStoreTrueStreamDoesNotShadowStore(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	reqBody, err := json.Marshal(map[string]any{
+		"model":  "gpt-5.4",
+		"store":  true,
+		"stream": true,
+		"messages": []map[string]any{
+			{"role": "user", "content": "Say OK and nothing else"},
+		},
+	})
+	require.NoError(t, err)
+
+	req, err := http.NewRequest(http.MethodPost, app.Server.URL+"/v1/chat/completions", bytes.NewReader(reqBody))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Contains(t, resp.Header.Get("Content-Type"), "text/event-stream")
+	events := readSSEEvents(t, resp.Body)
+	require.NotEmpty(t, events)
+
+	list := getStoredChatCompletions(t, app, "")
+	require.Empty(t, list.Data)
+	require.Nil(t, list.FirstID)
+	require.Nil(t, list.LastID)
+	require.False(t, list.HasMore)
+}
+
+func TestChatCompletionsStoredUpdateAndDelete(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	completionID := postStoredChatCompletion(t, app, map[string]any{
+		"model":    "gpt-5.4",
+		"store":    true,
+		"metadata": map[string]any{"topic": "alpha"},
+		"messages": []map[string]any{{"role": "user", "content": "Say OK and nothing else"}},
+	})
+
+	status, updated := rawRequest(t, app, http.MethodPost, "/v1/chat/completions/"+completionID, map[string]any{
+		"metadata": map[string]any{"topic": "beta", "owner": "shim"},
+	})
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, completionID, asStringAny(updated["id"]))
+	require.Equal(t, map[string]any{"topic": "beta", "owner": "shim"}, updated["metadata"])
+
+	list := getStoredChatCompletions(t, app, "?metadata[topic]=beta")
+	require.Len(t, list.Data, 1)
+	require.Equal(t, completionID, asStringAny(list.Data[0]["id"]))
+
+	empty := getStoredChatCompletions(t, app, "?metadata[topic]=alpha")
+	require.Empty(t, empty.Data)
+
+	status, deleted := rawRequest(t, app, http.MethodDelete, "/v1/chat/completions/"+completionID, nil)
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, completionID, asStringAny(deleted["id"]))
+	require.Equal(t, "chat.completion.deleted", asStringAny(deleted["object"]))
+	require.Equal(t, true, deleted["deleted"])
+
+	status, payload := rawRequest(t, app, http.MethodGet, "/v1/chat/completions/"+completionID, nil)
+	require.Equal(t, http.StatusNotFound, status)
+	require.Equal(t, "not_found_error", asStringAny(payload["error"].(map[string]any)["type"]))
+
+	status, payload = rawRequest(t, app, http.MethodGet, "/v1/chat/completions/"+completionID+"/messages", nil)
+	require.Equal(t, http.StatusNotFound, status)
+	require.Equal(t, "not_found_error", asStringAny(payload["error"].(map[string]any)["type"]))
+}
+
+func TestChatCompletionsStoredUpdateRejectsInvalidBody(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	completionID := postStoredChatCompletion(t, app, map[string]any{
+		"model":    "gpt-5.4",
+		"store":    true,
+		"metadata": map[string]any{"topic": "alpha"},
+		"messages": []map[string]any{{"role": "user", "content": "Say OK and nothing else"}},
+	})
+
+	status, payload := rawRequest(t, app, http.MethodPost, "/v1/chat/completions/"+completionID, map[string]any{
+		"foo": "bar",
+	})
+	require.Equal(t, http.StatusBadRequest, status)
+	require.Equal(t, "invalid_request_error", asStringAny(payload["error"].(map[string]any)["type"]))
+	require.Equal(t, "body", asStringAny(payload["error"].(map[string]any)["param"]))
+
+	status, payload = rawRequest(t, app, http.MethodPost, "/v1/chat/completions/"+completionID, map[string]any{
+		"metadata": "nope",
+	})
+	require.Equal(t, http.StatusBadRequest, status)
+	require.Equal(t, "invalid_request_error", asStringAny(payload["error"].(map[string]any)["type"]))
+	require.Equal(t, "metadata", asStringAny(payload["error"].(map[string]any)["param"]))
+}
+
 func TestFilesEndpointsUploadListRetrieveContentAndDelete(t *testing.T) {
 	app := testutil.NewTestApp(t)
 

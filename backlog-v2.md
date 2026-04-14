@@ -36,6 +36,8 @@
 - `POST /v1/chat/completions`
 - `GET /v1/chat/completions`
 - `GET /v1/chat/completions/{completion_id}`
+- `POST /v1/chat/completions/{completion_id}`
+- `DELETE /v1/chat/completions/{completion_id}`
 - `GET /v1/chat/completions/{completion_id}/messages`
 - `POST /v1/files`
 - `GET /v1/files`
@@ -94,6 +96,8 @@
 - успешные non-streaming `POST /v1/chat/completions` с explicit `store: true`
   теперь shadow-store-ятся локально и доступны через shim-owned
   `GET /v1/chat/completions`, `GET /v1/chat/completions/{completion_id}`,
+  `POST /v1/chat/completions/{completion_id}`,
+  `DELETE /v1/chat/completions/{completion_id}`,
   `GET /v1/chat/completions/{completion_id}/messages`
 - локальный retrieval substrate заведен на OpenAI-shaped surface:
   `POST/GET/DELETE /v1/files`, `GET /v1/files/{id}/content`,
@@ -179,7 +183,7 @@
 - [x] - local reranked retrieval subset behind local `vector_stores` ([детали](#task-retrieval-semantic-backend))
 - [ ] - hosted reranked retrieval parity behind local `vector_stores` ([детали](#task-retrieval-semantic-backend))
 - [ ] - parity для hosted/native Responses tools (`web_search`, `computer_use`, `code_interpreter`, `image_generation`, `remote MCP`, `tool_search`) ([детали](#task-hosted-tools-parity))
-- [x] - local stored Chat Completions read surface for explicit `store=true` non-streaming proxy completions ([детали](#task-chat-stored-surface-local))
+- [x] - local stored Chat Completions CRUD surface for explicit `store=true` non-streaming proxy completions ([детали](#task-chat-stored-surface-local))
 - [x] - `/readyz` checks SQLite, upstream llama backend, and configured retrieval embedder readiness ([детали](#task-ops-hardening))
 - [ ] - stored Chat Completions compatibility surface ([детали](#task-chat-stored-surface))
 - [ ] - operational hardening: backend readiness, retention job, local DX ([детали](#task-ops-hardening))
@@ -696,7 +700,7 @@ Definition of done:
 - synthetic `response.output_item.added` для `computer_call` omits final
   `actions[]` until `response.output_item.done`
 
-Статус на 12 апреля 2026:
+Статус на 13 апреля 2026:
 
 - закрыто для stored `computer_call`: retrieve replay и completed-only
   normalization теперь воспроизводят generic `response.output_item.*`
@@ -1399,14 +1403,14 @@ Definition of done:
 - [Migrate to Responses: Messages vs. Items](https://developers.openai.com/api/docs/guides/migrate-to-responses#messages-vs-items)
 - [Hosted tool search](https://developers.openai.com/api/docs/guides/tools-tool-search#hosted-tool-search)
 
-## <a id="task-chat-stored-surface-local"></a>Local stored Chat Completions read surface for explicit `store=true` non-streaming proxy completions
+## <a id="task-chat-stored-surface-local"></a>Local stored Chat Completions CRUD surface for explicit `store=true` non-streaming proxy completions
 
 Почему это отдельно:
 
 - official OpenAI surface у `chat/completions` включает stored-resource routes,
   но полный parity здесь сильно шире, чем просто “добавить три GET handler-а”
 - прагматичный следующий шаг это не эмулировать весь upstream history, а дать
-  честный local read model для тех Chat Completions, которые реально прошли
+  честный local CRUD model для тех Chat Completions, которые реально прошли
   через shim и были explicitly stored
 - такой partial ownership уже полезен клиентам и не требует выдумывать
   account-level default storage semantics или reconstruction из streamed chunks
@@ -1418,6 +1422,8 @@ Definition of done:
 - `GET /v1/chat/completions` с filters/pagination subset:
   `model`, `metadata[key]=value`, `after`, `limit`, `order`
 - `GET /v1/chat/completions/{completion_id}`
+- `POST /v1/chat/completions/{completion_id}` only for `metadata` update
+- `DELETE /v1/chat/completions/{completion_id}`
 - `GET /v1/chat/completions/{completion_id}/messages`, где message list
   реконструируется из исходного request `messages[]`
 - OpenAPI/docs wording, которая прямо фиксирует границы этого local subset
@@ -1426,16 +1432,20 @@ Definition of done:
 
 - закрыто для local shim-owned subset:
   successful non-streaming explicit `store: true` chat completions now land in
-  SQLite and are readable through list/get/messages handlers
+  SQLite and are manageable through list/get/update/delete/messages handlers
 - `messages` read surface возвращает reconstructed request messages with stable
   synthetic ids when the original message object had no `id`
+- `POST /v1/chat/completions/{completion_id}` обновляет только stored
+  `metadata`, а `DELETE /v1/chat/completions/{completion_id}` удаляет локальный
+  shadow resource и после этого `get/messages` возвращают `404`
 - filtering/pagination покрыты integration tests и store tests
 - OpenAPI wording explicitly says, что это local shadow-store subset, а не
   full official stored-chat parity
 
 Definition of done:
 
-- local list/get/messages contract реализован и покрыт integration tests
+- local list/get/update/delete/messages contract реализован и покрыт
+  integration tests
 - OpenAPI/backlog не overclaim-ят upstream-owned history, default storage при
   omitted `store`, или streamed-chat reconstruction
 - `go test ./...` проходит на этом scope
@@ -1444,16 +1454,19 @@ Definition of done:
 
 - [List stored Chat Completions](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/list)
 - [Retrieve a stored Chat Completion](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/retrieve)
+- [Update a stored Chat Completion](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/update)
+- [Delete a stored Chat Completion](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/delete)
 - [List messages for a stored Chat Completion](https://developers.openai.com/api/reference/resources/chat/subresources/completions/subresources/messages/methods/list)
 
 ## <a id="task-chat-stored-surface"></a>Stored Chat Completions compatibility surface
 
 Почему это важно:
 
-- в official OpenAI API у `chat/completions` есть не только `POST`, но и stored-resource surface: list/get/messages
+- в official OpenAI API у `chat/completions` есть не только `POST`, но и
+  stored-resource surface: list/get/update/delete/messages
 - сейчас shim уже дает local shadow-store subset для explicit `store: true`
-  non-streaming proxy completions, но это еще не полная OpenAI-compatible read
-  model для stored chat completions
+  non-streaming proxy completions, включая update/delete, но это еще не полная
+  OpenAI-compatible stored-chat model
 - это один из заметных gaps между “минимальный shim для chat proxy” и “честный OpenAI-compatible facade”
 
 Что входит:
@@ -1464,12 +1477,12 @@ Definition of done:
   shim contract или оставлять это explicit gap
 - streamed chat completions: reconstruct/shadow-store from chunks или честно
   не включать в local stored surface
-- update/delete endpoints для stored chat completions, если и когда shim
-  начнет владеть ими
+- upstream-owned historical stored chat completions: proxy surface, explicit
+  not-supported, или дальнейшее local ownership
 
 Definition of done:
 
-- по remaining stored chat endpoints/semantics есть осознанный contract:
+- по remaining stored chat semantics есть осознанный contract:
   implemented, proxy-only или explicit not-supported
 - docs/OpenAPI не создают ложного впечатления, что `POST /v1/chat/completions` автоматически означает полную parity со всем official chat surface
 - local shadow-store subset и remaining gaps разделены явно
@@ -1480,6 +1493,8 @@ Definition of done:
 
 - [List stored Chat Completions](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/list)
 - [Retrieve a stored Chat Completion](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/retrieve)
+- [Update a stored Chat Completion](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/update)
+- [Delete a stored Chat Completion](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/delete)
 - [List messages for a stored Chat Completion](https://developers.openai.com/api/reference/resources/chat/subresources/completions/subresources/messages/methods/list)
 
 ## <a id="task-ops-hardening"></a>Operational hardening: backend readiness, retention job, local DX

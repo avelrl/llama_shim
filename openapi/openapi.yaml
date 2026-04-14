@@ -1784,9 +1784,11 @@ paths:
         Successful non-streaming JSON responses with explicit `store: true` are
         also shadow-stored locally and become visible via the shim-owned
         `GET /v1/chat/completions`, `GET /v1/chat/completions/{completion_id}`,
-        and `GET /v1/chat/completions/{completion_id}/messages` read surface.
-        This does not currently cover streamed chat completions or upstream
-        account-level default storage when `store` is omitted.
+        `POST /v1/chat/completions/{completion_id}`,
+        `DELETE /v1/chat/completions/{completion_id}`, and
+        `GET /v1/chat/completions/{completion_id}/messages` local stored-chat
+        surface. This does not currently cover streamed chat completions or
+        upstream account-level default storage when `store` is omitted.
       requestBody:
         required: true
         content:
@@ -1832,6 +1834,54 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ChatCompletionResource"
+        "404":
+          $ref: "#/components/responses/ErrorResponse"
+    post:
+      tags: [chat]
+      summary: Update metadata for a locally stored Chat Completion
+      x-shim-status: partial
+      description: |
+        Updates the `metadata` field for a locally shadow-stored Chat
+        Completion created by this shim from a successful non-streaming
+        `POST /v1/chat/completions` request with explicit `store: true`.
+
+        Only `metadata` updates are supported in this local subset.
+      parameters:
+        - $ref: "#/components/parameters/ChatCompletionID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StoredChatCompletionMetadataUpdateRequest"
+      responses:
+        "200":
+          description: Updated locally stored chat completion
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatCompletionResource"
+        "400":
+          $ref: "#/components/responses/ErrorResponse"
+        "404":
+          $ref: "#/components/responses/ErrorResponse"
+    delete:
+      tags: [chat]
+      summary: Delete a locally stored Chat Completion
+      x-shim-status: partial
+      description: |
+        Deletes a locally shadow-stored Chat Completion created by this shim
+        from a successful non-streaming `POST /v1/chat/completions` request
+        with explicit `store: true`.
+      parameters:
+        - $ref: "#/components/parameters/ChatCompletionID"
+      responses:
+        "200":
+          description: Deletion confirmation for a locally stored chat completion
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatCompletionDeleted"
         "404":
           $ref: "#/components/responses/ErrorResponse"
   /v1/chat/completions/{completion_id}/messages:
@@ -3264,6 +3314,29 @@ components:
         Sanitized Chat Completion JSON resource shadow-stored locally by the
         shim for successful non-streaming `store: true` proxy requests.
       additionalProperties: true
+    StoredChatCompletionMetadataUpdateRequest:
+      type: object
+      required: [metadata]
+      additionalProperties: false
+      properties:
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+          description: |
+            Replacement metadata map for the locally stored Chat Completion.
+            This local subset only supports `metadata` updates.
+    ChatCompletionDeleted:
+      type: object
+      required: [id, object, deleted]
+      properties:
+        id:
+          type: string
+        object:
+          type: string
+          const: chat.completion.deleted
+        deleted:
+          type: boolean
     StoredChatCompletionList:
       type: object
       required: [object, data, has_more]

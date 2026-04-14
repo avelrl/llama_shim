@@ -127,6 +127,44 @@ func (s *Store) ListChatCompletions(ctx context.Context, query domain.ListStored
 	}, nil
 }
 
+func (s *Store) UpdateChatCompletionMetadata(ctx context.Context, id string, metadata map[string]string) (domain.StoredChatCompletion, error) {
+	completion, err := s.GetChatCompletion(ctx, id)
+	if err != nil {
+		return domain.StoredChatCompletion{}, err
+	}
+
+	completion.Metadata = metadata
+	responseJSON, err := patchStoredChatCompletionResponseMetadata(completion.ResponseJSON, metadata)
+	if err != nil {
+		return domain.StoredChatCompletion{}, err
+	}
+	completion.ResponseJSON = responseJSON
+
+	if err := s.SaveChatCompletion(ctx, completion); err != nil {
+		return domain.StoredChatCompletion{}, err
+	}
+
+	return completion, nil
+}
+
+func (s *Store) DeleteChatCompletion(ctx context.Context, id string) error {
+	result, err := s.db.ExecContext(ctx, `
+		DELETE FROM chat_completions
+		WHERE id = ?
+	`, id)
+	if err != nil {
+		return fmt.Errorf("delete chat completion: %w", err)
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("delete chat completion rows affected: %w", err)
+	}
+	if rowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func scanStoredChatCompletion(row interface{ Scan(...any) error }) (domain.StoredChatCompletion, error) {
 	var (
 		completion   domain.StoredChatCompletion
@@ -167,4 +205,20 @@ func matchesMetadataFilter(metadata map[string]string, filter map[string]string)
 		}
 	}
 	return true
+}
+
+func patchStoredChatCompletionResponseMetadata(responseJSON string, metadata map[string]string) (string, error) {
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(responseJSON), &payload); err != nil {
+		return "", fmt.Errorf("decode chat completion response metadata patch: %w", err)
+	}
+	if metadata == nil {
+		metadata = map[string]string{}
+	}
+	payload["metadata"] = metadata
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("encode chat completion response metadata patch: %w", err)
+	}
+	return string(raw), nil
 }

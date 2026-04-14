@@ -3,6 +3,7 @@ package sqlite_test
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -596,6 +597,52 @@ func TestStoreSaveChatCompletionRoundTripAndList(t *testing.T) {
 
 	_, err = store.GetChatCompletion(ctx, "chatcmpl_missing")
 	require.ErrorIs(t, err, sqlite.ErrNotFound)
+}
+
+func TestStoreUpdateAndDeleteChatCompletion(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store := openTestStore(t, ctx)
+
+	completion := domain.StoredChatCompletion{
+		ID:           "chatcmpl_update_me",
+		Model:        "gpt-5.4",
+		Metadata:     map[string]string{"topic": "alpha"},
+		RequestJSON:  `{"model":"gpt-5.4","store":true,"metadata":{"topic":"alpha"},"messages":[{"role":"user","content":"first"}]}`,
+		ResponseJSON: `{"id":"chatcmpl_update_me","object":"chat.completion","created":1712059200,"model":"gpt-5.4","metadata":{"topic":"alpha"},"choices":[{"index":0,"message":{"role":"assistant","content":"one"},"finish_reason":"stop","logprobs":null}]}`,
+		CreatedAt:    1712059200,
+	}
+
+	require.NoError(t, store.SaveChatCompletion(ctx, completion))
+
+	updated, err := store.UpdateChatCompletionMetadata(ctx, completion.ID, map[string]string{"topic": "beta", "owner": "shim"})
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{"topic": "beta", "owner": "shim"}, updated.Metadata)
+	require.Equal(t, map[string]string{"topic": "beta", "owner": "shim"}, extractStoredChatCompletionMetadata(t, updated.ResponseJSON))
+
+	got, err := store.GetChatCompletion(ctx, completion.ID)
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{"topic": "beta", "owner": "shim"}, got.Metadata)
+	require.Equal(t, map[string]string{"topic": "beta", "owner": "shim"}, extractStoredChatCompletionMetadata(t, got.ResponseJSON))
+
+	require.NoError(t, store.DeleteChatCompletion(ctx, completion.ID))
+
+	_, err = store.GetChatCompletion(ctx, completion.ID)
+	require.ErrorIs(t, err, sqlite.ErrNotFound)
+
+	err = store.DeleteChatCompletion(ctx, completion.ID)
+	require.ErrorIs(t, err, sqlite.ErrNotFound)
+}
+
+func extractStoredChatCompletionMetadata(t *testing.T, responseJSON string) map[string]string {
+	t.Helper()
+
+	var payload struct {
+		Metadata map[string]string `json:"metadata"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(responseJSON), &payload))
+	return payload.Metadata
 }
 
 func TestStoreSaveResponseUpsertsLifecyclePayload(t *testing.T) {

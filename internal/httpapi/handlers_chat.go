@@ -120,6 +120,12 @@ type chatCompletionMessagesListResponse struct {
 	HasMore bool             `json:"has_more"`
 }
 
+type chatCompletionDeletedResponse struct {
+	ID      string `json:"id"`
+	Object  string `json:"object"`
+	Deleted bool   `json:"deleted"`
+}
+
 type listStoredChatCompletionMessagesQuery struct {
 	After string
 	Limit int
@@ -165,6 +171,40 @@ func (h *proxyHandler) getStoredChatCompletion(w http.ResponseWriter, r *http.Re
 
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = io.WriteString(w, completion.ResponseJSON)
+}
+
+func (h *proxyHandler) updateStoredChatCompletion(w http.ResponseWriter, r *http.Request) {
+	metadata, err := parseUpdateStoredChatCompletionRequest(w, r)
+	if err != nil {
+		status, payload := MapError(r.Context(), h.logger, err)
+		WriteJSON(w, status, apiErrorPayload{Error: payload})
+		return
+	}
+
+	completion, err := h.store.UpdateChatCompletionMetadata(r.Context(), r.PathValue("completion_id"), metadata)
+	if err != nil {
+		status, payload := MapError(r.Context(), h.logger, err)
+		WriteJSON(w, status, apiErrorPayload{Error: payload})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = io.WriteString(w, completion.ResponseJSON)
+}
+
+func (h *proxyHandler) deleteStoredChatCompletion(w http.ResponseWriter, r *http.Request) {
+	completionID := r.PathValue("completion_id")
+	if err := h.store.DeleteChatCompletion(r.Context(), completionID); err != nil {
+		status, payload := MapError(r.Context(), h.logger, err)
+		WriteJSON(w, status, apiErrorPayload{Error: payload})
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, chatCompletionDeletedResponse{
+		ID:      completionID,
+		Object:  "chat.completion.deleted",
+		Deleted: true,
+	})
 }
 
 func (h *proxyHandler) listStoredChatCompletionMessages(w http.ResponseWriter, r *http.Request) {
@@ -324,6 +364,39 @@ func parseListStoredChatCompletionMessagesQuery(r *http.Request) (listStoredChat
 		}
 	}
 	return query, nil
+}
+
+func parseUpdateStoredChatCompletionRequest(w http.ResponseWriter, r *http.Request) (map[string]string, error) {
+	rawBody, err := readJSONBody(w, r)
+	if err != nil {
+		return nil, err
+	}
+
+	trimmed := bytes.TrimSpace(rawBody)
+	if len(trimmed) == 0 {
+		return nil, domain.NewValidationError("metadata", "metadata is required")
+	}
+
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(trimmed, &payload); err != nil {
+		return nil, domain.NewValidationError("", "malformed JSON body")
+	}
+
+	for key := range payload {
+		if key != "metadata" {
+			return nil, domain.NewValidationError("body", "unsupported chat completion update field "+`"`+key+`"`)
+		}
+	}
+
+	rawMetadata, ok := payload["metadata"]
+	if !ok {
+		return nil, domain.NewValidationError("metadata", "metadata is required")
+	}
+	if bytes.Equal(bytes.TrimSpace(rawMetadata), []byte("null")) {
+		return nil, domain.NewValidationError("metadata", "metadata must be an object with string values")
+	}
+
+	return domain.NormalizeResponseMetadata(rawMetadata)
 }
 
 func parseChatCompletionMetadataFilter(values url.Values) (map[string]string, error) {

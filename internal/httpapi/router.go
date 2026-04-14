@@ -177,11 +177,16 @@ func NewRouter(deps RouterDeps) http.Handler {
 		}
 	})
 	mux.HandleFunc("/v1/chat/completions/{completion_id}", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
+		switch r.Method {
+		case http.MethodGet:
+			proxyHandler.getStoredChatCompletion(w, r)
+		case http.MethodPost:
+			proxyHandler.updateStoredChatCompletion(w, r)
+		case http.MethodDelete:
+			proxyHandler.deleteStoredChatCompletion(w, r)
+		default:
 			WriteError(w, http.StatusMethodNotAllowed, "invalid_request_error", "method not allowed", "")
-			return
 		}
-		proxyHandler.getStoredChatCompletion(w, r)
 	})
 	mux.HandleFunc("/v1/chat/completions/{completion_id}/messages", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
