@@ -126,6 +126,15 @@ chat_completions:
 
 responses:
   mode: prefer_local
+  web_search:
+    backend: disabled
+    base_url: ""
+    timeout: 10s
+    max_results: 10
+  image_generation:
+    backend: disabled
+    base_url: ""
+    timeout: 60s
   custom_tools:
     mode: auto
   codex:
@@ -200,6 +209,9 @@ Supported environment overrides:
 - `RESPONSES_WEB_SEARCH_BASE_URL` overrides `responses.web_search.base_url`
 - `RESPONSES_WEB_SEARCH_TIMEOUT` overrides `responses.web_search.timeout`
 - `RESPONSES_WEB_SEARCH_MAX_RESULTS` overrides `responses.web_search.max_results`
+- `RESPONSES_IMAGE_GENERATION_BACKEND` overrides `responses.image_generation.backend`; supported values: `disabled`, `responses`
+- `RESPONSES_IMAGE_GENERATION_BASE_URL` overrides `responses.image_generation.base_url`
+- `RESPONSES_IMAGE_GENERATION_TIMEOUT` overrides `responses.image_generation.timeout`
 - `RESPONSES_CUSTOM_TOOLS_MODE` overrides `responses.custom_tools.mode`; supported values: `bridge`, `auto`, `passthrough`
   Use `auto` for the default path: it keeps bridge behavior for plain-text custom tools, routes supported `grammar` / `regex` custom tools into the shim-local constrained path, uses backend-native structured generation of raw `input` for named constrained custom tools and `tool_choice: "required"` with a single constrained tool, and in broader auto/mixed cases runs a shim-local tool selector before backend-native constrained generation for the selected custom tool. Shim-local `tool_choice.type=allowed_tools` is supported for function/custom subsets. The old validation/repair loop remains only as an error fallback, not the happy path.
 - `RESPONSES_CODEX_ENABLE_COMPATIBILITY` overrides `responses.codex.enable_compatibility`; when disabled, the shim stops injecting Codex-specific instructions/context and skips Codex-specific response normalization
@@ -319,6 +331,8 @@ When `retrieval.index.backend=sqlite_vec` is enabled, `/readyz` also checks the 
 
 When `responses.web_search.backend=searxng` is enabled, `/readyz` also checks that the configured web search backend answers before returning `ready`.
 
+When `responses.image_generation.backend=responses` is enabled, `/readyz` also checks that the configured image-generation `/v1/responses` backend answers before returning `ready`.
+
 For a step-by-step local setup and a smoke test script, see [docs/semantic-retrieval-embedanything.md](docs/semantic-retrieval-embedanything.md).
 
 ## Local web search
@@ -333,6 +347,29 @@ The shim now has a pragmatic local `web_search` / `web_search_preview` subset in
 - `include=["web_search_call.action.sources"]` is accepted in the local subset
 
 This is intentionally not a claim of full hosted browsing parity. Exact hosted planner behavior, broader live-web semantics, and full hosted failure choreography remain separate follow-up work.
+
+## Local image generation
+
+The shim now has a pragmatic local `image_generation` subset inside
+`/v1/responses`:
+
+- one `image_generation` tool in `responses.mode=prefer_local|local_only`
+- a separate OpenAI-compatible `/v1/responses` image backend selected via
+  `responses.image_generation.backend=responses`
+- non-stream and stream create paths, with stored shadow-state and retrieve
+  replay handled by the shim
+- current-turn `input_image` parts and local `previous_response_id` edit
+  lineage are forwarded to the image backend through the flattened Responses
+  `input` owned by the shim
+- when the backend stream emits
+  `response.image_generation_call.partial_image`, the shim persists those
+  irrecoverable artifacts and replays them on stored
+  `GET /v1/responses/{id}?stream=true`
+
+This is intentionally not a claim of exact hosted live-stream timing or full
+hosted planner/failure choreography. The current local subset delegates image
+tool execution to a dedicated Responses-compatible backend and then replays the
+stored result through the shim-owned Responses surface.
 
 ## Remote MCP in local mode
 

@@ -12,6 +12,7 @@ import (
 
 	"llama_shim/internal/config"
 	"llama_shim/internal/httpapi"
+	"llama_shim/internal/imagegen"
 	"llama_shim/internal/llama"
 	"llama_shim/internal/retrieval"
 	"llama_shim/internal/sandbox"
@@ -80,6 +81,7 @@ type TestAppOptions struct {
 	RetrievalConfig                       retrieval.Config
 	RetrievalEmbedder                     retrieval.Embedder
 	WebSearchProvider                     websearch.Provider
+	ImageGenerationProvider               imagegen.Provider
 	CodeInterpreterBackend                sandbox.Backend
 	CodeInterpreterInputFileURLPolicy     string
 	CodeInterpreterInputFileURLAllowHosts []string
@@ -157,6 +159,7 @@ func NewTestAppWithOptions(t *testing.T, options TestAppOptions) *TestApp {
 		ResponsesCodexEnableCompatibility:     options.CodexCompatibilityEnabled,
 		ResponsesCodexForceToolChoiceRequired: options.ForceToolChoiceRequired,
 		WebSearchProvider:                     options.WebSearchProvider,
+		ImageGenerationProvider:               options.ImageGenerationProvider,
 		LocalCodeInterpreter:                  localCodeInterpreter,
 		RetrievalIndexBackend:                 options.RetrievalConfig.IndexBackend,
 		RetrievalEmbedder:                     options.RetrievalEmbedder,

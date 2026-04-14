@@ -63,10 +63,12 @@ paths:
         embedder backend such as `embedanything`, the local retrieval embedder
         is also reachable. When `responses.web_search.backend=searxng` is
         enabled, `/readyz` also checks that the configured web-search backend
-        is reachable.
+        is reachable. When `responses.image_generation.backend=responses` is
+        enabled, `/readyz` also checks that the configured image-generation
+        `/v1/responses` backend is reachable.
       responses:
         "200":
-          description: SQLite store, upstream backend, and any configured retrieval or web-search backends are reachable
+          description: SQLite store, upstream backend, and any configured retrieval, web-search, or image-generation backends are reachable
           content:
             application/json:
               schema:
@@ -213,6 +215,26 @@ paths:
           to `responses.mode`
         - exact hosted planner behavior, broader live-web semantics, and full
           hosted failure choreography remain open
+
+        Notes for the local `image_generation` subset:
+        - the shim can execute one `image_generation` tool locally when
+          `responses.image_generation.backend=responses` is configured
+        - local execution delegates the tool call to a separate
+          OpenAI-compatible `/v1/responses` image backend instead of
+          proxying through the main upstream text-generation backend
+        - non-stream and stream create paths are supported, and stored/retrieve
+          replay remains consistent with persisted `image_generation_call`
+          items
+        - current-turn `input_image` parts and local
+          `previous_response_id` image-edit lineage are flattened into the
+          shim-owned Responses `input` that is forwarded to the configured
+          image backend
+        - when the backend stream emits
+          `response.image_generation_call.partial_image`, the shim persists
+          those irrecoverable artifacts and replays them on stored
+          `GET /v1/responses/{id}?stream=true`
+        - exact hosted live-stream timing and broader hosted
+          planner/failure choreography remain open
 
         Notes for the local `code_interpreter` subset:
         - the shim executes one `code_interpreter` tool locally only when

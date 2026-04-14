@@ -103,6 +103,15 @@ responses:
     timeout: 10s
     # Maximum results requested from the web search backend per rewritten query.
     max_results: 10
+  image_generation:
+    # disabled: no shim-local image_generation runtime
+    # responses: delegate one image_generation tool to a separate
+    # OpenAI-compatible /v1/responses image backend
+    backend: disabled
+    # Base URL of the image backend, for example http://127.0.0.1:8085
+    base_url: ""
+    # Timeout per local image generation request to the image backend.
+    timeout: 60s
   custom_tools:
     # How custom tools are transported to the upstream.
     # auto: recommended default; bridge plain-text custom tools when possible

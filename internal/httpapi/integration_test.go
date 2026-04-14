@@ -24,6 +24,7 @@ import (
 
 	"llama_shim/internal/config"
 	"llama_shim/internal/domain"
+	"llama_shim/internal/imagegen"
 	"llama_shim/internal/retrieval"
 	"llama_shim/internal/sandbox"
 	"llama_shim/internal/storage/sqlite"
@@ -250,6 +251,27 @@ func TestReadyzReturns503WhenWebSearchBackendIsUnavailable(t *testing.T) {
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&payload))
 	require.Equal(t, "service_unavailable", payload["error"]["type"])
 	require.Equal(t, "web search backend is not ready", payload["error"]["message"])
+}
+
+func TestReadyzReturns503WhenImageGenerationBackendIsUnavailable(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		ImageGenerationProvider: &testutil.FakeImageGenerationProvider{
+			ReadyErr: errors.New("image generation backend unavailable"),
+		},
+	})
+
+	req, err := http.NewRequest(http.MethodGet, app.Server.URL+"/readyz", nil)
+	require.NoError(t, err)
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
+	var payload map[string]map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&payload))
+	require.Equal(t, "service_unavailable", payload["error"]["type"])
+	require.Equal(t, "image generation backend is not ready", payload["error"]["message"])
 }
 
 func TestShimStaticBearerAuthProtectsAPISurfaceButSkipsHealthChecks(t *testing.T) {
@@ -4556,6 +4578,199 @@ func TestResponsesLocalWebSearchStreamReplayIncludesOpenPageAndFindInPage(t *tes
 	replayEvents := readSSEEvents(t, retrieveResp.Body)
 	require.Len(t, findEvents(replayEvents, "response.web_search_call.completed"), 3)
 	require.Contains(t, eventTypes(replayEvents), "response.output_text.annotation.added")
+}
+
+func TestResponsesLocalImageGenerationUsesProviderAndStoresResponse(t *testing.T) {
+	provider := &testutil.FakeImageGenerationProvider{
+		CreateFunc: func(_ context.Context, requestBody []byte) ([]byte, error) {
+			require.Contains(t, string(requestBody), `"type":"image_generation"`)
+			return mustJSON(t, fakeImageGenerationResponsePayload("resp_local_image_1", "ig_local_1")), nil
+		},
+	}
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		ImageGenerationProvider: provider,
+	})
+
+	status, body := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model": "test-model",
+		"store": true,
+		"input": "Generate a tiny orange cat in a teacup.",
+		"tools": []map[string]any{
+			{
+				"type":          "image_generation",
+				"output_format": "png",
+				"quality":       "low",
+				"size":          "1024x1024",
+			},
+		},
+		"tool_choice": map[string]any{"type": "image_generation"},
+	})
+
+	require.Equal(t, http.StatusOK, status)
+	require.NotEmpty(t, provider.CreateBodies)
+	require.Empty(t, provider.CreateStreamBodies)
+	require.Equal(t, "resp_local_image_1", asStringAny(body["id"]))
+	require.Equal(t, "completed", asStringAny(body["status"]))
+
+	output, ok := body["output"].([]any)
+	require.True(t, ok)
+	require.Len(t, output, 1)
+	item, ok := output[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "image_generation_call", asStringAny(item["type"]))
+	require.Equal(t, "completed", asStringAny(item["status"]))
+	require.Equal(t, "generate", asStringAny(item["action"]))
+	require.Equal(t, "A tiny orange cat curled up in a teacup.", asStringAny(item["revised_prompt"]))
+
+	stored := getResponse(t, app, "resp_local_image_1")
+	require.Equal(t, "resp_local_image_1", stored.ID)
+	require.Len(t, stored.Output, 1)
+	require.Equal(t, "image_generation_call", stored.Output[0].Type)
+}
+
+func TestResponsesLocalImageGenerationStreamCapturesPartialImageAndReplaysStoredArtifacts(t *testing.T) {
+	provider := &testutil.FakeImageGenerationProvider{
+		CreateStreamFunc: func(_ context.Context, requestBody []byte) (imagegen.StreamResponse, error) {
+			require.Contains(t, string(requestBody), `"type":"image_generation"`)
+			return imagegen.StreamResponse{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+				Body: io.NopCloser(strings.NewReader(strings.Join([]string{
+					"event: response.created",
+					`data: {"type":"response.created","sequence_number":1,"response":{"id":"resp_local_image_stream","object":"response","created_at":1712059200,"status":"in_progress","completed_at":null,"error":null,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"model":"test-model","output":[],"parallel_tool_calls":true,"previous_response_id":null,"reasoning":{"effort":null,"summary":null},"store":false,"temperature":1.0,"text":{"format":{"type":"text"}},"tool_choice":{"type":"image_generation"},"tools":[{"type":"image_generation","output_format":"png","quality":"low","size":"1024x1024"}],"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{},"output_text":""}}`,
+					"",
+					"event: response.output_item.added",
+					`data: {"type":"response.output_item.added","sequence_number":2,"output_index":0,"item":{"id":"ig_local_stream","type":"image_generation_call","status":"in_progress"}}`,
+					"",
+					"event: response.image_generation_call.in_progress",
+					`data: {"type":"response.image_generation_call.in_progress","sequence_number":3,"item_id":"ig_local_stream","output_index":0}`,
+					"",
+					"event: response.image_generation_call.generating",
+					`data: {"type":"response.image_generation_call.generating","sequence_number":4,"item_id":"ig_local_stream","output_index":0}`,
+					"",
+					"event: response.image_generation_call.partial_image",
+					`data: {"type":"response.image_generation_call.partial_image","sequence_number":5,"item_id":"ig_local_stream","output_index":0,"partial_image_index":0,"partial_image_b64":"cGFydGlhbC0w","background":"transparent","output_format":"png","quality":"low","size":"1024x1024"}`,
+					"",
+					"event: response.image_generation_call.partial_image",
+					`data: {"type":"response.image_generation_call.partial_image","sequence_number":6,"item_id":"ig_local_stream","output_index":0,"partial_image_index":1,"partial_image_b64":"cGFydGlhbC0x","background":"transparent","output_format":"png","quality":"low","size":"1024x1024"}`,
+					"",
+					"event: response.output_item.done",
+					`data: {"type":"response.output_item.done","sequence_number":7,"output_index":0,"item":{"id":"ig_local_stream","type":"image_generation_call","status":"completed","background":"transparent","output_format":"png","quality":"low","size":"1024x1024","result":"ZmFrZS1pbWFnZQ==","revised_prompt":"A tiny orange cat curled up in a teacup.","action":"generate"}}`,
+					"",
+					"event: response.completed",
+					`data: {"type":"response.completed","sequence_number":8,"response":{"id":"resp_local_image_stream","object":"response","created_at":1712059200,"status":"completed","completed_at":1712059201,"error":null,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"model":"test-model","output":[{"id":"ig_local_stream","type":"image_generation_call","status":"completed","background":"transparent","output_format":"png","quality":"low","size":"1024x1024","result":"ZmFrZS1pbWFnZQ==","revised_prompt":"A tiny orange cat curled up in a teacup.","action":"generate"}],"parallel_tool_calls":true,"previous_response_id":null,"reasoning":{"effort":null,"summary":null},"store":false,"temperature":1.0,"text":{"format":{"type":"text"}},"tool_choice":{"type":"image_generation"},"tools":[{"type":"image_generation","output_format":"png","quality":"low","size":"1024x1024"}],"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{},"output_text":""}}`,
+					"",
+				}, "\n"))),
+			}, nil
+		},
+	}
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		ImageGenerationProvider: provider,
+	})
+
+	req, err := http.NewRequest(http.MethodPost, app.Server.URL+"/v1/responses", bytes.NewReader(mustJSON(t, map[string]any{
+		"model":  "test-model",
+		"store":  true,
+		"stream": true,
+		"input":  "Generate a tiny orange cat in a teacup.",
+		"tools": []map[string]any{
+			{
+				"type":          "image_generation",
+				"output_format": "png",
+				"quality":       "low",
+				"size":          "1024x1024",
+			},
+		},
+		"tool_choice": map[string]any{"type": "image_generation"},
+	})))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Contains(t, resp.Header.Get("Content-Type"), "text/event-stream")
+
+	events := readSSEEvents(t, resp.Body)
+	require.Contains(t, eventTypes(events), "response.output_item.added")
+	require.Contains(t, eventTypes(events), "response.image_generation_call.in_progress")
+	require.Contains(t, eventTypes(events), "response.image_generation_call.generating")
+	require.NotContains(t, eventTypes(events), "response.image_generation_call.completed")
+	require.Len(t, findEvents(events, "response.image_generation_call.partial_image"), 2)
+
+	completed := findEvent(t, events, "response.completed").Data
+	responsePayload, ok := completed["response"].(map[string]any)
+	require.True(t, ok)
+	responseID := asStringAny(responsePayload["id"])
+	require.Equal(t, "resp_local_image_stream", responseID)
+
+	retrieveReq, err := http.NewRequest(http.MethodGet, app.Server.URL+"/v1/responses/"+responseID+"?stream=true", nil)
+	require.NoError(t, err)
+	retrieveResp, err := app.Client().Do(retrieveReq)
+	require.NoError(t, err)
+	defer retrieveResp.Body.Close()
+	require.Equal(t, http.StatusOK, retrieveResp.StatusCode)
+
+	replayEvents := readSSEEvents(t, retrieveResp.Body)
+	require.Contains(t, eventTypes(replayEvents), "response.image_generation_call.in_progress")
+	require.Contains(t, eventTypes(replayEvents), "response.image_generation_call.generating")
+	require.Len(t, findEvents(replayEvents, "response.image_generation_call.partial_image"), 2)
+
+	partial0 := findNthEvent(t, replayEvents, "response.image_generation_call.partial_image", 0).Data
+	require.EqualValues(t, 0, partial0["partial_image_index"])
+	require.Equal(t, "cGFydGlhbC0w", asStringAny(partial0["partial_image_b64"]))
+	partial1 := findNthEvent(t, replayEvents, "response.image_generation_call.partial_image", 1).Data
+	require.EqualValues(t, 1, partial1["partial_image_index"])
+	require.Equal(t, "cGFydGlhbC0x", asStringAny(partial1["partial_image_b64"]))
+}
+
+func TestResponsesLocalImageGenerationPreviousResponseIDFlattensLineage(t *testing.T) {
+	var callCount int
+	provider := &testutil.FakeImageGenerationProvider{}
+	provider.CreateFunc = func(_ context.Context, requestBody []byte) ([]byte, error) {
+		callCount++
+		switch callCount {
+		case 1:
+			require.NotContains(t, string(requestBody), `"previous_response_id"`)
+			return mustJSON(t, fakeImageGenerationResponsePayload("resp_local_image_prev_1", "ig_local_prev_1")), nil
+		case 2:
+			require.NotContains(t, string(requestBody), `"previous_response_id"`)
+			require.Contains(t, string(requestBody), `"type":"image_generation_call"`)
+			require.Contains(t, string(requestBody), `"id":"ig_local_prev_1"`)
+			return mustJSON(t, fakeImageGenerationResponsePayload("resp_local_image_prev_2", "ig_local_prev_2")), nil
+		default:
+			t.Fatalf("unexpected local image generation create call %d", callCount)
+			return nil, nil
+		}
+	}
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		ImageGenerationProvider: provider,
+	})
+
+	first := postResponse(t, app, map[string]any{
+		"model": "test-model",
+		"store": true,
+		"input": "Generate an orange cat in a teacup.",
+		"tools": []map[string]any{
+			{"type": "image_generation", "output_format": "png", "quality": "low", "size": "1024x1024"},
+		},
+		"tool_choice": map[string]any{"type": "image_generation"},
+	})
+	require.Equal(t, "resp_local_image_prev_1", first.ID)
+
+	second := postResponse(t, app, map[string]any{
+		"model":                "test-model",
+		"store":                true,
+		"previous_response_id": first.ID,
+		"input":                "Edit it to add a blue saucer.",
+		"tools": []map[string]any{
+			{"type": "image_generation", "output_format": "png", "quality": "low", "size": "1024x1024"},
+		},
+		"tool_choice": map[string]any{"type": "image_generation"},
+	})
+	require.Equal(t, "resp_local_image_prev_2", second.ID)
+	require.Len(t, provider.CreateBodies, 2)
 }
 
 func TestResponsesWithJSONTextFormatKeepLocalConversationState(t *testing.T) {
@@ -9492,6 +9707,65 @@ func rawRequestWithHeaders(t *testing.T, app *testutil.TestApp, method, path str
 	var decoded map[string]any
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&decoded))
 	return resp.StatusCode, resp.Header.Clone(), decoded
+}
+
+func fakeImageGenerationResponsePayload(responseID, itemID string) map[string]any {
+	return map[string]any{
+		"id":                 responseID,
+		"object":             "response",
+		"created_at":         1712059200,
+		"status":             "completed",
+		"completed_at":       1712059201,
+		"error":              nil,
+		"incomplete_details": nil,
+		"instructions":       nil,
+		"max_output_tokens":  nil,
+		"model":              "test-model",
+		"output": []map[string]any{
+			{
+				"id":             itemID,
+				"type":           "image_generation_call",
+				"status":         "completed",
+				"background":     "transparent",
+				"output_format":  "png",
+				"quality":        "low",
+				"size":           "1024x1024",
+				"result":         "ZmFrZS1pbWFnZQ==",
+				"revised_prompt": "A tiny orange cat curled up in a teacup.",
+				"action":         "generate",
+			},
+		},
+		"parallel_tool_calls":  true,
+		"previous_response_id": nil,
+		"reasoning": map[string]any{
+			"effort":  nil,
+			"summary": nil,
+		},
+		"store":       false,
+		"temperature": 1.0,
+		"text": map[string]any{
+			"format": map[string]any{
+				"type": "text",
+			},
+		},
+		"tool_choice": map[string]any{
+			"type": "image_generation",
+		},
+		"tools": []map[string]any{
+			{
+				"type":          "image_generation",
+				"output_format": "png",
+				"quality":       "low",
+				"size":          "1024x1024",
+			},
+		},
+		"top_p":       1.0,
+		"truncation":  "disabled",
+		"usage":       nil,
+		"user":        nil,
+		"metadata":    map[string]any{},
+		"output_text": "",
+	}
 }
 
 func uploadFile(t *testing.T, app *testutil.TestApp, filename, purpose string, content []byte, extraFields map[string]string) (int, map[string]any) {

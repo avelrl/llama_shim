@@ -57,8 +57,10 @@
 - `GET /v1/responses/{id}?stream=true` with local SSE replay
 - `/healthz`
 - `/readyz` с проверкой SQLite, upstream llama backend, retrieval embedder
-  readiness when semantic retrieval is enabled, and optional web-search
-  backend readiness when shim-local `web_search` is configured
+  readiness when semantic retrieval is enabled, optional web-search backend
+  readiness when shim-local `web_search` is configured, and optional
+  image-generation `/v1/responses` backend readiness when shim-local
+  `image_generation` is configured
 - `/metrics` как shim-owned Prometheus-text endpoint when metrics are enabled
 - SQLite migrations, `WAL`, default `busy_timeout`
 - local-first `responses.mode=prefer_local` по умолчанию с controlled upstream fallback
@@ -146,6 +148,13 @@
   heuristic `open_page` / `find_in_page`, stored/streaming
   `web_search_call` items, pragmatic final `url_citation` annotations, and
   proxy fallback when local web search is unavailable or not selected
+- local `/v1/responses` теперь умеет shim-local `image_generation` subset
+  over a separate OpenAI-compatible `/v1/responses` image backend:
+  one `image_generation` tool, non-stream and stream create, shadow-stored
+  responses, local `previous_response_id` image-edit lineage flattened into
+  shim-owned `input`, and persisted
+  `response.image_generation_call.partial_image` artifacts replayed on
+  stored retrieve-stream
 - local `/v1/responses` теперь умеет dev-only shim-local `code_interpreter`
   execution в pragmatic subset:
   один `code_interpreter` tool с `container.type=auto` или explicit
@@ -206,6 +215,7 @@
 - [x] - local retrieval substrate: files + vector stores + lexical search ([детали](#task-retrieval-substrate-local))
 - [x] - retrieval-compatible local `file_search` execution inside `/v1/responses` ([детали](#task-retrieval-layer))
 - [x] - shim-local `web_search` runtime subset inside `/v1/responses` ([детали](#task-local-web-search-runtime))
+- [x] - shim-local `image_generation` runtime subset inside `/v1/responses` ([детали](#task-local-image-generation-runtime))
 - [x] - dev-only local `code_interpreter` execution inside `/v1/responses` ([детали](#task-local-code-interpreter-runtime))
 - [x] - exact dense semantic/vector retrieval subset behind local `vector_stores` ([детали](#task-retrieval-semantic-backend))
 - [x] - weighted hybrid retrieval subset behind local `vector_stores` ([детали](#task-retrieval-semantic-backend))
@@ -213,7 +223,7 @@
 - [ ] - hosted reranked retrieval parity behind local `vector_stores` ([детали](#task-retrieval-semantic-backend))
 - [ ] - remaining parity для hosted/native Responses tools (`computer_use`, `code_interpreter`, `image_generation`, `remote MCP`, `tool_search`, exact hosted `web_search`) ([детали](#task-hosted-tools-parity))
 - [x] - local-first stored Chat Completions CRUD surface for proxy completions ([детали](#task-chat-stored-surface-local))
-- [x] - `/readyz` checks SQLite, upstream llama backend, and configured retrieval embedder readiness ([детали](#task-ops-hardening))
+- [x] - `/readyz` checks SQLite, upstream llama backend, configured retrieval embedder readiness, and configured local tool backends ([детали](#task-ops-hardening))
 - [x] - shim-owned ops hardening subset: ingress auth, request rate limiting, quotas, metrics, structured observability ([детали](#task-ops-hardening))
 - [ ] - stored Chat Completions compatibility surface ([детали](#task-chat-stored-surface))
 - [ ] - broader operational hardening: retention, maintenance, tenanting, richer quotas/exporters ([детали](#task-ops-hardening))
@@ -1391,6 +1401,53 @@ Definition of done:
 - backlog/OpenAPI/docs explicitly describe this as a shim-local subset, not
   full hosted browsing parity
 
+## <a id="task-local-image-generation-runtime"></a>Shim-local `image_generation` runtime subset inside `/v1/responses`
+
+Почему это отдельный pragmatic subset:
+
+- trace-backed stored replay for `image_generation_call` was already closed,
+  but that only covered retrieve fidelity, not real tool execution
+- direct `/images/*` passthrough would underspecify Responses-native tool
+  semantics such as `image_generation_call`, `previous_response_id` edit
+  lineage, and `partial_image` streaming artifacts
+- a dedicated local subset over a separate OpenAI-compatible
+  `/v1/responses` image backend gives a usable runtime now without claiming
+  exact hosted live-stream parity
+
+Что закрыто сейчас:
+
+- shim-local `/v1/responses` supports one `image_generation` tool in
+  `responses.mode=prefer_local|local_only`
+- local execution is explicitly gated by
+  `responses.image_generation.backend=responses` and delegates the tool call
+  to a separate OpenAI-compatible `/v1/responses` image backend instead of
+  the main upstream text-generation backend
+- non-stream and stream create are supported, and saved Responses remain
+  consistent across create, retrieve, and retrieve-stream
+- current-turn `input_image` parts and local `previous_response_id`
+  image-edit lineage are flattened into the shim-owned Responses `input`
+  forwarded to the configured image backend
+- when the backend stream emits
+  `response.image_generation_call.partial_image`, the shim persists those
+  irrecoverable artifacts and replays them on stored
+  `GET /v1/responses/{id}?stream=true`
+- `/readyz` now checks the configured image-generation backend when this
+  local subset is enabled
+
+Что остаётся open:
+
+- exact hosted live-stream timing and choreography during create-stream
+- broader hosted planner/failure semantics
+- provider diversity beyond the current `responses` backend
+
+Definition of done:
+
+- local `image_generation` is actually usable inside `/v1/responses`
+- stream create and stored retrieve-stream preserve
+  `partial_image` artifacts when the backend emitted them
+- backlog/OpenAPI/docs explicitly describe this as a shim-local subset over a
+  dedicated Responses-compatible image backend, not full hosted parity
+
 ## <a id="task-local-code-interpreter-runtime"></a>Dev-only local `code_interpreter` execution inside `/v1/responses`
 
 Почему это отдельный pragmatic subset:
@@ -1531,6 +1588,9 @@ Definition of done:
 - current state already includes a pragmatic local remote MCP subset for
   `server_url` servers; remaining remote MCP work is connector parity and
   broader hosted transport/failure semantics
+- current state already includes pragmatic local subsets for `web_search`,
+  `image_generation`, and `code_interpreter`; remaining work there is
+  broader hosted/native parity, not first-use runtime
 
 Что входит:
 

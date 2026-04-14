@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"llama_shim/internal/imagegen"
 	"llama_shim/internal/llama"
 	"llama_shim/internal/retrieval"
 	"llama_shim/internal/service"
@@ -29,6 +30,7 @@ type RouterDeps struct {
 	ResponsesCodexEnableCompatibility     bool
 	ResponsesCodexForceToolChoiceRequired bool
 	WebSearchProvider                     websearch.Provider
+	ImageGenerationProvider               imagegen.Provider
 	LocalCodeInterpreter                  LocalCodeInterpreterRuntimeConfig
 	RetrievalIndexBackend                 string
 	RetrievalEmbedder                     retrieval.Embedder
@@ -61,6 +63,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 		deps.ResponsesCodexEnableCompatibility,
 		deps.ResponsesCodexForceToolChoiceRequired,
 		deps.WebSearchProvider,
+		deps.ImageGenerationProvider,
 		deps.LocalCodeInterpreter,
 		deps.Store,
 		deps.Store,
@@ -117,6 +120,14 @@ func NewRouter(deps RouterDeps) http.Handler {
 			defer cancel()
 			if err := checker.CheckReady(webSearchCtx); err != nil {
 				WriteError(w, http.StatusServiceUnavailable, "service_unavailable", "web search backend is not ready", "")
+				return
+			}
+		}
+		if deps.ImageGenerationProvider != nil {
+			imageGenerationCtx, cancel := context.WithTimeout(r.Context(), readyzUpstreamTimeout)
+			defer cancel()
+			if err := deps.ImageGenerationProvider.CheckReady(imageGenerationCtx); err != nil {
+				WriteError(w, http.StatusServiceUnavailable, "service_unavailable", "image generation backend is not ready", "")
 				return
 			}
 		}

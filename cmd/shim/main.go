@@ -12,6 +12,7 @@ import (
 
 	"llama_shim/internal/config"
 	"llama_shim/internal/httpapi"
+	"llama_shim/internal/imagegen"
 	"llama_shim/internal/llama"
 	"llama_shim/internal/retrieval"
 	"llama_shim/internal/sandbox"
@@ -82,13 +83,22 @@ func main() {
 		os.Exit(1)
 	}
 	webSearchProvider, err := websearch.NewProvider(websearch.Config{
-		Backend:   cfg.ResponsesWebSearchBackend,
-		BaseURL:   cfg.ResponsesWebSearchBaseURL,
-		Timeout:   cfg.ResponsesWebSearchTimeout,
+		Backend:    cfg.ResponsesWebSearchBackend,
+		BaseURL:    cfg.ResponsesWebSearchBaseURL,
+		Timeout:    cfg.ResponsesWebSearchTimeout,
 		MaxResults: cfg.ResponsesWebSearchMaxResults,
 	})
 	if err != nil {
 		logger.Error("build web search provider", "err", err)
+		os.Exit(1)
+	}
+	imageGenerationProvider, err := imagegen.NewProvider(imagegen.Config{
+		Backend: cfg.ResponsesImageGenerationBackend,
+		BaseURL: cfg.ResponsesImageGenerationBaseURL,
+		Timeout: cfg.ResponsesImageGenerationTimeout,
+	})
+	if err != nil {
+		logger.Error("build image generation provider", "err", err)
 		os.Exit(1)
 	}
 	httpapi.StartLocalCodeInterpreterCleanupLoop(processCtx, logger, localCodeInterpreter, store, store, cfg.ResponsesCodeInterpreterCleanupInterval)
@@ -118,6 +128,7 @@ func main() {
 			ResponsesCodexEnableCompatibility:     cfg.ResponsesCodexEnableCompatibility,
 			ResponsesCodexForceToolChoiceRequired: cfg.ResponsesCodexForceToolChoiceRequired,
 			WebSearchProvider:                     webSearchProvider,
+			ImageGenerationProvider:               imageGenerationProvider,
 			LocalCodeInterpreter:                  localCodeInterpreter,
 			RetrievalIndexBackend:                 cfg.RetrievalIndexBackend,
 			RetrievalEmbedder:                     retrievalEmbedder,
@@ -161,6 +172,9 @@ func main() {
 		"responses_web_search_base_url", cfg.ResponsesWebSearchBaseURL,
 		"responses_web_search_timeout", cfg.ResponsesWebSearchTimeout,
 		"responses_web_search_max_results", cfg.ResponsesWebSearchMaxResults,
+		"responses_image_generation_backend", cfg.ResponsesImageGenerationBackend,
+		"responses_image_generation_base_url", cfg.ResponsesImageGenerationBaseURL,
+		"responses_image_generation_timeout", cfg.ResponsesImageGenerationTimeout,
 		"responses_code_interpreter_backend", cfg.ResponsesCodeInterpreterBackend,
 		"responses_code_interpreter_python_binary", cfg.ResponsesCodeInterpreterPythonBinary,
 		"responses_code_interpreter_docker_binary", cfg.ResponsesCodeInterpreterDockerBinary,

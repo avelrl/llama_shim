@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"llama_shim/internal/imagegen"
 	"llama_shim/internal/retrieval"
 	"llama_shim/internal/websearch"
 
@@ -50,6 +51,9 @@ type Config struct {
 	ResponsesWebSearchBaseURL                      string
 	ResponsesWebSearchTimeout                      time.Duration
 	ResponsesWebSearchMaxResults                   int
+	ResponsesImageGenerationBackend                string
+	ResponsesImageGenerationBaseURL                string
+	ResponsesImageGenerationTimeout                time.Duration
 	ChatCompletionsStoreWhenOmitted                bool
 	ResponsesMode                                  string
 	ResponsesCustomToolsMode                       string
@@ -112,6 +116,8 @@ func Load(configPath string) (Config, error) {
 		RetrievalEmbedderModel:                         strings.TrimSpace(v.GetString("retrieval.embedder.model")),
 		ResponsesWebSearchBackend:                      strings.ToLower(strings.TrimSpace(v.GetString("responses.web_search.backend"))),
 		ResponsesWebSearchBaseURL:                      strings.TrimSpace(v.GetString("responses.web_search.base_url")),
+		ResponsesImageGenerationBackend:                strings.ToLower(strings.TrimSpace(v.GetString("responses.image_generation.backend"))),
+		ResponsesImageGenerationBaseURL:                strings.TrimSpace(v.GetString("responses.image_generation.base_url")),
 		ChatCompletionsStoreWhenOmitted:                v.GetBool("chat_completions.default_store_when_omitted"),
 		ResponsesMode:                                  strings.ToLower(strings.TrimSpace(v.GetString("responses.mode"))),
 		ResponsesCustomToolsMode:                       strings.ToLower(strings.TrimSpace(v.GetString("responses.custom_tools.mode"))),
@@ -168,8 +174,8 @@ func Load(configPath string) (Config, error) {
 	cfg.RetrievalEmbedderBaseURL = normalizedRetrieval.Embedder.BaseURL
 	cfg.RetrievalEmbedderModel = normalizedRetrieval.Embedder.Model
 	normalizedWebSearch, err := websearch.NormalizeConfig(websearch.Config{
-		Backend:   cfg.ResponsesWebSearchBackend,
-		BaseURL:   cfg.ResponsesWebSearchBaseURL,
+		Backend:    cfg.ResponsesWebSearchBackend,
+		BaseURL:    cfg.ResponsesWebSearchBaseURL,
 		MaxResults: 0,
 	})
 	if err != nil {
@@ -235,6 +241,20 @@ func Load(configPath string) (Config, error) {
 	if err := parseDuration(v.GetString("responses.web_search.timeout"), &cfg.ResponsesWebSearchTimeout); err != nil {
 		return Config{}, fmt.Errorf("parse responses.web_search.timeout: %w", err)
 	}
+	if err := parseDuration(v.GetString("responses.image_generation.timeout"), &cfg.ResponsesImageGenerationTimeout); err != nil {
+		return Config{}, fmt.Errorf("parse responses.image_generation.timeout: %w", err)
+	}
+	normalizedImageGeneration, err := imagegen.NormalizeConfig(imagegen.Config{
+		Backend: cfg.ResponsesImageGenerationBackend,
+		BaseURL: cfg.ResponsesImageGenerationBaseURL,
+		Timeout: cfg.ResponsesImageGenerationTimeout,
+	})
+	if err != nil {
+		return Config{}, fmt.Errorf("parse responses.image_generation config: %w", err)
+	}
+	cfg.ResponsesImageGenerationBackend = normalizedImageGeneration.Backend
+	cfg.ResponsesImageGenerationBaseURL = normalizedImageGeneration.BaseURL
+	cfg.ResponsesImageGenerationTimeout = normalizedImageGeneration.Timeout
 	if err := parseDuration(v.GetString("responses.code_interpreter.cleanup_interval"), &cfg.ResponsesCodeInterpreterCleanupInterval); err != nil {
 		return Config{}, fmt.Errorf("parse responses.code_interpreter.cleanup_interval: %w", err)
 	}
@@ -283,7 +303,6 @@ func Load(configPath string) (Config, error) {
 		return Config{}, fmt.Errorf("parse responses.web_search.max_results: %w", err)
 	}
 	cfg.ResponsesWebSearchMaxResults = webSearchMaxResults
-
 	return cfg, nil
 }
 
@@ -323,6 +342,9 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("responses.web_search.base_url", "")
 	v.SetDefault("responses.web_search.timeout", "10s")
 	v.SetDefault("responses.web_search.max_results", "10")
+	v.SetDefault("responses.image_generation.backend", imagegen.BackendDisabled)
+	v.SetDefault("responses.image_generation.base_url", "")
+	v.SetDefault("responses.image_generation.timeout", "60s")
 	v.SetDefault("responses.code_interpreter.backend", "")
 	v.SetDefault("responses.code_interpreter.enable_unsafe_host_executor", false)
 	v.SetDefault("responses.code_interpreter.python_binary", "python3")

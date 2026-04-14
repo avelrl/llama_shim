@@ -13,6 +13,7 @@ import (
 
 	"llama_shim/internal/config"
 	"llama_shim/internal/domain"
+	"llama_shim/internal/imagegen"
 	"llama_shim/internal/service"
 	"llama_shim/internal/websearch"
 )
@@ -46,12 +47,13 @@ type responseHandler struct {
 	codexCompatibilityEnabled    bool
 	forceCodexToolChoiceRequired bool
 	webSearchProvider            websearch.Provider
+	imageGenerationProvider      imagegen.Provider
 	localCodeInterpreter         LocalCodeInterpreterRuntimeConfig
 	localCodeInterpreterFiles    LocalCodeInterpreterFileStore
 	localCodeInterpreterSessions LocalCodeInterpreterSessionStore
 }
 
-func newResponseHandler(logger *slog.Logger, service *service.ResponseService, proxy *proxyHandler, responsesMode string, customToolsMode string, codexCompatibilityEnabled bool, forceCodexToolChoiceRequired bool, webSearchProvider websearch.Provider, localCodeInterpreter LocalCodeInterpreterRuntimeConfig, localCodeInterpreterFiles LocalCodeInterpreterFileStore, localCodeInterpreterSessions LocalCodeInterpreterSessionStore, metrics *Metrics, serviceLimits ServiceLimits, retrievalGate *concurrencyGate, codeInterpreterGate *concurrencyGate) *responseHandler {
+func newResponseHandler(logger *slog.Logger, service *service.ResponseService, proxy *proxyHandler, responsesMode string, customToolsMode string, codexCompatibilityEnabled bool, forceCodexToolChoiceRequired bool, webSearchProvider websearch.Provider, imageGenerationProvider imagegen.Provider, localCodeInterpreter LocalCodeInterpreterRuntimeConfig, localCodeInterpreterFiles LocalCodeInterpreterFileStore, localCodeInterpreterSessions LocalCodeInterpreterSessionStore, metrics *Metrics, serviceLimits ServiceLimits, retrievalGate *concurrencyGate, codeInterpreterGate *concurrencyGate) *responseHandler {
 	return &responseHandler{
 		logger:                       logger,
 		service:                      service,
@@ -65,6 +67,7 @@ func newResponseHandler(logger *slog.Logger, service *service.ResponseService, p
 		codexCompatibilityEnabled:    codexCompatibilityEnabled,
 		forceCodexToolChoiceRequired: forceCodexToolChoiceRequired,
 		webSearchProvider:            webSearchProvider,
+		imageGenerationProvider:      imageGenerationProvider,
 		localCodeInterpreter:         localCodeInterpreter,
 		localCodeInterpreterFiles:    localCodeInterpreterFiles,
 		localCodeInterpreterSessions: localCodeInterpreterSessions,
@@ -111,6 +114,8 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 	localToolSearch := supportsLocalToolSearch(rawFields)
 	localFileSearch := supportsLocalFileSearch(rawFields)
 	localWebSearch := supportsLocalWebSearch(rawFields, h.webSearchProvider)
+	localImageGenerationRequested := isLocalImageGenerationToolRequest(rawFields)
+	localImageGeneration := supportsLocalImageGeneration(rawFields, h.imageGenerationProvider)
 	localMCPSupported := supportsLocalMCP(rawFields)
 	localMCPConnector := hasConnectorMCPTools(rawFields)
 	localMCPUnsupported := hasUnsupportedLocalMCPTools(rawFields)
@@ -144,6 +149,24 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 			}
 			if err := writeCompletedResponseAsSSE(r.Context(), h.logger, w, rawResponse, customToolTransportPlan{}, streamOptions.IncludeObfuscation); err != nil && !shouldIgnoreStreamProxyError(err) {
 				h.logger.WarnContext(r.Context(), "local web search stream failed", "request_id", RequestIDFromContext(r.Context()), "err", err)
+			}
+			return
+		case localImageGeneration:
+			response, artifacts, err := h.createLocalImageGenerationResponse(r.Context(), request, requestJSON, rawFields)
+			if err != nil {
+				if shouldFallbackLocalState(h.responsesMode, err) {
+					if hasLocalState {
+						h.createStreamViaUpstream(w, r, request, requestJSON, rawFields, streamOptions)
+						return
+					}
+					h.proxyCreateStream(w, r, request, requestJSON, rawFields, streamOptions)
+					return
+				}
+				h.writeError(w, r, normalizeLocalOnlyCreateError(h.responsesMode, err))
+				return
+			}
+			if err := writeResponseReplayAsSSE(w, response, artifacts, 0, streamOptions.IncludeObfuscation); err != nil && !shouldIgnoreStreamProxyError(err) {
+				h.logger.WarnContext(r.Context(), "local image generation stream failed", "request_id", RequestIDFromContext(r.Context()), "err", err)
 			}
 			return
 		case localFileSearch:
@@ -287,6 +310,28 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 		}
 		WriteJSON(w, http.StatusOK, response)
 		return
+	case localImageGeneration:
+		response, _, err := h.createLocalImageGenerationResponse(r.Context(), request, requestJSON, rawFields)
+		if err != nil {
+			if shouldFallbackLocalState(h.responsesMode, err) {
+				var response domain.Response
+				var fallbackErr error
+				if hasLocalState {
+					response, fallbackErr = h.createLocalStateViaUpstream(r.Context(), request, requestJSON, rawFields)
+				} else {
+					response, fallbackErr = h.createProxyResponseViaUpstream(r.Context(), request, requestJSON, rawFields)
+				}
+				if fallbackErr == nil {
+					WriteJSON(w, http.StatusOK, response)
+					return
+				}
+				err = fallbackErr
+			}
+			h.writeError(w, r, normalizeLocalOnlyCreateError(h.responsesMode, err))
+			return
+		}
+		WriteJSON(w, http.StatusOK, response)
+		return
 	case localFileSearch:
 		response, err := h.createLocalFileSearchResponse(r.Context(), request, requestJSON, rawFields)
 		if err != nil {
@@ -383,6 +428,9 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 			err = fallbackErr
 		}
 		h.writeError(w, r, normalizeLocalOnlyCreateError(h.responsesMode, err))
+		return
+	case localImageGenerationRequested && h.responsesMode == config.ResponsesModeLocalOnly:
+		h.writeError(w, r, localImageGenerationDisabledError())
 		return
 	case localCodeInterpreterRequested && h.responsesMode == config.ResponsesModeLocalOnly:
 		h.writeError(w, r, localCodeInterpreterDisabledError())

@@ -63,6 +63,10 @@ responses:
     base_url: http://127.0.0.1:8084
     timeout: 9s
     max_results: 7
+  image_generation:
+    backend: responses
+    base_url: http://127.0.0.1:8188
+    timeout: 95s
   custom_tools:
     mode: bridge
   codex:
@@ -124,6 +128,9 @@ responses:
 	require.Equal(t, "http://127.0.0.1:8084", cfg.ResponsesWebSearchBaseURL)
 	require.Equal(t, 9*time.Second, cfg.ResponsesWebSearchTimeout)
 	require.Equal(t, 7, cfg.ResponsesWebSearchMaxResults)
+	require.Equal(t, "responses", cfg.ResponsesImageGenerationBackend)
+	require.Equal(t, "http://127.0.0.1:8188", cfg.ResponsesImageGenerationBaseURL)
+	require.Equal(t, 95*time.Second, cfg.ResponsesImageGenerationTimeout)
 	require.Equal(t, "bridge", cfg.ResponsesCustomToolsMode)
 	require.True(t, cfg.ResponsesCodexEnableCompatibility)
 	require.True(t, cfg.ResponsesCodexForceToolChoiceRequired)
@@ -198,6 +205,9 @@ responses:
 	t.Setenv("RESPONSES_WEB_SEARCH_BASE_URL", "http://127.0.0.1:8181")
 	t.Setenv("RESPONSES_WEB_SEARCH_TIMEOUT", "8s")
 	t.Setenv("RESPONSES_WEB_SEARCH_MAX_RESULTS", "6")
+	t.Setenv("RESPONSES_IMAGE_GENERATION_BACKEND", "responses")
+	t.Setenv("RESPONSES_IMAGE_GENERATION_BASE_URL", "http://127.0.0.1:8282")
+	t.Setenv("RESPONSES_IMAGE_GENERATION_TIMEOUT", "70s")
 	t.Setenv("RESPONSES_CODEX_ENABLE_COMPATIBILITY", "true")
 	t.Setenv("RESPONSES_CODEX_FORCE_TOOL_CHOICE_REQUIRED", "true")
 	t.Setenv("RESPONSES_CODE_INTERPRETER_BACKEND", "unsafe_host")
@@ -245,6 +255,9 @@ responses:
 	require.Equal(t, "http://127.0.0.1:8181", cfg.ResponsesWebSearchBaseURL)
 	require.Equal(t, 8*time.Second, cfg.ResponsesWebSearchTimeout)
 	require.Equal(t, 6, cfg.ResponsesWebSearchMaxResults)
+	require.Equal(t, "responses", cfg.ResponsesImageGenerationBackend)
+	require.Equal(t, "http://127.0.0.1:8282", cfg.ResponsesImageGenerationBaseURL)
+	require.Equal(t, 70*time.Second, cfg.ResponsesImageGenerationTimeout)
 	require.True(t, cfg.ResponsesCodexEnableCompatibility)
 	require.True(t, cfg.ResponsesCodexForceToolChoiceRequired)
 	require.Equal(t, config.ResponsesCodeInterpreterBackendUnsafeHost, cfg.ResponsesCodeInterpreterBackend)
@@ -294,6 +307,9 @@ func TestLoadUsesCodexSafeDefaults(t *testing.T) {
 	require.Empty(t, cfg.RetrievalEmbedderModel)
 	require.True(t, cfg.ChatCompletionsStoreWhenOmitted)
 	require.Equal(t, config.ResponsesModePreferLocal, cfg.ResponsesMode)
+	require.Equal(t, "disabled", cfg.ResponsesImageGenerationBackend)
+	require.Empty(t, cfg.ResponsesImageGenerationBaseURL)
+	require.Equal(t, 0*time.Second, cfg.ResponsesImageGenerationTimeout)
 	require.Equal(t, "auto", cfg.ResponsesCustomToolsMode)
 	require.True(t, cfg.ResponsesCodexEnableCompatibility)
 	require.True(t, cfg.ResponsesCodexForceToolChoiceRequired)
@@ -338,4 +354,17 @@ retrieval:
 	_, err := config.Load(configPath)
 	require.Error(t, err)
 	require.ErrorContains(t, err, `unsupported retrieval index backend "bogus"`)
+}
+
+func TestLoadRejectsImageGenerationResponsesBackendWithoutBaseURL(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	writeFile(t, configPath, `
+responses:
+  image_generation:
+    backend: responses
+`)
+
+	_, err := config.Load(configPath)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "responses.image_generation.base_url must not be empty")
 }
