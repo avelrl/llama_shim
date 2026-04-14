@@ -35,12 +35,12 @@ Detailed task notes and implementation history still live in
 
 | Surface | Current shim status | V2 target | Notes |
 | --- | --- | --- | --- |
-| `POST /v1/responses` | Broad subset | Close remaining hosted/native tool contract and mode behavior | Local-first path is real and stateful; unsupported/rare semantics must stay explicit |
+| `POST /v1/responses` | Broad subset | Finish remaining retrieval and stored-chat parity work | Local-first path is real and stateful; the hosted/native tool contract is now fixed for the V2 facade scope |
 | `GET /v1/responses/{id}` | Implemented | Keep docs and OpenAPI aligned | Stored response ownership is already in the shim |
 | `DELETE /v1/responses/{id}` and `POST /v1/responses/{id}/cancel` | Implemented | Keep lifecycle semantics honest | No known V2 blocker beyond lifecycle wording |
 | `GET /v1/responses/{id}/input_items` | Implemented | Keep item-history semantics stable | Effective input snapshot is already persisted |
 | create-stream and retrieve-stream | Broad subset | Keep core SSE stable; do not overclaim exact hosted choreography | Generic replay is accepted where docs or fixtures do not lock down tool-specific event families |
-| `responses.mode=prefer_local|prefer_upstream|local_only` | Partial | Finish the remaining per-tool coverage and wording | The route selector and initial mode tests are in place, but the facade contract still needs broader per-tool documentation/tests |
+| `responses.mode=prefer_local|prefer_upstream|local_only` | Broad subset | Keep the per-tool matrix aligned with implementation | Per-tool matrix and integration coverage now span the supported hosted/native tool families; exact hosted choreography stays out of scope |
 | `POST /v1/conversations` | Implemented | Keep aligned with Responses state model | Durable conversation ids are already part of the baseline |
 | `GET /v1/conversations/{id}` | Implemented | Keep read-model honest | |
 | `GET/POST/DELETE /v1/conversations/{id}/items*` | Implemented | Keep canonical append/delete flow centralized | |
@@ -93,7 +93,7 @@ proxy-first escape hatch for standalone hosted/native requests, while
 | --- | --- | --- | --- | --- |
 | core local Responses subset | local first, fallback upstream on unsupported subset | proxy first for standalone requests; local-state follow-up still uses shim-owned state handling | reject unsupported fields | This covers the shim-owned stateful baseline |
 | local `file_search` | local subset | proxy first | local subset or validation error | Current local subset is useful, but `prefer_upstream` does not silently replace hosted behavior |
-| local `web_search` | local subset when backend is configured; fallback upstream on unsupported shape/runtime absence | proxy first | local subset or explicit local-only error | Exact hosted search behavior remains out of scope for V2 |
+| local `web_search` | local subset when backend is configured; fallback upstream on unsupported shape/runtime absence | proxy first | local subset or explicit local-only error | Covers `web_search` plus `web_search_preview`; preview ignores `external_web_access` and local preview filters are rejected explicitly |
 | local `image_generation` | local subset when backend is configured; fallback upstream before local dispatch when runtime/subset is unavailable | proxy first | local subset or explicit disabled-runtime error | `prefer_upstream` does not silently reroute to local image generation if upstream rejects the tool type |
 | local `computer` | local subset when backend is configured | proxy first | local subset or explicit disabled-runtime error | `prefer_upstream` stays raw-proxy; current local subset is screenshot-first external-loop planning |
 | local `code_interpreter` | local subset when backend is configured | proxy first | local subset or explicit disabled-runtime error | `prefer_upstream` stays raw-proxy; current subset stays explicitly dev-only/local |
@@ -116,9 +116,6 @@ proxy-first escape hatch for standalone hosted/native requests, while
 These are the remaining items that still look like real V2 blockers as of
 April 14, 2026:
 
-- per-tool compatibility and mode matrix for `prefer_local`,
-  `prefer_upstream`, and `local_only`
-- remaining hosted/native Responses tools parity work
 - hosted reranked retrieval parity behind local `vector_stores`
 - stored Chat Completions contract finalization
 - minimum operator floor: retention cleanup, maintenance path, and local DX

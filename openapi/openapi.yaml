@@ -219,7 +219,8 @@ paths:
           locally when `responses.web_search.backend` is configured
         - the local subset accepts `search_context_size`,
           `include=["web_search_call.action.sources"]`, and a pragmatic
-          `filters` subset for `web_search`
+          `filters` subset for `web_search`; `web_search_preview` rejects
+          `filters` in shim-local mode
         - local execution uses deterministic query planning/rewrite, a
           configurable SearXNG backend for search, heuristic `open_page` /
           `find_in_page` follow-up when the prompt clearly asks to inspect a
@@ -227,9 +228,10 @@ paths:
         - when `responses.mode=local_only` selects this subset without a
           configured backend, the shim returns an explicit validation error
           pointing at `responses.web_search.backend`
-        - `web_search.external_web_access=false` is not emulated locally; when
-          local routing is selected, this shape falls back or errors according
-          to `responses.mode`
+        - `web_search_preview` ignores `external_web_access` in line with the
+          public tool guide; `web_search.external_web_access=false` is not
+          emulated locally, so when local routing is selected for the GA tool,
+          this shape falls back or errors according to `responses.mode`
         - exact hosted planner behavior, broader live-web semantics, and full
           hosted failure choreography remain open
 

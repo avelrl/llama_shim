@@ -121,6 +121,11 @@
   when the backend rejects those tool types, while `local_only` with enabled
   local runtimes now proves parser errors instead of false
   disabled-runtime responses
+- local `web_search` mode coverage now explicitly includes
+  `web_search_preview`: preview requests still run through the local subset
+  even when `external_web_access=false`, `prefer_upstream` stays proxy-first,
+  and preview-specific unsupported shapes like `filters` now have explicit
+  parser coverage in `local_only`
 - `/readyz` теперь реально проверяет SQLite и upstream llama backend, а при
   `sqlite_vec` + readiness-aware embedder ещё и retrieval embedder, а не просто
   отвечает `200`
@@ -257,7 +262,7 @@ Release framing as of April 14, 2026:
 - [x] - weighted hybrid retrieval subset behind local `vector_stores` ([детали](#task-retrieval-semantic-backend))
 - [x] - local reranked retrieval subset behind local `vector_stores` ([детали](#task-retrieval-semantic-backend))
 - [ ] - hosted reranked retrieval parity behind local `vector_stores` ([детали](#task-retrieval-semantic-backend))
-- [ ] - remaining parity для hosted/native Responses tools (`computer_use`, `code_interpreter`, `image_generation`, `remote MCP`, `tool_search`, exact hosted `web_search`) ([детали](#task-hosted-tools-parity))
+- [x] - V2 hosted/native Responses tools contract matrix and mode semantics (`web_search` / `web_search_preview`, `computer`, `code_interpreter`, `image_generation`, `remote MCP`, `tool_search`) ([детали](#task-hosted-tools-parity))
 - [x] - local-first stored Chat Completions CRUD surface for proxy completions ([детали](#task-chat-stored-surface-local))
 - [x] - `/readyz` checks SQLite, upstream llama backend, configured retrieval embedder readiness, and configured local tool backends ([детали](#task-ops-hardening))
 - [x] - shim-owned ops hardening subset: ingress auth, request rate limiting, quotas, metrics, structured observability ([детали](#task-ops-hardening))
@@ -1725,9 +1730,20 @@ Definition of done:
   tests для основных mode/tool routing веток
 - explicit local-only disabled-runtime errors уже зафиксированы для
   `image_generation`, `computer`, и `code_interpreter`
-- remaining work здесь — не “ещё один ad-hoc branch”, а расширение matrix/docs
-  coverage и per-tool integration coverage для всех hosted/native tool
-  families
+- integration coverage now spans:
+  `web_search` / `web_search_preview`,
+  `image_generation`,
+  `computer`,
+  `code_interpreter`,
+  remote MCP `server_url` / `connector_id`,
+  and `tool_search` hosted/server / client execution
+- V2 broad-compatibility scope for hosted/native Responses tools is now
+  closed: the matrix, OpenAPI wording, and integration coverage all describe
+  which families run locally, which stay raw-proxy, and which reject in
+  `local_only`
+- exact hosted planner choreography, richer tool-specific failure/status
+  parity, and broader fixture-heavy semantics stay tracked in the dedicated
+  tool/runtime items above and do not block the V2 compatibility facade
 
 Полезные reference:
 

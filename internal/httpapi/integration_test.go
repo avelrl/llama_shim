@@ -4508,6 +4508,92 @@ func TestResponsesPreferUpstreamWebSearchStaysProxyFirstEvenWhenLocalProviderExi
 	require.Empty(t, provider.SearchCalls)
 }
 
+func TestResponsesLocalWebSearchPreviewUsesProviderAndIgnoresExternalWebAccessFlag(t *testing.T) {
+	provider := &testutil.FakeWebSearchProvider{
+		SearchFunc: func(_ context.Context, request websearch.SearchRequest) (websearch.SearchResponse, error) {
+			require.NotEmpty(t, strings.TrimSpace(request.Query))
+			return websearch.SearchResponse{
+				Results: []websearch.SearchResult{
+					{
+						Title:   "Preview Result",
+						URL:     "https://preview.example/result",
+						Snippet: "Preview variants can still return sources.",
+					},
+				},
+			}, nil
+		},
+	}
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		WebSearchProvider: provider,
+	})
+
+	status, body := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model": "test-model",
+		"store": true,
+		"input": "Search the web with the preview tool.",
+		"include": []string{
+			"web_search_call.action.sources",
+		},
+		"tools": []map[string]any{
+			{
+				"type":                "web_search_preview",
+				"external_web_access": false,
+				"user_location": map[string]any{
+					"type":     "approximate",
+					"country":  "US",
+					"timezone": "America/Chicago",
+				},
+			},
+		},
+		"tool_choice": map[string]any{"type": "web_search_preview"},
+	})
+
+	require.Equal(t, http.StatusOK, status)
+	require.NotEqual(t, "upstream_resp_1", asStringAny(body["id"]))
+	require.Len(t, provider.SearchCalls, 1)
+
+	output, ok := body["output"].([]any)
+	require.True(t, ok)
+	require.Len(t, output, 2)
+
+	searchItem, ok := output[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "web_search_call", asStringAny(searchItem["type"]))
+	action, ok := searchItem["action"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "search", asStringAny(action["type"]))
+	sources, ok := action["sources"].([]any)
+	require.True(t, ok)
+	require.Len(t, sources, 1)
+	require.Equal(t, "https://preview.example/result", asStringAny(sources[0].(map[string]any)["url"]))
+
+	messageItem, ok := output[1].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "message", asStringAny(messageItem["type"]))
+}
+
+func TestResponsesPreferUpstreamWebSearchPreviewStaysProxyFirstEvenWhenLocalProviderExists(t *testing.T) {
+	provider := &testutil.FakeWebSearchProvider{}
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		ResponsesMode:     config.ResponsesModePreferUpstream,
+		WebSearchProvider: provider,
+	})
+
+	response := postResponse(t, app, map[string]any{
+		"model": "test-model",
+		"input": "Search the web with the preview tool.",
+		"tools": []map[string]any{
+			{
+				"type": "web_search_preview",
+			},
+		},
+	})
+
+	require.Equal(t, "upstream_resp_1", response.ID)
+	require.Equal(t, "UPSTREAM", response.OutputText)
+	require.Empty(t, provider.SearchCalls)
+}
+
 func TestResponsesLocalOnlyWebSearchRequiresBackend(t *testing.T) {
 	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
 		ResponsesMode: config.ResponsesModeLocalOnly,
@@ -4552,6 +4638,33 @@ func TestResponsesLocalOnlyWebSearchUnsupportedShapeUsesParserErrorWhenBackendEx
 	require.True(t, ok)
 	require.Equal(t, "invalid_request_error", asStringAny(errorPayload["type"]))
 	require.Contains(t, asStringAny(errorPayload["message"]), "input shape is not supported when responses.mode=local_only")
+	require.NotContains(t, asStringAny(errorPayload["message"]), "responses.web_search.backend")
+}
+
+func TestResponsesLocalOnlyWebSearchPreviewRejectsFiltersWhenBackendExists(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		ResponsesMode:     config.ResponsesModeLocalOnly,
+		WebSearchProvider: &testutil.FakeWebSearchProvider{},
+	})
+
+	status, payload := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model": "test-model",
+		"input": "Search the web with the preview tool.",
+		"tools": []map[string]any{
+			{
+				"type": "web_search_preview",
+				"filters": map[string]any{
+					"allowed_domains": []string{"openai.com"},
+				},
+			},
+		},
+	})
+
+	require.Equal(t, http.StatusBadRequest, status)
+	errorPayload, ok := payload["error"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "invalid_request_error", asStringAny(errorPayload["type"]))
+	require.Contains(t, asStringAny(errorPayload["message"]), "web_search_preview does not support filters in shim-local mode")
 	require.NotContains(t, asStringAny(errorPayload["message"]), "responses.web_search.backend")
 }
 
