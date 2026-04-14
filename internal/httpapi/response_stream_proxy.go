@@ -126,9 +126,9 @@ func (h *responseHandler) proxyCreateStream(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	var onCompleted func([]byte) error
+	var onCompleted func([]byte, []domain.ResponseReplayArtifact) error
 	if ok {
-		onCompleted = func(rawResponse []byte) error {
+		onCompleted = func(rawResponse []byte, artifacts []domain.ResponseReplayArtifact) error {
 			response, err := domain.ParseUpstreamResponse(rawResponse)
 			if err != nil {
 				return err
@@ -137,8 +137,11 @@ func (h *responseHandler) proxyCreateStream(w http.ResponseWriter, r *http.Reque
 			if response.OutputText == "" && len(response.Output) == 0 {
 				return nil
 			}
-			_, err = h.service.SaveExternalResponse(r.Context(), prepared, input, response)
-			return err
+			stored, err := h.service.SaveExternalResponse(r.Context(), prepared, input, response)
+			if err != nil {
+				return err
+			}
+			return h.service.SaveReplayArtifacts(r.Context(), stored.ID, artifacts)
 		}
 	}
 
@@ -289,7 +292,7 @@ func (h *responseHandler) createStreamViaUpstream(w http.ResponseWriter, r *http
 		return
 	}
 
-	err = proxyResponsesStream(r.Context(), h.logger, w, resp, plan, func(rawResponse []byte) error {
+	err = proxyResponsesStream(r.Context(), h.logger, w, resp, plan, func(rawResponse []byte, artifacts []domain.ResponseReplayArtifact) error {
 		response, err := domain.ParseUpstreamResponse(rawResponse)
 		if err != nil {
 			return err
@@ -298,8 +301,11 @@ func (h *responseHandler) createStreamViaUpstream(w http.ResponseWriter, r *http
 		if response.OutputText == "" && len(response.Output) == 0 {
 			return nil
 		}
-		_, err = h.service.SaveExternalResponse(r.Context(), prepared, input, response)
-		return err
+		stored, err := h.service.SaveExternalResponse(r.Context(), prepared, input, response)
+		if err != nil {
+			return err
+		}
+		return h.service.SaveReplayArtifacts(r.Context(), stored.ID, artifacts)
 	})
 	if err != nil && !shouldIgnoreStreamProxyError(err) {
 		h.logger.WarnContext(r.Context(), "upstream local-state stream failed", "request_id", RequestIDFromContext(r.Context()), "err", err)
@@ -319,7 +325,7 @@ func (h *responseHandler) proxyResponseRequest(r *http.Request, body []byte) (*h
 	return h.proxy.client.Proxy(cloned.Context(), cloned)
 }
 
-func proxyResponsesStream(ctx context.Context, logger *slog.Logger, w http.ResponseWriter, resp *http.Response, plan customToolTransportPlan, onCompleted func([]byte) error) error {
+func proxyResponsesStream(ctx context.Context, logger *slog.Logger, w http.ResponseWriter, resp *http.Response, plan customToolTransportPlan, onCompleted func([]byte, []domain.ResponseReplayArtifact) error) error {
 	isSSE := strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "text/event-stream")
 	if logger != nil && logger.Enabled(ctx, slog.LevelDebug) {
 		logger.DebugContext(ctx, "responses stream opened",
@@ -404,7 +410,7 @@ func writeCompletedResponseAsSSE(ctx context.Context, logger *slog.Logger, w htt
 	if err != nil {
 		return err
 	}
-	events := buildResponseReplayEvents(response, includeObfuscation)
+	events := buildResponseReplayEvents(response, nil, includeObfuscation)
 	for index, event := range events {
 		event.payload["sequence_number"] = index + 1
 		if err := emitter.write(event.eventType, event.payload); err != nil {
@@ -434,7 +440,7 @@ type responseStreamEventProxy struct {
 	ctx                          context.Context
 	logger                       *slog.Logger
 	plan                         customToolTransportPlan
-	onCompleted                  func([]byte) error
+	onCompleted                  func([]byte, []domain.ResponseReplayArtifact) error
 	eventType                    string
 	dataLines                    []string
 	customItemByID               map[string]customToolDescriptor
@@ -456,9 +462,10 @@ type responseStreamEventProxy struct {
 	model                        string
 	outputAnnotations            []any
 	outputText                   strings.Builder
+	replayArtifacts              []domain.ResponseReplayArtifact
 }
 
-func newResponseStreamEventProxy(ctx context.Context, logger *slog.Logger, plan customToolTransportPlan, onCompleted func([]byte) error) *responseStreamEventProxy {
+func newResponseStreamEventProxy(ctx context.Context, logger *slog.Logger, plan customToolTransportPlan, onCompleted func([]byte, []domain.ResponseReplayArtifact) error) *responseStreamEventProxy {
 	return &responseStreamEventProxy{
 		ctx:             ctx,
 		logger:          logger,
@@ -554,7 +561,7 @@ func (p *responseStreamEventProxy) flushEvent(w io.Writer) error {
 				if err != nil {
 					return err
 				}
-				if err := p.onCompleted(body); err != nil {
+				if err := p.onCompleted(body, p.responseReplayArtifacts()); err != nil {
 					return err
 				}
 			}
@@ -1004,7 +1011,7 @@ func (p *responseStreamEventProxy) emitSyntheticCompletionIfNeeded(w io.Writer) 
 		if err != nil {
 			return err
 		}
-		if err := p.onCompleted(body); err != nil {
+		if err := p.onCompleted(body, p.responseReplayArtifacts()); err != nil {
 			return err
 		}
 	}
@@ -1188,6 +1195,9 @@ func (p *responseStreamEventProxy) noteEvent(eventType string, payload map[strin
 		p.errorType = fallbackString(strings.TrimSpace(asString(errPayload["type"])), p.errorType)
 		p.errorMessage = fallbackString(strings.TrimSpace(asString(errPayload["message"])), p.errorMessage)
 	}
+	if artifact, ok := responseReplayArtifactFromStreamEvent(eventType, payload); ok {
+		p.replayArtifacts = append(p.replayArtifacts, artifact)
+	}
 }
 
 func (p *responseStreamEventProxy) logEventSummary(eventType string, payload map[string]any) {
@@ -1257,6 +1267,10 @@ func (p *responseStreamEventProxy) logEventSummary(eventType string, payload map
 	case "response.file_search_call.in_progress",
 		"response.file_search_call.searching",
 		"response.file_search_call.completed":
+		attrs = append(attrs, "item_id", strings.TrimSpace(asString(payload["item_id"])))
+	case "response.image_generation_call.in_progress",
+		"response.image_generation_call.generating",
+		"response.image_generation_call.partial_image":
 		attrs = append(attrs, "item_id", strings.TrimSpace(asString(payload["item_id"])))
 	case "response.code_interpreter_call.in_progress",
 		"response.code_interpreter_call.interpreting",
@@ -1335,6 +1349,51 @@ func (p *responseStreamEventProxy) logEventSummary(eventType string, payload map
 	}
 
 	p.logger.DebugContext(p.ctx, "responses stream event", attrs...)
+}
+
+func responseReplayArtifactFromStreamEvent(eventType string, payload map[string]any) (domain.ResponseReplayArtifact, bool) {
+	if !shouldPersistResponseReplayArtifact(eventType) || payload == nil {
+		return domain.ResponseReplayArtifact{}, false
+	}
+
+	sequence, ok := intAttr(payload["sequence_number"])
+	if !ok || sequence <= 0 {
+		return domain.ResponseReplayArtifact{}, false
+	}
+
+	cloned := cloneAnyMap(payload)
+	delete(cloned, "sequence_number")
+	body, err := json.Marshal(cloned)
+	if err != nil {
+		return domain.ResponseReplayArtifact{}, false
+	}
+
+	return domain.ResponseReplayArtifact{
+		Sequence:    sequence,
+		EventType:   strings.TrimSpace(eventType),
+		PayloadJSON: string(body),
+	}, true
+}
+
+func shouldPersistResponseReplayArtifact(eventType string) bool {
+	switch strings.TrimSpace(eventType) {
+	case "response.image_generation_call.partial_image":
+		return true
+	default:
+		return false
+	}
+}
+
+func (p *responseStreamEventProxy) responseReplayArtifacts() []domain.ResponseReplayArtifact {
+	if len(p.replayArtifacts) == 0 {
+		return nil
+	}
+	artifacts := make([]domain.ResponseReplayArtifact, 0, len(p.replayArtifacts))
+	for _, artifact := range p.replayArtifacts {
+		artifact.ResponseID = p.responseID
+		artifacts = append(artifacts, artifact)
+	}
+	return artifacts
 }
 
 func (p *responseStreamEventProxy) logStreamSummary() {
@@ -1625,7 +1684,6 @@ func hostedToolReplayEventTypes(itemType string, item map[string]any) []string {
 			return []string{
 				"response.image_generation_call.in_progress",
 				"response.image_generation_call.generating",
-				"response.image_generation_call.completed",
 			}
 		}
 	}

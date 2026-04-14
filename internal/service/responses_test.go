@@ -51,6 +51,14 @@ func (noopResponseStore) SaveResponse(context.Context, domain.StoredResponse) er
 	return nil
 }
 
+func (noopResponseStore) SaveResponseReplayArtifacts(context.Context, string, []domain.ResponseReplayArtifact) error {
+	return nil
+}
+
+func (noopResponseStore) GetResponseReplayArtifacts(context.Context, string) ([]domain.ResponseReplayArtifact, error) {
+	return nil, nil
+}
+
 func (noopResponseStore) DeleteResponse(context.Context, string) error {
 	return nil
 }
@@ -151,6 +159,14 @@ func (s *recordingResponseStore) GetResponseLineage(context.Context, string) ([]
 func (s *recordingResponseStore) SaveResponse(_ context.Context, response domain.StoredResponse) error {
 	s.saved = append(s.saved, response)
 	return nil
+}
+
+func (s *recordingResponseStore) SaveResponseReplayArtifacts(context.Context, string, []domain.ResponseReplayArtifact) error {
+	return nil
+}
+
+func (s *recordingResponseStore) GetResponseReplayArtifacts(context.Context, string) ([]domain.ResponseReplayArtifact, error) {
+	return nil, nil
 }
 
 func (s *recordingResponseStore) DeleteResponse(context.Context, string) error {

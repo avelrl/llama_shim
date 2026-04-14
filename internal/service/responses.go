@@ -23,6 +23,8 @@ type ResponseStore interface {
 	GetResponse(ctx context.Context, id string) (domain.StoredResponse, error)
 	GetResponseLineage(ctx context.Context, id string) ([]domain.StoredResponse, error)
 	SaveResponse(ctx context.Context, response domain.StoredResponse) error
+	SaveResponseReplayArtifacts(ctx context.Context, responseID string, artifacts []domain.ResponseReplayArtifact) error
+	GetResponseReplayArtifacts(ctx context.Context, responseID string) ([]domain.ResponseReplayArtifact, error)
 	DeleteResponse(ctx context.Context, id string) error
 }
 
@@ -330,6 +332,20 @@ func (s *ResponseService) SaveExternalResponse(ctx context.Context, prepared Pre
 	}
 
 	return response, nil
+}
+
+func (s *ResponseService) SaveReplayArtifacts(ctx context.Context, responseID string, artifacts []domain.ResponseReplayArtifact) error {
+	if strings.TrimSpace(responseID) == "" || len(artifacts) == 0 {
+		return nil
+	}
+	return s.responses.SaveResponseReplayArtifacts(ctx, responseID, artifacts)
+}
+
+func (s *ResponseService) GetReplayArtifacts(ctx context.Context, responseID string) ([]domain.ResponseReplayArtifact, error) {
+	if strings.TrimSpace(responseID) == "" {
+		return nil, nil
+	}
+	return s.responses.GetResponseReplayArtifacts(ctx, responseID)
 }
 
 func (s *ResponseService) CreateStream(ctx context.Context, input CreateResponseInput, hooks StreamHooks) (domain.Response, error) {

@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -191,13 +192,13 @@ func parseOptionalIntQuery(values url.Values, name string) (int, bool, error) {
 	return value, true, nil
 }
 
-func writeResponseReplayAsSSE(w http.ResponseWriter, response domain.Response, startingAfter int, includeObfuscation bool) error {
+func writeResponseReplayAsSSE(w http.ResponseWriter, response domain.Response, artifacts []domain.ResponseReplayArtifact, startingAfter int, includeObfuscation bool) error {
 	emitter, err := newResponseStreamEmitter(w, false)
 	if err != nil {
 		return err
 	}
 
-	events := buildResponseReplayEvents(response, includeObfuscation)
+	events := buildResponseReplayEvents(response, artifacts, includeObfuscation)
 	for idx, event := range events {
 		sequence := idx + 1
 		if sequence <= startingAfter {
@@ -211,7 +212,7 @@ func writeResponseReplayAsSSE(w http.ResponseWriter, response domain.Response, s
 	return emitter.done()
 }
 
-func buildResponseReplayEvents(response domain.Response, includeObfuscation bool) []responseReplayEvent {
+func buildResponseReplayEvents(response domain.Response, artifacts []domain.ResponseReplayArtifact, includeObfuscation bool) []responseReplayEvent {
 	status := strings.TrimSpace(response.Status)
 	if status == "" {
 		status = "completed"
@@ -237,7 +238,7 @@ func buildResponseReplayEvents(response domain.Response, includeObfuscation bool
 
 	outputItems := responseReplayOutputItems(response)
 	for outputIndex, outputItem := range outputItems {
-		events = append(events, buildResponseReplayOutputItemEvents(response.ID, outputIndex, outputItem, includeObfuscation)...)
+		events = append(events, buildResponseReplayOutputItemEvents(response.ID, outputIndex, outputItem, artifacts, includeObfuscation)...)
 	}
 
 	finalEventType := "response.completed"
@@ -286,7 +287,7 @@ func replayItemPayload(item domain.Item) map[string]any {
 	return payload
 }
 
-func buildResponseReplayOutputItemEvents(responseID string, outputIndex int, item domain.Item, includeObfuscation bool) []responseReplayEvent {
+func buildResponseReplayOutputItemEvents(responseID string, outputIndex int, item domain.Item, artifacts []domain.ResponseReplayArtifact, includeObfuscation bool) []responseReplayEvent {
 	addedItem := replayItemPayload(item)
 	itemType := strings.TrimSpace(item.Type)
 	switch itemType {
@@ -490,6 +491,7 @@ func buildResponseReplayOutputItemEvents(responseID string, outputIndex int, ite
 			})
 		}
 	}
+	events = append(events, responseReplayArtifactEventsForItem(outputIndex, itemID, artifacts)...)
 
 	doneItemPayload := replayItemPayload(item)
 	if isToolStreamItemType(itemType) {
@@ -504,6 +506,38 @@ func buildResponseReplayOutputItemEvents(responseID string, outputIndex int, ite
 			"item":         doneItemPayload,
 		},
 	})
+	return events
+}
+
+func responseReplayArtifactEventsForItem(outputIndex int, itemID string, artifacts []domain.ResponseReplayArtifact) []responseReplayEvent {
+	if len(artifacts) == 0 || strings.TrimSpace(itemID) == "" {
+		return nil
+	}
+
+	events := make([]responseReplayEvent, 0, len(artifacts))
+	for _, artifact := range artifacts {
+		if strings.TrimSpace(artifact.EventType) == "" || strings.TrimSpace(artifact.PayloadJSON) == "" {
+			continue
+		}
+
+		var payload map[string]any
+		if err := json.Unmarshal([]byte(artifact.PayloadJSON), &payload); err != nil {
+			continue
+		}
+		if strings.TrimSpace(asStringValue(payload["item_id"])) != itemID {
+			continue
+		}
+		artifactOutputIndex, ok := intAttr(payload["output_index"])
+		if !ok || artifactOutputIndex != outputIndex {
+			continue
+		}
+		payload["type"] = strings.TrimSpace(artifact.EventType)
+		events = append(events, responseReplayEvent{
+			eventType: strings.TrimSpace(artifact.EventType),
+			payload:   payload,
+		})
+	}
+
 	return events
 }
 

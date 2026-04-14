@@ -59,6 +59,13 @@ type StoredResponse struct {
 	CompletedAt          string
 }
 
+type ResponseReplayArtifact struct {
+	ResponseID  string
+	Sequence    int
+	EventType   string
+	PayloadJSON string
+}
+
 type CodeInterpreterSession struct {
 	ID                  string
 	Backend             string

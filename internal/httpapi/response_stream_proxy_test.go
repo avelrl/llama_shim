@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"llama_shim/internal/domain"
+
 	"github.com/stretchr/testify/require"
 )
 
@@ -871,13 +873,12 @@ func TestNormalizeCompletedToolCallEventSynthesizesImageGenerationCallReplaySubs
 	})
 
 	require.Equal(t, "response.completed", eventType)
-	require.Len(t, before, 6)
+	require.Len(t, before, 5)
 	require.Equal(t, "response.created", before[0].eventType)
 	require.Equal(t, "response.output_item.added", before[1].eventType)
 	require.Equal(t, "response.image_generation_call.in_progress", before[2].eventType)
 	require.Equal(t, "response.image_generation_call.generating", before[3].eventType)
-	require.Equal(t, "response.image_generation_call.completed", before[4].eventType)
-	require.Equal(t, "response.output_item.done", before[5].eventType)
+	require.Equal(t, "response.output_item.done", before[4].eventType)
 
 	addedItem, ok := before[1].payload["item"].(map[string]any)
 	require.True(t, ok)
@@ -899,7 +900,7 @@ func TestNormalizeCompletedToolCallEventSynthesizesImageGenerationCallReplaySubs
 	_, hasAction := addedItem["action"]
 	require.False(t, hasAction)
 
-	doneItem, ok := before[5].payload["item"].(map[string]any)
+	doneItem, ok := before[4].payload["item"].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, "completed", asString(doneItem["status"]))
 	require.Equal(t, "/9j/4AAQSkZJRgABAQAAAQABAAD...", asString(doneItem["result"]))
@@ -914,6 +915,48 @@ func TestNormalizeCompletedToolCallEventSynthesizesImageGenerationCallReplaySubs
 	finalItem, ok := output[0].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, "ig_test", asString(finalItem["id"]))
+}
+
+func TestResponseStreamEventProxyCapturesImageGenerationPartialImageReplayArtifacts(t *testing.T) {
+	var (
+		completedRaw []byte
+		artifacts    []domain.ResponseReplayArtifact
+	)
+
+	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, func(rawResponse []byte, replayArtifacts []domain.ResponseReplayArtifact) error {
+		completedRaw = append([]byte(nil), rawResponse...)
+		artifacts = append([]domain.ResponseReplayArtifact(nil), replayArtifacts...)
+		return nil
+	})
+
+	var out bytes.Buffer
+	lines := []string{
+		"event: response.created\n",
+		"data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_test\",\"object\":\"response\",\"model\":\"test-model\",\"output_text\":\"\",\"output\":[]}}\n",
+		"\n",
+		"event: response.output_item.added\n",
+		"data: {\"type\":\"response.output_item.added\",\"item\":{\"id\":\"ig_test\",\"type\":\"image_generation_call\",\"status\":\"in_progress\"},\"output_index\":1}\n",
+		"\n",
+		"event: response.image_generation_call.partial_image\n",
+		"data: {\"type\":\"response.image_generation_call.partial_image\",\"item_id\":\"ig_test\",\"output_index\":1,\"partial_image_index\":0,\"partial_image_b64\":\"cGFydGlhbA==\",\"sequence_number\":7}\n",
+		"\n",
+		"event: response.completed\n",
+		"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_test\",\"object\":\"response\",\"model\":\"test-model\",\"output_text\":\"\",\"output\":[{\"id\":\"ig_test\",\"type\":\"image_generation_call\",\"status\":\"completed\",\"result\":\"final\"}]}}\n",
+		"\n",
+	}
+
+	for _, line := range lines {
+		require.NoError(t, proxy.WriteLine(&out, line))
+	}
+	require.NoError(t, proxy.Flush(io.Discard))
+
+	require.NotEmpty(t, completedRaw)
+	require.Len(t, artifacts, 1)
+	require.Equal(t, "resp_test", artifacts[0].ResponseID)
+	require.Equal(t, 7, artifacts[0].Sequence)
+	require.Equal(t, "response.image_generation_call.partial_image", artifacts[0].EventType)
+	require.NotContains(t, artifacts[0].PayloadJSON, "sequence_number")
+	require.Contains(t, artifacts[0].PayloadJSON, `"partial_image_b64":"cGFydGlhbA=="`)
 }
 
 func TestNormalizeCompletedToolCallEventSynthesizesMCPApprovalRequestGenericReplay(t *testing.T) {

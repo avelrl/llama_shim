@@ -186,7 +186,7 @@
 - [x] - trace-backed `file_search_call` tool-specific SSE replay for stored Responses items ([детали](#task-streaming-replay-file-search))
 - [x] - trace-backed `code_interpreter_call` tool-specific SSE replay for stored Responses items ([детали](#task-streaming-replay-code-interpreter))
 - [x] - trace-backed `computer_call` generic SSE replay for stored Responses items ([детали](#task-streaming-replay-computer))
-- [x] - trace-backed `image_generation_call` pre-final SSE replay for stored Responses items ([детали](#task-streaming-replay-image-generation))
+- [x] - trace-backed `image_generation_call` lifecycle and `partial_image` replay for stored Responses items ([детали](#task-streaming-replay-image-generation))
 - [x] - docs-backed `mcp_approval_request` generic SSE replay for stored Responses items ([детали](#task-streaming-replay-mcp-approval-request))
 - [x] - docs-backed `mcp_list_tools` generic SSE replay for stored Responses items ([детали](#task-streaming-replay-mcp-list-tools))
 - [x] - docs-backed `tool_search` passthrough contract and generic SSE replay for stored Responses items ([детали](#task-streaming-replay-tool-search))
@@ -740,7 +740,7 @@ Definition of done:
 - backlog/OpenAPI wording честно фиксируют, что текущая parity для
   `computer_call` generic-only по trace
 
-## <a id="task-streaming-replay-image-generation"></a>Trace-backed `image_generation_call` pre-final SSE replay for stored Responses items
+## <a id="task-streaming-replay-image-generation"></a>Trace-backed `image_generation_call` lifecycle and `partial_image` replay for stored Responses items
 
 Почему это отдельно:
 
@@ -749,17 +749,17 @@ Definition of done:
   `action`
 - those same docs also describe a dedicated streaming event
   `response.image_generation_call.partial_image`, but the stored Response
-  object does not retain the intermediate partial image bytes needed to replay
-  that event faithfully
+  object alone does not retain the intermediate partial image bytes needed to
+  replay that event faithfully
 - live upstream captures now confirm dedicated
   `response.image_generation_call.in_progress` and
   `response.image_generation_call.generating` events before the terminal item,
-  but they still do not make the intermediate partial image bytes recoverable
-  from a stored Response object
-- official Responses streaming reference now also documents
-  `response.image_generation_call.completed`, so stored replay can safely
-  synthesize the pre-final lifecycle around the final stored item while
-  leaving `partial_image` explicitly open
+  plus `response.image_generation_call.partial_image`; current captures do not
+  show a dedicated `response.image_generation_call.completed`
+- faithful stored replay therefore requires two things:
+  create-time persistence of irrecoverable `partial_image_b64` artifacts, and
+  conservative replay choreography that does not invent unsupported terminal
+  tool-specific events
 
 Что входит:
 
@@ -768,33 +768,35 @@ Definition of done:
 - trace-backed synthetic sequence через `response.output_item.added`,
   `response.image_generation_call.in_progress`,
   `response.image_generation_call.generating`,
-  `response.image_generation_call.completed`, and
+  persisted `response.image_generation_call.partial_image` artifacts when
+  present, and
   `response.output_item.done`
 - synthetic `response.output_item.added` follows current upstream captures and
   is reduced to the minimal in-progress item shape instead of exposing stable
   image metadata too early
+- create-time capture/persistence layer for irrecoverable streamed replay
+  artifacts, currently used for `response.image_generation_call.partial_image`
 
-Статус на 12 апреля 2026:
+Статус на 14 апреля 2026:
 
 - закрыто для stored `image_generation_call`: retrieve replay и
   completed-only normalization теперь synthesize
   `response.image_generation_call.in_progress`,
   `response.image_generation_call.generating`,
-  `response.image_generation_call.completed`, and terminal
+  persisted `response.image_generation_call.partial_image` artifacts when they
+  were captured during the original create-time stream, and terminal
   `response.output_item.done`
 - docs source: image generation guide and Responses streaming reference
   explicitly document `image_generation_call` result shape plus
   `response.image_generation_call.in_progress`,
   `response.image_generation_call.generating`,
-  `response.image_generation_call.completed`, and
   `response.image_generation_call.partial_image`
-- shim intentionally keeps `response.image_generation_call.partial_image`
-  open for stored replay because the stored Response object does not retain the
-  intermediate `partial_image_b64` payloads needed for faithful replay
-- explicit follow-up for full closure: persist irrecoverable
-  `response.image_generation_call.partial_image` artifacts during create-time
-  streaming, then attach them to stored responses so retrieve replay can emit
-  the original `partial_image_b64` sequence without synthesizing bytes
+- current live traces do not show a dedicated
+  `response.image_generation_call.completed`, so shim no longer invents that
+  event during stored replay
+- irrecoverable `response.image_generation_call.partial_image` payloads are now
+  persisted during create-time upstream streaming and replayed from storage on
+  retrieve, without synthesizing bytes from the final stored item
 - coverage есть и на stored retrieve replay, и на completed-only proxy branch
 
 Definition of done:
@@ -805,11 +807,11 @@ Definition of done:
 - stored replay now emits the docs-backed pre-final lifecycle through
   `response.image_generation_call.in_progress`,
   `response.image_generation_call.generating`, and
-  `response.image_generation_call.completed`
+- persisted `response.image_generation_call.partial_image` artifacts when
+  available, without inventing `response.image_generation_call.completed`
 - final stored item shape is still preserved in `response.output_item.done`
-- backlog/OpenAPI wording честно фиксируют, что
-  `response.image_generation_call.partial_image` remains explicitly open for
-  stored replay
+- backlog/OpenAPI wording честно фиксируют, что `partial_image` replay depends
+  on create-time artifact capture rather than the final stored Response object
 
 ## <a id="task-streaming-replay-mcp-approval-request"></a>Docs-backed `mcp_approval_request` generic SSE replay for stored Responses items
 
@@ -1069,10 +1071,11 @@ Definition of done:
 - trace-backed replay для stored `computer_call` вынесен в закрытый item
   выше; captured upstream flow для него generic-only и не содержит
   `response.computer_call.*`
-- trace-backed pre-final replay для stored `image_generation_call` вынесен в
-  закрытый item выше; dedicated stored replay for
-  `response.image_generation_call.partial_image` is not claimed without a
-  recoverable partial-image policy
+- trace-backed replay для stored `image_generation_call` вынесен в закрытый
+  item выше; current captures do not show a dedicated
+  `response.image_generation_call.completed`, and stored `partial_image`
+  replay now depends on persisted create-time replay artifacts rather than the
+  final stored Response object alone
 - docs-backed generic replay для stored `mcp_approval_request` вынесен в
   закрытый item выше; dedicated `response.mcp_approval_request.*` family не
   заявляется без trace/reference support

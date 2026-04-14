@@ -169,6 +169,57 @@ func TestStoreSaveResponseRoundTripAndLineage(t *testing.T) {
 	require.ErrorIs(t, err, sqlite.ErrNotFound)
 }
 
+func TestStoreSaveResponseReplayArtifactsRoundTripAndCascade(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store := openTestStore(t, ctx)
+
+	response := domain.StoredResponse{
+		ID:                   "resp_artifacts",
+		Model:                "test-model",
+		RequestJSON:          `{"input":"draw a cat"}`,
+		ResponseJSON:         `{"id":"resp_artifacts","object":"response","created_at":1712059200,"status":"completed","completed_at":1712059201,"error":null,"incomplete_details":null,"model":"test-model","output":[{"id":"ig_test","type":"image_generation_call","status":"completed","result":"final"}],"store":true,"background":false,"text":{"format":{"type":"text"}},"usage":null,"metadata":{},"output_text":""}`,
+		NormalizedInputItems: []domain.Item{domain.NewInputTextMessage("user", "draw a cat")},
+		EffectiveInputItems:  []domain.Item{domain.NewInputTextMessage("user", "draw a cat")},
+		Output:               []domain.Item{},
+		OutputText:           "",
+		Store:                true,
+		CreatedAt:            "2026-04-14T10:00:00Z",
+		CompletedAt:          "2026-04-14T10:00:01Z",
+	}
+	require.NoError(t, store.SaveResponse(ctx, response))
+
+	artifacts := []domain.ResponseReplayArtifact{
+		{
+			ResponseID:  response.ID,
+			Sequence:    7,
+			EventType:   "response.image_generation_call.partial_image",
+			PayloadJSON: `{"type":"response.image_generation_call.partial_image","item_id":"ig_test","output_index":0,"partial_image_index":0,"partial_image_b64":"aGVsbG8="}`,
+		},
+		{
+			ResponseID:  response.ID,
+			Sequence:    8,
+			EventType:   "response.image_generation_call.partial_image",
+			PayloadJSON: `{"type":"response.image_generation_call.partial_image","item_id":"ig_test","output_index":0,"partial_image_index":1,"partial_image_b64":"d29ybGQ="}`,
+		},
+	}
+	require.NoError(t, store.SaveResponseReplayArtifacts(ctx, response.ID, artifacts))
+
+	got, err := store.GetResponseReplayArtifacts(ctx, response.ID)
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	require.Equal(t, []int{7, 8}, []int{got[0].Sequence, got[1].Sequence})
+	require.Equal(t, artifacts[0].PayloadJSON, got[0].PayloadJSON)
+	require.Equal(t, artifacts[1].PayloadJSON, got[1].PayloadJSON)
+
+	require.NoError(t, store.DeleteResponse(ctx, response.ID))
+
+	got, err = store.GetResponseReplayArtifacts(ctx, response.ID)
+	require.NoError(t, err)
+	require.Empty(t, got)
+}
+
 func TestOpenWithOptionsRejectsUnsupportedRetrievalBackend(t *testing.T) {
 	t.Parallel()
 

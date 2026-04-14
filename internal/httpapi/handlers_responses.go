@@ -28,6 +28,8 @@ type ResponseService interface {
 	Refresh(ctx context.Context, response domain.Response) (domain.Response, error)
 	PrepareCreateContext(ctx context.Context, input service.CreateResponseInput) (service.PreparedResponseContext, error)
 	SaveExternalResponse(ctx context.Context, prepared service.PreparedResponseContext, input service.CreateResponseInput, response domain.Response) (domain.Response, error)
+	SaveReplayArtifacts(ctx context.Context, responseID string, artifacts []domain.ResponseReplayArtifact) error
+	GetReplayArtifacts(ctx context.Context, responseID string) ([]domain.ResponseReplayArtifact, error)
 }
 
 type responseHandler struct {
@@ -817,7 +819,12 @@ func (h *responseHandler) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if query.Stream {
-		if err := writeResponseReplayAsSSE(w, response, query.StartingAfter, query.IncludeObfuscation); err != nil {
+		artifacts, err := h.service.GetReplayArtifacts(r.Context(), id)
+		if err != nil {
+			h.writeError(w, r, err)
+			return
+		}
+		if err := writeResponseReplayAsSSE(w, response, artifacts, query.StartingAfter, query.IncludeObfuscation); err != nil {
 			if errors.Is(err, context.Canceled) {
 				return
 			}

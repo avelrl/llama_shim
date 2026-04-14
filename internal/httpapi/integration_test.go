@@ -1413,6 +1413,20 @@ func TestResponsesGetStreamReplaysImageGenerationCallReplaySubset(t *testing.T) 
 		CompletedAt:          "2026-04-12T13:00:01Z",
 	}
 	require.NoError(t, app.Store.SaveResponse(context.Background(), stored))
+	require.NoError(t, app.Store.SaveResponseReplayArtifacts(context.Background(), stored.ID, []domain.ResponseReplayArtifact{
+		{
+			ResponseID:  stored.ID,
+			Sequence:    7,
+			EventType:   "response.image_generation_call.partial_image",
+			PayloadJSON: `{"type":"response.image_generation_call.partial_image","background":"opaque","item_id":"ig_test","output_format":"png","output_index":0,"partial_image_b64":"cGFydGlhbC0w","partial_image_index":0,"quality":"low","size":"1024x1024"}`,
+		},
+		{
+			ResponseID:  stored.ID,
+			Sequence:    8,
+			EventType:   "response.image_generation_call.partial_image",
+			PayloadJSON: `{"type":"response.image_generation_call.partial_image","background":"opaque","item_id":"ig_test","output_format":"png","output_index":0,"partial_image_b64":"cGFydGlhbC0x","partial_image_index":1,"quality":"low","size":"1024x1024"}`,
+		},
+	}))
 
 	req, err := http.NewRequest(http.MethodGet, app.Server.URL+"/v1/responses/resp_image_generation_call?stream=true", nil)
 	require.NoError(t, err)
@@ -1426,8 +1440,8 @@ func TestResponsesGetStreamReplaysImageGenerationCallReplaySubset(t *testing.T) 
 	require.Contains(t, eventTypes(events), "response.output_item.done")
 	require.Contains(t, eventTypes(events), "response.image_generation_call.in_progress")
 	require.Contains(t, eventTypes(events), "response.image_generation_call.generating")
-	require.Contains(t, eventTypes(events), "response.image_generation_call.completed")
-	require.NotContains(t, eventTypes(events), "response.image_generation_call.partial_image")
+	require.NotContains(t, eventTypes(events), "response.image_generation_call.completed")
+	require.Equal(t, 2, strings.Count(strings.Join(eventTypes(events), "\n"), "response.image_generation_call.partial_image"))
 
 	added := findEvent(t, events, "response.output_item.added").Data
 	addedItem, ok := added["item"].(map[string]any)
@@ -1456,6 +1470,15 @@ func TestResponsesGetStreamReplaysImageGenerationCallReplaySubset(t *testing.T) 
 	require.Equal(t, "/9j/4AAQSkZJRgABAQAAAQABAAD...", asStringAny(outputDoneItem["result"]))
 	require.Equal(t, "A tiny orange cat curled up in a teacup.", asStringAny(outputDoneItem["revised_prompt"]))
 	require.Equal(t, "generate", asStringAny(outputDoneItem["action"]))
+
+	partial0 := findNthEvent(t, events, "response.image_generation_call.partial_image", 0).Data
+	require.Equal(t, "ig_test", asStringAny(partial0["item_id"]))
+	require.EqualValues(t, 0, partial0["partial_image_index"])
+	require.Equal(t, "cGFydGlhbC0w", asStringAny(partial0["partial_image_b64"]))
+
+	partial1 := findNthEvent(t, events, "response.image_generation_call.partial_image", 1).Data
+	require.EqualValues(t, 1, partial1["partial_image_index"])
+	require.Equal(t, "cGFydGlhbC0x", asStringAny(partial1["partial_image_b64"]))
 }
 
 func TestResponsesGetStreamReplaysMCPApprovalRequestAsGenericOutputItemReplay(t *testing.T) {
@@ -8907,6 +8930,16 @@ func findEvents(events []sseEvent, eventType string) []sseEvent {
 		}
 	}
 	return out
+}
+
+func findNthEvent(t *testing.T, events []sseEvent, eventType string, index int) sseEvent {
+	t.Helper()
+
+	matches := findEvents(events, eventType)
+	if index < 0 || index >= len(matches) {
+		t.Fatalf("event %q at index %d not found", eventType, index)
+	}
+	return matches[index]
 }
 
 func eventIndex(t *testing.T, events []sseEvent, eventType string) int {

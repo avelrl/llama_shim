@@ -686,13 +686,14 @@ paths:
         - trace-backed stored `image_generation_call` items replay through
           `response.image_generation_call.in_progress`,
           `response.image_generation_call.generating`,
-          `response.image_generation_call.completed`, and terminal
-          `response.output_item.done`; synthetic
+          persisted `response.image_generation_call.partial_image` artifacts
+          when the original create-time stream was captured, and terminal
+          `response.output_item.done`; current upstream captures do not expose
+          a dedicated `response.image_generation_call.completed`, so shim does
+          not invent it during stored replay; synthetic
           `response.output_item.added` follows current upstream captures and
           omits image metadata plus final `result`, `revised_prompt`, and
-          `action` until the terminal item, and shim does not claim stored
-          replay for `response.image_generation_call.partial_image` without
-          recoverable partial-image payloads
+          `action` until the terminal item
         - docs-backed stored `mcp_approval_request` items replay only through
           generic `response.output_item.*`; the documented item shape is
           preserved, shim does not invent a dedicated
