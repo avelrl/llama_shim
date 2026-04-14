@@ -159,6 +159,12 @@
   exact dense semantic ranking, weighted hybrid dense+text ranking, and
   shim-local reranking when `retrieval.index.backend=sqlite_vec` plus a
   configured embedder backend are enabled
+- retrieval ranking contract now stays explicitly docs-backed:
+  raw `/v1/vector_stores/{id}/search` and local `file_search` accept
+  `auto` plus canonical `default-2024-08-21`, preserve shim-local `none` as
+  an explicit escape hatch, accept legacy compatibility alias
+  `default_2024_08_21`, and reject the undocumented `default-2024-11-15`
+  alias
 - local `/v1/responses` теперь умеет shim-owned `file_search` execution over
   local `vector_stores` в pragmatic subset:
   один `file_search` tool, deterministic query rewriting + small multi-search
@@ -222,7 +228,7 @@
 
 ## Что делаем дальше
 
-Release framing as of April 14, 2026:
+Release framing as of April 15, 2026:
 
 - V2 = broad compatibility facade over the current official OpenAI surface
   already exposed by the shim
@@ -266,7 +272,7 @@ Release framing as of April 14, 2026:
 - [x] - exact dense semantic/vector retrieval subset behind local `vector_stores` ([детали](#task-retrieval-semantic-backend))
 - [x] - weighted hybrid retrieval subset behind local `vector_stores` ([детали](#task-retrieval-semantic-backend))
 - [x] - local reranked retrieval subset behind local `vector_stores` ([детали](#task-retrieval-semantic-backend))
-- [ ] - hosted reranked retrieval parity behind local `vector_stores` ([детали](#task-retrieval-semantic-backend))
+- [x] - docs-backed retrieval ranking contract behind local `vector_stores` (`ranker`, `score_threshold`, `hybrid_search`) ([детали](#task-retrieval-semantic-backend))
 - [x] - V2 hosted/native Responses tools contract matrix and mode semantics (`web_search` / `web_search_preview`, `computer`, `code_interpreter`, `image_generation`, `remote MCP`, `tool_search`) ([детали](#task-hosted-tools-parity))
 - [x] - local-first stored Chat Completions CRUD surface for proxy completions ([детали](#task-chat-stored-surface-local))
 - [x] - `/readyz` checks SQLite, upstream llama backend, configured retrieval embedder readiness, and configured local tool backends ([детали](#task-ops-hardening))
@@ -1346,9 +1352,10 @@ Definition of done:
 - поверх dense/hybrid candidate set теперь есть local reranking subset:
   when `retrieval.index.backend=sqlite_vec` is active, shim-local retrieval
   treats omitted `ranking_options.ranker` as `auto`, applies a small local
-  rerank stage by default, supports `default_2024_08_21` /
-  `default-2024-08-21` as a conservative legacy profile, and accepts
-  `ranker=none` as a shim-local escape hatch to disable reranking
+  rerank stage by default, supports canonical `default-2024-08-21` as a
+  conservative legacy profile, accepts legacy compatibility alias
+  `default_2024_08_21`, and accepts `ranker=none` as a shim-local escape
+  hatch to disable reranking
 - raw `vector_stores/{id}/search` now honors `rewrite_query=true` with a
   deterministic local rewrite subset and returns the rewritten query payload
   in `search_query` instead of treating that field as a compatibility no-op
@@ -1383,6 +1390,10 @@ Definition of done:
 - local reranking is intentionally a shim-owned heuristic subset; it uses the
   documented `ranker` knobs and default-auto behavior, but it does not claim
   exact hosted OpenAI reranker parity
+- accepted local/public ranker surface is now constrained to the docs-backed
+  names `auto` and canonical `default-2024-08-21`; shim-local `none` remains
+  an explicit escape hatch, legacy alias `default_2024_08_21` is still
+  accepted for compatibility, and undocumented dated aliases are rejected
 - local query rewriting and multi-search decomposition are also intentionally
   shim-owned heuristic subsets; they are docs-backed as product direction, but
   they do not claim exact hosted OpenAI planner/query-rewrite parity
@@ -1399,6 +1410,15 @@ Definition of done:
   external shim contract
 - remaining open work теперь отдельная задача качества, а не “semantic backend
   отсутствует вообще”
+
+Статус на 15 апреля 2026:
+
+- V2 blocker закрыт консервативно: raw `/v1/vector_stores/{id}/search` и
+  local `/v1/responses` `file_search` принимают docs-backed ranker names,
+  honor `score_threshold` / `hybrid_search`, and reject the undocumented
+  `default-2024-11-15` alias
+- stronger hosted-grade reranker quality remains out of scope for V2 and is
+  treated as future quality work, not as a compatibility blocker
 
 Практический decomposition, когда вернемся:
 

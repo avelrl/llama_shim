@@ -1,6 +1,6 @@
 # V2 Compatibility Matrix
 
-Last updated: April 14, 2026.
+Last updated: April 15, 2026.
 
 This document is the release-planning view for `llama_shim` V2.
 
@@ -65,7 +65,7 @@ Detailed task notes and implementation history still live in
 | `/v1/vector_stores` CRUD | Implemented | Keep local retrieval subset explicit | |
 | `/v1/vector_stores/{id}/files*` | Implemented | Keep failed-binary indexing behavior explicit | |
 | `/v1/vector_stores/{id}/search` lexical + semantic + hybrid local subsets | Broad subset | Keep ranking semantics and filters explicit | Local substrate is already usable |
-| hosted reranked retrieval parity | Partial | Close the remaining hosted reranking gap or narrow the claim explicitly | This remains a V2 blocker |
+| retrieval ranking contract (`ranker`, `score_threshold`, `hybrid_search`) | Broad subset | Keep the docs-backed ranking knobs explicit | Local search supports the documented ranker names plus shim-local `none`; exact hosted reranker quality is not claimed |
 
 ## Tools In Responses
 
@@ -113,10 +113,9 @@ proxy-first escape hatch for standalone hosted/native requests, while
 
 ## V2 Ship Blockers
 
-These are the remaining items that still look like real V2 blockers as of
-April 14, 2026:
+This is the remaining item that still looks like a real V2 blocker as of
+April 15, 2026:
 
-- hosted reranked retrieval parity behind local `vector_stores`
 - minimum operator floor: retention cleanup, maintenance path, and local DX
 
 ## Staged For V3

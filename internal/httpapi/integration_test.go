@@ -7293,6 +7293,68 @@ func TestVectorStoreSearchAppliesLocalRerankingByDefault(t *testing.T) {
 	require.Equal(t, fileSemanticID, asStringAny(result["file_id"]))
 }
 
+func TestVectorStoreSearchSupportsDocsBackedLegacyRankers(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		RetrievalConfig: retrieval.Config{
+			IndexBackend: retrieval.IndexBackendSQLiteVec,
+		},
+		RetrievalEmbedder: rerankingTestEmbedder{},
+	})
+
+	status, uploadedSemantic := uploadFile(t, app, "semantic.txt", "assistants", []byte("semanticwinner banana orchard notes"), nil)
+	require.Equal(t, http.StatusOK, status)
+	fileSemanticID := asStringAny(uploadedSemantic["id"])
+
+	status, uploadedReranked := uploadFile(t, app, "banana-nutrition.txt", "assistants", []byte("banana nutrition exact phrase and calories"), nil)
+	require.Equal(t, http.StatusOK, status)
+	fileRerankedID := asStringAny(uploadedReranked["id"])
+
+	status, created := rawRequest(t, app, http.MethodPost, "/v1/vector_stores", map[string]any{
+		"name":     "RerankLegacy",
+		"file_ids": []string{fileSemanticID, fileRerankedID},
+	})
+	require.Equal(t, http.StatusOK, status)
+	vectorStoreID := asStringAny(created["id"])
+
+	topFileIDs := make([]string, 0, 2)
+	for _, ranker := range []string{"default_2024_08_21", "default-2024-08-21"} {
+		status, search := rawRequest(t, app, http.MethodPost, "/v1/vector_stores/"+vectorStoreID+"/search", map[string]any{
+			"query": "banana nutrition",
+			"ranking_options": map[string]any{
+				"ranker": ranker,
+			},
+		})
+		require.Equal(t, http.StatusOK, status)
+		require.NotEmpty(t, search["data"].([]any))
+		result := search["data"].([]any)[0].(map[string]any)
+		topFileID := asStringAny(result["file_id"])
+		require.Contains(t, []string{fileSemanticID, fileRerankedID}, topFileID)
+		topFileIDs = append(topFileIDs, topFileID)
+	}
+	require.Len(t, topFileIDs, 2)
+	require.Equal(t, topFileIDs[0], topFileIDs[1])
+}
+
+func TestVectorStoreSearchRejectsUndocumentedRankerAlias(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	status, created := rawRequest(t, app, http.MethodPost, "/v1/vector_stores", map[string]any{
+		"name": "InvalidRanker",
+	})
+	require.Equal(t, http.StatusOK, status)
+	vectorStoreID := asStringAny(created["id"])
+
+	status, payload := rawRequest(t, app, http.MethodPost, "/v1/vector_stores/"+vectorStoreID+"/search", map[string]any{
+		"query": "banana nutrition",
+		"ranking_options": map[string]any{
+			"ranker": "default-2024-11-15",
+		},
+	})
+	require.Equal(t, http.StatusBadRequest, status)
+	require.Equal(t, "invalid_request_error", payload["error"].(map[string]any)["type"])
+	require.Equal(t, "ranking_options.ranker", payload["error"].(map[string]any)["param"])
+}
+
 func TestResponsesCreateExecutesLocalFileSearch(t *testing.T) {
 	app := testutil.NewTestApp(t)
 
@@ -7724,6 +7786,86 @@ func TestResponsesCreateLocalFileSearchAppliesLocalRerankingByDefault(t *testing
 	results = response.Output[0].Map()["results"].([]any)
 	require.NotEmpty(t, results)
 	require.Equal(t, fileSemanticID, asStringAny(results[0].(map[string]any)["file_id"]))
+}
+
+func TestResponsesCreateLocalFileSearchSupportsDocsBackedLegacyRankers(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		RetrievalConfig: retrieval.Config{
+			IndexBackend: retrieval.IndexBackendSQLiteVec,
+		},
+		RetrievalEmbedder: rerankingTestEmbedder{},
+	})
+
+	status, uploadedSemantic := uploadFile(t, app, "semantic.txt", "assistants", []byte("semanticwinner banana orchard notes"), nil)
+	require.Equal(t, http.StatusOK, status)
+	fileSemanticID := asStringAny(uploadedSemantic["id"])
+
+	status, uploadedReranked := uploadFile(t, app, "banana-nutrition.txt", "assistants", []byte("banana nutrition exact phrase and calories"), nil)
+	require.Equal(t, http.StatusOK, status)
+	fileRerankedID := asStringAny(uploadedReranked["id"])
+
+	status, created := rawRequest(t, app, http.MethodPost, "/v1/vector_stores", map[string]any{
+		"name":     "RerankLegacyFileSearch",
+		"file_ids": []string{fileSemanticID, fileRerankedID},
+	})
+	require.Equal(t, http.StatusOK, status)
+	vectorStoreID := asStringAny(created["id"])
+
+	topFileIDs := make([]string, 0, 2)
+	for _, ranker := range []string{"default_2024_08_21", "default-2024-08-21"} {
+		response := postResponse(t, app, map[string]any{
+			"model":   "test-model",
+			"store":   true,
+			"input":   "banana nutrition",
+			"include": []string{"file_search_call.results"},
+			"tools": []map[string]any{
+				{
+					"type":             "file_search",
+					"vector_store_ids": []string{vectorStoreID},
+					"ranking_options": map[string]any{
+						"ranker": ranker,
+					},
+				},
+			},
+		})
+
+		results := response.Output[0].Map()["results"].([]any)
+		require.NotEmpty(t, results)
+		topFileID := asStringAny(results[0].(map[string]any)["file_id"])
+		require.Contains(t, []string{fileSemanticID, fileRerankedID}, topFileID)
+		topFileIDs = append(topFileIDs, topFileID)
+	}
+	require.Len(t, topFileIDs, 2)
+	require.Equal(t, topFileIDs[0], topFileIDs[1])
+}
+
+func TestResponsesCreateLocalFileSearchRejectsUndocumentedRankerAlias(t *testing.T) {
+	app := testutil.NewTestAppWithResponsesMode(t, config.ResponsesModeLocalOnly)
+
+	status, created := rawRequest(t, app, http.MethodPost, "/v1/vector_stores", map[string]any{
+		"name": "InvalidFileSearchRanker",
+	})
+	require.Equal(t, http.StatusOK, status)
+	vectorStoreID := asStringAny(created["id"])
+
+	status, payload := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model":   "test-model",
+		"store":   true,
+		"input":   "banana nutrition",
+		"include": []string{"file_search_call.results"},
+		"tools": []map[string]any{
+			{
+				"type":             "file_search",
+				"vector_store_ids": []string{vectorStoreID},
+				"ranking_options": map[string]any{
+					"ranker": "default-2024-11-15",
+				},
+			},
+		},
+	})
+	require.Equal(t, http.StatusBadRequest, status)
+	require.Equal(t, "invalid_request_error", payload["error"].(map[string]any)["type"])
+	require.Contains(t, asStringAny(payload["error"].(map[string]any)["message"]), "unsupported file_search.ranking_options.ranker")
 }
 
 func TestResponsesCreateLocalFileSearchWorksInLocalOnlyMode(t *testing.T) {

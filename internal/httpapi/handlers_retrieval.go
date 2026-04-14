@@ -522,7 +522,7 @@ func (h *retrievalHandler) searchVectorStore(w http.ResponseWriter, r *http.Requ
 	}
 	if ranker := strings.TrimSpace(request.RankingOptions.Ranker); ranker != "" {
 		switch ranker {
-		case "auto", "none", "default-2024-11-15", "default_2024_08_21", "default-2024-08-21":
+		case "auto", "none", "default_2024_08_21", "default-2024-08-21":
 		default:
 			h.writeError(w, r, domain.NewValidationError("ranking_options.ranker", "unsupported ranking_options.ranker"))
 			return

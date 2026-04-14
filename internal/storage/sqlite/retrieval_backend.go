@@ -69,9 +69,9 @@ type rankedSearchContent struct {
 
 type aggregatedSearchResult struct {
 	domain.VectorStoreSearchResult
-	bestDistance    float64
-	contentRanks    []rankedSearchContent
-	seenContentText map[string]struct{}
+	bestDistance     float64
+	contentRanks     []rankedSearchContent
+	seenContentText  map[string]struct{}
 	nextContentOrder int
 }
 
@@ -825,7 +825,7 @@ func localRerankProfileForRanker(ranker string) *localRerankProfile {
 	switch strings.TrimSpace(ranker) {
 	case "none":
 		return nil
-	case "", "auto", "default-2024-11-15":
+	case "", "auto":
 		profile := latestLocalRerankProfile
 		return &profile
 	case "default_2024_08_21", "default-2024-08-21":

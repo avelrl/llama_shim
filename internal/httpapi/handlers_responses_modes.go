@@ -34,6 +34,7 @@ type responsesCreateRouteInputs struct {
 	LocalToolLoop                      bool
 	LocalToolSearchRequested           bool
 	LocalToolSearch                    bool
+	LocalFileSearchRequested           bool
 	LocalFileSearch                    bool
 	LocalWebSearchRequested            bool
 	LocalWebSearchRuntimeEnabled       bool
@@ -73,6 +74,8 @@ func selectResponsesCreateRoute(responsesMode string, profile responsesCreateRou
 		}
 		return responsesCreateRouteLocalImageGeneration
 	case profile.LocalFileSearch:
+		return responsesCreateRouteLocalFileSearch
+	case profile.LocalFileSearchRequested && responsesMode == config.ResponsesModeLocalOnly:
 		return responsesCreateRouteLocalFileSearch
 	case profile.LocalComputer:
 		return responsesCreateRouteLocalComputer
@@ -129,6 +132,7 @@ func buildResponsesCreateRouteInputs(
 		LocalToolLoop:                      supportsLocalToolLoop(rawFields),
 		LocalToolSearchRequested:           hasLocalToolSearchRequest(rawFields),
 		LocalToolSearch:                    supportsLocalToolSearch(rawFields),
+		LocalFileSearchRequested:           isLocalFileSearchToolRequest(rawFields),
 		LocalFileSearch:                    supportsLocalFileSearch(rawFields),
 		LocalWebSearchRequested:            isLocalWebSearchToolRequest(rawFields),
 		LocalWebSearchRuntimeEnabled:       webSearchProvider != nil,

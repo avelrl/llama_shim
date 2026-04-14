@@ -1610,9 +1610,13 @@ paths:
         Performs retrieval-compatible local search over a shim-owned vector
         store.
 
-        Current implementation is deterministic lexical chunk search with
-        attribute filtering. It does not implement hosted OpenAI semantic
-        embeddings/reranking parity.
+        Current implementation supports deterministic lexical chunk search by
+        default, attribute filtering, optional exact dense semantic ranking,
+        weighted hybrid dense+text ranking, deterministic `rewrite_query`, and
+        a shim-local rerank layer via `ranking_options` when
+        `retrieval.index.backend=sqlite_vec` plus a configured embedder
+        backend are enabled. Exact hosted OpenAI
+        semantic/reranker/planner parity is not claimed.
       parameters:
         - $ref: "#/components/parameters/VectorStoreID"
       requestBody:
@@ -3378,12 +3382,14 @@ components:
             ranker:
               type: string
               enum:
-                [none, auto, default-2024-11-15, default_2024_08_21, default-2024-08-21]
+                [none, auto, default-2024-08-21, default_2024_08_21]
               description: |
                 Local retrieval ranker selection. In shim-local `sqlite_vec`
                 mode, omitted `ranker` behaves like `auto`, `none` disables
-                the local rerank stage, and the dated values select
-                shim-owned local rerank profiles. Exact hosted ranker parity
+                the local rerank stage, the canonical public dated value is
+                `default-2024-08-21`, and the legacy compatibility alias
+                `default_2024_08_21` is also accepted. Both map to the same
+                conservative local rerank profile. Exact hosted ranker parity
                 is not claimed.
             score_threshold:
               type: number
@@ -3402,8 +3408,9 @@ components:
         When the semantic retrieval backend (`sqlite_vec`) is enabled,
         `ranking_options.ranker` controls a shim-local rerank layer:
         omitted `ranker` defaults to local `auto`,
-        `default_2024_08_21` / `default-2024-08-21` select a conservative
-        legacy local profile, and `none` disables local reranking.
+        canonical `default-2024-08-21` selects a conservative legacy local
+        profile, legacy compatibility alias `default_2024_08_21` is also
+        accepted, and `none` disables local reranking.
         `ranking_options.hybrid_search` is also honored in that
         `sqlite_vec` path. Without `sqlite_vec`, the local implementation
         falls back to deterministic lexical search plus optional

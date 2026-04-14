@@ -130,6 +130,14 @@ func TestSelectResponsesCreateRoute(t *testing.T) {
 			want: responsesCreateRouteLocalFileSearch,
 		},
 		{
+			name: "local only routes file search parser errors into local parser",
+			mode: config.ResponsesModeLocalOnly,
+			profile: responsesCreateRouteInputs{
+				LocalFileSearchRequested: true,
+			},
+			want: responsesCreateRouteLocalFileSearch,
+		},
+		{
 			name: "prefer local runs local tool search",
 			mode: config.ResponsesModePreferLocal,
 			profile: responsesCreateRouteInputs{

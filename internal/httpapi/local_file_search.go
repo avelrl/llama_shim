@@ -50,6 +50,14 @@ type localFileSearchAnnotationRange struct {
 	End   int
 }
 
+func isLocalFileSearchToolRequest(rawFields map[string]json.RawMessage) bool {
+	tools := decodeToolList(rawFields)
+	if len(tools) != 1 {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(asString(tools[0]["type"])), "file_search")
+}
+
 func supportsLocalFileSearch(rawFields map[string]json.RawMessage) bool {
 	for key := range rawFields {
 		if _, ok := shimLocalStateBaseFields[key]; ok {
@@ -277,7 +285,7 @@ func parseLocalFileSearchRankingOptions(value any) (string, *float64, *domain.Ve
 	if rawRanker, ok := options["ranker"]; ok && rawRanker != nil {
 		ranker = strings.TrimSpace(asString(rawRanker))
 		switch ranker {
-		case "", "auto", "none", "default-2024-11-15", "default_2024_08_21", "default-2024-08-21":
+		case "", "auto", "none", "default_2024_08_21", "default-2024-08-21":
 		default:
 			return "", nil, nil, domain.NewValidationError("tools", "unsupported file_search.ranking_options.ranker")
 		}
