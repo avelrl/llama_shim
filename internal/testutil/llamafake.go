@@ -527,6 +527,9 @@ func fakeLlamaOutputFromChatMessages(messages []map[string]any) string {
 
 	last := strings.ToLower(chatMessageContent(messages[len(messages)-1]))
 	joined := strings.ToLower(joinChatMessageContent(messages))
+	if output, ok := fakeConstrainedToolSelectionJSONOutput(joined); ok {
+		return output
+	}
 	if output, ok := fakeConstrainedCustomToolJSONOutput(joined); ok {
 		return output
 	}
@@ -554,6 +557,35 @@ func fakeLlamaOutputFromChatMessages(messages []map[string]any) string {
 	}
 }
 
+func fakeConstrainedToolSelectionJSONOutput(joined string) (string, bool) {
+	if !strings.Contains(joined, "shim-local constrained tool selector") {
+		return "", false
+	}
+	switch {
+	case strings.Contains(joined, "reply ok") || strings.Contains(joined, "say ok and nothing else"):
+		if strings.Contains(joined, "assistant") {
+			return `{"selection":"assistant"}`, true
+		}
+		return "", false
+	case strings.Contains(joined, "call add") && strings.Contains(joined, "function:add"):
+		return `{"selection":"function:add"}`, true
+	case strings.Contains(joined, "use shell.exec") && strings.Contains(joined, "custom:shell.exec"):
+		return `{"selection":"custom:shell.exec"}`, true
+	case strings.Contains(joined, "use regex tool") && strings.Contains(joined, "custom:exact_text"):
+		return `{"selection":"custom:exact_text"}`, true
+	case strings.Contains(joined, "use grammar tool") && strings.Contains(joined, "custom:math_exp"):
+		return `{"selection":"custom:math_exp"}`, true
+	case strings.Contains(joined, "invalid grammar first attempt") && strings.Contains(joined, "custom:math_exp"):
+		return `{"selection":"custom:math_exp"}`, true
+	case strings.Contains(joined, "always invalid grammar tool") && strings.Contains(joined, "custom:math_exp"):
+		return `{"selection":"custom:math_exp"}`, true
+	case strings.Contains(joined, "backend rejects native custom tools") && strings.Contains(joined, "custom:code_exec"):
+		return `{"selection":"custom:code_exec"}`, true
+	default:
+		return `{"selection":"assistant"}`, true
+	}
+}
+
 func fakeConstrainedCustomToolJSONOutput(joined string) (string, bool) {
 	if !strings.Contains(joined, "shim-local constrained custom tool generator") {
 		return "", false
@@ -565,6 +597,8 @@ func fakeConstrainedCustomToolJSONOutput(joined string) (string, bool) {
 		return `{"input":"4 + 4"}`, true
 	case strings.Contains(joined, "`exact_text`"):
 		return `{"input":"hello 42"}`, true
+	case strings.Contains(joined, "`code_exec`"):
+		return `{"input":"print(\"hello world\")"}`, true
 	case strings.Contains(joined, "`shell.exec`"):
 		return `{"input":"print(\"hello world\")"}`, true
 	default:

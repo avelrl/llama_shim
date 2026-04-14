@@ -312,12 +312,14 @@ paths:
         - when `tool_choice` names a supported constrained custom tool, or
           `tool_choice: "required"` is used with a single constrained custom
           tool, the shim first attempts backend-native structured generation of
-          raw `input` through `/v1/chat/completions`; broader auto/mixed
-          constrained-tool cases still use the normal local tool loop for tool
-          selection, then attempt backend-native constrained regeneration of an
-          invalid selected `input`, and only then fall back to shim-local
-          validation/repair compatibility rather than full spec-equivalent
-          constrained decoding
+          raw `input` through `/v1/chat/completions`
+        - broader auto/mixed constrained-tool cases use a shim-local tool
+          selector plus backend-native constrained generation for the selected
+          custom tool, including a shim-local `tool_choice.type=allowed_tools`
+          subset for function/custom tools
+        - legacy shim-local validation/repair remains only as an error fallback,
+          not the happy-path enforcement mechanism; this is still not full
+          spec-equivalent single-pass constrained decoding
       requestBody:
         required: true
         content:

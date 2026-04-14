@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -112,6 +113,16 @@ func buildLocalToolLoopTransportPlan(rawFields map[string]json.RawMessage, tools
 		return nil, plan, toolChoice, "", nil
 	}
 
+	rewrittenToolChoice := rawFields["tool_choice"]
+	allowedSubset, rewrittenAllowedChoice, err := applyLocalAllowedToolsSubset(rawFields["tool_choice"], tools)
+	if err != nil {
+		return nil, customToolTransportPlan{}, nil, "", err
+	}
+	if allowedSubset != nil {
+		tools = allowedSubset
+		rewrittenToolChoice = rewrittenAllowedChoice
+	}
+
 	localTools := make([]map[string]any, 0, len(tools))
 	customDescriptors := make([]customToolDescriptor, 0, len(tools))
 	usedNames := make(map[string]struct{})
@@ -167,7 +178,7 @@ func buildLocalToolLoopTransportPlan(rawFields map[string]json.RawMessage, tools
 	plan.DroppedBuiltinTools = droppedBuiltinTools
 
 	var toolChoice any
-	if rawChoice, ok := rawFields["tool_choice"]; ok {
+	if rawChoice := rewrittenToolChoice; len(bytes.TrimSpace(rawChoice)) > 0 {
 		rewrittenChoice, err := remapToolChoice(rawChoice, rawFields, tools, plan, forceCodexToolChoiceRequired)
 		if err != nil {
 			return nil, customToolTransportPlan{}, nil, "", err
@@ -177,6 +188,109 @@ func buildLocalToolLoopTransportPlan(rawFields map[string]json.RawMessage, tools
 	}
 
 	return localTools, plan, toolChoice, buildLocalCustomToolLoopInstructions(customDescriptors), nil
+}
+
+func applyLocalAllowedToolsSubset(rawChoice json.RawMessage, tools []map[string]any) ([]map[string]any, json.RawMessage, error) {
+	trimmed := bytes.TrimSpace(rawChoice)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return nil, nil, nil
+	}
+
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(trimmed, &payload); err != nil {
+		return nil, nil, nil
+	}
+	var choiceType string
+	if err := json.Unmarshal(payload["type"], &choiceType); err != nil || !strings.EqualFold(strings.TrimSpace(choiceType), "allowed_tools") {
+		return nil, nil, nil
+	}
+
+	var mode string
+	if err := json.Unmarshal(payload["mode"], &mode); err != nil {
+		return nil, nil, domain.NewValidationError("tool_choice", "allowed_tools mode is required")
+	}
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	if mode != "auto" && mode != "required" {
+		return nil, nil, domain.NewValidationError("tool_choice", "allowed_tools mode must be auto or required")
+	}
+
+	var rawAllowed []map[string]any
+	if err := json.Unmarshal(payload["tools"], &rawAllowed); err != nil || len(rawAllowed) == 0 {
+		return nil, nil, domain.NewValidationError("tool_choice", "allowed_tools.tools must be a non-empty array")
+	}
+
+	allowed := make(map[string]struct{}, len(rawAllowed))
+	for _, ref := range rawAllowed {
+		key, err := allowedToolChoiceKey(ref)
+		if err != nil {
+			return nil, nil, err
+		}
+		allowed[key] = struct{}{}
+	}
+
+	filtered := make([]map[string]any, 0, len(tools))
+	matched := make(map[string]struct{}, len(allowed))
+	for _, tool := range tools {
+		key, ok := localToolChoiceKey(tool)
+		if !ok {
+			continue
+		}
+		if _, exists := allowed[key]; !exists {
+			continue
+		}
+		filtered = append(filtered, tool)
+		matched[key] = struct{}{}
+	}
+
+	if len(filtered) == 0 {
+		return nil, nil, domain.NewValidationError("tool_choice", "allowed_tools did not match any declared shim-local tools")
+	}
+	for key := range allowed {
+		if _, ok := matched[key]; !ok {
+			return nil, nil, domain.NewValidationError("tool_choice", "allowed_tools must reference only declared shim-local tools")
+		}
+	}
+
+	rewrittenChoice := json.RawMessage(`"` + mode + `"`)
+	return filtered, rewrittenChoice, nil
+}
+
+func allowedToolChoiceKey(payload map[string]any) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(asString(payload["type"]))) {
+	case "function":
+		name := strings.TrimSpace(asString(payload["name"]))
+		if name == "" {
+			return "", domain.NewValidationError("tool_choice", "allowed_tools function entries require a name")
+		}
+		return "function:" + name, nil
+	case "custom", "custom_tool":
+		name, namespace := customToolIdentity(payload)
+		if name == "" {
+			return "", domain.NewValidationError("tool_choice", "allowed_tools custom tool entries require a name")
+		}
+		return "custom:" + canonicalCustomToolKey(namespace, name), nil
+	default:
+		return "", domain.NewValidationError("tool_choice", "allowed_tools currently supports only function and custom tool entries in shim-local mode")
+	}
+}
+
+func localToolChoiceKey(tool map[string]any) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(asString(tool["type"]))) {
+	case "function":
+		name := strings.TrimSpace(asString(tool["name"]))
+		if name == "" {
+			return "", false
+		}
+		return "function:" + name, true
+	case "custom", "custom_tool":
+		name, namespace := customToolIdentity(tool)
+		if name == "" {
+			return "", false
+		}
+		return "custom:" + canonicalCustomToolKey(namespace, name), true
+	default:
+		return "", false
+	}
 }
 
 func buildLocalFunctionToolDefinition(tool map[string]any) (map[string]any, string, error) {

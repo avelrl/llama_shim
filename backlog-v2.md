@@ -163,7 +163,7 @@
   `last_error`
 - усилен bridge для custom tools и `tool_choice`: normalizing, contract tracking, fallback/retry для upstream-ов, которые принимают только `tool_choice=auto`
 - локальные constrained custom tools для supported `grammar` / `regex` subset заведены в local tool loop
-- для named constrained custom tools и `tool_choice=required` с единственным constrained tool shim сначала пытается backend-native structured generation of raw `input`; в broader auto/mixed cases shim сначала даёт обычному local tool loop выбрать tool, а потом пытается backend-native constrained regeneration of invalid `input` before falling back to legacy validation/repair
+- для supported constrained custom tools shim теперь делает backend-native structured generation of raw `input` не только для named constrained custom tools и `tool_choice=required` с единственным constrained tool, но и для broad auto/mixed cases через отдельный shim-local tool-selection stage; `tool_choice.type=allowed_tools` тоже поддержан в shim-local subset, а legacy validation/repair loop остаётся только error fallback path
 - улучшена canonical error mapping для response/tool-choice ошибок
 - добавлены тесты на store, middleware, stream proxy, chat sanitization и integration scenarios
 - docs/config cleanup для публичной репы: английские комментарии в конфиге, отдельный русский README, ссылка на него из английского README
@@ -1702,13 +1702,13 @@ Definition of done:
 Почему это отдельная задача:
 
 - OpenAI docs для custom tools и CFG описывают настоящий constrained generation/runtime, а не prompt+validate и не retry/repair loop
-- текущий shim уже умеет делать backend-native structured generation fast path для named constrained custom tools и `tool_choice=required` с единственным constrained tool, а также умеет native-regenerate invalid selected constrained input before repair; но tool selection в broad auto/mixed path всё ещё идёт через обычный local tool loop и не является spec-equivalent decoding
+- текущий shim уже умеет делать backend-native structured generation of raw constrained `input` для named constrained custom tools, для broad auto/mixed cases через отдельный shim-local tool selector, и для local `tool_choice.type=allowed_tools`; repair loop больше не нужен на happy path, но tool selection и constrained input generation всё ещё split across two chat-completions calls instead of one spec-equivalent constrained decoder
 - без true runtime нельзя честно обещать строгую parity для сложных grammar/regex сценариев
 
 Что входит:
 
 - либо backend-native constrained generation path для `/v1/chat/completions`, либо отдельный local decoder/runtime внутри shim
-- убрать зависимость grammar/regex input generation от repair prompts
+- убрать даже error-path зависимость grammar/regex input generation от repair prompts
 - сделать constraint enforcement частью самого generation path, а не пост-валидации результата
 - зафиксировать в docs/spec, какой путь выбран и какие гарантии он даёт
 
@@ -1729,7 +1729,7 @@ Definition of done:
 - `internal/llama/client.go`
   здесь нужен либо новый backend request path для constrained generation, либо capability-aware adapter поверх текущего `/v1/chat/completions`
 - `internal/httpapi/local_tool_loop.go`
-  текущий repair loop должен быть заменён на вызов настоящего constrained runtime для `custom_tool_call.input`
+  split tool-selection/runtime branch должен быть заменён на единый spec-equivalent constrained decoder for `custom_tool_call.input`
 - `internal/httpapi/local_tool_loop_request.go`
   compiler/validator остаётся как preflight для supported subset и как safety-check, но перестаёт быть primary enforcement path
 - `internal/config/config.go`
@@ -1745,6 +1745,7 @@ Definition of done:
 
 - constrained custom tool input генерируется через реальный runtime constraint, а не через prompt + validate + repair
 - grammar/regex happy path не требует repair loop для соблюдения constraint
+- broad auto/mixed constrained path не зависит от обычного tool loop для выбора constrained tool на happy path
 - docs/spec не вводят в заблуждение и не обещают parity там, где её нет
 
 Полезные reference:

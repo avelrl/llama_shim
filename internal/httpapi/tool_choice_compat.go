@@ -58,6 +58,15 @@ func deriveToolChoiceContract(raw json.RawMessage, upstreamChoice any) toolChoic
 	}
 
 	switch strings.ToLower(strings.TrimSpace(asString(choice["type"]))) {
+	case "allowed_tools":
+		mode := strings.ToLower(strings.TrimSpace(asString(choice["mode"])))
+		if mode == "required" {
+			return toolChoiceContract{Mode: toolChoiceContractRequiredAny}
+		}
+		if upstreamLiteral, ok := upstreamChoice.(string); ok && strings.EqualFold(strings.TrimSpace(upstreamLiteral), "required") {
+			return toolChoiceContract{Mode: toolChoiceContractRequiredAny}
+		}
+		return toolChoiceContract{}
 	case "function":
 		name := strings.TrimSpace(asString(choice["name"]))
 		if name == "" {

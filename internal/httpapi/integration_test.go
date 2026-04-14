@@ -3908,6 +3908,254 @@ func TestResponsesPreferLocalUsesBackendConstrainedRuntimeForRequiredSingleGramm
 	require.Equal(t, "4 + 4", item["input"])
 }
 
+func TestResponsesPreferLocalUsesPlannerForMixedGrammarAndFunctionTools(t *testing.T) {
+	app := testutil.NewTestAppWithCustomToolsMode(t, "auto")
+
+	status, body := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model": "test-model",
+		"input": "Use grammar tool",
+		"tools": []map[string]any{
+			{
+				"type": "function",
+				"name": "add",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"a": map[string]any{"type": "number"},
+						"b": map[string]any{"type": "number"},
+					},
+					"required": []string{"a", "b"},
+				},
+			},
+			{
+				"type": "custom",
+				"name": "math_exp",
+				"format": map[string]any{
+					"type":       "grammar",
+					"syntax":     "lark",
+					"definition": "start: expr\nexpr: term (SP ADD SP term)* -> add\n| term\nterm: INT\nSP: \" \"\nADD: \"+\"\n%import common.INT",
+				},
+			},
+		},
+	})
+
+	require.Equal(t, http.StatusOK, status)
+	output, ok := body["output"].([]any)
+	require.True(t, ok)
+	require.Len(t, output, 1)
+	item, ok := output[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "custom_tool_call", item["type"])
+	require.Equal(t, "math_exp", item["name"])
+	require.Equal(t, "4 + 4", item["input"])
+}
+
+func TestResponsesPreferLocalUsesPlannerForMixedFunctionInsteadOfGrammarTool(t *testing.T) {
+	app := testutil.NewTestAppWithCustomToolsMode(t, "auto")
+
+	status, body := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model": "test-model",
+		"input": "Call add.",
+		"tools": []map[string]any{
+			{
+				"type": "function",
+				"name": "add",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"a": map[string]any{"type": "number"},
+						"b": map[string]any{"type": "number"},
+					},
+					"required": []string{"a", "b"},
+				},
+			},
+			{
+				"type": "custom",
+				"name": "math_exp",
+				"format": map[string]any{
+					"type":       "grammar",
+					"syntax":     "lark",
+					"definition": "start: expr\nexpr: term (SP ADD SP term)* -> add\n| term\nterm: INT\nSP: \" \"\nADD: \"+\"\n%import common.INT",
+				},
+			},
+		},
+	})
+
+	require.Equal(t, http.StatusOK, status)
+	output, ok := body["output"].([]any)
+	require.True(t, ok)
+	require.Len(t, output, 1)
+	item, ok := output[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "function_call", item["type"])
+	require.Equal(t, "add", item["name"])
+}
+
+func TestResponsesPreferLocalUsesPlannerAssistantBranchForMixedGrammarTools(t *testing.T) {
+	app := testutil.NewTestAppWithCustomToolsMode(t, "auto")
+
+	status, body := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model": "test-model",
+		"input": "Reply OK",
+		"tools": []map[string]any{
+			{
+				"type": "function",
+				"name": "add",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"a": map[string]any{"type": "number"},
+						"b": map[string]any{"type": "number"},
+					},
+					"required": []string{"a", "b"},
+				},
+			},
+			{
+				"type": "custom",
+				"name": "math_exp",
+				"format": map[string]any{
+					"type":       "grammar",
+					"syntax":     "lark",
+					"definition": "start: expr\nexpr: term (SP ADD SP term)* -> add\n| term\nterm: INT\nSP: \" \"\nADD: \"+\"\n%import common.INT",
+				},
+			},
+		},
+	})
+
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, "OK", asStringAny(body["output_text"]))
+	output, ok := body["output"].([]any)
+	require.True(t, ok)
+	require.Len(t, output, 1)
+	item, ok := output[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "message", item["type"])
+}
+
+func TestResponsesPreferLocalSupportsAllowedToolsForConstrainedSubset(t *testing.T) {
+	app := testutil.NewTestAppWithCustomToolsMode(t, "auto")
+
+	status, body := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model":       "test-model",
+		"tool_choice": map[string]any{"type": "allowed_tools", "mode": "required", "tools": []map[string]any{{"type": "custom", "name": "math_exp"}}},
+		"input":       "Always invalid grammar tool. Use grammar tool",
+		"tools": []map[string]any{
+			{
+				"type": "function",
+				"name": "add",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"a": map[string]any{"type": "number"},
+						"b": map[string]any{"type": "number"},
+					},
+					"required": []string{"a", "b"},
+				},
+			},
+			{
+				"type": "custom",
+				"name": "math_exp",
+				"format": map[string]any{
+					"type":       "grammar",
+					"syntax":     "lark",
+					"definition": "start: expr\nexpr: term (SP ADD SP term)* -> add\n| term\nterm: INT\nSP: \" \"\nADD: \"+\"\n%import common.INT",
+				},
+			},
+		},
+	})
+
+	require.Equal(t, http.StatusOK, status)
+	output, ok := body["output"].([]any)
+	require.True(t, ok)
+	require.Len(t, output, 1)
+	item, ok := output[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "custom_tool_call", item["type"])
+	require.Equal(t, "math_exp", item["name"])
+	require.Equal(t, "4 + 4", item["input"])
+}
+
+func TestResponsesPreferLocalRejectsUnknownAllowedToolsSubset(t *testing.T) {
+	app := testutil.NewTestAppWithCustomToolsMode(t, "auto")
+
+	status, body := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model":       "test-model",
+		"tool_choice": map[string]any{"type": "allowed_tools", "mode": "required", "tools": []map[string]any{{"type": "function", "name": "missing_tool"}}},
+		"input":       "Use grammar tool",
+		"tools": []map[string]any{
+			{
+				"type": "custom",
+				"name": "math_exp",
+				"format": map[string]any{
+					"type":       "grammar",
+					"syntax":     "lark",
+					"definition": "start: expr\nexpr: term (SP ADD SP term)* -> add\n| term\nterm: INT\nSP: \" \"\nADD: \"+\"\n%import common.INT",
+				},
+			},
+		},
+	})
+
+	require.Equal(t, http.StatusBadRequest, status)
+	errorPayload, ok := body["error"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "invalid_request_error", errorPayload["type"])
+	require.Equal(t, "tool_choice", errorPayload["param"])
+	require.Contains(t, asStringAny(errorPayload["message"]), "allowed_tools")
+}
+
+func TestResponsesStreamUsesPlannerForMixedGrammarAndFunctionTools(t *testing.T) {
+	app := testutil.NewTestAppWithCustomToolsMode(t, "auto")
+
+	reqBody, err := json.Marshal(map[string]any{
+		"model":  "test-model",
+		"stream": true,
+		"input": []map[string]any{
+			{"role": "user", "content": "Use grammar tool"},
+		},
+		"tools": []map[string]any{
+			{
+				"type": "function",
+				"name": "add",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"a": map[string]any{"type": "number"},
+						"b": map[string]any{"type": "number"},
+					},
+					"required": []string{"a", "b"},
+				},
+			},
+			{
+				"type": "custom",
+				"name": "math_exp",
+				"format": map[string]any{
+					"type":       "grammar",
+					"syntax":     "lark",
+					"definition": "start: expr\nexpr: term (SP ADD SP term)* -> add\n| term\nterm: INT\nSP: \" \"\nADD: \"+\"\n%import common.INT",
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	req, err := http.NewRequest(http.MethodPost, app.Server.URL+"/v1/responses", bytes.NewReader(reqBody))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	events := readSSEEvents(t, resp.Body)
+	done := findEvent(t, events, "response.custom_tool_call_input.done").Data
+	doneItem, ok := done["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "custom_tool_call", doneItem["type"])
+	require.Equal(t, "math_exp", doneItem["name"])
+	require.Equal(t, "4 + 4", doneItem["input"])
+}
+
 func TestResponsesPreferLocalRecoversInvalidGrammarCustomToolWithNativeRuntime(t *testing.T) {
 	app := testutil.NewTestAppWithCustomToolsMode(t, "auto")
 
