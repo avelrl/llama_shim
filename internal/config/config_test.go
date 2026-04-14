@@ -35,6 +35,8 @@ retrieval:
     backend: embedanything
     base_url: http://127.0.0.1:9099
     model: snowflake-arctic-embed-l-v2.0
+chat_completions:
+  default_store_when_omitted: false
 responses:
   mode: prefer_upstream
   custom_tools:
@@ -74,6 +76,7 @@ responses:
 	require.Equal(t, "embedanything", cfg.RetrievalEmbedderBackend)
 	require.Equal(t, "http://127.0.0.1:9099", cfg.RetrievalEmbedderBaseURL)
 	require.Equal(t, "snowflake-arctic-embed-l-v2.0", cfg.RetrievalEmbedderModel)
+	require.False(t, cfg.ChatCompletionsStoreWhenOmitted)
 	require.Equal(t, config.ResponsesModePreferUpstream, cfg.ResponsesMode)
 	require.Equal(t, "bridge", cfg.ResponsesCustomToolsMode)
 	require.True(t, cfg.ResponsesCodexEnableCompatibility)
@@ -126,6 +129,7 @@ responses:
 	t.Setenv("RETRIEVAL_EMBEDDER_BACKEND", "openai_compatible")
 	t.Setenv("RETRIEVAL_EMBEDDER_BASE_URL", "http://127.0.0.1:8082")
 	t.Setenv("RETRIEVAL_EMBEDDER_MODEL", "text-embedding-3-small")
+	t.Setenv("CHAT_COMPLETIONS_DEFAULT_STORE_WHEN_OMITTED", "true")
 	t.Setenv("RESPONSES_MODE", "local_only")
 	t.Setenv("RESPONSES_CODEX_ENABLE_COMPATIBILITY", "true")
 	t.Setenv("RESPONSES_CODEX_FORCE_TOOL_CHOICE_REQUIRED", "true")
@@ -151,6 +155,7 @@ responses:
 	require.Equal(t, "openai_compatible", cfg.RetrievalEmbedderBackend)
 	require.Equal(t, "http://127.0.0.1:8082", cfg.RetrievalEmbedderBaseURL)
 	require.Equal(t, "text-embedding-3-small", cfg.RetrievalEmbedderModel)
+	require.True(t, cfg.ChatCompletionsStoreWhenOmitted)
 	require.Equal(t, config.ResponsesModeLocalOnly, cfg.ResponsesMode)
 	require.True(t, cfg.ResponsesCodexEnableCompatibility)
 	require.True(t, cfg.ResponsesCodexForceToolChoiceRequired)
@@ -182,6 +187,7 @@ func TestLoadUsesCodexSafeDefaults(t *testing.T) {
 	require.Equal(t, "disabled", cfg.RetrievalEmbedderBackend)
 	require.Empty(t, cfg.RetrievalEmbedderBaseURL)
 	require.Empty(t, cfg.RetrievalEmbedderModel)
+	require.True(t, cfg.ChatCompletionsStoreWhenOmitted)
 	require.Equal(t, config.ResponsesModePreferLocal, cfg.ResponsesMode)
 	require.Equal(t, "auto", cfg.ResponsesCustomToolsMode)
 	require.True(t, cfg.ResponsesCodexEnableCompatibility)

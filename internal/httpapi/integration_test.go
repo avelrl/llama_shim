@@ -5027,8 +5027,37 @@ func TestChatCompletionsStoreTrueExposesStoredReadSurface(t *testing.T) {
 	require.Nil(t, messages.Data[0]["content_parts"])
 }
 
-func TestChatCompletionsWithoutExplicitStoreDoNotShadowStore(t *testing.T) {
+func TestChatCompletionsWithoutExplicitStoreShadowStoreByDefault(t *testing.T) {
 	app := testutil.NewTestApp(t)
+
+	status, body := rawRequest(t, app, http.MethodPost, "/v1/chat/completions", map[string]any{
+		"model": "gpt-5.4",
+		"metadata": map[string]any{
+			"topic": "implicit-store",
+		},
+		"messages": []map[string]any{
+			{"role": "user", "content": "Say OK and nothing else"},
+		},
+	})
+	require.Equal(t, http.StatusOK, status)
+	completionID := asStringAny(body["id"])
+	require.NotEmpty(t, completionID)
+
+	list := getStoredChatCompletions(t, app, "")
+	require.Len(t, list.Data, 1)
+	require.Equal(t, completionID, asStringAny(list.Data[0]["id"]))
+	require.NotNil(t, list.FirstID)
+	require.NotNil(t, list.LastID)
+	require.Equal(t, completionID, *list.FirstID)
+	require.Equal(t, completionID, *list.LastID)
+	require.False(t, list.HasMore)
+}
+
+func TestChatCompletionsWithoutExplicitStoreDoNotShadowStoreWhenDefaultDisabled(t *testing.T) {
+	storeWhenOmitted := false
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		ChatCompletionsStoreWhenOmitted: &storeWhenOmitted,
+	})
 
 	status, body := rawRequest(t, app, http.MethodPost, "/v1/chat/completions", map[string]any{
 		"model": "gpt-5.4",
@@ -5037,13 +5066,19 @@ func TestChatCompletionsWithoutExplicitStoreDoNotShadowStore(t *testing.T) {
 		},
 	})
 	require.Equal(t, http.StatusOK, status)
-	require.NotEmpty(t, asStringAny(body["id"]))
+	completionID := asStringAny(body["id"])
+	require.NotEmpty(t, completionID)
+
+	localPage, err := app.Store.ListChatCompletions(context.Background(), domain.ListStoredChatCompletionsQuery{
+		Limit: 20,
+		Order: domain.ChatCompletionOrderAsc,
+	})
+	require.NoError(t, err)
+	require.Empty(t, localPage.Completions)
 
 	list := getStoredChatCompletions(t, app, "")
-	require.Empty(t, list.Data)
-	require.Nil(t, list.FirstID)
-	require.Nil(t, list.LastID)
-	require.False(t, list.HasMore)
+	require.Len(t, list.Data, 1)
+	require.Equal(t, completionID, asStringAny(list.Data[0]["id"]))
 }
 
 func TestChatCompletionsStoredListFiltersAndPaginates(t *testing.T) {
@@ -5151,6 +5186,58 @@ func TestChatCompletionsStoreTrueStreamShadowStoresReconstructedCompletion(t *te
 	})
 }
 
+func TestChatCompletionsStoreTrueStreamShadowStoresToolCallReconstructedCompletion(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	reqBody, err := json.Marshal(map[string]any{
+		"model":  "gpt-5.4",
+		"store":  true,
+		"stream": true,
+		"tools": []map[string]any{
+			{
+				"type": "function",
+				"function": map[string]any{
+					"name": "math_exp",
+				},
+			},
+		},
+		"messages": []map[string]any{
+			{"role": "user", "content": "Use the tool."},
+		},
+	})
+	require.NoError(t, err)
+
+	req, err := http.NewRequest(http.MethodPost, app.Server.URL+"/v1/chat/completions", bytes.NewReader(reqBody))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Contains(t, resp.Header.Get("Content-Type"), "text/event-stream")
+	events := readSSEEvents(t, resp.Body)
+	require.NotEmpty(t, events)
+	require.Equal(t, "[DONE]", events[len(events)-1].Raw)
+
+	list := getStoredChatCompletions(t, app, "")
+	require.Len(t, list.Data, 1)
+	completionID := asStringAny(list.Data[0]["id"])
+	stored := getStoredChatCompletion(t, app, completionID)
+	choices := stored["choices"].([]any)
+	require.Len(t, choices, 1)
+	choice := choices[0].(map[string]any)
+	require.Equal(t, "tool_calls", asStringAny(choice["finish_reason"]))
+	message := choice["message"].(map[string]any)
+	require.Nil(t, message["content"])
+	toolCalls := message["tool_calls"].([]any)
+	require.Len(t, toolCalls, 1)
+	function := toolCalls[0].(map[string]any)["function"].(map[string]any)
+	require.Equal(t, "math_exp", asStringAny(function["name"]))
+	require.Equal(t, `{"input":"4 + 4"}`, asStringAny(function["arguments"]))
+}
+
 func TestChatCompletionsStoredUpdateAndDelete(t *testing.T) {
 	app := testutil.NewTestApp(t)
 
@@ -5213,6 +5300,80 @@ func TestChatCompletionsStoredUpdateRejectsInvalidBody(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, status)
 	require.Equal(t, "invalid_request_error", asStringAny(payload["error"].(map[string]any)["type"]))
 	require.Equal(t, "metadata", asStringAny(payload["error"].(map[string]any)["param"]))
+}
+
+func TestChatCompletionsStoredListMergesLocalAndUpstreamHistoricalCompletions(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	localID := postStoredChatCompletion(t, app, map[string]any{
+		"model":    "gpt-5.4",
+		"store":    true,
+		"metadata": map[string]any{"topic": "local"},
+		"messages": []map[string]any{{"role": "user", "content": "Say OK and nothing else"}},
+	})
+	upstreamID := postUpstreamStoredChatCompletion(t, app, map[string]any{
+		"model":    "gpt-5.4",
+		"store":    true,
+		"metadata": map[string]any{"topic": "upstream"},
+		"messages": []map[string]any{{"role": "user", "content": "Say OK and nothing else"}},
+	})
+
+	page := getStoredChatCompletions(t, app, "")
+	require.Len(t, page.Data, 2)
+	ids := []string{
+		asStringAny(page.Data[0]["id"]),
+		asStringAny(page.Data[1]["id"]),
+	}
+	require.Contains(t, ids, localID)
+	require.Contains(t, ids, upstreamID)
+
+	upstreamOnly := getStoredChatCompletions(t, app, "?metadata[topic]=upstream")
+	require.Len(t, upstreamOnly.Data, 1)
+	require.Equal(t, upstreamID, asStringAny(upstreamOnly.Data[0]["id"]))
+}
+
+func TestChatCompletionsStoredRoutesFallbackToUpstreamHistoricalCompletion(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	completionID := postUpstreamStoredChatCompletion(t, app, map[string]any{
+		"model":    "gpt-5.4",
+		"store":    true,
+		"metadata": map[string]any{"topic": "upstream"},
+		"messages": []map[string]any{
+			{"role": "developer", "content": "You are terse."},
+			{"role": "user", "content": "Say OK and nothing else"},
+		},
+	})
+
+	stored := getStoredChatCompletion(t, app, completionID)
+	require.Equal(t, completionID, asStringAny(stored["id"]))
+	require.Equal(t, "gpt-5.4", asStringAny(stored["model"]))
+
+	messages := getStoredChatCompletionMessages(t, app, completionID, "")
+	require.Len(t, messages.Data, 2)
+	require.Equal(t, []string{"developer", "user"}, []string{
+		asStringAny(messages.Data[0]["role"]),
+		asStringAny(messages.Data[1]["role"]),
+	})
+
+	status, updated := rawRequest(t, app, http.MethodPost, "/v1/chat/completions/"+completionID, map[string]any{
+		"metadata": map[string]any{"topic": "updated-upstream"},
+	})
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, map[string]any{"topic": "updated-upstream"}, updated["metadata"])
+
+	filtered := getStoredChatCompletions(t, app, "?metadata[topic]=updated-upstream")
+	require.Len(t, filtered.Data, 1)
+	require.Equal(t, completionID, asStringAny(filtered.Data[0]["id"]))
+
+	status, deleted := rawRequest(t, app, http.MethodDelete, "/v1/chat/completions/"+completionID, nil)
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, completionID, asStringAny(deleted["id"]))
+	require.Equal(t, true, deleted["deleted"])
+
+	status, payload := rawRequest(t, app, http.MethodGet, "/v1/chat/completions/"+completionID, nil)
+	require.Equal(t, http.StatusNotFound, status)
+	require.Equal(t, "not_found_error", asStringAny(payload["error"].(map[string]any)["type"]))
 }
 
 func TestFilesEndpointsUploadListRetrieveContentAndDelete(t *testing.T) {
@@ -8201,6 +8362,27 @@ func postStoredChatCompletion(t *testing.T, app *testutil.TestApp, payload map[s
 
 	status, body := rawRequest(t, app, http.MethodPost, "/v1/chat/completions", payload)
 	require.Equal(t, http.StatusOK, status)
+	return asStringAny(body["id"])
+}
+
+func postUpstreamStoredChatCompletion(t *testing.T, app *testutil.TestApp, payload map[string]any) string {
+	t.Helper()
+
+	require.NotNil(t, app.LlamaServer)
+	rawBody, err := json.Marshal(payload)
+	require.NoError(t, err)
+
+	req, err := http.NewRequest(http.MethodPost, app.LlamaServer.URL+"/v1/chat/completions", bytes.NewReader(rawBody))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := app.LlamaServer.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var body map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
 	return asStringAny(body["id"])
 }
 

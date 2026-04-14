@@ -93,8 +93,11 @@
   `sqlite_vec` + readiness-aware embedder ещё и retrieval embedder, а не просто
   отвечает `200`
 - `/v1/chat/completions` очищает provider-specific поля в обычном JSON и SSE потоке
-- успешные `POST /v1/chat/completions` с explicit `store: true`
-  теперь shadow-store-ятся локально и доступны через shim-owned
+- успешные `POST /v1/chat/completions` теперь shadow-store-ятся локально при
+  explicit `store: true` и при omitted `store`, когда включен shim-owned
+  `chat_completions.default_store_when_omitted`; stored read surface теперь
+  local-first, а upstream-owned history добирается только как optional
+  compatibility bridge через official routes when available
   `GET /v1/chat/completions`, `GET /v1/chat/completions/{completion_id}`,
   `POST /v1/chat/completions/{completion_id}`,
   `DELETE /v1/chat/completions/{completion_id}`,
@@ -183,7 +186,7 @@
 - [x] - local reranked retrieval subset behind local `vector_stores` ([детали](#task-retrieval-semantic-backend))
 - [ ] - hosted reranked retrieval parity behind local `vector_stores` ([детали](#task-retrieval-semantic-backend))
 - [ ] - parity для hosted/native Responses tools (`web_search`, `computer_use`, `code_interpreter`, `image_generation`, `remote MCP`, `tool_search`) ([детали](#task-hosted-tools-parity))
-- [x] - local stored Chat Completions CRUD surface for explicit `store=true` proxy completions ([детали](#task-chat-stored-surface-local))
+- [x] - local-first stored Chat Completions CRUD surface for proxy completions ([детали](#task-chat-stored-surface-local))
 - [x] - `/readyz` checks SQLite, upstream llama backend, and configured retrieval embedder readiness ([детали](#task-ops-hardening))
 - [ ] - stored Chat Completions compatibility surface ([детали](#task-chat-stored-surface))
 - [ ] - operational hardening: backend readiness, retention job, local DX ([детали](#task-ops-hardening))
@@ -1403,7 +1406,7 @@ Definition of done:
 - [Migrate to Responses: Messages vs. Items](https://developers.openai.com/api/docs/guides/migrate-to-responses#messages-vs-items)
 - [Hosted tool search](https://developers.openai.com/api/docs/guides/tools-tool-search#hosted-tool-search)
 
-## <a id="task-chat-stored-surface-local"></a>Local stored Chat Completions CRUD surface for explicit `store=true` proxy completions
+## <a id="task-chat-stored-surface-local"></a>Local-first stored Chat Completions CRUD surface for proxy completions
 
 Почему это отдельно:
 
@@ -1413,14 +1416,15 @@ Definition of done:
   честный local CRUD model для тех Chat Completions, которые реально прошли
   через shim, были explicitly stored, и либо already came back as JSON, либо
   могут быть локально reconstructed из streamed chunks
-- такой partial ownership уже полезен клиентам и не требует выдумывать
-  account-level default storage semantics или upstream-owned history
+- такой partial ownership уже полезен клиентам и теперь уже покрывает
+  shim-owned omitted-store policy и local-first upstream history fallback, не
+  заявляя full hosted parity
 
 Что входит:
 
-- local shadow-store для успешных `POST /v1/chat/completions`
-  c explicit `store: true`:
-  non-streaming JSON plus current streamed reconstruction subset
+- local shadow-store для успешных `POST /v1/chat/completions`:
+  explicit `store: true` plus shim-owned configurable omitted-store default
+  policy; non-streaming JSON plus current streamed reconstruction subset
 - `GET /v1/chat/completions` с filters/pagination subset:
   `model`, `metadata[key]=value`, `after`, `limit`, `order`
 - `GET /v1/chat/completions/{completion_id}`
@@ -1428,32 +1432,42 @@ Definition of done:
 - `DELETE /v1/chat/completions/{completion_id}`
 - `GET /v1/chat/completions/{completion_id}/messages`, где message list
   реконструируется из исходного request `messages[]`
+- local-first fallback to upstream-owned stored Chat Completions for
+  list/get/update/delete/messages when upstream backend exposes those routes
 - OpenAPI/docs wording, которая прямо фиксирует границы этого local subset
 
 Статус на 14 апреля 2026:
 
 - закрыто для local shim-owned subset:
-  successful explicit `store: true` chat completions now land in SQLite and
-  are manageable through list/get/update/delete/messages handlers
-- streamed explicit `store: true` chat completions now shadow-store through a
+  successful chat completions now land in SQLite whenever `store: true` is
+  explicit or omitted-store local shadowing is enabled, and are manageable
+  through list/get/update/delete/messages handlers
+- stored read routes are now local-first with upstream fallback, and list
+  may merge in upstream-owned historical stored chat completions only when the
+  backend supports official stored-chat routes
+- streamed stored chat completions now shadow-store through a
   local reconstructed final `chat.completion` object built from sanitized
-  upstream chunks; current happy-path coverage is assistant-text chunk streams
+  upstream chunks; current coverage includes assistant-text and tool-call-heavy
+  chunk streams
 - `messages` read surface возвращает reconstructed request messages with stable
   synthetic ids when the original message object had no `id`
 - `POST /v1/chat/completions/{completion_id}` обновляет только stored
   `metadata`, а `DELETE /v1/chat/completions/{completion_id}` удаляет локальный
-  shadow resource и после этого `get/messages` возвращают `404`
+  shadow resource; для shadow-owned ids shim делает best-effort upstream sync,
+  а если локального shadow resource нет, routes идут в upstream fallback
 - filtering/pagination покрыты integration tests и store tests
-- OpenAPI wording explicitly says, что это local shadow-store subset, а не
-  full official stored-chat parity
+- OpenAPI wording explicitly says, что это local-first stored-chat subset, а
+  не full official stored-chat parity
 
 Definition of done:
 
 - local list/get/update/delete/messages contract реализован и покрыт
   integration tests
-- OpenAPI/backlog не overclaim-ят upstream-owned history или default storage
-  при omitted `store`; streamed reconstruction зафиксирован только как current
-  local subset, не как full hosted parity
+- omitted `store` policy зафиксирован как shim-owned configurable model current
+  official default behavior, а upstream-owned history поддержан только как
+  optional local-first compatibility bridge
+- streamed reconstruction зафиксирован только как current local subset, не как
+  full hosted parity
 - `go test ./...` проходит на этом scope
 
 Полезные reference:
@@ -1470,8 +1484,9 @@ Definition of done:
 
 - в official OpenAI API у `chat/completions` есть не только `POST`, но и
   stored-resource surface: list/get/update/delete/messages
-- сейчас shim уже дает local shadow-store subset для explicit `store: true`
-  proxy completions, включая update/delete и streamed reconstruction subset,
+- сейчас shim уже дает local-first subset для explicit `store: true` и
+  shim-owned omitted-store default, плюс optional upstream compatibility bridge
+  for stored resources, включая update/delete и streamed reconstruction subset,
   но это еще не полная
   OpenAI-compatible stored-chat model
 - это один из заметных gaps между “минимальный shim для chat proxy” и “честный OpenAI-compatible facade”
@@ -1479,14 +1494,11 @@ Definition of done:
 Что входит:
 
 - upstream-aware policy: что shim хранит локально при `store=true`, а что
-  честно оставляет upstream-only
-- решение по omitted `store`: считать ли account-level default storage частью
-  shim contract или оставлять это explicit gap
-- streamed chat completions: current assistant-text reconstruction subset уже
-  есть, но broader streamed parity по tool calls / richer chunk semantics
-  остаётся отдельным решением
-- upstream-owned historical stored chat completions: proxy surface, explicit
-  not-supported, или дальнейшее local ownership
+  честно оставляет upstream-only beyond the current local-first subset
+- broader streamed parity beyond current reconstructed subset for rarer chunk
+  semantics than assistant text / tool calls
+- deeper ownership questions around upstream vs local stored-chat lifecycle if
+  we ever want more than local-first fallback/merge
 
 Definition of done:
 

@@ -48,6 +48,13 @@ retrieval:
     # Embedding model identifier understood by the embedder server.
     model: ""
 
+# Shim-owned policy for Chat Completions storage when requests omit `store`.
+chat_completions:
+  # true: shadow-store omitted-store chat completions locally, matching the
+  # current OpenAI default for new accounts
+  # false: only explicit `store: true` is shadow-stored locally
+  default_store_when_omitted: true
+
 # Settings for the OpenAI Responses-compatible layer.
 responses:
   # How /v1/responses is routed.

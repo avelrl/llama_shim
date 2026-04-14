@@ -1712,19 +1712,19 @@ paths:
   /v1/chat/completions:
     get:
       tags: [chat]
-      summary: List locally stored Chat Completions
+      summary: List stored Chat Completions
       x-shim-status: partial
       description: |
-        Returns locally shadow-stored Chat Completion resources for successful
-        `POST /v1/chat/completions` calls created through this shim with
-        explicit `store: true`.
+        Returns a local-first stored-chat view. Shim-owned shadow-stored Chat
+        Completion resources are the core path; upstream-owned stored Chat
+        Completions are only added as an optional compatibility bridge when
+        the configured backend supports official stored-chat routes.
 
-        Current local subset includes both non-streaming JSON responses and a
-        reconstructed streamed subset built from sanitized upstream chunks.
-
-        This local read surface does not enumerate upstream-owned stored Chat
-        Completions and does not infer account-level default storage when
-        `store` is omitted.
+        Current local shadow-store subset includes:
+        non-streaming JSON responses, reconstructed streamed responses built
+        from sanitized upstream chunks, and a shim-owned default policy for
+        omitted `store` requests via
+        `chat_completions.default_store_when_omitted`.
       parameters:
         - name: model
           in: query
@@ -1764,7 +1764,7 @@ paths:
             default: asc
       responses:
         "200":
-          description: Locally stored chat completion list
+          description: Stored chat completion list from the shim local-first surface
           content:
             application/json:
               schema:
@@ -1783,16 +1783,17 @@ paths:
         are sanitized to remove some backend-specific fields. SSE responses are
         proxied through unchanged.
 
-        Successful explicit `store: true` responses are also shadow-stored
-        locally and become visible via the shim-owned
+        Successful responses are shadow-stored locally whenever either
+        `store: true` is explicit or omitted-`store` local shadowing is enabled
+        by `chat_completions.default_store_when_omitted`. These resources
+        become visible via the shim-owned
         `GET /v1/chat/completions`, `GET /v1/chat/completions/{completion_id}`,
         `POST /v1/chat/completions/{completion_id}`,
         `DELETE /v1/chat/completions/{completion_id}`, and
         `GET /v1/chat/completions/{completion_id}/messages` local stored-chat
-        surface. Current local subset covers non-streaming JSON plus
-        reconstructed streamed completions from sanitized upstream chunks.
-        This does not currently cover upstream account-level default storage
-        when `store` is omitted.
+        surface. Current local streamed reconstruction subset covers assistant
+        text and tool-call-heavy chunk flows reconstructed from sanitized
+        upstream chunks.
       requestBody:
         required: true
         content:
@@ -1823,17 +1824,17 @@ paths:
   /v1/chat/completions/{completion_id}:
     get:
       tags: [chat]
-      summary: Retrieve a locally stored Chat Completion
+      summary: Retrieve a stored Chat Completion
       x-shim-status: partial
       description: |
-        Returns a locally shadow-stored Chat Completion created by this shim
-        from a successful `POST /v1/chat/completions` request with explicit
-        `store: true`.
+        Returns a shim-owned shadow-stored Chat Completion when present;
+        otherwise falls back to the upstream stored-chat resource route when
+        the configured backend supports it.
       parameters:
         - $ref: "#/components/parameters/ChatCompletionID"
       responses:
         "200":
-          description: Locally stored chat completion
+          description: Stored chat completion from the shim local-first surface
           content:
             application/json:
               schema:
@@ -1842,14 +1843,14 @@ paths:
           $ref: "#/components/responses/ErrorResponse"
     post:
       tags: [chat]
-      summary: Update metadata for a locally stored Chat Completion
+      summary: Update metadata for a stored Chat Completion
       x-shim-status: partial
       description: |
-        Updates the `metadata` field for a locally shadow-stored Chat
-        Completion created by this shim from a successful
-        `POST /v1/chat/completions` request with explicit `store: true`.
+        Updates the `metadata` field for a shim-owned shadow-stored Chat
+        Completion when present, otherwise falls back to the upstream stored
+        resource route when the configured backend supports it.
 
-        Only `metadata` updates are supported in this local subset.
+        Only `metadata` updates are supported in the shim-owned local subset.
       parameters:
         - $ref: "#/components/parameters/ChatCompletionID"
       requestBody:
@@ -1860,7 +1861,7 @@ paths:
               $ref: "#/components/schemas/StoredChatCompletionMetadataUpdateRequest"
       responses:
         "200":
-          description: Updated locally stored chat completion
+          description: Updated stored chat completion from the shim local-first surface
           content:
             application/json:
               schema:
@@ -1871,17 +1872,18 @@ paths:
           $ref: "#/components/responses/ErrorResponse"
     delete:
       tags: [chat]
-      summary: Delete a locally stored Chat Completion
+      summary: Delete a stored Chat Completion
       x-shim-status: partial
       description: |
-        Deletes a locally shadow-stored Chat Completion created by this shim
-        from a successful `POST /v1/chat/completions` request with explicit
-        `store: true`.
+        Deletes a shim-owned shadow-stored Chat Completion when present and
+        best-effort synchronizes the matching upstream stored resource; when no
+        local shadow copy exists, falls back to the upstream stored resource
+        route when the configured backend supports it.
       parameters:
         - $ref: "#/components/parameters/ChatCompletionID"
       responses:
         "200":
-          description: Deletion confirmation for a locally stored chat completion
+          description: Deletion confirmation for a stored chat completion
           content:
             application/json:
               schema:
@@ -1891,12 +1893,12 @@ paths:
   /v1/chat/completions/{completion_id}/messages:
     get:
       tags: [chat]
-      summary: List messages for a locally stored Chat Completion
+      summary: List messages for a stored Chat Completion
       x-shim-status: partial
       description: |
-        Returns the request `messages` array captured for a locally
-        shadow-stored Chat Completion created by this shim from a successful
-        `POST /v1/chat/completions` request with explicit `store: true`.
+        Returns the request `messages` array captured for a shim-owned
+        shadow-stored Chat Completion when present, otherwise falls back to the
+        upstream stored resource route when the configured backend supports it.
       parameters:
         - $ref: "#/components/parameters/ChatCompletionID"
         - name: after
@@ -1920,7 +1922,7 @@ paths:
             default: asc
       responses:
         "200":
-          description: Message list for a locally stored chat completion
+          description: Message list for a stored chat completion
           content:
             application/json:
               schema:
@@ -3315,8 +3317,9 @@ components:
       type: object
       description: |
         Sanitized Chat Completion JSON resource shadow-stored locally by the
-        shim for successful explicit `store: true` proxy requests, including
-        the current reconstructed streamed subset.
+        shim for successful proxy requests when either `store: true` is
+        explicit or omitted-`store` local shadowing is enabled, including the
+        current reconstructed streamed subset.
       additionalProperties: true
     StoredChatCompletionMetadataUpdateRequest:
       type: object

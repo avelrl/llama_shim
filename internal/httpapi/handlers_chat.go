@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -64,7 +65,7 @@ func (h *proxyHandler) forwardChatCompletions(w http.ResponseWriter, r *http.Req
 			} else {
 				body = sanitized
 			}
-			if shouldStore, err := shouldShadowStoreChatCompletion(rawBody); err != nil {
+			if shouldStore, err := h.shouldShadowStoreChatCompletion(rawBody); err != nil {
 				h.logger.WarnContext(r.Context(), "chat completion shadow store eligibility check failed",
 					"request_id", RequestIDFromContext(r.Context()),
 					"err", err,
@@ -98,7 +99,7 @@ func (h *proxyHandler) forwardChatCompletions(w http.ResponseWriter, r *http.Req
 
 	var streamStoreCapture *chatCompletionStreamStoreCapture
 	if response.StatusCode >= 200 && response.StatusCode < 300 {
-		if shouldStore, err := shouldShadowStoreChatCompletion(rawBody); err != nil {
+		if shouldStore, err := h.shouldShadowStoreChatCompletion(rawBody); err != nil {
 			h.logger.WarnContext(r.Context(), "chat completion shadow store eligibility check failed",
 				"request_id", RequestIDFromContext(r.Context()),
 				"err", err,
@@ -165,23 +166,38 @@ func (h *proxyHandler) listStoredChatCompletions(w http.ResponseWriter, r *http.
 		return
 	}
 
-	page, err := h.store.ListChatCompletions(r.Context(), query)
+	localCompletions, err := h.store.ListAllChatCompletions(r.Context(), query)
 	if err != nil {
 		status, payload := MapError(r.Context(), h.logger, err)
 		WriteJSON(w, status, apiErrorPayload{Error: payload})
 		return
 	}
 
-	data := make([]json.RawMessage, 0, len(page.Completions))
-	for _, completion := range page.Completions {
-		data = append(data, json.RawMessage(completion.ResponseJSON))
+	upstreamData, upstreamStatusCode, upstreamHeaders, upstreamBody, err := h.listUpstreamStoredChatCompletions(r.Context(), r, query)
+	if err != nil {
+		status, payload := MapError(r.Context(), h.logger, err)
+		WriteJSON(w, status, apiErrorPayload{Error: payload})
+		return
+	}
+	if upstreamStatusCode != 0 {
+		copyResponseHeaders(w.Header(), upstreamHeaders)
+		w.WriteHeader(upstreamStatusCode)
+		_, _ = w.Write(upstreamBody)
+		return
+	}
+
+	page, err := buildMergedStoredChatCompletionsPage(localCompletions, upstreamData, query)
+	if err != nil {
+		status, payload := MapError(r.Context(), h.logger, err)
+		WriteJSON(w, status, apiErrorPayload{Error: payload})
+		return
 	}
 
 	WriteJSON(w, http.StatusOK, chatCompletionsListResponse{
 		Object:  "list",
-		Data:    data,
-		FirstID: firstRawID(data),
-		LastID:  lastRawID(data),
+		Data:    page.Data,
+		FirstID: firstRawID(page.Data),
+		LastID:  lastRawID(page.Data),
 		HasMore: page.HasMore,
 	})
 }
@@ -189,6 +205,10 @@ func (h *proxyHandler) listStoredChatCompletions(w http.ResponseWriter, r *http.
 func (h *proxyHandler) getStoredChatCompletion(w http.ResponseWriter, r *http.Request) {
 	completion, err := h.store.GetChatCompletion(r.Context(), r.PathValue("completion_id"))
 	if err != nil {
+		if errors.Is(err, sqlite.ErrNotFound) {
+			h.forwardRequest(w, r)
+			return
+		}
 		status, payload := MapError(r.Context(), h.logger, err)
 		WriteJSON(w, status, apiErrorPayload{Error: payload})
 		return
@@ -199,19 +219,36 @@ func (h *proxyHandler) getStoredChatCompletion(w http.ResponseWriter, r *http.Re
 }
 
 func (h *proxyHandler) updateStoredChatCompletion(w http.ResponseWriter, r *http.Request) {
-	metadata, err := parseUpdateStoredChatCompletionRequest(w, r)
+	rawBody, err := readJSONBody(w, r)
+	if err != nil {
+		return
+	}
+
+	completionID := r.PathValue("completion_id")
+	if _, err := h.store.GetChatCompletion(r.Context(), completionID); err != nil {
+		if errors.Is(err, sqlite.ErrNotFound) {
+			h.forwardWithBody(w, r, rawBody)
+			return
+		}
+		status, payload := MapError(r.Context(), h.logger, err)
+		WriteJSON(w, status, apiErrorPayload{Error: payload})
+		return
+	}
+
+	metadata, err := parseUpdateStoredChatCompletionRequestRaw(rawBody)
 	if err != nil {
 		status, payload := MapError(r.Context(), h.logger, err)
 		WriteJSON(w, status, apiErrorPayload{Error: payload})
 		return
 	}
 
-	completion, err := h.store.UpdateChatCompletionMetadata(r.Context(), r.PathValue("completion_id"), metadata)
+	completion, err := h.store.UpdateChatCompletionMetadata(r.Context(), completionID, metadata)
 	if err != nil {
 		status, payload := MapError(r.Context(), h.logger, err)
 		WriteJSON(w, status, apiErrorPayload{Error: payload})
 		return
 	}
+	h.bestEffortForwardStoredChatCompletion(r.Context(), r, rawBody)
 
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = io.WriteString(w, completion.ResponseJSON)
@@ -220,10 +257,15 @@ func (h *proxyHandler) updateStoredChatCompletion(w http.ResponseWriter, r *http
 func (h *proxyHandler) deleteStoredChatCompletion(w http.ResponseWriter, r *http.Request) {
 	completionID := r.PathValue("completion_id")
 	if err := h.store.DeleteChatCompletion(r.Context(), completionID); err != nil {
+		if errors.Is(err, sqlite.ErrNotFound) {
+			h.forwardRequest(w, r)
+			return
+		}
 		status, payload := MapError(r.Context(), h.logger, err)
 		WriteJSON(w, status, apiErrorPayload{Error: payload})
 		return
 	}
+	h.bestEffortForwardStoredChatCompletion(r.Context(), r, nil)
 
 	WriteJSON(w, http.StatusOK, chatCompletionDeletedResponse{
 		ID:      completionID,
@@ -242,6 +284,10 @@ func (h *proxyHandler) listStoredChatCompletionMessages(w http.ResponseWriter, r
 
 	completion, err := h.store.GetChatCompletion(r.Context(), r.PathValue("completion_id"))
 	if err != nil {
+		if errors.Is(err, sqlite.ErrNotFound) {
+			h.forwardRequest(w, r)
+			return
+		}
 		status, payload := MapError(r.Context(), h.logger, err)
 		WriteJSON(w, status, apiErrorPayload{Error: payload})
 		return
@@ -263,14 +309,17 @@ func (h *proxyHandler) listStoredChatCompletionMessages(w http.ResponseWriter, r
 	})
 }
 
-func shouldShadowStoreChatCompletion(rawBody []byte) (bool, error) {
+func (h *proxyHandler) shouldShadowStoreChatCompletion(rawBody []byte) (bool, error) {
 	var request struct {
 		Store *bool `json:"store,omitempty"`
 	}
 	if err := json.Unmarshal(rawBody, &request); err != nil {
 		return false, err
 	}
-	return request.Store != nil && *request.Store, nil
+	if request.Store != nil {
+		return *request.Store, nil
+	}
+	return h.chatCompletionsStoreWhenOmitted, nil
 }
 
 func (h *proxyHandler) shadowStoreChatCompletion(ctx context.Context, requestBody []byte, responseBody []byte) error {
@@ -392,7 +441,10 @@ func parseUpdateStoredChatCompletionRequest(w http.ResponseWriter, r *http.Reque
 	if err != nil {
 		return nil, err
 	}
+	return parseUpdateStoredChatCompletionRequestRaw(rawBody)
+}
 
+func parseUpdateStoredChatCompletionRequestRaw(rawBody []byte) (map[string]string, error) {
 	trimmed := bytes.TrimSpace(rawBody)
 	if len(trimmed) == 0 {
 		return nil, domain.NewValidationError("metadata", "metadata is required")

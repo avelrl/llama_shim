@@ -17,6 +17,7 @@ type RouterDeps struct {
 	LlamaClient                           *llama.Client
 	ResponseService                       *service.ResponseService
 	ConversationService                   *service.ConversationService
+	ChatCompletionsStoreWhenOmitted       bool
 	ResponsesMode                         string
 	ResponsesCustomToolsMode              string
 	ResponsesCodexEnableCompatibility     bool
@@ -30,7 +31,7 @@ type RouterDeps struct {
 const readyzUpstreamTimeout = 2 * time.Second
 
 func NewRouter(deps RouterDeps) http.Handler {
-	proxyHandler := newProxyHandler(deps.Logger, deps.LlamaClient, deps.Store)
+	proxyHandler := newProxyHandler(deps.Logger, deps.LlamaClient, deps.Store, deps.ChatCompletionsStoreWhenOmitted)
 	responseHandler := newResponseHandler(
 		deps.Logger,
 		deps.ResponseService,

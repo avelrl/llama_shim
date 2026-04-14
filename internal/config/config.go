@@ -28,6 +28,7 @@ type Config struct {
 	RetrievalEmbedderBackend                       string
 	RetrievalEmbedderBaseURL                       string
 	RetrievalEmbedderModel                         string
+	ChatCompletionsStoreWhenOmitted                bool
 	ResponsesMode                                  string
 	ResponsesCustomToolsMode                       string
 	ResponsesCodexEnableCompatibility              bool
@@ -80,6 +81,7 @@ func Load(configPath string) (Config, error) {
 		RetrievalEmbedderBackend:                       strings.TrimSpace(v.GetString("retrieval.embedder.backend")),
 		RetrievalEmbedderBaseURL:                       strings.TrimSpace(v.GetString("retrieval.embedder.base_url")),
 		RetrievalEmbedderModel:                         strings.TrimSpace(v.GetString("retrieval.embedder.model")),
+		ChatCompletionsStoreWhenOmitted:                v.GetBool("chat_completions.default_store_when_omitted"),
 		ResponsesMode:                                  strings.ToLower(strings.TrimSpace(v.GetString("responses.mode"))),
 		ResponsesCustomToolsMode:                       strings.ToLower(strings.TrimSpace(v.GetString("responses.custom_tools.mode"))),
 		ResponsesCodexEnableCompatibility:              v.GetBool("responses.codex.enable_compatibility"),
@@ -187,6 +189,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("retrieval.embedder.backend", retrieval.EmbedderBackendDisabled)
 	v.SetDefault("retrieval.embedder.base_url", "")
 	v.SetDefault("retrieval.embedder.model", "")
+	v.SetDefault("chat_completions.default_store_when_omitted", true)
 	v.SetDefault("responses.mode", ResponsesModePreferLocal)
 	v.SetDefault("responses.custom_tools.mode", "auto")
 	v.SetDefault("responses.codex.enable_compatibility", true)

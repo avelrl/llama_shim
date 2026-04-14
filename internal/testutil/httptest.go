@@ -60,6 +60,7 @@ type TestAppOptions struct {
 	CustomToolsMode                       string
 	CodexCompatibilityEnabled             bool
 	ForceToolChoiceRequired               bool
+	ChatCompletionsStoreWhenOmitted       *bool
 	DBPath                                string
 	LlamaBaseURL                          string
 	RetrievalConfig                       retrieval.Config
@@ -101,6 +102,10 @@ func NewTestAppWithOptions(t *testing.T, options TestAppOptions) *TestApp {
 	if responsesMode == "" {
 		responsesMode = config.ResponsesModePreferLocal
 	}
+	chatCompletionsStoreWhenOmitted := true
+	if options.ChatCompletionsStoreWhenOmitted != nil {
+		chatCompletionsStoreWhenOmitted = *options.ChatCompletionsStoreWhenOmitted
+	}
 
 	localCodeInterpreter := httpapi.LocalCodeInterpreterRuntimeConfig{
 		Backend:                options.CodeInterpreterBackend,
@@ -114,6 +119,7 @@ func NewTestAppWithOptions(t *testing.T, options TestAppOptions) *TestApp {
 		LlamaClient:                           llamaClient,
 		ResponseService:                       responseService,
 		ConversationService:                   conversationService,
+		ChatCompletionsStoreWhenOmitted:       chatCompletionsStoreWhenOmitted,
 		ResponsesMode:                         responsesMode,
 		ResponsesCustomToolsMode:              options.CustomToolsMode,
 		ResponsesCodexEnableCompatibility:     options.CodexCompatibilityEnabled,

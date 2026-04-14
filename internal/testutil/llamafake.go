@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -26,13 +27,19 @@ type fakeLlamaMessage struct {
 	Content string `json:"content"`
 }
 
+type fakeStoredChatCompletion struct {
+	Request  map[string]any
+	Response map[string]any
+}
+
 func NewFakeLlamaServer(t *testing.T) *httptest.Server {
 	t.Helper()
 
 	var (
-		mu        sync.Mutex
-		nextID    int
-		responses = map[string]map[string]any{}
+		mu              sync.Mutex
+		nextID          int
+		responses       = map[string]map[string]any{}
+		chatCompletions = map[string]fakeStoredChatCompletion{}
 	)
 
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -222,6 +229,17 @@ func NewFakeLlamaServer(t *testing.T) *httptest.Server {
 					},
 				},
 			}))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/chat/completions":
+			w.Header().Set("Content-Type", "application/json")
+			mu.Lock()
+			page, statusCode, payload := buildFakeStoredChatCompletionsList(chatCompletions, r.URL.Query())
+			mu.Unlock()
+			if statusCode != http.StatusOK {
+				w.WriteHeader(statusCode)
+				require.NoError(t, json.NewEncoder(w).Encode(payload))
+				return
+			}
+			require.NoError(t, json.NewEncoder(w).Encode(page))
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/chat/completions":
 			var request map[string]any
 			require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
@@ -231,10 +249,26 @@ func NewFakeLlamaServer(t *testing.T) *httptest.Server {
 				mu.Lock()
 				nextID++
 				id := "chatcmpl_" + strconv.Itoa(nextID)
+				completion := buildFakeChatCompletionResponse(id, model, request, response["choices"])
+				if shouldStoreFakeChatCompletion(request) {
+					chatCompletions[id] = fakeStoredChatCompletion{
+						Request:  cloneJSONObject(request),
+						Response: cloneJSONObject(completion),
+					}
+				}
 				mu.Unlock()
 
+				if stream, _ := request["stream"].(bool); stream {
+					if toolCalls := extractFakeChatCompletionToolCalls(response["choices"]); len(toolCalls) > 0 {
+						writeFakeChatCompletionToolStream(t, w, id, model, toolCalls)
+						return
+					}
+					writeFakeChatCompletionStream(t, w, id, model, extractFakeChatCompletionAssistantContent(response["choices"]))
+					return
+				}
+
 				w.Header().Set("Content-Type", "application/json")
-				require.NoError(t, json.NewEncoder(w).Encode(buildFakeChatCompletionResponse(id, model, request, response["choices"])))
+				require.NoError(t, json.NewEncoder(w).Encode(completion))
 				return
 			}
 
@@ -250,9 +284,7 @@ func NewFakeLlamaServer(t *testing.T) *httptest.Server {
 			mu.Lock()
 			nextID++
 			id := "chatcmpl_" + strconv.Itoa(nextID)
-			mu.Unlock()
-			w.Header().Set("Content-Type", "application/json")
-			require.NoError(t, json.NewEncoder(w).Encode(buildFakeChatCompletionResponse(id, model, request, []map[string]any{
+			completion := buildFakeChatCompletionResponse(id, model, request, []map[string]any{
 				{
 					"index": 0,
 					"message": map[string]any{
@@ -264,7 +296,18 @@ func NewFakeLlamaServer(t *testing.T) *httptest.Server {
 					"finish_reason": "stop",
 					"logprobs":      nil,
 				},
-			})))
+			})
+			if shouldStoreFakeChatCompletion(request) {
+				chatCompletions[id] = fakeStoredChatCompletion{
+					Request:  cloneJSONObject(request),
+					Response: cloneJSONObject(completion),
+				}
+			}
+			mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			require.NoError(t, json.NewEncoder(w).Encode(completion))
+		case strings.HasPrefix(r.URL.Path, "/v1/chat/completions/"):
+			handleFakeStoredChatCompletionRoute(t, w, r, chatCompletions, &mu)
 		case r.URL.Path == "/v1/echo":
 			body, err := io.ReadAll(r.Body)
 			require.NoError(t, err)
@@ -309,6 +352,53 @@ func buildFakeChatCompletionResponse(id, model string, request map[string]any, c
 		"system_fingerprint": "fp_fake_chat_completion",
 		"seed":               1,
 	}
+}
+
+func shouldStoreFakeChatCompletion(request map[string]any) bool {
+	if rawStore, ok := request["store"]; ok {
+		store, ok := rawStore.(bool)
+		return ok && store
+	}
+	return true
+}
+
+func extractFakeChatCompletionAssistantContent(choices any) string {
+	rawChoices, ok := choices.([]map[string]any)
+	if !ok || len(rawChoices) == 0 {
+		return ""
+	}
+	message, ok := rawChoices[0]["message"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	return asString(message["content"])
+}
+
+func extractFakeChatCompletionToolCalls(choices any) []map[string]any {
+	rawChoices, ok := choices.([]map[string]any)
+	if !ok || len(rawChoices) == 0 {
+		return nil
+	}
+	message, ok := rawChoices[0]["message"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	rawToolCalls, ok := message["tool_calls"].([]map[string]any)
+	if ok {
+		return rawToolCalls
+	}
+	typed, ok := message["tool_calls"].([]any)
+	if !ok {
+		return nil
+	}
+	toolCalls := make([]map[string]any, 0, len(typed))
+	for _, rawToolCall := range typed {
+		toolCall, ok := rawToolCall.(map[string]any)
+		if ok {
+			toolCalls = append(toolCalls, toolCall)
+		}
+	}
+	return toolCalls
 }
 
 func fakeInputTokenCount(request map[string]any) int {
@@ -1230,6 +1320,111 @@ func writeFakeChatCompletionStream(t *testing.T, w http.ResponseWriter, id strin
 	flusher.Flush()
 }
 
+func writeFakeChatCompletionToolStream(t *testing.T, w http.ResponseWriter, id string, model string, toolCalls []map[string]any) {
+	t.Helper()
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	flusher, ok := w.(http.Flusher)
+	require.True(t, ok)
+	created := time.Now().Unix()
+
+	delta := map[string]any{
+		"role": "assistant",
+	}
+	streamToolCalls := make([]map[string]any, 0, len(toolCalls))
+	for index, toolCall := range toolCalls {
+		function, _ := toolCall["function"].(map[string]any)
+		arguments := asString(function["arguments"])
+		midpoint := len(arguments) / 2
+		if midpoint <= 0 {
+			midpoint = len(arguments)
+		}
+		streamToolCalls = append(streamToolCalls, map[string]any{
+			"index": index,
+			"id":    asString(toolCall["id"]),
+			"type":  fakeToolCallType(toolCall),
+			"function": map[string]any{
+				"name":      asString(function["name"]),
+				"arguments": arguments[:midpoint],
+			},
+		})
+	}
+	delta["tool_calls"] = streamToolCalls
+	require.NoError(t, writeSSEData(w, map[string]any{
+		"id":                 id,
+		"object":             "chat.completion.chunk",
+		"created":            created,
+		"model":              model,
+		"system_fingerprint": "fp_fake_chat_completion",
+		"choices": []map[string]any{
+			{
+				"index": 0,
+				"delta": delta,
+			},
+		},
+	}))
+	flusher.Flush()
+	time.Sleep(120 * time.Millisecond)
+
+	continuation := make([]map[string]any, 0, len(toolCalls))
+	for index, toolCall := range toolCalls {
+		function, _ := toolCall["function"].(map[string]any)
+		arguments := asString(function["arguments"])
+		midpoint := len(arguments) / 2
+		if midpoint <= 0 {
+			midpoint = len(arguments)
+		}
+		if midpoint >= len(arguments) {
+			continue
+		}
+		continuation = append(continuation, map[string]any{
+			"index": index,
+			"function": map[string]any{
+				"arguments": arguments[midpoint:],
+			},
+		})
+	}
+	if len(continuation) > 0 {
+		require.NoError(t, writeSSEData(w, map[string]any{
+			"id":                 id,
+			"object":             "chat.completion.chunk",
+			"created":            created,
+			"model":              model,
+			"system_fingerprint": "fp_fake_chat_completion",
+			"choices": []map[string]any{
+				{
+					"index": 0,
+					"delta": map[string]any{
+						"tool_calls": continuation,
+					},
+				},
+			},
+		}))
+		flusher.Flush()
+		time.Sleep(120 * time.Millisecond)
+	}
+
+	require.NoError(t, writeSSEData(w, map[string]any{
+		"id":                 id,
+		"object":             "chat.completion.chunk",
+		"created":            created,
+		"model":              model,
+		"system_fingerprint": "fp_fake_chat_completion",
+		"choices": []map[string]any{
+			{
+				"index":         0,
+				"delta":         map[string]any{},
+				"finish_reason": "tool_calls",
+			},
+		},
+	}))
+	flusher.Flush()
+	time.Sleep(50 * time.Millisecond)
+	_, err := io.WriteString(w, "data: [DONE]\n\n")
+	require.NoError(t, err)
+	flusher.Flush()
+}
+
 func writeFakeResponsesStream(t *testing.T, w http.ResponseWriter, response map[string]any, output string) {
 	t.Helper()
 
@@ -1510,6 +1705,370 @@ func cloneMap(src map[string]any) map[string]any {
 		dst[key] = value
 	}
 	return dst
+}
+
+func cloneJSONObject(src map[string]any) map[string]any {
+	raw, err := json.Marshal(src)
+	if err != nil {
+		return cloneMap(src)
+	}
+	var dst map[string]any
+	if err := json.Unmarshal(raw, &dst); err != nil {
+		return cloneMap(src)
+	}
+	return dst
+}
+
+func handleFakeStoredChatCompletionRoute(t *testing.T, w http.ResponseWriter, r *http.Request, stored map[string]fakeStoredChatCompletion, mu *sync.Mutex) {
+	t.Helper()
+
+	completionID, isMessages := fakeStoredChatCompletionPath(r.URL.Path)
+	if completionID == "" {
+		http.NotFound(w, r)
+		return
+	}
+
+	switch {
+	case r.Method == http.MethodGet && isMessages:
+		w.Header().Set("Content-Type", "application/json")
+		mu.Lock()
+		record, ok := stored[completionID]
+		mu.Unlock()
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			require.NoError(t, json.NewEncoder(w).Encode(fakeNotFoundError("chat completion not found")))
+			return
+		}
+		page, statusCode, payload := buildFakeStoredChatCompletionMessages(record, completionID, r.URL.Query())
+		if statusCode != http.StatusOK {
+			w.WriteHeader(statusCode)
+			require.NoError(t, json.NewEncoder(w).Encode(payload))
+			return
+		}
+		require.NoError(t, json.NewEncoder(w).Encode(page))
+	case r.Method == http.MethodGet:
+		w.Header().Set("Content-Type", "application/json")
+		mu.Lock()
+		record, ok := stored[completionID]
+		mu.Unlock()
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			require.NoError(t, json.NewEncoder(w).Encode(fakeNotFoundError("chat completion not found")))
+			return
+		}
+		require.NoError(t, json.NewEncoder(w).Encode(record.Response))
+	case r.Method == http.MethodPost:
+		var request map[string]any
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
+		metadata, ok := request["metadata"].(map[string]any)
+		if len(request) != 1 || !ok {
+			w.WriteHeader(http.StatusBadRequest)
+			require.NoError(t, json.NewEncoder(w).Encode(fakeValidationError("metadata", "metadata is required")))
+			return
+		}
+
+		mu.Lock()
+		record, found := stored[completionID]
+		if found {
+			response := cloneJSONObject(record.Response)
+			response["metadata"] = metadata
+			record.Response = response
+			requestClone := cloneJSONObject(record.Request)
+			requestClone["metadata"] = metadata
+			record.Request = requestClone
+			stored[completionID] = record
+		}
+		mu.Unlock()
+		if !found {
+			w.WriteHeader(http.StatusNotFound)
+			require.NoError(t, json.NewEncoder(w).Encode(fakeNotFoundError("chat completion not found")))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		require.NoError(t, json.NewEncoder(w).Encode(record.Response))
+	case r.Method == http.MethodDelete:
+		mu.Lock()
+		_, found := stored[completionID]
+		if found {
+			delete(stored, completionID)
+		}
+		mu.Unlock()
+		if !found {
+			w.WriteHeader(http.StatusNotFound)
+			require.NoError(t, json.NewEncoder(w).Encode(fakeNotFoundError("chat completion not found")))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"id":      completionID,
+			"object":  "chat.completion.deleted",
+			"deleted": true,
+		}))
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func fakeStoredChatCompletionPath(path string) (string, bool) {
+	if !strings.HasPrefix(path, "/v1/chat/completions/") {
+		return "", false
+	}
+	trimmed := strings.TrimPrefix(path, "/v1/chat/completions/")
+	if trimmed == "" {
+		return "", false
+	}
+	if strings.HasSuffix(trimmed, "/messages") {
+		return strings.TrimSuffix(trimmed, "/messages"), true
+	}
+	if strings.Contains(trimmed, "/") {
+		return "", false
+	}
+	return trimmed, false
+}
+
+func buildFakeStoredChatCompletionsList(stored map[string]fakeStoredChatCompletion, values map[string][]string) (map[string]any, int, map[string]any) {
+	entries := make([]map[string]any, 0, len(stored))
+	for _, record := range stored {
+		entries = append(entries, cloneJSONObject(record.Response))
+	}
+
+	model := strings.TrimSpace(lastQueryValue(values, "model"))
+	metadataFilters := parseFakeMetadataFilters(values)
+	filtered := make([]map[string]any, 0, len(entries))
+	for _, entry := range entries {
+		if model != "" && asString(entry["model"]) != model {
+			continue
+		}
+		if !matchesFakeMetadataFilter(entry["metadata"], metadataFilters) {
+			continue
+		}
+		filtered = append(filtered, entry)
+	}
+
+	order := strings.TrimSpace(lastQueryValue(values, "order"))
+	if order == "" {
+		order = "asc"
+	}
+	sort.Slice(filtered, func(i, j int) bool {
+		leftCreated := int64(asFloat(filtered[i]["created"]))
+		rightCreated := int64(asFloat(filtered[j]["created"]))
+		leftID := asString(filtered[i]["id"])
+		rightID := asString(filtered[j]["id"])
+		if order == "desc" {
+			if leftCreated != rightCreated {
+				return leftCreated > rightCreated
+			}
+			return leftID > rightID
+		}
+		if leftCreated != rightCreated {
+			return leftCreated < rightCreated
+		}
+		return leftID < rightID
+	})
+
+	after := strings.TrimSpace(lastQueryValue(values, "after"))
+	start := 0
+	if after != "" {
+		start = -1
+		for i, entry := range filtered {
+			if asString(entry["id"]) == after {
+				start = i + 1
+				break
+			}
+		}
+		if start < 0 {
+			return nil, http.StatusNotFound, fakeNotFoundError("chat completion not found")
+		}
+	}
+
+	limit := 20
+	if rawLimit := strings.TrimSpace(lastQueryValue(values, "limit")); rawLimit != "" {
+		parsed, err := strconv.Atoi(rawLimit)
+		if err != nil || parsed < 1 {
+			return nil, http.StatusBadRequest, fakeValidationError("limit", "limit must be a positive integer")
+		}
+		limit = parsed
+	}
+	if start > len(filtered) {
+		start = len(filtered)
+	}
+	end := start + limit
+	hasMore := end < len(filtered)
+	if end > len(filtered) {
+		end = len(filtered)
+	}
+
+	data := filtered[start:end]
+	page := map[string]any{
+		"object":   "list",
+		"data":     data,
+		"has_more": hasMore,
+	}
+	if len(data) > 0 {
+		page["first_id"] = asString(data[0]["id"])
+		page["last_id"] = asString(data[len(data)-1]["id"])
+	} else {
+		page["first_id"] = nil
+		page["last_id"] = nil
+	}
+	return page, http.StatusOK, nil
+}
+
+func buildFakeStoredChatCompletionMessages(record fakeStoredChatCompletion, completionID string, values map[string][]string) (map[string]any, int, map[string]any) {
+	rawMessages, _ := record.Request["messages"].([]any)
+	messages := make([]map[string]any, 0, len(rawMessages))
+	for index, rawMessage := range rawMessages {
+		message, ok := rawMessage.(map[string]any)
+		if !ok {
+			continue
+		}
+		cloned := cloneJSONObject(message)
+		if _, ok := cloned["id"]; !ok {
+			cloned["id"] = completionID + "-" + strconv.Itoa(index)
+		}
+		if _, ok := cloned["name"]; !ok {
+			cloned["name"] = nil
+		}
+		if content, ok := cloned["content"].([]any); ok {
+			cloned["content_parts"] = content
+			cloned["content"] = nil
+		} else if _, ok := cloned["content_parts"]; !ok {
+			cloned["content_parts"] = nil
+		}
+		messages = append(messages, cloned)
+	}
+
+	order := strings.TrimSpace(lastQueryValue(values, "order"))
+	if order == "" {
+		order = "asc"
+	}
+	if order == "desc" {
+		for i, j := 0, len(messages)-1; i < j; i, j = i+1, j-1 {
+			messages[i], messages[j] = messages[j], messages[i]
+		}
+	}
+
+	after := strings.TrimSpace(lastQueryValue(values, "after"))
+	start := 0
+	if after != "" {
+		start = -1
+		for i, message := range messages {
+			if asString(message["id"]) == after {
+				start = i + 1
+				break
+			}
+		}
+		if start < 0 {
+			return nil, http.StatusNotFound, fakeNotFoundError("chat completion not found")
+		}
+	}
+	limit := 20
+	if rawLimit := strings.TrimSpace(lastQueryValue(values, "limit")); rawLimit != "" {
+		parsed, err := strconv.Atoi(rawLimit)
+		if err != nil || parsed < 1 {
+			return nil, http.StatusBadRequest, fakeValidationError("limit", "limit must be a positive integer")
+		}
+		limit = parsed
+	}
+	if start > len(messages) {
+		start = len(messages)
+	}
+	end := start + limit
+	hasMore := end < len(messages)
+	if end > len(messages) {
+		end = len(messages)
+	}
+
+	data := messages[start:end]
+	page := map[string]any{
+		"object":   "list",
+		"data":     data,
+		"has_more": hasMore,
+	}
+	if len(data) > 0 {
+		page["first_id"] = asString(data[0]["id"])
+		page["last_id"] = asString(data[len(data)-1]["id"])
+	} else {
+		page["first_id"] = nil
+		page["last_id"] = nil
+	}
+	return page, http.StatusOK, nil
+}
+
+func parseFakeMetadataFilters(values map[string][]string) map[string]string {
+	filters := map[string]string{}
+	for key, rawValues := range values {
+		if !strings.HasPrefix(key, "metadata[") || !strings.HasSuffix(key, "]") {
+			continue
+		}
+		name := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(key, "metadata["), "]"))
+		if name == "" {
+			continue
+		}
+		filters[name] = lastQueryValue(values, key)
+		_ = rawValues
+	}
+	return filters
+}
+
+func matchesFakeMetadataFilter(metadataValue any, filters map[string]string) bool {
+	if len(filters) == 0 {
+		return true
+	}
+	metadata, _ := metadataValue.(map[string]any)
+	for key, expected := range filters {
+		if asString(metadata[key]) != expected {
+			return false
+		}
+	}
+	return true
+}
+
+func lastQueryValue(values map[string][]string, key string) string {
+	rawValues := values[key]
+	if len(rawValues) == 0 {
+		return ""
+	}
+	return rawValues[len(rawValues)-1]
+}
+
+func fakeNotFoundError(message string) map[string]any {
+	return map[string]any{
+		"error": map[string]any{
+			"type":    "not_found_error",
+			"message": message,
+		},
+	}
+}
+
+func fakeValidationError(param string, message string) map[string]any {
+	return map[string]any{
+		"error": map[string]any{
+			"type":    "invalid_request_error",
+			"param":   param,
+			"message": message,
+		},
+	}
+}
+
+func asFloat(value any) float64 {
+	switch typed := value.(type) {
+	case float64:
+		return typed
+	case int:
+		return float64(typed)
+	case int64:
+		return float64(typed)
+	default:
+		return 0
+	}
+}
+
+func fakeToolCallType(toolCall map[string]any) string {
+	if kind := asString(toolCall["type"]); kind != "" {
+		return kind
+	}
+	return "function"
 }
 
 func cloneResponseWithoutToolItemIDs(response map[string]any) map[string]any {

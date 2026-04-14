@@ -61,41 +61,9 @@ func (s *Store) GetChatCompletion(ctx context.Context, id string) (domain.Stored
 }
 
 func (s *Store) ListChatCompletions(ctx context.Context, query domain.ListStoredChatCompletionsQuery) (domain.StoredChatCompletionPage, error) {
-	orderDir := "ASC"
-	if query.Order == domain.ChatCompletionOrderDesc {
-		orderDir = "DESC"
-	}
-
-	statement := `
-		SELECT id, model, metadata_json, request_json, response_json, created_at
-		FROM chat_completions
-	`
-	args := make([]any, 0, 1)
-	if strings.TrimSpace(query.Model) != "" {
-		statement += ` WHERE model = ?`
-		args = append(args, strings.TrimSpace(query.Model))
-	}
-	statement += ` ORDER BY created_at ` + orderDir + `, id ` + orderDir
-
-	rows, err := s.db.QueryContext(ctx, statement, args...)
+	filtered, err := s.listAllChatCompletions(ctx, query)
 	if err != nil {
-		return domain.StoredChatCompletionPage{}, fmt.Errorf("list chat completions: %w", err)
-	}
-	defer rows.Close()
-
-	filtered := make([]domain.StoredChatCompletion, 0, query.Limit+1)
-	for rows.Next() {
-		completion, err := scanStoredChatCompletion(rows)
-		if err != nil {
-			return domain.StoredChatCompletionPage{}, err
-		}
-		if !matchesMetadataFilter(completion.Metadata, query.Metadata) {
-			continue
-		}
-		filtered = append(filtered, completion)
-	}
-	if err := rows.Err(); err != nil {
-		return domain.StoredChatCompletionPage{}, fmt.Errorf("iterate chat completions: %w", err)
+		return domain.StoredChatCompletionPage{}, err
 	}
 
 	start := 0
@@ -125,6 +93,51 @@ func (s *Store) ListChatCompletions(ctx context.Context, query domain.ListStored
 		Completions: filtered[start:end],
 		HasMore:     hasMore,
 	}, nil
+}
+
+func (s *Store) ListAllChatCompletions(ctx context.Context, query domain.ListStoredChatCompletionsQuery) ([]domain.StoredChatCompletion, error) {
+	return s.listAllChatCompletions(ctx, query)
+}
+
+func (s *Store) listAllChatCompletions(ctx context.Context, query domain.ListStoredChatCompletionsQuery) ([]domain.StoredChatCompletion, error) {
+	orderDir := "ASC"
+	if query.Order == domain.ChatCompletionOrderDesc {
+		orderDir = "DESC"
+	}
+
+	statement := `
+		SELECT id, model, metadata_json, request_json, response_json, created_at
+		FROM chat_completions
+	`
+	args := make([]any, 0, 1)
+	if strings.TrimSpace(query.Model) != "" {
+		statement += ` WHERE model = ?`
+		args = append(args, strings.TrimSpace(query.Model))
+	}
+	statement += ` ORDER BY created_at ` + orderDir + `, id ` + orderDir
+
+	rows, err := s.db.QueryContext(ctx, statement, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list chat completions: %w", err)
+	}
+	defer rows.Close()
+
+	filtered := make([]domain.StoredChatCompletion, 0, query.Limit+1)
+	for rows.Next() {
+		completion, err := scanStoredChatCompletion(rows)
+		if err != nil {
+			return nil, err
+		}
+		if !matchesMetadataFilter(completion.Metadata, query.Metadata) {
+			continue
+		}
+		filtered = append(filtered, completion)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate chat completions: %w", err)
+	}
+
+	return filtered, nil
 }
 
 func (s *Store) UpdateChatCompletionMetadata(ctx context.Context, id string, metadata map[string]string) (domain.StoredChatCompletion, error) {

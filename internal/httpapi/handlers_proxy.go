@@ -12,16 +12,18 @@ import (
 )
 
 type proxyHandler struct {
-	logger *slog.Logger
-	client *llama.Client
-	store  *sqlite.Store
+	logger                          *slog.Logger
+	client                          *llama.Client
+	store                           *sqlite.Store
+	chatCompletionsStoreWhenOmitted bool
 }
 
-func newProxyHandler(logger *slog.Logger, client *llama.Client, store *sqlite.Store) *proxyHandler {
+func newProxyHandler(logger *slog.Logger, client *llama.Client, store *sqlite.Store, chatCompletionsStoreWhenOmitted bool) *proxyHandler {
 	return &proxyHandler{
-		logger: logger,
-		client: client,
-		store:  store,
+		logger:                          logger,
+		client:                          client,
+		store:                           store,
+		chatCompletionsStoreWhenOmitted: chatCompletionsStoreWhenOmitted,
 	}
 }
 

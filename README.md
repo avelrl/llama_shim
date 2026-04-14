@@ -10,8 +10,11 @@ v1 supports:
 - `GET /v1/responses/{id}`
 - `POST /v1/conversations`
 - `POST /v1/responses` with `stream: true` over SSE
-- local stored Chat Completions CRUD subset for successful explicit
-  `store: true` proxy calls, including streamed reconstruction subset:
+- stored Chat Completions list/get/update/delete/messages local-first surface;
+  shim-owned shadow storage is the core path, and upstream-owned historical
+  resources are only an optional compatibility bridge when the upstream backend
+  supports stored-chat routes; local shadow storage follows a shim-owned
+  omitted-`store` policy and includes streamed reconstruction:
   `GET /v1/chat/completions`,
   `GET/POST/DELETE /v1/chat/completions/{completion_id}`,
   `GET /v1/chat/completions/{completion_id}/messages`
@@ -101,6 +104,9 @@ retrieval:
     base_url: ""
     model: ""
 
+chat_completions:
+  default_store_when_omitted: true
+
 responses:
   mode: prefer_local
   custom_tools:
@@ -139,6 +145,7 @@ Supported environment overrides:
 - `RETRIEVAL_EMBEDDER_BACKEND` overrides `retrieval.embedder.backend`; supported values: `disabled`, `openai_compatible`, `embedanything`
 - `RETRIEVAL_EMBEDDER_BASE_URL` overrides `retrieval.embedder.base_url`
 - `RETRIEVAL_EMBEDDER_MODEL` overrides `retrieval.embedder.model`
+- `CHAT_COMPLETIONS_DEFAULT_STORE_WHEN_OMITTED` overrides `chat_completions.default_store_when_omitted`
 - `RESPONSES_MODE` overrides `responses.mode`; supported values: `prefer_local`, `prefer_upstream`, `local_only`
   `prefer_local` is the default: the shim owns `/v1/responses` whenever the request fits the locally-supported subset, and falls back to upstream `/v1/responses` only for unsupported features.
 - `RESPONSES_CUSTOM_TOOLS_MODE` overrides `responses.custom_tools.mode`; supported values: `bridge`, `auto`, `passthrough`
