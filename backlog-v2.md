@@ -115,6 +115,12 @@
   forms like MCP `connector_id` and client `tool_search` now fail through
   their tool-specific local validation paths instead of a generic
   unsupported-mode branch
+- integration coverage now fixes the mode contract for standalone
+  `image_generation`, `computer`, and `code_interpreter` requests:
+  `prefer_upstream` stays raw-proxy and bubbles upstream validation errors
+  when the backend rejects those tool types, while `local_only` with enabled
+  local runtimes now proves parser errors instead of false
+  disabled-runtime responses
 - `/readyz` теперь реально проверяет SQLite и upstream llama backend, а при
   `sqlite_vec` + readiness-aware embedder ещё и retrieval embedder, а не просто
   отвечает `200`

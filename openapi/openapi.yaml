@@ -156,6 +156,10 @@ paths:
           shim-local subsets first
         - `responses.mode=prefer_upstream` keeps standalone create requests
           proxy-first even when a shim-local subset exists
+        - in `responses.mode=prefer_upstream`, standalone hosted/native tool
+          requests stay on the upstream path; if the upstream backend rejects a
+          tool family, the shim surfaces that upstream validation error instead
+          of silently rerouting to a shim-local runtime
         - `responses.mode=local_only` never calls upstream; disabled local
           runtimes for `web_search`, `image_generation`, `computer`, and
           `code_interpreter` return explicit validation errors, while

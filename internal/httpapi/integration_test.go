@@ -4717,6 +4717,63 @@ func TestResponsesLocalWebSearchStreamReplayIncludesOpenPageAndFindInPage(t *tes
 	require.Contains(t, eventTypes(replayEvents), "response.output_text.annotation.added")
 }
 
+func TestResponsesPreferUpstreamImageGenerationStaysProxyFirstEvenWhenLocalProviderExists(t *testing.T) {
+	provider := &testutil.FakeImageGenerationProvider{}
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		ResponsesMode:           config.ResponsesModePreferUpstream,
+		ImageGenerationProvider: provider,
+	})
+
+	status, payload := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model": "test-model",
+		"input": "Generate a tiny orange cat in a teacup.",
+		"tools": []map[string]any{
+			{
+				"type":          "image_generation",
+				"output_format": "png",
+				"quality":       "low",
+				"size":          "1024x1024",
+			},
+		},
+		"tool_choice": map[string]any{"type": "image_generation"},
+	})
+
+	require.Equal(t, http.StatusBadRequest, status)
+	errorPayload, ok := payload["error"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "invalid_request_error", asStringAny(errorPayload["type"]))
+	require.Equal(t, "'type' of tool must be 'function'", asStringAny(errorPayload["message"]))
+	require.Empty(t, provider.CreateBodies)
+	require.Empty(t, provider.CreateStreamBodies)
+}
+
+func TestResponsesLocalOnlyImageGenerationUnsupportedShapeUsesParserErrorWhenRuntimeExists(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		ResponsesMode:           config.ResponsesModeLocalOnly,
+		ImageGenerationProvider: &testutil.FakeImageGenerationProvider{},
+	})
+
+	status, payload := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model": "test-model",
+		"input": "Generate a tiny orange cat in a teacup.",
+		"tools": []map[string]any{
+			{
+				"type":          "image_generation",
+				"output_format": "png",
+				"mask":          "file_mask_123",
+			},
+		},
+		"tool_choice": map[string]any{"type": "image_generation"},
+	})
+
+	require.Equal(t, http.StatusBadRequest, status)
+	errorPayload, ok := payload["error"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "invalid_request_error", asStringAny(errorPayload["type"]))
+	require.Contains(t, asStringAny(errorPayload["message"]), `unsupported image_generation tool field "mask"`)
+	require.NotContains(t, asStringAny(errorPayload["message"]), "responses.image_generation.backend")
+}
+
 func TestResponsesLocalImageGenerationUsesProviderAndStoresResponse(t *testing.T) {
 	provider := &testutil.FakeImageGenerationProvider{
 		CreateFunc: func(_ context.Context, requestBody []byte) ([]byte, error) {
@@ -7997,6 +8054,55 @@ func TestResponsesCreateLocalImageGenerationStreamLocalOnlyRequiresRuntime(t *te
 	require.Contains(t, asStringAny(errorPayload["message"]), "responses.image_generation.backend")
 }
 
+func TestResponsesPreferUpstreamComputerStaysProxyFirstEvenWhenLocalRuntimeExists(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		ResponsesMode:   config.ResponsesModePreferUpstream,
+		ComputerBackend: httpapi.LocalComputerBackendChatCompletions,
+	})
+
+	status, payload := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model": "test-model",
+		"input": "Use the computer tool. First request a screenshot and do not take any other action until you receive it.",
+		"tools": []map[string]any{
+			{"type": "computer"},
+		},
+		"tool_choice": "required",
+	})
+
+	require.Equal(t, http.StatusBadRequest, status)
+	errorPayload, ok := payload["error"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "invalid_request_error", asStringAny(errorPayload["type"]))
+	require.Equal(t, "'type' of tool must be 'function'", asStringAny(errorPayload["message"]))
+	require.NotContains(t, asStringAny(errorPayload["message"]), "responses.computer.backend")
+}
+
+func TestResponsesLocalOnlyComputerUnsupportedShapeUsesParserErrorWhenRuntimeExists(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		ResponsesMode:   config.ResponsesModeLocalOnly,
+		ComputerBackend: httpapi.LocalComputerBackendChatCompletions,
+	})
+
+	status, payload := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model": "test-model",
+		"input": "Use the computer tool to inspect the page.",
+		"tools": []map[string]any{
+			{
+				"type":    "computer",
+				"display": map[string]any{"width": 1024, "height": 768},
+			},
+		},
+		"tool_choice": "required",
+	})
+
+	require.Equal(t, http.StatusBadRequest, status)
+	errorPayload, ok := payload["error"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "invalid_request_error", asStringAny(errorPayload["type"]))
+	require.Contains(t, asStringAny(errorPayload["message"]), `unsupported computer tool field "display"`)
+	require.NotContains(t, asStringAny(errorPayload["message"]), "responses.computer.backend")
+}
+
 func TestResponsesCreateLocalComputerFollowUpUsesScreenshotInput(t *testing.T) {
 	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
 		ComputerBackend: httpapi.LocalComputerBackendChatCompletions,
@@ -9404,6 +9510,70 @@ func TestResponsesCreateLocalCodeInterpreterLocalOnlyRequiresUnsafeExecutor(t *t
 	require.True(t, ok)
 	require.Equal(t, "invalid_request_error", asStringAny(errorPayload["type"]))
 	require.Contains(t, asStringAny(errorPayload["message"]), "responses.code_interpreter.backend")
+}
+
+func TestResponsesPreferUpstreamCodeInterpreterStaysProxyFirstEvenWhenLocalRuntimeExists(t *testing.T) {
+	var executeCalls int
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		ResponsesMode: config.ResponsesModePreferUpstream,
+		CodeInterpreterBackend: testutil.FakeSandboxBackend{
+			KindValue: "docker",
+			ExecuteFunc: func(_ context.Context, req sandbox.ExecuteRequest) (sandbox.ExecuteResult, error) {
+				executeCalls++
+				return sandbox.ExecuteResult{Logs: req.Code + "\n"}, nil
+			},
+		},
+	})
+
+	status, payload := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model": "test-model",
+		"input": "Use Python to calculate 2+2. Return only the numeric result.",
+		"tools": []map[string]any{
+			{
+				"type": "code_interpreter",
+				"container": map[string]any{
+					"type": "auto",
+				},
+			},
+		},
+		"tool_choice": "required",
+	})
+
+	require.Equal(t, http.StatusBadRequest, status)
+	errorPayload, ok := payload["error"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "invalid_request_error", asStringAny(errorPayload["type"]))
+	require.Equal(t, "'type' of tool must be 'function'", asStringAny(errorPayload["message"]))
+	require.Zero(t, executeCalls)
+}
+
+func TestResponsesLocalOnlyCodeInterpreterUnsupportedShapeUsesParserErrorWhenRuntimeExists(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		ResponsesMode:          config.ResponsesModeLocalOnly,
+		CodeInterpreterBackend: testutil.FakeSandboxBackend{KindValue: "docker"},
+	})
+
+	status, payload := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model": "test-model",
+		"input": "Use Python to calculate 2+2. Return only the numeric result.",
+		"tools": []map[string]any{
+			{
+				"type": "code_interpreter",
+				"container": map[string]any{
+					"type":    "auto",
+					"timeout": 30,
+				},
+			},
+		},
+		"tool_choice": "required",
+	})
+
+	require.Equal(t, http.StatusBadRequest, status)
+	errorPayload, ok := payload["error"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "invalid_request_error", asStringAny(errorPayload["type"]))
+	require.Contains(t, asStringAny(errorPayload["message"]), `unsupported code_interpreter.container field "timeout"`)
+	require.NotContains(t, asStringAny(errorPayload["message"]), "responses.code_interpreter.backend")
 }
 
 func TestResponsesCreateLocalCodeInterpreterStreamLocalOnlyRequiresUnsafeExecutor(t *testing.T) {
