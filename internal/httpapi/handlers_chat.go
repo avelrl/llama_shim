@@ -96,11 +96,36 @@ func (h *proxyHandler) forwardChatCompletions(w http.ResponseWriter, r *http.Req
 	disableWriteDeadline(w)
 	w.WriteHeader(response.StatusCode)
 
-	if err := proxyChatCompletionStream(w, response.Body); err != nil && !shouldIgnoreStreamProxyError(err) {
+	var streamStoreCapture *chatCompletionStreamStoreCapture
+	if response.StatusCode >= 200 && response.StatusCode < 300 {
+		if shouldStore, err := shouldShadowStoreChatCompletion(rawBody); err != nil {
+			h.logger.WarnContext(r.Context(), "chat completion shadow store eligibility check failed",
+				"request_id", RequestIDFromContext(r.Context()),
+				"err", err,
+			)
+		} else if shouldStore {
+			streamStoreCapture = newChatCompletionStreamStoreCapture(response.Header.Get("X-Request-Id"))
+		}
+	}
+
+	if err := proxyChatCompletionStream(w, response.Body, streamStoreCapture); err != nil && !shouldIgnoreStreamProxyError(err) {
 		h.logger.WarnContext(r.Context(), "chat completion stream proxy failed",
 			"request_id", RequestIDFromContext(r.Context()),
 			"err", err,
 		)
+	} else if err == nil && streamStoreCapture != nil {
+		reconstructedBody, reconstructErr := streamStoreCapture.ReconstructedResponse(rawBody)
+		if reconstructErr != nil {
+			h.logger.WarnContext(r.Context(), "chat completion streamed shadow store reconstruction failed",
+				"request_id", RequestIDFromContext(r.Context()),
+				"err", reconstructErr,
+			)
+		} else if err := h.shadowStoreChatCompletion(r.Context(), rawBody, reconstructedBody); err != nil {
+			h.logger.ErrorContext(r.Context(), "chat completion streamed shadow store failed",
+				"request_id", RequestIDFromContext(r.Context()),
+				"err", err,
+			)
+		}
 	}
 }
 
@@ -240,14 +265,10 @@ func (h *proxyHandler) listStoredChatCompletionMessages(w http.ResponseWriter, r
 
 func shouldShadowStoreChatCompletion(rawBody []byte) (bool, error) {
 	var request struct {
-		Store  *bool `json:"store,omitempty"`
-		Stream *bool `json:"stream,omitempty"`
+		Store *bool `json:"store,omitempty"`
 	}
 	if err := json.Unmarshal(rawBody, &request); err != nil {
 		return false, err
-	}
-	if request.Stream != nil && *request.Stream {
-		return false, nil
 	}
 	return request.Store != nil && *request.Store, nil
 }
@@ -623,7 +644,7 @@ func sanitizeChatCompletionValue(value any) {
 	}
 }
 
-func proxyChatCompletionStream(w http.ResponseWriter, body io.Reader) error {
+func proxyChatCompletionStream(w http.ResponseWriter, body io.Reader, capture *chatCompletionStreamStoreCapture) error {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		return nil
@@ -637,6 +658,9 @@ func proxyChatCompletionStream(w http.ResponseWriter, body io.Reader) error {
 			sanitized, sanitizeErr := sanitizeChatCompletionSSELine(line)
 			if sanitizeErr != nil {
 				return sanitizeErr
+			}
+			if capture != nil {
+				capture.CaptureLine(sanitized)
 			}
 			if _, writeErr := io.WriteString(w, sanitized); writeErr != nil {
 				return writeErr

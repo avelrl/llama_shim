@@ -93,7 +93,7 @@
   `sqlite_vec` + readiness-aware embedder ещё и retrieval embedder, а не просто
   отвечает `200`
 - `/v1/chat/completions` очищает provider-specific поля в обычном JSON и SSE потоке
-- успешные non-streaming `POST /v1/chat/completions` с explicit `store: true`
+- успешные `POST /v1/chat/completions` с explicit `store: true`
   теперь shadow-store-ятся локально и доступны через shim-owned
   `GET /v1/chat/completions`, `GET /v1/chat/completions/{completion_id}`,
   `POST /v1/chat/completions/{completion_id}`,
@@ -183,7 +183,7 @@
 - [x] - local reranked retrieval subset behind local `vector_stores` ([детали](#task-retrieval-semantic-backend))
 - [ ] - hosted reranked retrieval parity behind local `vector_stores` ([детали](#task-retrieval-semantic-backend))
 - [ ] - parity для hosted/native Responses tools (`web_search`, `computer_use`, `code_interpreter`, `image_generation`, `remote MCP`, `tool_search`) ([детали](#task-hosted-tools-parity))
-- [x] - local stored Chat Completions CRUD surface for explicit `store=true` non-streaming proxy completions ([детали](#task-chat-stored-surface-local))
+- [x] - local stored Chat Completions CRUD surface for explicit `store=true` proxy completions ([детали](#task-chat-stored-surface-local))
 - [x] - `/readyz` checks SQLite, upstream llama backend, and configured retrieval embedder readiness ([детали](#task-ops-hardening))
 - [ ] - stored Chat Completions compatibility surface ([детали](#task-chat-stored-surface))
 - [ ] - operational hardening: backend readiness, retention job, local DX ([детали](#task-ops-hardening))
@@ -1403,7 +1403,7 @@ Definition of done:
 - [Migrate to Responses: Messages vs. Items](https://developers.openai.com/api/docs/guides/migrate-to-responses#messages-vs-items)
 - [Hosted tool search](https://developers.openai.com/api/docs/guides/tools-tool-search#hosted-tool-search)
 
-## <a id="task-chat-stored-surface-local"></a>Local stored Chat Completions CRUD surface for explicit `store=true` non-streaming proxy completions
+## <a id="task-chat-stored-surface-local"></a>Local stored Chat Completions CRUD surface for explicit `store=true` proxy completions
 
 Почему это отдельно:
 
@@ -1411,14 +1411,16 @@ Definition of done:
   но полный parity здесь сильно шире, чем просто “добавить три GET handler-а”
 - прагматичный следующий шаг это не эмулировать весь upstream history, а дать
   честный local CRUD model для тех Chat Completions, которые реально прошли
-  через shim и были explicitly stored
+  через shim, были explicitly stored, и либо already came back as JSON, либо
+  могут быть локально reconstructed из streamed chunks
 - такой partial ownership уже полезен клиентам и не требует выдумывать
-  account-level default storage semantics или reconstruction из streamed chunks
+  account-level default storage semantics или upstream-owned history
 
 Что входит:
 
-- local shadow-store только для успешных non-streaming JSON
-  `POST /v1/chat/completions` c explicit `store: true`
+- local shadow-store для успешных `POST /v1/chat/completions`
+  c explicit `store: true`:
+  non-streaming JSON plus current streamed reconstruction subset
 - `GET /v1/chat/completions` с filters/pagination subset:
   `model`, `metadata[key]=value`, `after`, `limit`, `order`
 - `GET /v1/chat/completions/{completion_id}`
@@ -1428,11 +1430,14 @@ Definition of done:
   реконструируется из исходного request `messages[]`
 - OpenAPI/docs wording, которая прямо фиксирует границы этого local subset
 
-Статус на 12 апреля 2026:
+Статус на 14 апреля 2026:
 
 - закрыто для local shim-owned subset:
-  successful non-streaming explicit `store: true` chat completions now land in
-  SQLite and are manageable through list/get/update/delete/messages handlers
+  successful explicit `store: true` chat completions now land in SQLite and
+  are manageable through list/get/update/delete/messages handlers
+- streamed explicit `store: true` chat completions now shadow-store through a
+  local reconstructed final `chat.completion` object built from sanitized
+  upstream chunks; current happy-path coverage is assistant-text chunk streams
 - `messages` read surface возвращает reconstructed request messages with stable
   synthetic ids when the original message object had no `id`
 - `POST /v1/chat/completions/{completion_id}` обновляет только stored
@@ -1446,8 +1451,9 @@ Definition of done:
 
 - local list/get/update/delete/messages contract реализован и покрыт
   integration tests
-- OpenAPI/backlog не overclaim-ят upstream-owned history, default storage при
-  omitted `store`, или streamed-chat reconstruction
+- OpenAPI/backlog не overclaim-ят upstream-owned history или default storage
+  при omitted `store`; streamed reconstruction зафиксирован только как current
+  local subset, не как full hosted parity
 - `go test ./...` проходит на этом scope
 
 Полезные reference:
@@ -1465,7 +1471,8 @@ Definition of done:
 - в official OpenAI API у `chat/completions` есть не только `POST`, но и
   stored-resource surface: list/get/update/delete/messages
 - сейчас shim уже дает local shadow-store subset для explicit `store: true`
-  non-streaming proxy completions, включая update/delete, но это еще не полная
+  proxy completions, включая update/delete и streamed reconstruction subset,
+  но это еще не полная
   OpenAI-compatible stored-chat model
 - это один из заметных gaps между “минимальный shim для chat proxy” и “честный OpenAI-compatible facade”
 
@@ -1475,8 +1482,9 @@ Definition of done:
   честно оставляет upstream-only
 - решение по omitted `store`: считать ли account-level default storage частью
   shim contract или оставлять это explicit gap
-- streamed chat completions: reconstruct/shadow-store from chunks или честно
-  не включать в local stored surface
+- streamed chat completions: current assistant-text reconstruction subset уже
+  есть, но broader streamed parity по tool calls / richer chunk semantics
+  остаётся отдельным решением
 - upstream-owned historical stored chat completions: proxy surface, explicit
   not-supported, или дальнейшее local ownership
 

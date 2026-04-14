@@ -1716,13 +1716,15 @@ paths:
       x-shim-status: partial
       description: |
         Returns locally shadow-stored Chat Completion resources for successful
-        non-streaming `POST /v1/chat/completions` calls created through this
-        shim with explicit `store: true`.
+        `POST /v1/chat/completions` calls created through this shim with
+        explicit `store: true`.
+
+        Current local subset includes both non-streaming JSON responses and a
+        reconstructed streamed subset built from sanitized upstream chunks.
 
         This local read surface does not enumerate upstream-owned stored Chat
-        Completions, does not infer account-level default storage when `store`
-        is omitted, and does not reconstruct stored resources from streamed
-        Chat Completion chunks.
+        Completions and does not infer account-level default storage when
+        `store` is omitted.
       parameters:
         - name: model
           in: query
@@ -1781,14 +1783,16 @@ paths:
         are sanitized to remove some backend-specific fields. SSE responses are
         proxied through unchanged.
 
-        Successful non-streaming JSON responses with explicit `store: true` are
-        also shadow-stored locally and become visible via the shim-owned
+        Successful explicit `store: true` responses are also shadow-stored
+        locally and become visible via the shim-owned
         `GET /v1/chat/completions`, `GET /v1/chat/completions/{completion_id}`,
         `POST /v1/chat/completions/{completion_id}`,
         `DELETE /v1/chat/completions/{completion_id}`, and
         `GET /v1/chat/completions/{completion_id}/messages` local stored-chat
-        surface. This does not currently cover streamed chat completions or
-        upstream account-level default storage when `store` is omitted.
+        surface. Current local subset covers non-streaming JSON plus
+        reconstructed streamed completions from sanitized upstream chunks.
+        This does not currently cover upstream account-level default storage
+        when `store` is omitted.
       requestBody:
         required: true
         content:
@@ -1823,8 +1827,8 @@ paths:
       x-shim-status: partial
       description: |
         Returns a locally shadow-stored Chat Completion created by this shim
-        from a successful non-streaming `POST /v1/chat/completions` request
-        with explicit `store: true`.
+        from a successful `POST /v1/chat/completions` request with explicit
+        `store: true`.
       parameters:
         - $ref: "#/components/parameters/ChatCompletionID"
       responses:
@@ -1842,7 +1846,7 @@ paths:
       x-shim-status: partial
       description: |
         Updates the `metadata` field for a locally shadow-stored Chat
-        Completion created by this shim from a successful non-streaming
+        Completion created by this shim from a successful
         `POST /v1/chat/completions` request with explicit `store: true`.
 
         Only `metadata` updates are supported in this local subset.
@@ -1871,8 +1875,8 @@ paths:
       x-shim-status: partial
       description: |
         Deletes a locally shadow-stored Chat Completion created by this shim
-        from a successful non-streaming `POST /v1/chat/completions` request
-        with explicit `store: true`.
+        from a successful `POST /v1/chat/completions` request with explicit
+        `store: true`.
       parameters:
         - $ref: "#/components/parameters/ChatCompletionID"
       responses:
@@ -1892,8 +1896,7 @@ paths:
       description: |
         Returns the request `messages` array captured for a locally
         shadow-stored Chat Completion created by this shim from a successful
-        non-streaming `POST /v1/chat/completions` request with explicit
-        `store: true`.
+        `POST /v1/chat/completions` request with explicit `store: true`.
       parameters:
         - $ref: "#/components/parameters/ChatCompletionID"
         - name: after
@@ -3312,7 +3315,8 @@ components:
       type: object
       description: |
         Sanitized Chat Completion JSON resource shadow-stored locally by the
-        shim for successful non-streaming `store: true` proxy requests.
+        shim for successful explicit `store: true` proxy requests, including
+        the current reconstructed streamed subset.
       additionalProperties: true
     StoredChatCompletionMetadataUpdateRequest:
       type: object

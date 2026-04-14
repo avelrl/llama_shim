@@ -5079,14 +5079,16 @@ func TestChatCompletionsStoredListFiltersAndPaginates(t *testing.T) {
 	require.Equal(t, third, asStringAny(page2.Data[0]["id"]))
 }
 
-func TestChatCompletionsStoreTrueStreamDoesNotShadowStore(t *testing.T) {
+func TestChatCompletionsStoreTrueStreamShadowStoresReconstructedCompletion(t *testing.T) {
 	app := testutil.NewTestApp(t)
 
 	reqBody, err := json.Marshal(map[string]any{
-		"model":  "gpt-5.4",
-		"store":  true,
-		"stream": true,
+		"model":    "gpt-5.4",
+		"store":    true,
+		"stream":   true,
+		"metadata": map[string]any{"topic": "stream"},
 		"messages": []map[string]any{
+			{"role": "developer", "content": "You are terse."},
 			{"role": "user", "content": "Say OK and nothing else"},
 		},
 	})
@@ -5104,12 +5106,49 @@ func TestChatCompletionsStoreTrueStreamDoesNotShadowStore(t *testing.T) {
 	require.Contains(t, resp.Header.Get("Content-Type"), "text/event-stream")
 	events := readSSEEvents(t, resp.Body)
 	require.NotEmpty(t, events)
+	require.Equal(t, "[DONE]", events[len(events)-1].Raw)
 
 	list := getStoredChatCompletions(t, app, "")
-	require.Empty(t, list.Data)
-	require.Nil(t, list.FirstID)
-	require.Nil(t, list.LastID)
+	require.Len(t, list.Data, 1)
+	completionID := asStringAny(list.Data[0]["id"])
+	require.NotEmpty(t, completionID)
+	require.NotNil(t, list.FirstID)
+	require.NotNil(t, list.LastID)
+	require.Equal(t, completionID, *list.FirstID)
+	require.Equal(t, completionID, *list.LastID)
 	require.False(t, list.HasMore)
+
+	stored := getStoredChatCompletion(t, app, completionID)
+	require.Equal(t, completionID, asStringAny(stored["id"]))
+	require.Equal(t, "chat.completion", asStringAny(stored["object"]))
+	require.Equal(t, "gpt-5.4", asStringAny(stored["model"]))
+	created, ok := stored["created"].(float64)
+	require.True(t, ok)
+	require.NotZero(t, int(created))
+
+	metadata, ok := stored["metadata"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "stream", asStringAny(metadata["topic"]))
+
+	choices, ok := stored["choices"].([]any)
+	require.True(t, ok)
+	require.Len(t, choices, 1)
+	choice, ok := choices[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "stop", asStringAny(choice["finish_reason"]))
+
+	message, ok := choice["message"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "assistant", asStringAny(message["role"]))
+	require.Equal(t, "OK", asStringAny(message["content"]))
+
+	messages := getStoredChatCompletionMessages(t, app, completionID, "")
+	require.Equal(t, "list", messages.Object)
+	require.Len(t, messages.Data, 2)
+	require.Equal(t, []string{"developer", "user"}, []string{
+		asStringAny(messages.Data[0]["role"]),
+		asStringAny(messages.Data[1]["role"]),
+	})
 }
 
 func TestChatCompletionsStoredUpdateAndDelete(t *testing.T) {

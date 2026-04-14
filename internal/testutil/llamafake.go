@@ -240,7 +240,11 @@ func NewFakeLlamaServer(t *testing.T) *httptest.Server {
 
 			output := fakeLlamaOutputFromChatMessages(chatMessagesFromRequest(request["messages"]))
 			if stream, _ := request["stream"].(bool); stream {
-				writeFakeChatCompletionStream(t, w, output)
+				mu.Lock()
+				nextID++
+				id := "chatcmpl_" + strconv.Itoa(nextID)
+				mu.Unlock()
+				writeFakeChatCompletionStream(t, w, id, model, output)
 				return
 			}
 			mu.Lock()
@@ -1173,20 +1177,31 @@ func isAutoToolChoice(value any) bool {
 	return ok && strings.EqualFold(strings.TrimSpace(text), "auto")
 }
 
-func writeFakeChatCompletionStream(t *testing.T, w http.ResponseWriter, output string) {
+func writeFakeChatCompletionStream(t *testing.T, w http.ResponseWriter, id string, model string, output string) {
 	t.Helper()
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	flusher, ok := w.(http.Flusher)
 	require.True(t, ok)
+	created := time.Now().Unix()
 
-	for _, chunk := range chunkString(output, 1) {
+	for i, chunk := range chunkString(output, 1) {
+		delta := map[string]any{
+			"content": chunk,
+		}
+		if i == 0 {
+			delta["role"] = "assistant"
+		}
 		require.NoError(t, writeSSEData(w, map[string]any{
+			"id":                 id,
+			"object":             "chat.completion.chunk",
+			"created":            created,
+			"model":              model,
+			"system_fingerprint": "fp_fake_chat_completion",
 			"choices": []map[string]any{
 				{
-					"delta": map[string]any{
-						"content": chunk,
-					},
+					"index": 0,
+					"delta": delta,
 				},
 			},
 		}))
@@ -1195,8 +1210,14 @@ func writeFakeChatCompletionStream(t *testing.T, w http.ResponseWriter, output s
 	}
 
 	require.NoError(t, writeSSEData(w, map[string]any{
+		"id":                 id,
+		"object":             "chat.completion.chunk",
+		"created":            created,
+		"model":              model,
+		"system_fingerprint": "fp_fake_chat_completion",
 		"choices": []map[string]any{
 			{
+				"index":         0,
 				"delta":         map[string]any{},
 				"finish_reason": "stop",
 			},

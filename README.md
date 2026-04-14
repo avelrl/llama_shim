@@ -10,8 +10,8 @@ v1 supports:
 - `GET /v1/responses/{id}`
 - `POST /v1/conversations`
 - `POST /v1/responses` with `stream: true` over SSE
-- local stored Chat Completions CRUD subset for successful non-streaming
-  explicit `store: true` proxy calls:
+- local stored Chat Completions CRUD subset for successful explicit
+  `store: true` proxy calls, including streamed reconstruction subset:
   `GET /v1/chat/completions`,
   `GET/POST/DELETE /v1/chat/completions/{completion_id}`,
   `GET /v1/chat/completions/{completion_id}/messages`
