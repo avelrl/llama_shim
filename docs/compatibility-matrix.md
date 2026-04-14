@@ -53,8 +53,8 @@ Detailed task notes and implementation history still live in
 | Surface | Current shim status | V2 target | Notes |
 | --- | --- | --- | --- |
 | `POST /v1/chat/completions` | Broad subset | Keep sanitization, streaming, and store policy explicit | Still a major compatibility surface even though Responses is primary |
-| stored Chat Completions `list/get/update/delete/messages` | Partial | Finalize the local-first compatibility contract | This remains a V2 blocker |
-| stored Chat Completions upstream merge/fallback behavior | Partial | Make implemented vs upstream-only behavior explicit in docs and tests | The shim should not imply full hosted stored-chat ownership |
+| stored Chat Completions `list/get/update/delete/messages` | Broad subset | Keep the local-first compatibility contract explicit | Shim-owned shadow-stored resources cover the core surface even when upstream stored-chat routes are absent |
+| stored Chat Completions upstream merge/fallback behavior | Broad subset | Keep implemented vs upstream-only behavior explicit in docs and tests | Upstream history remains an optional compatibility bridge; the shim does not imply full hosted stored-chat ownership |
 | streamed shadow-store reconstruction | Broad subset | Keep current boundaries explicit | Current subset covers practical assistant-text and tool-call-heavy flows, not every possible hosted chunk shape |
 
 ## Files, Vector Stores, And Retrieval
@@ -117,7 +117,6 @@ These are the remaining items that still look like real V2 blockers as of
 April 14, 2026:
 
 - hosted reranked retrieval parity behind local `vector_stores`
-- stored Chat Completions contract finalization
 - minimum operator floor: retention cleanup, maintenance path, and local DX
 
 ## Staged For V3

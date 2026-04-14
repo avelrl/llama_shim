@@ -6795,6 +6795,111 @@ func TestChatCompletionsStoredRoutesFallbackToUpstreamHistoricalCompletion(t *te
 	require.Equal(t, "not_found_error", asStringAny(payload["error"].(map[string]any)["type"]))
 }
 
+func TestChatCompletionsStoredSurfaceWorksWithoutUpstreamStoredRoutes(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/chat/completions":
+			var request map[string]any
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
+			metadata, _ := request["metadata"].(map[string]any)
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+				"id":      "chatcmpl_local_shadow_only_1",
+				"object":  "chat.completion",
+				"created": 1744588800,
+				"model":   asStringAny(request["model"]),
+				"metadata": func() map[string]any {
+					if metadata == nil {
+						return map[string]any{}
+					}
+					return metadata
+				}(),
+				"choices": []map[string]any{
+					{
+						"index":         0,
+						"finish_reason": "stop",
+						"logprobs":      nil,
+						"message": map[string]any{
+							"role":    "assistant",
+							"content": "OK",
+						},
+					},
+				},
+				"usage": map[string]any{
+					"prompt_tokens":     4,
+					"completion_tokens": 1,
+					"total_tokens":      5,
+				},
+			}))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+				"error": map[string]any{
+					"message": "chat completion not found",
+					"type":    "not_found_error",
+				},
+			}))
+		}
+	}))
+	defer upstream.Close()
+
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		LlamaBaseURL: upstream.URL,
+	})
+
+	status, body := rawRequest(t, app, http.MethodPost, "/v1/chat/completions", map[string]any{
+		"model":    "gpt-5.4",
+		"store":    true,
+		"metadata": map[string]any{"topic": "local-only"},
+		"messages": []map[string]any{
+			{"role": "developer", "content": "You are terse."},
+			{"role": "user", "content": "Say OK and nothing else"},
+		},
+	})
+	require.Equal(t, http.StatusOK, status)
+	completionID := asStringAny(body["id"])
+	require.Equal(t, "chatcmpl_local_shadow_only_1", completionID)
+
+	page := getStoredChatCompletions(t, app, "")
+	require.Len(t, page.Data, 1)
+	require.Equal(t, completionID, asStringAny(page.Data[0]["id"]))
+	require.False(t, page.HasMore)
+
+	stored := getStoredChatCompletion(t, app, completionID)
+	require.Equal(t, completionID, asStringAny(stored["id"]))
+	require.Equal(t, map[string]any{"topic": "local-only"}, stored["metadata"])
+
+	messages := getStoredChatCompletionMessages(t, app, completionID, "")
+	require.Len(t, messages.Data, 2)
+	require.Equal(t, []string{"developer", "user"}, []string{
+		asStringAny(messages.Data[0]["role"]),
+		asStringAny(messages.Data[1]["role"]),
+	})
+
+	status, updated := rawRequest(t, app, http.MethodPost, "/v1/chat/completions/"+completionID, map[string]any{
+		"metadata": map[string]any{"topic": "updated-local-only"},
+	})
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, map[string]any{"topic": "updated-local-only"}, updated["metadata"])
+
+	page = getStoredChatCompletions(t, app, "?metadata[topic]=updated-local-only")
+	require.Len(t, page.Data, 1)
+	require.Equal(t, completionID, asStringAny(page.Data[0]["id"]))
+
+	status, deleted := rawRequest(t, app, http.MethodDelete, "/v1/chat/completions/"+completionID, nil)
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, completionID, asStringAny(deleted["id"]))
+	require.Equal(t, true, deleted["deleted"])
+
+	status, payload := rawRequest(t, app, http.MethodGet, "/v1/chat/completions/"+completionID, nil)
+	require.Equal(t, http.StatusNotFound, status)
+	require.Equal(t, "not_found_error", asStringAny(payload["error"].(map[string]any)["type"]))
+
+	page = getStoredChatCompletions(t, app, "")
+	require.Empty(t, page.Data)
+	require.False(t, page.HasMore)
+}
+
 func TestFilesEndpointsUploadListRetrieveContentAndDelete(t *testing.T) {
 	app := testutil.NewTestApp(t)
 

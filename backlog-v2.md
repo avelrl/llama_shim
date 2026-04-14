@@ -143,6 +143,11 @@
   `POST /v1/chat/completions/{completion_id}`,
   `DELETE /v1/chat/completions/{completion_id}`,
   `GET /v1/chat/completions/{completion_id}/messages`
+- integration coverage now proves that shim-owned stored Chat Completions do
+  not depend on upstream stored-chat ownership: when the backend only supports
+  `POST /v1/chat/completions` and returns `404` for stored resource routes,
+  local shadow-stored `list/get/update/delete/messages` still work end-to-end,
+  while upstream history remains only an optional compatibility bridge
 - локальный retrieval substrate заведен на OpenAI-shaped surface:
   `POST/GET/DELETE /v1/files`, `GET /v1/files/{id}/content`,
   `POST/GET/DELETE /v1/vector_stores`,
@@ -267,7 +272,7 @@ Release framing as of April 14, 2026:
 - [x] - `/readyz` checks SQLite, upstream llama backend, configured retrieval embedder readiness, and configured local tool backends ([детали](#task-ops-hardening))
 - [x] - shim-owned ops hardening subset: ingress auth, request rate limiting, quotas, metrics, structured observability ([детали](#task-ops-hardening))
 - [ ] - V2 ops floor: retention cleanup, maintenance path, and local DX packaging ([детали](#task-ops-hardening))
-- [ ] - stored Chat Completions compatibility surface ([детали](#task-chat-stored-surface))
+- [x] - stored Chat Completions compatibility contract: local-first subset plus optional upstream bridge ([детали](#task-chat-stored-surface))
 
 ## <a id="task-local-first-responses"></a>Local-first ownership для `/v1/responses` и Codex tool loop
 
@@ -1833,10 +1838,9 @@ Definition of done:
   stored-resource surface: list/get/update/delete/messages
 - сейчас shim уже дает local-first subset для explicit `store: true` и
   shim-owned omitted-store default, плюс optional upstream compatibility bridge
-  for stored resources, включая update/delete и streamed reconstruction subset,
-  но это еще не полная
-  OpenAI-compatible stored-chat model
-- это один из заметных gaps между “минимальный shim для chat proxy” и “честный OpenAI-compatible facade”
+  for stored resources, включая update/delete и streamed reconstruction subset;
+  broader exact hosted stored-chat ownership intentionally stays out of V2 scope
+- это был один из заметных gaps между “минимальный shim для chat proxy” и “честный OpenAI-compatible facade”; для V2 он теперь закрыт как conservative local-first contract
 
 Что входит:
 
@@ -1855,6 +1859,20 @@ Definition of done:
 - local shadow-store subset и remaining gaps разделены явно
 - если расширенный local support выбран, shape и pagination покрыты
   integration tests
+
+Статус на 14 апреля 2026:
+
+- V2 item closed conservatively: local shadow-stored
+  `list/get/update/delete/messages` contract is implemented, tested, and
+  documented as the primary shim-owned path
+- upstream stored-chat history remains optional:
+  list may merge upstream historical resources and missing local ids may fall
+  back upstream only when the backend exposes official stored-chat routes
+- local shadow-stored CRUD/messages no longer depend on upstream stored-chat
+  support and continue to work when the backend returns `404` for stored
+  resource routes
+- broader exact hosted stored-chat lifecycle parity and rarer streamed chunk
+  semantics remain intentionally outside the V2 broad-compatibility facade
 
 Полезные reference:
 

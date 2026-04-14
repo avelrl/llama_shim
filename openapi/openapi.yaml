@@ -1880,6 +1880,8 @@ paths:
         Completion resources are the core path; upstream-owned stored Chat
         Completions are only added opportunistically as a compatibility bridge
         when the configured backend supports official stored-chat routes.
+        If the backend does not expose those official stored-chat routes, this
+        endpoint returns only the shim-owned shadow-stored resources.
 
         Current local shadow-store subset includes:
         non-streaming JSON responses, reconstructed streamed responses built
@@ -1954,7 +1956,9 @@ paths:
         `GET /v1/chat/completions/{completion_id}/messages` local stored-chat
         surface. Current local streamed reconstruction subset covers assistant
         text and tool-call-heavy chunk flows reconstructed from sanitized
-        upstream chunks.
+        upstream chunks. This local stored-chat surface remains available even
+        when the configured backend does not implement official stored-chat
+        resource routes.
       requestBody:
         required: true
         content:
@@ -1990,7 +1994,8 @@ paths:
       description: |
         Returns a shim-owned shadow-stored Chat Completion when present;
         otherwise falls back to the upstream stored-chat resource route when
-        the configured backend supports it.
+        the configured backend supports it. If the backend lacks that route,
+        only shim-owned shadow copies are addressable here.
       parameters:
         - $ref: "#/components/parameters/ChatCompletionID"
       responses:
@@ -2012,6 +2017,8 @@ paths:
         resource route when the configured backend supports it.
 
         Only `metadata` updates are supported in the shim-owned local subset.
+        Best-effort upstream synchronization is ignored when the backend does
+        not implement stored-chat update routes.
       parameters:
         - $ref: "#/components/parameters/ChatCompletionID"
       requestBody:
@@ -2060,6 +2067,8 @@ paths:
         Returns the request `messages` array captured for a shim-owned
         shadow-stored Chat Completion when present, otherwise falls back to the
         upstream stored resource route when the configured backend supports it.
+        If the backend lacks this route, only shim-owned shadow copies expose
+        a messages list.
       parameters:
         - $ref: "#/components/parameters/ChatCompletionID"
         - name: after
