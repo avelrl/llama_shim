@@ -3,12 +3,14 @@ package httpapi
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"mime/multipart"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"llama_shim/internal/domain"
 	"llama_shim/internal/retrieval"
@@ -24,12 +26,14 @@ const (
 	maxVectorStoreFilesLimit     = 100
 	defaultSearchResultsLimit    = 10
 	maxSearchResultsLimit        = 50
-	maxLocalFileUploadBytes      = 64 << 20
 )
 
 type retrievalHandler struct {
-	logger *slog.Logger
-	store  *sqlite.Store
+	logger        *slog.Logger
+	store         *sqlite.Store
+	metrics       *Metrics
+	serviceLimits ServiceLimits
+	searchGate    *concurrencyGate
 }
 
 type fileObjectResponse struct {
@@ -114,16 +118,20 @@ type vectorStoreSearchResponse struct {
 	NextPage    *string                          `json:"next_page"`
 }
 
-func newRetrievalHandler(logger *slog.Logger, store *sqlite.Store) *retrievalHandler {
+func newRetrievalHandler(logger *slog.Logger, store *sqlite.Store, metrics *Metrics, serviceLimits ServiceLimits, searchGate *concurrencyGate) *retrievalHandler {
 	return &retrievalHandler{
-		logger: logger,
-		store:  store,
+		logger:        logger,
+		store:         store,
+		metrics:       metrics,
+		serviceLimits: normalizeServiceLimits(serviceLimits),
+		searchGate:    searchGate,
 	}
 }
 
 func (h *retrievalHandler) createFile(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, maxLocalFileUploadBytes+1<<20)
-	if err := r.ParseMultipartForm(maxLocalFileUploadBytes); err != nil {
+	maxUploadBytes := h.serviceLimits.RetrievalFileUploadBytes
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes+1<<20)
+	if err := r.ParseMultipartForm(maxUploadBytes); err != nil {
 		WriteError(w, http.StatusBadRequest, "invalid_request_error", "malformed multipart form body", "")
 		return
 	}
@@ -147,13 +155,13 @@ func (h *retrievalHandler) createFile(w http.ResponseWriter, r *http.Request) {
 	}
 	defer uploaded.Close()
 
-	content, err := io.ReadAll(io.LimitReader(uploaded, maxLocalFileUploadBytes+1))
+	content, err := io.ReadAll(io.LimitReader(uploaded, maxUploadBytes+1))
 	if err != nil {
 		WriteError(w, http.StatusBadRequest, "invalid_request_error", "failed to read uploaded file", "")
 		return
 	}
-	if len(content) > maxLocalFileUploadBytes {
-		h.writeError(w, r, domain.NewValidationError("file", "file exceeds local 64 MiB upload limit"))
+	if int64(len(content)) > maxUploadBytes {
+		h.writeError(w, r, domain.NewValidationError("file", "file exceeds the configured shim-local upload limit"))
 		return
 	}
 
@@ -452,6 +460,14 @@ func (h *retrievalHandler) deleteVectorStoreFile(w http.ResponseWriter, r *http.
 }
 
 func (h *retrievalHandler) searchVectorStore(w http.ResponseWriter, r *http.Request) {
+	release, err := h.searchGate.tryAcquire()
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	defer release()
+
+	start := time.Now()
 	rawBody, err := readJSONBody(w, r)
 	if err != nil {
 		return
@@ -478,9 +494,17 @@ func (h *retrievalHandler) searchVectorStore(w http.ResponseWriter, r *http.Requ
 		h.writeError(w, r, err)
 		return
 	}
+	if len(queries) > h.serviceLimits.RetrievalMaxSearchQueries {
+		h.writeError(w, r, domain.NewValidationError("query", fmt.Sprintf("query must contain at most %d search strings in shim-local retrieval", h.serviceLimits.RetrievalMaxSearchQueries)))
+		return
+	}
 	if request.RewriteQuery != nil && *request.RewriteQuery {
 		queries = retrieval.RewriteSearchQueries(queries)
 		rawSearchQuery = retrieval.SearchQueryPayloadLike(rawSearchQuery, queries)
+		if len(queries) > h.serviceLimits.RetrievalMaxSearchQueries {
+			queries = queries[:h.serviceLimits.RetrievalMaxSearchQueries]
+			rawSearchQuery = retrieval.SearchQueryPayloadLike(rawSearchQuery, queries)
+		}
 	}
 	filters, err := domain.NormalizeVectorStoreSearchFilter(request.Filters, "filters")
 	if err != nil {
@@ -527,9 +551,23 @@ func (h *retrievalHandler) searchVectorStore(w http.ResponseWriter, r *http.Requ
 		RawSearchQuery: rawSearchQuery,
 	})
 	if err != nil {
+		if h.metrics != nil {
+			h.metrics.IncRetrievalSearch("vector_store_search", "error")
+		}
 		h.writeError(w, r, err)
 		return
 	}
+	if h.metrics != nil {
+		h.metrics.IncRetrievalSearch("vector_store_search", "ok")
+	}
+	h.logger.InfoContext(r.Context(), "retrieval search",
+		"request_id", RequestIDFromContext(r.Context()),
+		"surface", "vector_store_search",
+		"vector_store_id", r.PathValue("vector_store_id"),
+		"queries", queries,
+		"result_count", len(page.Results),
+		"duration_ms", time.Since(start).Milliseconds(),
+	)
 
 	WriteJSON(w, http.StatusOK, vectorStoreSearchResponse{
 		Object:      "vector_store.search_results.page",

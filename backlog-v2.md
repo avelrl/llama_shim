@@ -1,6 +1,6 @@
 # Backlog / roadmap toward v2
 
-Актуализировано по состоянию на 13 апреля 2026 на основе:
+Актуализировано по состоянию на 14 апреля 2026 на основе:
 
 - текущего состояния репозитория, маршрутов и тестов
 - текущего staged diff
@@ -58,8 +58,12 @@
 - `/healthz`
 - `/readyz` с проверкой SQLite, upstream llama backend, и retrieval embedder
   readiness when semantic retrieval is enabled
+- `/metrics` как shim-owned Prometheus-text endpoint when metrics are enabled
 - SQLite migrations, `WAL`, default `busy_timeout`
 - local-first `responses.mode=prefer_local` по умолчанию с controlled upstream fallback
+- optional shim-owned ingress auth, request rate limiting, structured request
+  / retrieval / runtime observability, and configurable request/upload/runtime
+  quotas
 - локально поддерживаемые response-level fields уже включают lifecycle/storage surface, `text.format` subset и stateful `input_items` snapshot
 - retrieve/list handlers уже принимают documented compatibility query params (`include`, `after`, `limit`, `order`, `starting_after`, `include_obfuscation`, `stream`) там, где это реализовано shim-ом
 
@@ -92,6 +96,10 @@
 - `/readyz` теперь реально проверяет SQLite и upstream llama backend, а при
   `sqlite_vec` + readiness-aware embedder ещё и retrieval embedder, а не просто
   отвечает `200`
+- shim-owned ops hardening subset теперь закрывает:
+  optional static bearer ingress auth, in-memory request rate limiting,
+  request/upload/runtime/retrieval quotas, structured JSON request/runtime
+  logs, and shim-owned `/metrics` with Prometheus-text exposition
 - `/v1/chat/completions` очищает provider-specific поля в обычном JSON и SSE потоке
 - успешные `POST /v1/chat/completions` теперь shadow-store-ятся локально при
   explicit `store: true` и при omitted `store`, когда включен shim-owned
@@ -188,8 +196,9 @@
 - [ ] - parity для hosted/native Responses tools (`web_search`, `computer_use`, `code_interpreter`, `image_generation`, `remote MCP`, `tool_search`) ([детали](#task-hosted-tools-parity))
 - [x] - local-first stored Chat Completions CRUD surface for proxy completions ([детали](#task-chat-stored-surface-local))
 - [x] - `/readyz` checks SQLite, upstream llama backend, and configured retrieval embedder readiness ([детали](#task-ops-hardening))
+- [x] - shim-owned ops hardening subset: ingress auth, request rate limiting, quotas, metrics, structured observability ([детали](#task-ops-hardening))
 - [ ] - stored Chat Completions compatibility surface ([детали](#task-chat-stored-surface))
-- [ ] - operational hardening: backend readiness, retention job, local DX ([детали](#task-ops-hardening))
+- [ ] - broader operational hardening: retention, maintenance, tenanting, richer quotas/exporters ([детали](#task-ops-hardening))
 - [ ] - true constrained decoder/runtime для `grammar` / `regex` custom tools ([детали](#task-true-constrained-runtime))
 
 ## <a id="task-local-first-responses"></a>Local-first ownership для `/v1/responses` и Codex tool loop
@@ -1518,22 +1527,27 @@ Definition of done:
 - [Delete a stored Chat Completion](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/delete)
 - [List messages for a stored Chat Completion](https://developers.openai.com/api/reference/resources/chat/subresources/completions/subresources/messages/methods/list)
 
-## <a id="task-ops-hardening"></a>Operational hardening: backend readiness, retention job, local DX
+## <a id="task-ops-hardening"></a>Operational hardening: ingress controls, quotas, observability, readiness, retention, local DX
 
 Почему это важно:
 
-- `/readyz` уже проверяет SQLite и upstream llama backend readiness, но это
-  только первый кусок operational hardening
-- публичная репа без нормального local DX и maintenance path быстро зарастает ручными шагами
-- retention и vacuum/backup story нельзя оставлять “на потом”, если shim хранит state локально
+- shim уже достаточно функционален как local-first OpenAI-compatible service,
+  так что следующий practical risk это не missing endpoint, а эксплуатационная
+  рыхлость
+- long-running shim нужен с ingress controls, quotas, и наблюдаемостью, а не
+  только с working handlers
+- retention и maintenance story нельзя оставлять “на потом”, если shim хранит
+  state локально
 
 Что входит:
 
-- retention cleanup job
-- backup / restore / vacuum / optimize path
-- `Makefile`, dev script, `Dockerfile`, `docker-compose` или их осознанный минимальный subset
+- optional static bearer ingress auth
+- request rate limiting
+- request/upload/runtime/retrieval quotas
+- shim-owned metrics and structured logs
+- readiness / retention / maintenance / local DX
 
-Статус на 12 апреля 2026:
+Статус на 14 апреля 2026:
 
 - закрыт минимальный readiness scope:
   `/readyz` теперь возвращает `200` только когда жива SQLite и configured
@@ -1541,28 +1555,45 @@ Definition of done:
 - failure path тоже покрыт:
   readiness падает в `503 service_unavailable`, если upstream backend недоступен
   или не отдает валидный model-list payload
-- OpenAPI wording синхронизирован с этим contract
+- закрыт shim-owned ingress/observability subset:
+  optional static bearer auth,
+  optional in-memory request rate limiting with request-based
+  `X-RateLimit-*` headers,
+  configurable JSON/upload/retrieval/runtime limits,
+  structured JSON request/runtime/retrieval logs,
+  and `/metrics` Prometheus-text exposition
+- `/healthz` и `/readyz` остаются unauthenticated/unthrottled probe routes, а
+  `/metrics` делит ingress auth when enabled but excluded from request limiter
+- when shim ingress auth is enabled, ingress `Authorization` is consumed by the
+  shim and not forwarded upstream; `X-Client-Request-Id` still propagates
+- OpenAPI/README/tests синхронизированы с этим operational subset
 
 Что остается здесь open:
 
 - retention cleanup job
 - backup / restore / vacuum / optimize path
 - `Makefile`, dev script, `Dockerfile`, `docker-compose` или их осознанный минимальный subset
+- multi-tenant authz / tenanting
+- distributed/shared rate limiting
+- richer quotas beyond current request/upload/runtime knobs
+- dashboards / exporters / admin tooling beyond the built-in `/metrics`
+- governance work: redact logs, hard delete vs soft delete, optional encryption at rest
 
 Definition of done:
 
-- локальный запуск и smoke path документированы
-- оператору понятно, как проверить готовность и как чистить state
-- maintenance story не размазана по ad-hoc shell snippets
+- operators can protect the shim, observe it, and set sane local limits without
+  patching code
+- readiness and maintenance story are documented
+- remaining infra work is explicitly tracked and not hidden behind overclaims
 
 ## Более поздние milestone-пункты
 
 Это не “делаем прямо сейчас”, но важно не потерять:
 
 - Postgres / multi-instance mode без abstraction zoo
-- auth, tenanting, quotas
+- multi-tenant authz / tenanting / richer quotas
 - governance: redact logs, hard delete vs soft delete, optional encryption at rest
-- metrics / dashboards / admin tooling
+- dashboards / exporters / admin tooling
 - full multimodal parity только после стабилизации core Responses/Conversations surface
 
 ## Technical debt watchlist

@@ -22,6 +22,23 @@ type Config struct {
 	ReadTimeout                                    time.Duration
 	WriteTimeout                                   time.Duration
 	IdleTimeout                                    time.Duration
+	ShimAuthMode                                   string
+	ShimAuthBearerTokens                           []string
+	ShimRateLimitEnabled                           bool
+	ShimRateLimitRequestsPerMinute                 int
+	ShimRateLimitBurst                             int
+	ShimMetricsEnabled                             bool
+	ShimMetricsPath                                string
+	ShimJSONBodyLimitBytes                         int64
+	RetrievalFileUploadMaxBytes                    int64
+	RetrievalMaxConcurrentSearches                 int
+	RetrievalMaxSearchQueries                      int
+	RetrievalMaxGroundingChunks                    int
+	ResponsesCodeInterpreterMaxConcurrentRuns      int
+	ResponsesCodeInterpreterGeneratedFiles         int
+	ResponsesCodeInterpreterGeneratedFileBytes     int64
+	ResponsesCodeInterpreterGeneratedTotalBytes    int64
+	ResponsesCodeInterpreterRemoteInputFileBytes   int64
 	LogLevel                                       slog.Level
 	LogFilePath                                    string
 	RetrievalIndexBackend                          string
@@ -51,6 +68,8 @@ const (
 	ResponsesModePreferLocal                                       = "prefer_local"
 	ResponsesModePreferUpstream                                    = "prefer_upstream"
 	ResponsesModeLocalOnly                                         = "local_only"
+	ShimAuthModeDisabled                                           = "disabled"
+	ShimAuthModeStaticBearer                                       = "static_bearer"
 	ResponsesCodeInterpreterBackendDisabled                        = "disabled"
 	ResponsesCodeInterpreterBackendUnsafeHost                      = "unsafe_host"
 	ResponsesCodeInterpreterBackendDocker                          = "docker"
@@ -75,6 +94,11 @@ func Load(configPath string) (Config, error) {
 		SQLitePath:                                     strings.TrimSpace(v.GetString("sqlite.path")),
 		LlamaBaseURL:                                   strings.TrimRight(strings.TrimSpace(v.GetString("llama.base_url")), "/"),
 		ConfigFile:                                     v.ConfigFileUsed(),
+		ShimAuthMode:                                   strings.ToLower(strings.TrimSpace(v.GetString("shim.auth.mode"))),
+		ShimAuthBearerTokens:                           parseStringList(v, "shim.auth.bearer_tokens"),
+		ShimRateLimitEnabled:                           v.GetBool("shim.rate_limit.enabled"),
+		ShimMetricsEnabled:                             v.GetBool("shim.metrics.enabled"),
+		ShimMetricsPath:                                strings.TrimSpace(v.GetString("shim.metrics.path")),
 		LogLevel:                                       slog.LevelInfo,
 		LogFilePath:                                    strings.TrimSpace(v.GetString("log.file_path")),
 		RetrievalIndexBackend:                          strings.TrimSpace(v.GetString("retrieval.index.backend")),
@@ -118,6 +142,9 @@ func Load(configPath string) (Config, error) {
 	if err := parseLogLevel(v.GetString("log.level"), &cfg.LogLevel); err != nil {
 		return Config{}, fmt.Errorf("parse log.level: %w", err)
 	}
+	if err := parseShimAuthMode(cfg.ShimAuthMode); err != nil {
+		return Config{}, fmt.Errorf("parse shim.auth.mode: %w", err)
+	}
 	normalizedRetrieval, err := retrieval.NormalizeConfig(retrieval.Config{
 		IndexBackend: cfg.RetrievalIndexBackend,
 		Embedder: retrieval.EmbedderConfig{
@@ -145,6 +172,46 @@ func Load(configPath string) (Config, error) {
 	if err := parseCodeInterpreterInputFileURLPolicy(cfg.ResponsesCodeInterpreterInputFileURLPolicy); err != nil {
 		return Config{}, fmt.Errorf("parse responses.code_interpreter.input_file_url_policy: %w", err)
 	}
+	jsonBodyLimit, err := parseByteSize(v.GetString("shim.limits.json_body_bytes"))
+	if err != nil {
+		return Config{}, fmt.Errorf("parse shim.limits.json_body_bytes: %w", err)
+	}
+	cfg.ShimJSONBodyLimitBytes = jsonBodyLimit
+	retrievalUploadLimit, err := parseByteSize(v.GetString("shim.limits.retrieval_file_upload_bytes"))
+	if err != nil {
+		return Config{}, fmt.Errorf("parse shim.limits.retrieval_file_upload_bytes: %w", err)
+	}
+	cfg.RetrievalFileUploadMaxBytes = retrievalUploadLimit
+	retrievalMaxConcurrentSearches, err := parsePositiveInt(v.GetString("shim.limits.retrieval_max_concurrent_searches"))
+	if err != nil {
+		return Config{}, fmt.Errorf("parse shim.limits.retrieval_max_concurrent_searches: %w", err)
+	}
+	cfg.RetrievalMaxConcurrentSearches = retrievalMaxConcurrentSearches
+	retrievalMaxSearchQueries, err := parsePositiveInt(v.GetString("shim.limits.retrieval_max_search_queries"))
+	if err != nil {
+		return Config{}, fmt.Errorf("parse shim.limits.retrieval_max_search_queries: %w", err)
+	}
+	cfg.RetrievalMaxSearchQueries = retrievalMaxSearchQueries
+	retrievalMaxGroundingChunks, err := parsePositiveInt(v.GetString("shim.limits.retrieval_max_grounding_chunks"))
+	if err != nil {
+		return Config{}, fmt.Errorf("parse shim.limits.retrieval_max_grounding_chunks: %w", err)
+	}
+	cfg.RetrievalMaxGroundingChunks = retrievalMaxGroundingChunks
+	codeInterpreterMaxConcurrentRuns, err := parsePositiveInt(v.GetString("shim.limits.code_interpreter_max_concurrent_runs"))
+	if err != nil {
+		return Config{}, fmt.Errorf("parse shim.limits.code_interpreter_max_concurrent_runs: %w", err)
+	}
+	cfg.ResponsesCodeInterpreterMaxConcurrentRuns = codeInterpreterMaxConcurrentRuns
+	rateLimitRPM, err := parsePositiveInt(v.GetString("shim.rate_limit.requests_per_minute"))
+	if err != nil {
+		return Config{}, fmt.Errorf("parse shim.rate_limit.requests_per_minute: %w", err)
+	}
+	cfg.ShimRateLimitRequestsPerMinute = rateLimitRPM
+	rateLimitBurst, err := parsePositiveInt(v.GetString("shim.rate_limit.burst"))
+	if err != nil {
+		return Config{}, fmt.Errorf("parse shim.rate_limit.burst: %w", err)
+	}
+	cfg.ShimRateLimitBurst = rateLimitBurst
 	if err := parseDuration(v.GetString("responses.code_interpreter.execution_timeout"), &cfg.ResponsesCodeInterpreterTimeout); err != nil {
 		return Config{}, fmt.Errorf("parse responses.code_interpreter.execution_timeout: %w", err)
 	}
@@ -171,6 +238,26 @@ func Load(configPath string) (Config, error) {
 	if cfg.ResponsesCodeInterpreterDockerCPU == "" {
 		return Config{}, fmt.Errorf("parse responses.code_interpreter.docker.cpu_limit: %w", strconv.ErrSyntax)
 	}
+	generatedFiles, err := parsePositiveInt(v.GetString("responses.code_interpreter.limits.generated_files"))
+	if err != nil {
+		return Config{}, fmt.Errorf("parse responses.code_interpreter.limits.generated_files: %w", err)
+	}
+	cfg.ResponsesCodeInterpreterGeneratedFiles = generatedFiles
+	generatedFileBytes, err := parseByteSize(v.GetString("responses.code_interpreter.limits.generated_file_bytes"))
+	if err != nil {
+		return Config{}, fmt.Errorf("parse responses.code_interpreter.limits.generated_file_bytes: %w", err)
+	}
+	cfg.ResponsesCodeInterpreterGeneratedFileBytes = generatedFileBytes
+	generatedTotalBytes, err := parseByteSize(v.GetString("responses.code_interpreter.limits.generated_total_bytes"))
+	if err != nil {
+		return Config{}, fmt.Errorf("parse responses.code_interpreter.limits.generated_total_bytes: %w", err)
+	}
+	cfg.ResponsesCodeInterpreterGeneratedTotalBytes = generatedTotalBytes
+	remoteInputFileBytes, err := parseByteSize(v.GetString("responses.code_interpreter.limits.remote_input_file_bytes"))
+	if err != nil {
+		return Config{}, fmt.Errorf("parse responses.code_interpreter.limits.remote_input_file_bytes: %w", err)
+	}
+	cfg.ResponsesCodeInterpreterRemoteInputFileBytes = remoteInputFileBytes
 
 	return cfg, nil
 }
@@ -180,6 +267,19 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("shim.read_timeout", "15s")
 	v.SetDefault("shim.write_timeout", "90s")
 	v.SetDefault("shim.idle_timeout", "60s")
+	v.SetDefault("shim.auth.mode", ShimAuthModeDisabled)
+	v.SetDefault("shim.auth.bearer_tokens", []string{})
+	v.SetDefault("shim.rate_limit.enabled", false)
+	v.SetDefault("shim.rate_limit.requests_per_minute", "120")
+	v.SetDefault("shim.rate_limit.burst", "60")
+	v.SetDefault("shim.metrics.enabled", true)
+	v.SetDefault("shim.metrics.path", "/metrics")
+	v.SetDefault("shim.limits.json_body_bytes", "1MiB")
+	v.SetDefault("shim.limits.retrieval_file_upload_bytes", "64MiB")
+	v.SetDefault("shim.limits.retrieval_max_concurrent_searches", "8")
+	v.SetDefault("shim.limits.retrieval_max_search_queries", "4")
+	v.SetDefault("shim.limits.retrieval_max_grounding_chunks", "20")
+	v.SetDefault("shim.limits.code_interpreter_max_concurrent_runs", "2")
 	v.SetDefault("sqlite.path", "./data/shim.db")
 	v.SetDefault("llama.base_url", "http://127.0.0.1:8081")
 	v.SetDefault("llama.timeout", "60s")
@@ -206,6 +306,10 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("responses.code_interpreter.input_file_url_policy", ResponsesCodeInterpreterInputFileURLPolicyDisabled)
 	v.SetDefault("responses.code_interpreter.input_file_url_allow_hosts", []string{})
 	v.SetDefault("responses.code_interpreter.cleanup_interval", "1m")
+	v.SetDefault("responses.code_interpreter.limits.generated_files", "8")
+	v.SetDefault("responses.code_interpreter.limits.generated_file_bytes", "2MiB")
+	v.SetDefault("responses.code_interpreter.limits.generated_total_bytes", "8MiB")
+	v.SetDefault("responses.code_interpreter.limits.remote_input_file_bytes", "50MiB")
 }
 
 func resolveConfigPath(configPath string) string {
@@ -284,6 +388,15 @@ func parseResponsesMode(value string) error {
 	}
 }
 
+func parseShimAuthMode(value string) error {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", ShimAuthModeDisabled, ShimAuthModeStaticBearer:
+		return nil
+	default:
+		return strconv.ErrSyntax
+	}
+}
+
 func parseCodeInterpreterBackend(value string) error {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case ResponsesCodeInterpreterBackendDisabled, ResponsesCodeInterpreterBackendUnsafeHost, ResponsesCodeInterpreterBackendDocker:
@@ -310,6 +423,44 @@ func parsePositiveInt(value string) (int, error) {
 		return 0, err
 	}
 	if parsed <= 0 {
+		return 0, strconv.ErrSyntax
+	}
+	return parsed, nil
+}
+
+func parseByteSize(value string) (int64, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return 0, strconv.ErrSyntax
+	}
+
+	suffixes := []struct {
+		Suffix string
+		Scale  int64
+	}{
+		{"kib", 1 << 10},
+		{"mib", 1 << 20},
+		{"gib", 1 << 30},
+		{"kb", 1 << 10},
+		{"mb", 1 << 20},
+		{"gb", 1 << 30},
+		{"b", 1},
+	}
+	lower := strings.ToLower(trimmed)
+	for _, suffix := range suffixes {
+		if !strings.HasSuffix(lower, suffix.Suffix) {
+			continue
+		}
+		base := strings.TrimSpace(trimmed[:len(trimmed)-len(suffix.Suffix)])
+		parsed, err := strconv.ParseInt(base, 10, 64)
+		if err != nil || parsed <= 0 {
+			return 0, strconv.ErrSyntax
+		}
+		return parsed * suffix.Scale, nil
+	}
+
+	parsed, err := strconv.ParseInt(trimmed, 10, 64)
+	if err != nil || parsed <= 0 {
 		return 0, strconv.ErrSyntax
 	}
 	return parsed, nil

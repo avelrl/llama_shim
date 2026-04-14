@@ -34,6 +34,10 @@ type responseHandler struct {
 	logger                       *slog.Logger
 	service                      *service.ResponseService
 	proxy                        *proxyHandler
+	metrics                      *Metrics
+	serviceLimits                ServiceLimits
+	retrievalGate                *concurrencyGate
+	codeInterpreterGate          *concurrencyGate
 	responsesMode                string
 	customToolsMode              string
 	codexCompatibilityEnabled    bool
@@ -43,11 +47,15 @@ type responseHandler struct {
 	localCodeInterpreterSessions LocalCodeInterpreterSessionStore
 }
 
-func newResponseHandler(logger *slog.Logger, service *service.ResponseService, proxy *proxyHandler, responsesMode string, customToolsMode string, codexCompatibilityEnabled bool, forceCodexToolChoiceRequired bool, localCodeInterpreter LocalCodeInterpreterRuntimeConfig, localCodeInterpreterFiles LocalCodeInterpreterFileStore, localCodeInterpreterSessions LocalCodeInterpreterSessionStore) *responseHandler {
+func newResponseHandler(logger *slog.Logger, service *service.ResponseService, proxy *proxyHandler, responsesMode string, customToolsMode string, codexCompatibilityEnabled bool, forceCodexToolChoiceRequired bool, localCodeInterpreter LocalCodeInterpreterRuntimeConfig, localCodeInterpreterFiles LocalCodeInterpreterFileStore, localCodeInterpreterSessions LocalCodeInterpreterSessionStore, metrics *Metrics, serviceLimits ServiceLimits, retrievalGate *concurrencyGate, codeInterpreterGate *concurrencyGate) *responseHandler {
 	return &responseHandler{
 		logger:                       logger,
 		service:                      service,
 		proxy:                        proxy,
+		metrics:                      metrics,
+		serviceLimits:                normalizeServiceLimits(serviceLimits),
+		retrievalGate:                retrievalGate,
+		codeInterpreterGate:          codeInterpreterGate,
 		responsesMode:                normalizeResponsesMode(responsesMode),
 		customToolsMode:              customToolsMode,
 		codexCompatibilityEnabled:    codexCompatibilityEnabled,
@@ -932,8 +940,7 @@ func (h *responseHandler) proxyBufferedJSONRequest(w http.ResponseWriter, r *htt
 
 func readJSONBody(w http.ResponseWriter, r *http.Request) ([]byte, error) {
 	defer r.Body.Close()
-	reader := http.MaxBytesReader(w, r.Body, 1<<20)
-	body, err := io.ReadAll(reader)
+	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		var maxBytesErr *http.MaxBytesError
 		if errors.As(err, &maxBytesErr) {

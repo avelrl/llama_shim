@@ -13,6 +13,7 @@ var forwardedRequestHeaders = []string{
 	"Authorization",
 	"Api-Key",
 	"X-Api-Key",
+	"X-Client-Request-Id",
 	"OpenAI-Organization",
 	"OpenAI-Project",
 }

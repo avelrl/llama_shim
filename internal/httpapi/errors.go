@@ -49,11 +49,14 @@ func MapError(ctx context.Context, logger *slog.Logger, err error) (int, apiErro
 
 	var validationErr *domain.ValidationError
 	var toolChoiceErr *toolChoiceIncompatibleBackendError
+	var rateLimitErr *rateLimitExceededError
 	switch {
 	case errors.As(mappedErr, &validationErr):
 		return http.StatusBadRequest, newAPIError("invalid_request_error", validationErr.Message, validationErr.Param, "")
 	case errors.As(mappedErr, &toolChoiceErr):
 		return http.StatusNotImplemented, newAPIError("server_error", toolChoiceErr.Error(), "tool_choice", "tool_choice_incompatible_backend")
+	case errors.As(mappedErr, &rateLimitErr):
+		return http.StatusTooManyRequests, newAPIError("rate_limit_error", rateLimitErr.Error(), "", rateLimitErr.Code)
 	case errors.Is(mappedErr, sqlite.ErrNotFound), errors.Is(mappedErr, service.ErrNotFound):
 		return http.StatusNotFound, newAPIError("not_found_error", mappedErr.Error(), "", "")
 	case errors.Is(mappedErr, sqlite.ErrConflict), errors.Is(mappedErr, service.ErrConflict):

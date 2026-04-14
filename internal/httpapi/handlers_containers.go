@@ -16,20 +16,21 @@ import (
 )
 
 type containerHandler struct {
-	logger    *slog.Logger
-	manager   localCodeInterpreterContainerManager
-	fileStore LocalCodeInterpreterFileStore
+	logger        *slog.Logger
+	manager       localCodeInterpreterContainerManager
+	fileStore     LocalCodeInterpreterFileStore
+	serviceLimits ServiceLimits
 }
 
 type containerObjectResponse struct {
-	ID           string                                         `json:"id"`
-	Object       string                                         `json:"object"`
-	CreatedAt    int64                                          `json:"created_at"`
-	Status       string                                         `json:"status"`
+	ID           string                                           `json:"id"`
+	Object       string                                           `json:"object"`
+	CreatedAt    int64                                            `json:"created_at"`
+	Status       string                                           `json:"status"`
 	ExpiresAfter *domain.CodeInterpreterContainerExpirationPolicy `json:"expires_after,omitempty"`
-	LastActiveAt int64                                          `json:"last_active_at"`
-	MemoryLimit  string                                         `json:"memory_limit"`
-	Name         string                                         `json:"name"`
+	LastActiveAt int64                                            `json:"last_active_at"`
+	MemoryLimit  string                                           `json:"memory_limit"`
+	Name         string                                           `json:"name"`
 }
 
 type containerListResponse struct {
@@ -70,11 +71,12 @@ type containerFileDeletionResponse struct {
 	Deleted bool   `json:"deleted"`
 }
 
-func newContainerHandler(logger *slog.Logger, runtime LocalCodeInterpreterRuntimeConfig, files LocalCodeInterpreterFileStore, sessions LocalCodeInterpreterSessionStore) *containerHandler {
+func newContainerHandler(logger *slog.Logger, runtime LocalCodeInterpreterRuntimeConfig, files LocalCodeInterpreterFileStore, sessions LocalCodeInterpreterSessionStore, serviceLimits ServiceLimits) *containerHandler {
 	return &containerHandler{
-		logger:    logger,
-		manager:   newLocalCodeInterpreterContainerManager(runtime, files, sessions),
-		fileStore: files,
+		logger:        logger,
+		manager:       newLocalCodeInterpreterContainerManager(runtime, files, sessions),
+		fileStore:     files,
+		serviceLimits: normalizeServiceLimits(serviceLimits),
 	}
 }
 
@@ -186,10 +188,11 @@ func (h *containerHandler) deleteContainer(w http.ResponseWriter, r *http.Reques
 
 func (h *containerHandler) createContainerFile(w http.ResponseWriter, r *http.Request) {
 	containerID := r.PathValue("container_id")
+	maxUploadBytes := h.serviceLimits.RetrievalFileUploadBytes
 	contentType := strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Type")))
 	if strings.HasPrefix(contentType, "multipart/form-data") {
-		r.Body = http.MaxBytesReader(w, r.Body, maxLocalFileUploadBytes+1<<20)
-		if err := r.ParseMultipartForm(maxLocalFileUploadBytes); err != nil {
+		r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes+1<<20)
+		if err := r.ParseMultipartForm(maxUploadBytes); err != nil {
 			WriteError(w, http.StatusBadRequest, "invalid_request_error", "malformed multipart form body", "")
 			return
 		}
@@ -199,13 +202,13 @@ func (h *containerHandler) createContainerFile(w http.ResponseWriter, r *http.Re
 			return
 		}
 		defer uploaded.Close()
-		content, err := io.ReadAll(io.LimitReader(uploaded, maxLocalFileUploadBytes+1))
+		content, err := io.ReadAll(io.LimitReader(uploaded, maxUploadBytes+1))
 		if err != nil {
 			WriteError(w, http.StatusBadRequest, "invalid_request_error", "failed to read uploaded file", "")
 			return
 		}
-		if len(content) > maxLocalFileUploadBytes {
-			h.writeError(w, r, domain.NewValidationError("file", "file exceeds local 64 MiB upload limit"))
+		if int64(len(content)) > maxUploadBytes {
+			h.writeError(w, r, domain.NewValidationError("file", "file exceeds the configured shim-local upload limit"))
 			return
 		}
 		containerFile, err := h.manager.createUploadedContainerFile(r.Context(), containerID, header.Filename, content)

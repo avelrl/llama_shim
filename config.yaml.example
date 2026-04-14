@@ -9,6 +9,37 @@ shim:
   write_timeout: 90s
   # Idle timeout for keep-alive connections.
   idle_timeout: 60s
+  auth:
+    # disabled: no shim-owned ingress auth
+    # static_bearer: require one of the configured bearer tokens on non-health routes
+    mode: disabled
+    # Shared ingress tokens accepted by the shim itself.
+    # These tokens are not forwarded upstream.
+    bearer_tokens: []
+  rate_limit:
+    # Enables a shim-owned in-memory per-client request limiter.
+    enabled: false
+    # Sustained request budget per minute.
+    requests_per_minute: 120
+    # Immediate burst budget before refill.
+    burst: 60
+  metrics:
+    # Enables a shim-owned Prometheus-text metrics endpoint.
+    enabled: true
+    path: /metrics
+  limits:
+    # Maximum JSON request body for non-multipart routes.
+    json_body_bytes: 1MiB
+    # Maximum uploaded file size for /v1/files and /v1/containers/*/files.
+    retrieval_file_upload_bytes: 64MiB
+    # Maximum concurrent retrieval searches across raw vector search and local file_search.
+    retrieval_max_concurrent_searches: 8
+    # Maximum number of rewritten search queries per retrieval request.
+    retrieval_max_search_queries: 4
+    # Maximum number of grounding chunks injected into local file_search generation context.
+    retrieval_max_grounding_chunks: 20
+    # Maximum concurrent shim-local code_interpreter executions.
+    code_interpreter_max_concurrent_runs: 2
 
 # Local state storage owned by the shim.
 sqlite:
@@ -43,7 +74,7 @@ retrieval:
     # embedanything: EmbedAnything Actix server using the same OpenAI-compatible surface
     backend: disabled
     # Base URL of the embeddings server. For EmbedAnything this is typically
-    # http://127.0.0.1:8082
+    # http://127.0.0.1:8080
     base_url: ""
     # Embedding model identifier understood by the embedder server.
     model: ""
@@ -75,3 +106,36 @@ responses:
     # When true, Codex-like requests with tool_choice=auto are rewritten to
     # required before they are sent upstream.
     force_tool_choice_required: true
+  code_interpreter:
+    # disabled: reject shim-local code_interpreter execution
+    # unsafe_host: dev-only direct host python execution
+    # docker: hardened Docker-backed local execution
+    backend: disabled
+    # Python binary used by the unsafe_host backend.
+    python_binary: python3
+    # Maximum execution time per local code_interpreter run.
+    execution_timeout: 20s
+    docker:
+      # Docker binary used by the docker backend.
+      binary: docker
+      # Sandbox image used for local code_interpreter runs.
+      image: python:3.12-slim
+      memory_limit: 1g
+      cpu_limit: "0.5"
+      pids_limit: 64
+    # disabled: reject remote input_file.file_url
+    # allowlist: allow only configured hosts
+    # unsafe_allow_http_https: allow any http(s) URL
+    input_file_url_policy: disabled
+    input_file_url_allow_hosts: []
+    # Sweep interval for expired shim-managed code_interpreter containers.
+    cleanup_interval: 1m
+    limits:
+      # Maximum number of generated artifacts persisted from one run.
+      generated_files: 8
+      # Maximum size of one generated artifact.
+      generated_file_bytes: 2MiB
+      # Maximum aggregate size of persisted generated artifacts from one run.
+      generated_total_bytes: 8MiB
+      # Maximum size fetched from one remote input_file.file_url.
+      remote_input_file_bytes: 50MiB

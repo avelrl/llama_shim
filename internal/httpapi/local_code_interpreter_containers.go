@@ -334,17 +334,18 @@ func (m localCodeInterpreterContainerManager) persistGeneratedFiles(ctx context.
 	if len(generated) == 0 {
 		return nil, nil
 	}
-	saved := make([]localCodeInterpreterGeneratedFile, 0, min(len(generated), maxLocalCodeInterpreterGeneratedFiles))
+	limits := m.runtime.normalizedLimits()
+	saved := make([]localCodeInterpreterGeneratedFile, 0, min(len(generated), limits.GeneratedFiles))
 	totalBytes := 0
 	now := domain.NowUTC().Unix()
 	for _, file := range generated {
-		if len(saved) >= maxLocalCodeInterpreterGeneratedFiles {
+		if len(saved) >= limits.GeneratedFiles {
 			break
 		}
-		if len(file.Content) > maxLocalCodeInterpreterGeneratedFileBytes {
+		if len(file.Content) > limits.GeneratedFileBytes {
 			continue
 		}
-		if totalBytes+len(file.Content) > maxLocalCodeInterpreterGeneratedTotalBytes {
+		if totalBytes+len(file.Content) > limits.GeneratedTotalBytes {
 			continue
 		}
 

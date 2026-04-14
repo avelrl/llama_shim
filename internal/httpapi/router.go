@@ -17,6 +17,11 @@ type RouterDeps struct {
 	LlamaClient                           *llama.Client
 	ResponseService                       *service.ResponseService
 	ConversationService                   *service.ConversationService
+	Auth                                  StaticBearerAuthConfig
+	RateLimit                             RateLimitConfig
+	MetricsConfig                         MetricsConfig
+	Metrics                               *Metrics
+	ServiceLimits                         ServiceLimits
 	ChatCompletionsStoreWhenOmitted       bool
 	ResponsesMode                         string
 	ResponsesCustomToolsMode              string
@@ -31,6 +36,19 @@ type RouterDeps struct {
 const readyzUpstreamTimeout = 2 * time.Second
 
 func NewRouter(deps RouterDeps) http.Handler {
+	authConfig, err := normalizeStaticBearerAuthConfig(deps.Auth)
+	if err != nil {
+		panic(err)
+	}
+	rateLimitConfig, err := normalizeRateLimitConfig(deps.RateLimit)
+	if err != nil {
+		panic(err)
+	}
+	metricsConfig := normalizeMetricsConfig(deps.MetricsConfig)
+	serviceLimits := normalizeServiceLimits(deps.ServiceLimits)
+	retrievalGate := newConcurrencyGate("retrieval_search", serviceLimits.RetrievalMaxConcurrentSearches, deps.Metrics)
+	codeInterpreterGate := newConcurrencyGate("local_code_interpreter", serviceLimits.CodeInterpreterMaxConcurrentRuns, deps.Metrics)
+
 	proxyHandler := newProxyHandler(deps.Logger, deps.LlamaClient, deps.Store, deps.ChatCompletionsStoreWhenOmitted)
 	responseHandler := newResponseHandler(
 		deps.Logger,
@@ -43,10 +61,14 @@ func NewRouter(deps RouterDeps) http.Handler {
 		deps.LocalCodeInterpreter,
 		deps.Store,
 		deps.Store,
+		deps.Metrics,
+		serviceLimits,
+		retrievalGate,
+		codeInterpreterGate,
 	)
 	conversationHandler := newConversationHandler(deps.Logger, deps.ConversationService)
-	retrievalHandler := newRetrievalHandler(deps.Logger, deps.Store)
-	containerHandler := newContainerHandler(deps.Logger, deps.LocalCodeInterpreter, deps.Store, deps.Store)
+	retrievalHandler := newRetrievalHandler(deps.Logger, deps.Store, deps.Metrics, serviceLimits, retrievalGate)
+	containerHandler := newContainerHandler(deps.Logger, deps.LocalCodeInterpreter, deps.Store, deps.Store, serviceLimits)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -88,6 +110,9 @@ func NewRouter(deps RouterDeps) http.Handler {
 		}
 		WriteJSON(w, http.StatusOK, map[string]string{"status": "ready"})
 	})
+	if metricsConfig.Enabled && deps.Metrics != nil {
+		mux.Handle(metricsConfig.Path, deps.Metrics.Handler())
+	}
 	mux.HandleFunc("/v1/responses", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			WriteError(w, http.StatusMethodNotAllowed, "invalid_request_error", "method not allowed", "")
@@ -324,9 +349,12 @@ func NewRouter(deps RouterDeps) http.Handler {
 	return Chain(
 		mux,
 		RequestIDMiddleware,
-		ForwardHeadersMiddleware,
+		RequestLogMiddleware(deps.Logger, deps.Metrics),
 		RecoverMiddleware(deps.Logger),
-		RequestLogMiddleware(deps.Logger),
+		JSONBodyLimitMiddleware(serviceLimits.JSONBodyBytes),
+		StaticBearerAuthMiddleware(authConfig, deps.Metrics),
+		RateLimitMiddleware(rateLimitConfig, deps.Metrics, metricsConfig.Path),
+		ForwardHeadersMiddleware,
 	)
 }
 

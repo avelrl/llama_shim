@@ -229,6 +229,340 @@ func TestReadyzReturns503WhenRetrievalEmbedderIsUnavailable(t *testing.T) {
 	require.Equal(t, "retrieval embedder is not ready", payload["error"]["message"])
 }
 
+func TestShimStaticBearerAuthProtectsAPISurfaceButSkipsHealthChecks(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		AuthMode:     config.ShimAuthModeStaticBearer,
+		BearerTokens: []string{"shim-secret"},
+	})
+
+	for _, path := range []string{"/healthz", "/readyz"} {
+		req, err := http.NewRequest(http.MethodGet, app.Server.URL+path, nil)
+		require.NoError(t, err)
+
+		resp, err := app.Client().Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+	}
+
+	status, _, unauthorized := rawRequestWithHeaders(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model": "test-model",
+		"input": "Say OK and nothing else",
+	}, nil)
+	require.Equal(t, http.StatusUnauthorized, status)
+	require.Equal(t, "authentication_error", asStringAny(unauthorized["error"].(map[string]any)["type"]))
+
+	status, headers, invalid := rawRequestWithHeaders(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model": "test-model",
+		"input": "Say OK and nothing else",
+	}, map[string]string{
+		"Authorization": "Bearer wrong-secret",
+	})
+	require.Equal(t, http.StatusUnauthorized, status)
+	require.Equal(t, "Bearer", headers.Get("WWW-Authenticate"))
+	require.Equal(t, "authentication_error", asStringAny(invalid["error"].(map[string]any)["type"]))
+
+	status, _, authorized := rawRequestWithHeaders(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model": "test-model",
+		"input": "Say OK and nothing else",
+	}, map[string]string{
+		"Authorization": "Bearer shim-secret",
+	})
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, "response", asStringAny(authorized["object"]))
+}
+
+func TestShimStaticBearerAuthDoesNotLeakIngressAuthorizationUpstream(t *testing.T) {
+	var (
+		mu                sync.Mutex
+		seenAuthorization string
+		seenClientID      string
+	)
+
+	llamaServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/chat/completions":
+			mu.Lock()
+			seenAuthorization = r.Header.Get("Authorization")
+			seenClientID = r.Header.Get("X-Client-Request-Id")
+			mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+				"id":      "chatcmpl_auth_test",
+				"object":  "chat.completion",
+				"created": time.Now().Unix(),
+				"model":   "test-model",
+				"choices": []map[string]any{
+					{
+						"index": 0,
+						"message": map[string]any{
+							"role":    "assistant",
+							"content": "ok",
+						},
+						"finish_reason": "stop",
+					},
+				},
+				"usage": map[string]any{
+					"prompt_tokens":     1,
+					"completion_tokens": 1,
+					"total_tokens":      2,
+				},
+			}))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/models":
+			w.Header().Set("Content-Type", "application/json")
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+				"object": "list",
+				"data": []map[string]any{
+					{"id": "test-model", "object": "model", "created": time.Now().Unix(), "owned_by": "shim-test"},
+				},
+			}))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer llamaServer.Close()
+
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		LlamaBaseURL: llamaServer.URL,
+		AuthMode:     config.ShimAuthModeStaticBearer,
+		BearerTokens: []string{"shim-secret"},
+	})
+
+	status, _, body := rawRequestWithHeaders(t, app, http.MethodPost, "/v1/chat/completions", map[string]any{
+		"model": "test-model",
+		"store": false,
+		"messages": []map[string]any{
+			{"role": "user", "content": "Say OK"},
+		},
+	}, map[string]string{
+		"Authorization":       "Bearer shim-secret",
+		"X-Client-Request-Id": "client-123",
+	})
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, "chat.completion", asStringAny(body["object"]))
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Empty(t, seenAuthorization)
+	require.Equal(t, "client-123", seenClientID)
+}
+
+func TestShimRejectsInvalidClientRequestID(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	testCases := []string{
+		"привет",
+		strings.Repeat("a", 513),
+	}
+	for _, headerValue := range testCases {
+		status, _, body := rawRequestWithHeaders(t, app, http.MethodPost, "/v1/responses", map[string]any{
+			"model": "test-model",
+			"input": "Say OK and nothing else",
+		}, map[string]string{
+			"X-Client-Request-Id": headerValue,
+		})
+		require.Equal(t, http.StatusBadRequest, status)
+		errorPayload := body["error"].(map[string]any)
+		require.Equal(t, "invalid_request_error", asStringAny(errorPayload["type"]))
+		require.Contains(t, asStringAny(errorPayload["message"]), "X-Client-Request-Id")
+	}
+}
+
+func TestShimRateLimitRejectsExcessRequests(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		AuthMode:                   config.ShimAuthModeStaticBearer,
+		BearerTokens:               []string{"shim-secret"},
+		RateLimitEnabled:           true,
+		RateLimitRequestsPerMinute: 1,
+		RateLimitBurst:             1,
+	})
+
+	headers := map[string]string{"Authorization": "Bearer shim-secret"}
+	status, rateHeaders, body := rawRequestWithHeaders(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model": "test-model",
+		"input": "Say OK and nothing else",
+	}, headers)
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, "1", rateHeaders.Get("X-RateLimit-Limit-Requests"))
+	require.Equal(t, "0", rateHeaders.Get("X-RateLimit-Remaining-Requests"))
+	require.NotEmpty(t, rateHeaders.Get("X-RateLimit-Reset-Requests"))
+	require.Equal(t, "response", asStringAny(body["object"]))
+
+	status, rateHeaders, body = rawRequestWithHeaders(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model": "test-model",
+		"input": "Say OK and nothing else",
+	}, headers)
+	require.Equal(t, http.StatusTooManyRequests, status)
+	require.Equal(t, "1", rateHeaders.Get("X-RateLimit-Limit-Requests"))
+	require.Equal(t, "0", rateHeaders.Get("X-RateLimit-Remaining-Requests"))
+	require.NotEmpty(t, rateHeaders.Get("X-RateLimit-Reset-Requests"))
+	errorPayload := body["error"].(map[string]any)
+	require.Equal(t, "rate_limit_error", asStringAny(errorPayload["type"]))
+	require.Equal(t, "rate_limit_exceeded", asStringAny(errorPayload["code"]))
+}
+
+func TestShimMetricsEndpointExposesPrometheusTextAndSharesIngressAuth(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		AuthMode:     config.ShimAuthModeStaticBearer,
+		BearerTokens: []string{"shim-secret"},
+	})
+
+	req, err := http.NewRequest(http.MethodGet, app.Server.URL+"/healthz", nil)
+	require.NoError(t, err)
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	req, err = http.NewRequest(http.MethodGet, app.Server.URL+"/metrics", nil)
+	require.NoError(t, err)
+	resp, err = app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+
+	req, err = http.NewRequest(http.MethodGet, app.Server.URL+"/metrics", nil)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer shim-secret")
+	resp, err = app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Contains(t, resp.Header.Get("Content-Type"), "text/plain")
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	text := string(body)
+	require.Contains(t, text, "shim_http_requests_total")
+	require.Contains(t, text, `shim_auth_failures_total{reason="missing_bearer"} 1`)
+	require.Contains(t, text, `shim_http_requests_total{method="GET",route="/healthz",status="200"}`)
+}
+
+func TestShimJSONBodyLimitReturnsInvalidRequestError(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		JSONBodyLimitBytes: 128,
+	})
+
+	reqBody := mustJSON(t, map[string]any{
+		"model": "test-model",
+		"input": strings.Repeat("a", 512),
+	})
+	req, err := http.NewRequest(http.MethodPost, app.Server.URL+"/v1/responses", bytes.NewReader(reqBody))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+
+	var payload map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&payload))
+	errorPayload := payload["error"].(map[string]any)
+	require.Equal(t, "invalid_request_error", asStringAny(errorPayload["type"]))
+	require.Equal(t, "request body is too large", asStringAny(errorPayload["message"]))
+}
+
+func TestShimRetrievalUploadLimitRejectsOversizedFiles(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		RetrievalFileUploadMaxBytes: 8,
+	})
+
+	status, payload := uploadFile(t, app, "too-big.txt", "assistants", []byte("0123456789"), nil)
+	require.Equal(t, http.StatusBadRequest, status)
+	errorPayload := payload["error"].(map[string]any)
+	require.Equal(t, "invalid_request_error", asStringAny(errorPayload["type"]))
+	require.Contains(t, asStringAny(errorPayload["message"]), "configured shim-local upload limit")
+	require.Equal(t, "file", asStringAny(errorPayload["param"]))
+}
+
+func TestShimRetrievalSearchHonorsConfiguredMaxQueryCount(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		RetrievalMaxSearchQueries: 1,
+	})
+
+	status, file := uploadFile(t, app, "doc.txt", "assistants", []byte("banana smoothie recipe"), nil)
+	require.Equal(t, http.StatusOK, status)
+	fileID := asStringAny(file["id"])
+
+	status, store := rawRequest(t, app, http.MethodPost, "/v1/vector_stores", map[string]any{
+		"name":     "recipes",
+		"file_ids": []string{fileID},
+	})
+	require.Equal(t, http.StatusOK, status)
+	storeID := asStringAny(store["id"])
+
+	status, body := rawRequest(t, app, http.MethodPost, "/v1/vector_stores/"+storeID+"/search", map[string]any{
+		"query": []string{"banana smoothie", "fruit drink"},
+	})
+	require.Equal(t, http.StatusBadRequest, status)
+	errorPayload := body["error"].(map[string]any)
+	require.Equal(t, "invalid_request_error", asStringAny(errorPayload["type"]))
+	require.Contains(t, asStringAny(errorPayload["message"]), "at most 1 search strings")
+}
+
+func TestShimLocalCodeInterpreterConcurrencyLimitRejectsSecondRun(t *testing.T) {
+	var (
+		started     = make(chan struct{})
+		release     = make(chan struct{})
+		startedOnce sync.Once
+	)
+
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		CodeInterpreterMaxConcurrentRuns: 1,
+		CodeInterpreterBackend: testutil.FakeSandboxBackend{
+			KindValue: "docker",
+			ExecuteFunc: func(_ context.Context, _ sandbox.ExecuteRequest) (sandbox.ExecuteResult, error) {
+				startedOnce.Do(func() { close(started) })
+				<-release
+				return sandbox.ExecuteResult{Logs: "4\n"}, nil
+			},
+		},
+	})
+
+	payload := map[string]any{
+		"model":       "test-model",
+		"tool_choice": "required",
+		"input":       "Use Python to calculate 2+2. Return only the numeric result.",
+		"tools": []map[string]any{
+			{
+				"type": "code_interpreter",
+				"container": map[string]any{
+					"type": "auto",
+				},
+			},
+		},
+	}
+
+	firstDone := make(chan struct {
+		status int
+		body   map[string]any
+	}, 1)
+	go func() {
+		status, body := rawRequest(t, app, http.MethodPost, "/v1/responses", payload)
+		firstDone <- struct {
+			status int
+			body   map[string]any
+		}{status: status, body: body}
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for first code interpreter run to start")
+	}
+
+	status, body := rawRequest(t, app, http.MethodPost, "/v1/responses", payload)
+	require.Equal(t, http.StatusTooManyRequests, status)
+	errorPayload := body["error"].(map[string]any)
+	require.Equal(t, "rate_limit_error", asStringAny(errorPayload["type"]))
+	require.Contains(t, asStringAny(errorPayload["message"]), "local_code_interpreter concurrency limit exceeded")
+
+	close(release)
+	first := <-firstDone
+	require.Equal(t, http.StatusOK, first.status)
+	require.Equal(t, "response", asStringAny(first.body["object"]))
+}
+
 func TestResponsesGetIncludesExpandedResponseSurface(t *testing.T) {
 	app := testutil.NewTestApp(t)
 
@@ -8067,6 +8401,13 @@ func seedConversationWithResponse(t *testing.T, app *testutil.TestApp) conversat
 func rawRequest(t *testing.T, app *testutil.TestApp, method, path string, payload any) (int, map[string]any) {
 	t.Helper()
 
+	status, _, decoded := rawRequestWithHeaders(t, app, method, path, payload, nil)
+	return status, decoded
+}
+
+func rawRequestWithHeaders(t *testing.T, app *testutil.TestApp, method, path string, payload any, headers map[string]string) (int, http.Header, map[string]any) {
+	t.Helper()
+
 	var bodyBytes []byte
 	if payload != nil {
 		var err error
@@ -8079,6 +8420,9 @@ func rawRequest(t *testing.T, app *testutil.TestApp, method, path string, payloa
 	if payload != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
 
 	resp, err := app.Client().Do(req)
 	require.NoError(t, err)
@@ -8086,7 +8430,7 @@ func rawRequest(t *testing.T, app *testutil.TestApp, method, path string, payloa
 
 	var decoded map[string]any
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&decoded))
-	return resp.StatusCode, decoded
+	return resp.StatusCode, resp.Header.Clone(), decoded
 }
 
 func uploadFile(t *testing.T, app *testutil.TestApp, filename, purpose string, content []byte, extraFields map[string]string) (int, map[string]any) {

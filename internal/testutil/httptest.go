@@ -61,6 +61,19 @@ type TestAppOptions struct {
 	CodexCompatibilityEnabled             bool
 	ForceToolChoiceRequired               bool
 	ChatCompletionsStoreWhenOmitted       *bool
+	AuthMode                              string
+	BearerTokens                          []string
+	RateLimitEnabled                      bool
+	RateLimitRequestsPerMinute            int
+	RateLimitBurst                        int
+	MetricsEnabled                        *bool
+	MetricsPath                           string
+	JSONBodyLimitBytes                    int64
+	RetrievalFileUploadMaxBytes           int64
+	RetrievalMaxConcurrentSearches        int
+	RetrievalMaxSearchQueries             int
+	RetrievalMaxGroundingChunks           int
+	CodeInterpreterMaxConcurrentRuns      int
 	DBPath                                string
 	LlamaBaseURL                          string
 	RetrievalConfig                       retrieval.Config
@@ -112,13 +125,30 @@ func NewTestAppWithOptions(t *testing.T, options TestAppOptions) *TestApp {
 		InputFileURLPolicy:     options.CodeInterpreterInputFileURLPolicy,
 		InputFileURLAllowHosts: append([]string(nil), options.CodeInterpreterInputFileURLAllowHosts...),
 	}
+	metricsEnabled := true
+	if options.MetricsEnabled != nil {
+		metricsEnabled = *options.MetricsEnabled
+	}
+	metrics := httpapi.NewMetrics()
 	httpapi.StartLocalCodeInterpreterCleanupLoop(testCtx, logger, localCodeInterpreter, store, store, options.CodeInterpreterCleanupInterval)
 
 	server := httptest.NewServer(httpapi.NewRouter(httpapi.RouterDeps{
-		Logger:                                logger,
-		LlamaClient:                           llamaClient,
-		ResponseService:                       responseService,
-		ConversationService:                   conversationService,
+		Logger:              logger,
+		LlamaClient:         llamaClient,
+		ResponseService:     responseService,
+		ConversationService: conversationService,
+		Auth:                httpapi.StaticBearerAuthConfig{Mode: options.AuthMode, BearerTokens: append([]string(nil), options.BearerTokens...)},
+		RateLimit:           httpapi.RateLimitConfig{Enabled: options.RateLimitEnabled, RequestsPerMinute: options.RateLimitRequestsPerMinute, Burst: options.RateLimitBurst},
+		MetricsConfig:       httpapi.MetricsConfig{Enabled: metricsEnabled, Path: options.MetricsPath},
+		Metrics:             metrics,
+		ServiceLimits: httpapi.ServiceLimits{
+			JSONBodyBytes:                    options.JSONBodyLimitBytes,
+			RetrievalFileUploadBytes:         options.RetrievalFileUploadMaxBytes,
+			RetrievalMaxConcurrentSearches:   options.RetrievalMaxConcurrentSearches,
+			RetrievalMaxSearchQueries:        options.RetrievalMaxSearchQueries,
+			RetrievalMaxGroundingChunks:      options.RetrievalMaxGroundingChunks,
+			CodeInterpreterMaxConcurrentRuns: options.CodeInterpreterMaxConcurrentRuns,
+		},
 		ChatCompletionsStoreWhenOmitted:       chatCompletionsStoreWhenOmitted,
 		ResponsesMode:                         responsesMode,
 		ResponsesCustomToolsMode:              options.CustomToolsMode,

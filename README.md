@@ -84,6 +84,23 @@ shim:
   read_timeout: 15s
   write_timeout: 90s
   idle_timeout: 60s
+  auth:
+    mode: disabled
+    bearer_tokens: []
+  rate_limit:
+    enabled: false
+    requests_per_minute: 120
+    burst: 60
+  metrics:
+    enabled: true
+    path: /metrics
+  limits:
+    json_body_bytes: 1MiB
+    retrieval_file_upload_bytes: 64MiB
+    retrieval_max_concurrent_searches: 8
+    retrieval_max_search_queries: 4
+    retrieval_max_grounding_chunks: 20
+    code_interpreter_max_concurrent_runs: 2
 
 sqlite:
   path: ./data/shim.db
@@ -114,6 +131,24 @@ responses:
   codex:
     enable_compatibility: true
     force_tool_choice_required: true
+  code_interpreter:
+    backend: disabled
+    python_binary: python3
+    execution_timeout: 20s
+    docker:
+      binary: docker
+      image: python:3.12-slim
+      memory_limit: 1g
+      cpu_limit: "0.5"
+      pids_limit: 64
+    input_file_url_policy: disabled
+    input_file_url_allow_hosts: []
+    cleanup_interval: 1m
+    limits:
+      generated_files: 8
+      generated_file_bytes: 2MiB
+      generated_total_bytes: 8MiB
+      remote_input_file_bytes: 50MiB
 ```
 
 Run with an explicit config file:
@@ -141,6 +176,19 @@ Supported environment overrides:
 - `LLAMA_BASE_URL` overrides `llama.base_url`
 - `SQLITE_PATH` overrides `sqlite.path`
 - `SHIM_ADDR` overrides `shim.addr`
+- `SHIM_AUTH_MODE` overrides `shim.auth.mode`; supported values: `disabled`, `static_bearer`
+- `SHIM_AUTH_BEARER_TOKENS` overrides `shim.auth.bearer_tokens` as a comma-separated list
+- `SHIM_RATE_LIMIT_ENABLED` overrides `shim.rate_limit.enabled`
+- `SHIM_RATE_LIMIT_REQUESTS_PER_MINUTE` overrides `shim.rate_limit.requests_per_minute`
+- `SHIM_RATE_LIMIT_BURST` overrides `shim.rate_limit.burst`
+- `SHIM_METRICS_ENABLED` overrides `shim.metrics.enabled`
+- `SHIM_METRICS_PATH` overrides `shim.metrics.path`
+- `SHIM_LIMITS_JSON_BODY_BYTES` overrides `shim.limits.json_body_bytes`
+- `SHIM_LIMITS_RETRIEVAL_FILE_UPLOAD_BYTES` overrides `shim.limits.retrieval_file_upload_bytes`
+- `SHIM_LIMITS_RETRIEVAL_MAX_CONCURRENT_SEARCHES` overrides `shim.limits.retrieval_max_concurrent_searches`
+- `SHIM_LIMITS_RETRIEVAL_MAX_SEARCH_QUERIES` overrides `shim.limits.retrieval_max_search_queries`
+- `SHIM_LIMITS_RETRIEVAL_MAX_GROUNDING_CHUNKS` overrides `shim.limits.retrieval_max_grounding_chunks`
+- `SHIM_LIMITS_CODE_INTERPRETER_MAX_CONCURRENT_RUNS` overrides `shim.limits.code_interpreter_max_concurrent_runs`
 - `RETRIEVAL_INDEX_BACKEND` overrides `retrieval.index.backend`; supported values: `lexical`, `sqlite_vec`
 - `RETRIEVAL_EMBEDDER_BACKEND` overrides `retrieval.embedder.backend`; supported values: `disabled`, `openai_compatible`, `embedanything`
 - `RETRIEVAL_EMBEDDER_BASE_URL` overrides `retrieval.embedder.base_url`
@@ -152,12 +200,48 @@ Supported environment overrides:
   Use `auto` for the default path: it keeps bridge behavior for plain-text custom tools, routes supported `grammar` / `regex` custom tools into the shim-local constrained path, and for named constrained custom tools first tries backend-native structured generation of raw `input` before falling back to the legacy validation/repair loop.
 - `RESPONSES_CODEX_ENABLE_COMPATIBILITY` overrides `responses.codex.enable_compatibility`; when disabled, the shim stops injecting Codex-specific instructions/context and skips Codex-specific response normalization
 - `RESPONSES_CODEX_FORCE_TOOL_CHOICE_REQUIRED` overrides `responses.codex.force_tool_choice_required`; when enabled, Codex-like requests with `tool_choice: "auto"` are rewritten to `required`
+- `RESPONSES_CODE_INTERPRETER_BACKEND` overrides `responses.code_interpreter.backend`; supported values: `disabled`, `unsafe_host`, `docker`
+- `RESPONSES_CODE_INTERPRETER_PYTHON_BINARY` overrides `responses.code_interpreter.python_binary`
+- `RESPONSES_CODE_INTERPRETER_DOCKER_BINARY` overrides `responses.code_interpreter.docker.binary`
+- `RESPONSES_CODE_INTERPRETER_DOCKER_IMAGE` overrides `responses.code_interpreter.docker.image`
+- `RESPONSES_CODE_INTERPRETER_DOCKER_MEMORY_LIMIT` overrides `responses.code_interpreter.docker.memory_limit`
+- `RESPONSES_CODE_INTERPRETER_DOCKER_CPU_LIMIT` overrides `responses.code_interpreter.docker.cpu_limit`
+- `RESPONSES_CODE_INTERPRETER_DOCKER_PIDS_LIMIT` overrides `responses.code_interpreter.docker.pids_limit`
+- `RESPONSES_CODE_INTERPRETER_EXECUTION_TIMEOUT` overrides `responses.code_interpreter.execution_timeout`
+- `RESPONSES_CODE_INTERPRETER_INPUT_FILE_URL_POLICY` overrides `responses.code_interpreter.input_file_url_policy`
+- `RESPONSES_CODE_INTERPRETER_INPUT_FILE_URL_ALLOW_HOSTS` overrides `responses.code_interpreter.input_file_url_allow_hosts`
+- `RESPONSES_CODE_INTERPRETER_CLEANUP_INTERVAL` overrides `responses.code_interpreter.cleanup_interval`
+- `RESPONSES_CODE_INTERPRETER_LIMITS_GENERATED_FILES` overrides `responses.code_interpreter.limits.generated_files`
+- `RESPONSES_CODE_INTERPRETER_LIMITS_GENERATED_FILE_BYTES` overrides `responses.code_interpreter.limits.generated_file_bytes`
+- `RESPONSES_CODE_INTERPRETER_LIMITS_GENERATED_TOTAL_BYTES` overrides `responses.code_interpreter.limits.generated_total_bytes`
+- `RESPONSES_CODE_INTERPRETER_LIMITS_REMOTE_INPUT_FILE_BYTES` overrides `responses.code_interpreter.limits.remote_input_file_bytes`
 
 Response retention notes:
 
 - standalone `/v1/responses` objects follow the outward `store` contract returned on the response object
 - conversation-attached items follow the conversation lifecycle instead of standalone response retention
 - the shim may keep hidden response rows needed for local `previous_response_id` replay even when the outward response reports `store=false`
+
+## Ops hardening
+
+The shim now has a shim-owned operational layer that is separate from route-contract parity:
+
+- optional ingress bearer auth via `shim.auth.mode=static_bearer`
+- optional in-memory per-client request rate limiting via `shim.rate_limit.*`
+- optional Prometheus-text metrics at `shim.metrics.path` (default `/metrics`)
+- configurable request, upload, retrieval, and local `code_interpreter` limits
+- structured JSON logs with `request_id`, optional `client_request_id`, stable route labels, auth subject fingerprints, and retrieval/runtime events
+
+Important behavior:
+
+- `/healthz` and `/readyz` stay unauthenticated and unthrottled so external probes keep working
+- `/metrics` is skipped by the request rate limiter but still shares ingress auth when shim auth is enabled
+- when shim ingress auth is enabled, the ingress `Authorization` header is consumed by the shim and is not forwarded to the upstream text-generation backend; `X-Client-Request-Id` still propagates upstream
+- request rate limiting is currently a shim-owned in-memory subset with request-based headers:
+  `X-RateLimit-Limit-Requests`,
+  `X-RateLimit-Remaining-Requests`,
+  `X-RateLimit-Reset-Requests`
+- retrieval and local runtime limits are shim-owned operational controls, not claims about hosted OpenAI quotas
 
 ## Semantic retrieval with sqlite_vec + EmbedAnything
 

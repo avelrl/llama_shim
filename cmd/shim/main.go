@@ -74,6 +74,7 @@ func main() {
 	llamaClient := llama.NewClient(cfg.LlamaBaseURL, cfg.LlamaTimeout)
 	responseService := service.NewResponseService(store, store, llamaClient)
 	conversationService := service.NewConversationService(store)
+	metrics := httpapi.NewMetrics()
 	localCodeInterpreter, err := buildLocalCodeInterpreterRuntimeConfig(cfg)
 	if err != nil {
 		logger.Error("build code interpreter runtime", "err", err)
@@ -84,10 +85,22 @@ func main() {
 	server := &http.Server{
 		Addr: cfg.Addr,
 		Handler: httpapi.NewRouter(httpapi.RouterDeps{
-			Logger:                                logger,
-			LlamaClient:                           llamaClient,
-			ResponseService:                       responseService,
-			ConversationService:                   conversationService,
+			Logger:              logger,
+			LlamaClient:         llamaClient,
+			ResponseService:     responseService,
+			ConversationService: conversationService,
+			Auth:                httpapi.StaticBearerAuthConfig{Mode: cfg.ShimAuthMode, BearerTokens: cfg.ShimAuthBearerTokens},
+			RateLimit:           httpapi.RateLimitConfig{Enabled: cfg.ShimRateLimitEnabled, RequestsPerMinute: cfg.ShimRateLimitRequestsPerMinute, Burst: cfg.ShimRateLimitBurst},
+			MetricsConfig:       httpapi.MetricsConfig{Enabled: cfg.ShimMetricsEnabled, Path: cfg.ShimMetricsPath},
+			Metrics:             metrics,
+			ServiceLimits: httpapi.ServiceLimits{
+				JSONBodyBytes:                    cfg.ShimJSONBodyLimitBytes,
+				RetrievalFileUploadBytes:         cfg.RetrievalFileUploadMaxBytes,
+				RetrievalMaxConcurrentSearches:   cfg.RetrievalMaxConcurrentSearches,
+				RetrievalMaxSearchQueries:        cfg.RetrievalMaxSearchQueries,
+				RetrievalMaxGroundingChunks:      cfg.RetrievalMaxGroundingChunks,
+				CodeInterpreterMaxConcurrentRuns: cfg.ResponsesCodeInterpreterMaxConcurrentRuns,
+			},
 			ChatCompletionsStoreWhenOmitted:       cfg.ChatCompletionsStoreWhenOmitted,
 			ResponsesMode:                         cfg.ResponsesMode,
 			ResponsesCustomToolsMode:              cfg.ResponsesCustomToolsMode,
@@ -110,6 +123,19 @@ func main() {
 		"sqlite_path", cfg.SQLitePath,
 		"config_file", cfg.ConfigFile,
 		"log_file_path", cfg.LogFilePath,
+		"shim_auth_mode", cfg.ShimAuthMode,
+		"shim_auth_bearer_token_count", len(cfg.ShimAuthBearerTokens),
+		"shim_rate_limit_enabled", cfg.ShimRateLimitEnabled,
+		"shim_rate_limit_requests_per_minute", cfg.ShimRateLimitRequestsPerMinute,
+		"shim_rate_limit_burst", cfg.ShimRateLimitBurst,
+		"shim_metrics_enabled", cfg.ShimMetricsEnabled,
+		"shim_metrics_path", cfg.ShimMetricsPath,
+		"shim_json_body_limit_bytes", cfg.ShimJSONBodyLimitBytes,
+		"shim_retrieval_file_upload_max_bytes", cfg.RetrievalFileUploadMaxBytes,
+		"shim_retrieval_max_concurrent_searches", cfg.RetrievalMaxConcurrentSearches,
+		"shim_retrieval_max_search_queries", cfg.RetrievalMaxSearchQueries,
+		"shim_retrieval_max_grounding_chunks", cfg.RetrievalMaxGroundingChunks,
+		"shim_code_interpreter_max_concurrent_runs", cfg.ResponsesCodeInterpreterMaxConcurrentRuns,
 		"retrieval_index_backend", cfg.RetrievalIndexBackend,
 		"retrieval_embedder_backend", cfg.RetrievalEmbedderBackend,
 		"retrieval_embedder_base_url", cfg.RetrievalEmbedderBaseURL,
@@ -130,6 +156,10 @@ func main() {
 		"responses_code_interpreter_input_file_url_policy", cfg.ResponsesCodeInterpreterInputFileURLPolicy,
 		"responses_code_interpreter_input_file_url_allow_hosts", cfg.ResponsesCodeInterpreterInputFileURLAllowHosts,
 		"responses_code_interpreter_cleanup_interval", cfg.ResponsesCodeInterpreterCleanupInterval,
+		"responses_code_interpreter_generated_files_limit", cfg.ResponsesCodeInterpreterGeneratedFiles,
+		"responses_code_interpreter_generated_file_bytes_limit", cfg.ResponsesCodeInterpreterGeneratedFileBytes,
+		"responses_code_interpreter_generated_total_bytes_limit", cfg.ResponsesCodeInterpreterGeneratedTotalBytes,
+		"responses_code_interpreter_remote_input_file_bytes_limit", cfg.ResponsesCodeInterpreterRemoteInputFileBytes,
 	)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		logger.Error("server stopped", "err", err)
@@ -138,6 +168,12 @@ func main() {
 }
 
 func buildLocalCodeInterpreterRuntimeConfig(cfg config.Config) (httpapi.LocalCodeInterpreterRuntimeConfig, error) {
+	limits := httpapi.LocalCodeInterpreterLimits{
+		GeneratedFiles:       cfg.ResponsesCodeInterpreterGeneratedFiles,
+		GeneratedFileBytes:   int(cfg.ResponsesCodeInterpreterGeneratedFileBytes),
+		GeneratedTotalBytes:  int(cfg.ResponsesCodeInterpreterGeneratedTotalBytes),
+		RemoteInputFileBytes: int(cfg.ResponsesCodeInterpreterRemoteInputFileBytes),
+	}
 	switch cfg.ResponsesCodeInterpreterBackend {
 	case config.ResponsesCodeInterpreterBackendDisabled:
 		return httpapi.LocalCodeInterpreterRuntimeConfig{}, nil
@@ -147,6 +183,7 @@ func buildLocalCodeInterpreterRuntimeConfig(cfg config.Config) (httpapi.LocalCod
 				PythonBinary: cfg.ResponsesCodeInterpreterPythonBinary,
 				Timeout:      cfg.ResponsesCodeInterpreterTimeout,
 			},
+			Limits:                 limits,
 			InputFileURLPolicy:     cfg.ResponsesCodeInterpreterInputFileURLPolicy,
 			InputFileURLAllowHosts: append([]string(nil), cfg.ResponsesCodeInterpreterInputFileURLAllowHosts...),
 		}, nil
@@ -160,6 +197,7 @@ func buildLocalCodeInterpreterRuntimeConfig(cfg config.Config) (httpapi.LocalCod
 				CPULimit:     cfg.ResponsesCodeInterpreterDockerCPU,
 				PidsLimit:    cfg.ResponsesCodeInterpreterDockerPids,
 			},
+			Limits:                 limits,
 			InputFileURLPolicy:     cfg.ResponsesCodeInterpreterInputFileURLPolicy,
 			InputFileURLAllowHosts: append([]string(nil), cfg.ResponsesCodeInterpreterInputFileURLAllowHosts...),
 		}, nil

@@ -27,7 +27,7 @@ func TestRequestLogMiddlewareLogsBodiesAtDebug(t *testing.T) {
 			_, err = w.Write([]byte(`{"echo":` + string(body) + `}`))
 			require.NoError(t, err)
 		}),
-		httpapi.RequestLogMiddleware(logger),
+		httpapi.RequestLogMiddleware(logger, nil),
 		httpapi.RequestIDMiddleware,
 	)
 
@@ -61,7 +61,7 @@ func TestRequestLogMiddlewareMarksTruncatedBodies(t *testing.T) {
 			_, err = w.Write([]byte(large))
 			require.NoError(t, err)
 		}),
-		httpapi.RequestLogMiddleware(logger),
+		httpapi.RequestLogMiddleware(logger, nil),
 		httpapi.RequestIDMiddleware,
 	)
 
@@ -85,7 +85,7 @@ func TestRequestLogMiddlewareOmitsSSEBodiesAtDebug(t *testing.T) {
 			_, err := w.Write([]byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"secret\"}\n\n"))
 			require.NoError(t, err)
 		}),
-		httpapi.RequestLogMiddleware(logger),
+		httpapi.RequestLogMiddleware(logger, nil),
 		httpapi.RequestIDMiddleware,
 	)
 

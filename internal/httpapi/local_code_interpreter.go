@@ -13,6 +13,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -25,10 +26,6 @@ import (
 
 const (
 	defaultLocalCodeInterpreterPlannedCodeLimit = 16 << 10
-	maxLocalCodeInterpreterGeneratedFiles       = 8
-	maxLocalCodeInterpreterGeneratedFileBytes   = 2 << 20
-	maxLocalCodeInterpreterGeneratedTotalBytes  = 8 << 20
-	maxLocalCodeInterpreterRemoteInputFileBytes = 50 << 20
 )
 
 var shimLocalCodeInterpreterFields = map[string]struct{}{
@@ -65,12 +62,17 @@ var localCodeInterpreterForbiddenFragments = []string{
 
 type LocalCodeInterpreterRuntimeConfig struct {
 	Backend                sandbox.Backend
+	Limits                 LocalCodeInterpreterLimits
 	InputFileURLPolicy     string
 	InputFileURLAllowHosts []string
 }
 
 func (c LocalCodeInterpreterRuntimeConfig) Enabled() bool {
 	return c.Backend != nil
+}
+
+func (c LocalCodeInterpreterRuntimeConfig) normalizedLimits() LocalCodeInterpreterLimits {
+	return normalizeLocalCodeInterpreterLimits(c.Limits)
 }
 
 func (c LocalCodeInterpreterRuntimeConfig) allowsRemoteInputFileURL(parsedURL *neturl.URL) error {
@@ -285,10 +287,26 @@ func (h *responseHandler) createLocalCodeInterpreterResponse(ctx context.Context
 		return domain.Response{}, err
 	}
 
+	release, err := h.codeInterpreterGate.tryAcquire()
+	if err != nil {
+		return domain.Response{}, err
+	}
+	defer release()
+
+	executionStart := time.Now()
 	execution, err := h.executeLocalCodeInterpreter(ctx, prepared, config.Container, inputFiles, plan.Code)
 	if err != nil {
 		var execFailure *localCodeInterpreterExecutionFailure
 		if errors.As(err, &execFailure) {
+			if h.metrics != nil {
+				h.metrics.IncCodeInterpreterRun("failed")
+			}
+			h.logger.WarnContext(ctx, "local code interpreter execution failed",
+				"request_id", RequestIDFromContext(ctx),
+				"container_id", execFailure.ContainerID,
+				"duration_ms", time.Since(executionStart).Milliseconds(),
+				"message", execFailure.Message,
+			)
 			return h.buildLocalCodeInterpreterFailedResponse(ctx, prepared, input, config, plan.Code, execFailure)
 		}
 		return domain.Response{}, err
@@ -330,6 +348,22 @@ func (h *responseHandler) createLocalCodeInterpreterResponse(ctx context.Context
 	if err != nil {
 		return domain.Response{}, err
 	}
+
+	outcome := "ok"
+	if execution.ToolError {
+		outcome = "tool_error"
+	}
+	if h.metrics != nil {
+		h.metrics.IncCodeInterpreterRun(outcome)
+	}
+	h.logger.InfoContext(ctx, "local code interpreter execution",
+		"request_id", RequestIDFromContext(ctx),
+		"container_id", execution.ContainerID,
+		"generated_files", len(execution.GeneratedFiles),
+		"logs_bytes", len(execution.Logs),
+		"tool_error", execution.ToolError,
+		"duration_ms", time.Since(executionStart).Milliseconds(),
+	)
 
 	return h.service.SaveExternalResponse(ctx, prepared, input, response)
 }
@@ -1066,12 +1100,13 @@ func (h *responseHandler) resolveLocalCodeInterpreterRemoteInputFile(ctx context
 		return localCodeInterpreterInputFile{}, domain.NewValidationError("input", fmt.Sprintf("input_file.file_url returned HTTP %d in shim-local code_interpreter mode", resp.StatusCode))
 	}
 
-	content, err := io.ReadAll(io.LimitReader(resp.Body, maxLocalCodeInterpreterRemoteInputFileBytes+1))
+	limits := h.localCodeInterpreter.normalizedLimits()
+	content, err := io.ReadAll(io.LimitReader(resp.Body, int64(limits.RemoteInputFileBytes+1)))
 	if err != nil {
 		return localCodeInterpreterInputFile{}, domain.NewValidationError("input", "input_file.file_url could not be read in shim-local code_interpreter mode")
 	}
-	if len(content) > maxLocalCodeInterpreterRemoteInputFileBytes {
-		return localCodeInterpreterInputFile{}, domain.NewValidationError("input", "input_file.file_url exceeds the 50 MiB limit in shim-local code_interpreter mode")
+	if len(content) > limits.RemoteInputFileBytes {
+		return localCodeInterpreterInputFile{}, domain.NewValidationError("input", "input_file.file_url exceeds the configured shim-local code_interpreter size limit")
 	}
 
 	resolvedFilename := strings.TrimSpace(filename)
@@ -1182,17 +1217,18 @@ func (h *responseHandler) persistLocalCodeInterpreterGeneratedFiles(ctx context.
 		return nil, fmt.Errorf("local code interpreter file store is not configured")
 	}
 
-	saved := make([]localCodeInterpreterGeneratedFile, 0, min(len(generated), maxLocalCodeInterpreterGeneratedFiles))
+	limits := h.localCodeInterpreter.normalizedLimits()
+	saved := make([]localCodeInterpreterGeneratedFile, 0, min(len(generated), limits.GeneratedFiles))
 	totalBytes := 0
 	now := domain.NowUTC().Unix()
 	for _, file := range generated {
-		if len(saved) >= maxLocalCodeInterpreterGeneratedFiles {
+		if len(saved) >= limits.GeneratedFiles {
 			break
 		}
-		if len(file.Content) > maxLocalCodeInterpreterGeneratedFileBytes {
+		if len(file.Content) > limits.GeneratedFileBytes {
 			continue
 		}
-		if totalBytes+len(file.Content) > maxLocalCodeInterpreterGeneratedTotalBytes {
+		if totalBytes+len(file.Content) > limits.GeneratedTotalBytes {
 			continue
 		}
 

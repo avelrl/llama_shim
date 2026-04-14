@@ -56,6 +56,10 @@ func TestBuildLocalCodeInterpreterRuntimeConfigDocker(t *testing.T) {
 		ResponsesCodeInterpreterTimeout:                30 * time.Second,
 		ResponsesCodeInterpreterInputFileURLPolicy:     config.ResponsesCodeInterpreterInputFileURLPolicyAllowlist,
 		ResponsesCodeInterpreterInputFileURLAllowHosts: []string{"files.example.com"},
+		ResponsesCodeInterpreterGeneratedFiles:         3,
+		ResponsesCodeInterpreterGeneratedFileBytes:     1 << 20,
+		ResponsesCodeInterpreterGeneratedTotalBytes:    2 << 20,
+		ResponsesCodeInterpreterRemoteInputFileBytes:   3 << 20,
 	})
 	require.NoError(t, err)
 
@@ -69,6 +73,10 @@ func TestBuildLocalCodeInterpreterRuntimeConfigDocker(t *testing.T) {
 	require.Equal(t, 30*time.Second, backend.Timeout)
 	require.Equal(t, config.ResponsesCodeInterpreterInputFileURLPolicyAllowlist, runtime.InputFileURLPolicy)
 	require.Equal(t, []string{"files.example.com"}, runtime.InputFileURLAllowHosts)
+	require.Equal(t, 3, runtime.Limits.GeneratedFiles)
+	require.Equal(t, 1<<20, runtime.Limits.GeneratedFileBytes)
+	require.Equal(t, 2<<20, runtime.Limits.GeneratedTotalBytes)
+	require.Equal(t, 3<<20, runtime.Limits.RemoteInputFileBytes)
 }
 
 func TestBuildLocalCodeInterpreterRuntimeConfigUnsafeHost(t *testing.T) {
@@ -80,6 +88,10 @@ func TestBuildLocalCodeInterpreterRuntimeConfigUnsafeHost(t *testing.T) {
 		ResponsesCodeInterpreterTimeout:                12 * time.Second,
 		ResponsesCodeInterpreterInputFileURLPolicy:     config.ResponsesCodeInterpreterInputFileURLPolicyUnsafeAllowHTTPHTTPS,
 		ResponsesCodeInterpreterInputFileURLAllowHosts: []string{"files.example.com"},
+		ResponsesCodeInterpreterGeneratedFiles:         5,
+		ResponsesCodeInterpreterGeneratedFileBytes:     4 << 20,
+		ResponsesCodeInterpreterGeneratedTotalBytes:    10 << 20,
+		ResponsesCodeInterpreterRemoteInputFileBytes:   25 << 20,
 	})
 	require.NoError(t, err)
 
@@ -89,4 +101,8 @@ func TestBuildLocalCodeInterpreterRuntimeConfigUnsafeHost(t *testing.T) {
 	require.Equal(t, 12*time.Second, backend.Timeout)
 	require.Equal(t, config.ResponsesCodeInterpreterInputFileURLPolicyUnsafeAllowHTTPHTTPS, runtime.InputFileURLPolicy)
 	require.Equal(t, []string{"files.example.com"}, runtime.InputFileURLAllowHosts)
+	require.Equal(t, 5, runtime.Limits.GeneratedFiles)
+	require.Equal(t, 4<<20, runtime.Limits.GeneratedFileBytes)
+	require.Equal(t, 10<<20, runtime.Limits.GeneratedTotalBytes)
+	require.Equal(t, 25<<20, runtime.Limits.RemoteInputFileBytes)
 }

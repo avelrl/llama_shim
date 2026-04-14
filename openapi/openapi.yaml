@@ -17,6 +17,10 @@ info:
     Notes:
     - `/v1/responses` is local-first for the supported subset and may still proxy
       unsupported features upstream depending on `responses.mode`
+    - the shim may enforce optional ingress bearer auth, request rate limiting,
+      request/upload/runtime quotas, and a shim-owned `/metrics` endpoint;
+      these are operational controls owned by the shim, not OpenAI parity
+      claims
     - item payloads are intentionally described as typed open objects because the
       shim preserves normalized raw item bodies across several Responses and
       Conversations flows
@@ -24,6 +28,7 @@ servers:
   - url: http://127.0.0.1:8080
 tags:
   - name: health
+  - name: ops
   - name: responses
   - name: conversations
   - name: chat
@@ -76,6 +81,49 @@ paths:
                 error:
                   message: retrieval embedder is not ready
                   type: service_unavailable
+                  param: null
+                  code: null
+        "405":
+          $ref: "#/components/responses/ErrorResponse"
+  /metrics:
+    get:
+      tags: [ops]
+      summary: Shim-owned metrics endpoint
+      x-shim-status: implemented
+      description: |
+        Returns a shim-owned Prometheus-text exposition for request, auth,
+        rate-limit, retrieval, local code-interpreter, and in-flight
+        operation metrics.
+
+        Notes:
+        - this route is shim-owned operational surface, not an OpenAI API
+          parity claim
+        - when shim ingress auth is enabled, `/metrics` shares the same bearer
+          requirement
+        - when shim request rate limiting is enabled, `/metrics` is excluded
+          from that limiter so probes and scrapers do not consume request
+          budget
+      responses:
+        "200":
+          description: Prometheus-text metrics payload
+          content:
+            text/plain:
+              schema:
+                type: string
+              example: |
+                # HELP shim_http_requests_total Total HTTP requests handled by the shim.
+                # TYPE shim_http_requests_total counter
+                shim_http_requests_total{method="GET",route="/healthz",status="200"} 1
+        "401":
+          description: Missing or invalid shim ingress bearer token when auth is enabled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                error:
+                  message: missing or invalid bearer token
+                  type: authentication_error
                   param: null
                   code: null
         "405":

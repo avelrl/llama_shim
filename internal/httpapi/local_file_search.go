@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"llama_shim/internal/domain"
@@ -16,7 +17,6 @@ import (
 
 const defaultLocalFileSearchResultsLimit = 20
 const localFileSearchCitationLimit = 3
-const localFileSearchMaxChunksInContext = 20
 
 var shimLocalFileSearchFields = map[string]struct{}{
 	"tools":               {},
@@ -102,13 +102,16 @@ func (h *responseHandler) createLocalFileSearchResponse(ctx context.Context, req
 	if len(searchQueries) == 0 {
 		searchQueries = []string{query}
 	}
+	if len(searchQueries) > h.serviceLimits.RetrievalMaxSearchQueries {
+		searchQueries = searchQueries[:h.serviceLimits.RetrievalMaxSearchQueries]
+	}
 
 	results, err := h.searchLocalFileSearchResults(ctx, config, searchQueries)
 	if err != nil {
 		return domain.Response{}, err
 	}
 
-	generationContext, err := buildLocalFileSearchGenerationContext(prepared, query, searchQueries, results)
+	generationContext, err := buildLocalFileSearchGenerationContext(prepared, query, searchQueries, results, h.serviceLimits.RetrievalMaxGroundingChunks)
 	if err != nil {
 		return domain.Response{}, err
 	}
@@ -405,11 +408,18 @@ func deriveLocalFileSearchQuery(items []domain.Item) (string, error) {
 }
 
 func (h *responseHandler) searchLocalFileSearchResults(ctx context.Context, config localFileSearchConfig, queries []string) ([]localFileSearchResult, error) {
+	release, err := h.retrievalGate.tryAcquire()
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
 	type resultKey struct {
 		VectorStoreID string
 		FileID        string
 	}
 
+	start := time.Now()
 	bestByFile := map[resultKey]localFileSearchResult{}
 	for _, vectorStoreID := range config.VectorStoreIDs {
 		page, err := h.proxy.store.SearchVectorStore(ctx, domain.VectorStoreSearchQuery{
@@ -423,6 +433,9 @@ func (h *responseHandler) searchLocalFileSearchResults(ctx context.Context, conf
 			RawSearchQuery: retrieval.SearchQueryPayload(queries),
 		})
 		if err != nil {
+			if h.metrics != nil {
+				h.metrics.IncRetrievalSearch("local_file_search", "error")
+			}
 			return nil, err
 		}
 		for _, result := range page.Results {
@@ -462,10 +475,21 @@ func (h *responseHandler) searchLocalFileSearchResults(ctx context.Context, conf
 	if len(results) > config.MaxNumResults {
 		results = results[:config.MaxNumResults]
 	}
+	if h.metrics != nil {
+		h.metrics.IncRetrievalSearch("local_file_search", "ok")
+	}
+	h.logger.InfoContext(ctx, "retrieval search",
+		"request_id", RequestIDFromContext(ctx),
+		"surface", "local_file_search",
+		"vector_store_ids", config.VectorStoreIDs,
+		"queries", queries,
+		"result_count", len(results),
+		"duration_ms", time.Since(start).Milliseconds(),
+	)
 	return results, nil
 }
 
-func buildLocalFileSearchGenerationContext(prepared service.PreparedResponseContext, query string, searchQueries []string, results []localFileSearchResult) ([]domain.Item, error) {
+func buildLocalFileSearchGenerationContext(prepared service.PreparedResponseContext, query string, searchQueries []string, results []localFileSearchResult, maxChunks int) ([]domain.Item, error) {
 	prefixItems := prepared.ContextItems
 	if len(prepared.NormalizedInput) <= len(prefixItems) {
 		prefixItems = prefixItems[:len(prefixItems)-len(prepared.NormalizedInput)]
@@ -480,7 +504,7 @@ func buildLocalFileSearchGenerationContext(prepared service.PreparedResponseCont
 		return nil, err
 	}
 
-	searchContext := domain.NewInputTextMessage("system", buildLocalFileSearchContextPrompt(query, searchQueries, results))
+	searchContext := domain.NewInputTextMessage("system", buildLocalFileSearchContextPrompt(query, searchQueries, results, maxChunks))
 	out := make([]domain.Item, 0, len(prefix)+len(currentInput)+1)
 	out = append(out, prefix...)
 	out = append(out, searchContext)
@@ -488,7 +512,7 @@ func buildLocalFileSearchGenerationContext(prepared service.PreparedResponseCont
 	return out, nil
 }
 
-func buildLocalFileSearchContextPrompt(query string, searchQueries []string, results []localFileSearchResult) string {
+func buildLocalFileSearchContextPrompt(query string, searchQueries []string, results []localFileSearchResult, maxChunks int) string {
 	var builder strings.Builder
 	builder.WriteString("You have access to shim-local file search results.\n")
 	builder.WriteString("Use only the retrieved snippets below as local knowledge for this turn.\n")
@@ -509,7 +533,10 @@ func buildLocalFileSearchContextPrompt(query string, searchQueries []string, res
 		return builder.String()
 	}
 
-	remainingChunks := localFileSearchMaxChunksInContext
+	if maxChunks <= 0 {
+		maxChunks = 20
+	}
+	remainingChunks := maxChunks
 	omittedChunks := 0
 	for idx, result := range results {
 		snippets := localFileSearchContextSnippets(result)

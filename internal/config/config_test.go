@@ -20,6 +20,25 @@ shim:
   read_timeout: 5s
   write_timeout: 30s
   idle_timeout: 45s
+  auth:
+    mode: static_bearer
+    bearer_tokens:
+      - token-a
+      - token-b
+  rate_limit:
+    enabled: true
+    requests_per_minute: 240
+    burst: 40
+  metrics:
+    enabled: true
+    path: /metrics
+  limits:
+    json_body_bytes: 2MiB
+    retrieval_file_upload_bytes: 32MiB
+    retrieval_max_concurrent_searches: 6
+    retrieval_max_search_queries: 3
+    retrieval_max_grounding_chunks: 12
+    code_interpreter_max_concurrent_runs: 4
 sqlite:
   path: ./tmp/test.db
 llama:
@@ -59,6 +78,11 @@ responses:
       pids_limit: 96
     execution_timeout: 45s
     cleanup_interval: 2m
+    limits:
+      generated_files: 4
+      generated_file_bytes: 1MiB
+      generated_total_bytes: 3MiB
+      remote_input_file_bytes: 12MiB
 `)
 
 	cfg, err := config.Load(configPath)
@@ -70,6 +94,19 @@ responses:
 	require.Equal(t, 5*time.Second, cfg.ReadTimeout)
 	require.Equal(t, 30*time.Second, cfg.WriteTimeout)
 	require.Equal(t, 45*time.Second, cfg.IdleTimeout)
+	require.Equal(t, config.ShimAuthModeStaticBearer, cfg.ShimAuthMode)
+	require.Equal(t, []string{"token-a", "token-b"}, cfg.ShimAuthBearerTokens)
+	require.True(t, cfg.ShimRateLimitEnabled)
+	require.Equal(t, 240, cfg.ShimRateLimitRequestsPerMinute)
+	require.Equal(t, 40, cfg.ShimRateLimitBurst)
+	require.True(t, cfg.ShimMetricsEnabled)
+	require.Equal(t, "/metrics", cfg.ShimMetricsPath)
+	require.EqualValues(t, 2<<20, cfg.ShimJSONBodyLimitBytes)
+	require.EqualValues(t, 32<<20, cfg.RetrievalFileUploadMaxBytes)
+	require.Equal(t, 6, cfg.RetrievalMaxConcurrentSearches)
+	require.Equal(t, 3, cfg.RetrievalMaxSearchQueries)
+	require.Equal(t, 12, cfg.RetrievalMaxGroundingChunks)
+	require.Equal(t, 4, cfg.ResponsesCodeInterpreterMaxConcurrentRuns)
 	require.Equal(t, slog.LevelDebug, cfg.LogLevel)
 	require.Equal(t, "./tmp/shim.log", cfg.LogFilePath)
 	require.Equal(t, "lexical", cfg.RetrievalIndexBackend)
@@ -92,6 +129,10 @@ responses:
 	require.Equal(t, config.ResponsesCodeInterpreterInputFileURLPolicyAllowlist, cfg.ResponsesCodeInterpreterInputFileURLPolicy)
 	require.Equal(t, []string{"files.example.com", "*.trusted.internal"}, cfg.ResponsesCodeInterpreterInputFileURLAllowHosts)
 	require.Equal(t, 2*time.Minute, cfg.ResponsesCodeInterpreterCleanupInterval)
+	require.Equal(t, 4, cfg.ResponsesCodeInterpreterGeneratedFiles)
+	require.EqualValues(t, 1<<20, cfg.ResponsesCodeInterpreterGeneratedFileBytes)
+	require.EqualValues(t, 3<<20, cfg.ResponsesCodeInterpreterGeneratedTotalBytes)
+	require.EqualValues(t, 12<<20, cfg.ResponsesCodeInterpreterRemoteInputFileBytes)
 	require.Equal(t, configPath, cfg.ConfigFile)
 }
 
@@ -122,6 +163,19 @@ responses:
 `)
 
 	t.Setenv("SHIM_ADDR", ":7070")
+	t.Setenv("SHIM_AUTH_MODE", "static_bearer")
+	t.Setenv("SHIM_AUTH_BEARER_TOKENS", "token-1,token-2")
+	t.Setenv("SHIM_RATE_LIMIT_ENABLED", "true")
+	t.Setenv("SHIM_RATE_LIMIT_REQUESTS_PER_MINUTE", "180")
+	t.Setenv("SHIM_RATE_LIMIT_BURST", "30")
+	t.Setenv("SHIM_METRICS_ENABLED", "false")
+	t.Setenv("SHIM_METRICS_PATH", "/internal/metrics")
+	t.Setenv("SHIM_LIMITS_JSON_BODY_BYTES", "3MiB")
+	t.Setenv("SHIM_LIMITS_RETRIEVAL_FILE_UPLOAD_BYTES", "48MiB")
+	t.Setenv("SHIM_LIMITS_RETRIEVAL_MAX_CONCURRENT_SEARCHES", "9")
+	t.Setenv("SHIM_LIMITS_RETRIEVAL_MAX_SEARCH_QUERIES", "5")
+	t.Setenv("SHIM_LIMITS_RETRIEVAL_MAX_GROUNDING_CHUNKS", "11")
+	t.Setenv("SHIM_LIMITS_CODE_INTERPRETER_MAX_CONCURRENT_RUNS", "7")
 	t.Setenv("LLAMA_TIMEOUT", "25s")
 	t.Setenv("LOG_LEVEL", "warn")
 	t.Setenv("LOG_FILE_PATH", "./override.log")
@@ -144,10 +198,27 @@ responses:
 	t.Setenv("RESPONSES_CODE_INTERPRETER_INPUT_FILE_URL_POLICY", "unsafe_allow_http_https")
 	t.Setenv("RESPONSES_CODE_INTERPRETER_INPUT_FILE_URL_ALLOW_HOSTS", "files.example.com,*.trusted.internal")
 	t.Setenv("RESPONSES_CODE_INTERPRETER_CLEANUP_INTERVAL", "90s")
+	t.Setenv("RESPONSES_CODE_INTERPRETER_LIMITS_GENERATED_FILES", "5")
+	t.Setenv("RESPONSES_CODE_INTERPRETER_LIMITS_GENERATED_FILE_BYTES", "4MiB")
+	t.Setenv("RESPONSES_CODE_INTERPRETER_LIMITS_GENERATED_TOTAL_BYTES", "10MiB")
+	t.Setenv("RESPONSES_CODE_INTERPRETER_LIMITS_REMOTE_INPUT_FILE_BYTES", "25MiB")
 
 	cfg, err := config.Load(configPath)
 	require.NoError(t, err)
 	require.Equal(t, ":7070", cfg.Addr)
+	require.Equal(t, config.ShimAuthModeStaticBearer, cfg.ShimAuthMode)
+	require.Equal(t, []string{"token-1", "token-2"}, cfg.ShimAuthBearerTokens)
+	require.True(t, cfg.ShimRateLimitEnabled)
+	require.Equal(t, 180, cfg.ShimRateLimitRequestsPerMinute)
+	require.Equal(t, 30, cfg.ShimRateLimitBurst)
+	require.False(t, cfg.ShimMetricsEnabled)
+	require.Equal(t, "/internal/metrics", cfg.ShimMetricsPath)
+	require.EqualValues(t, 3<<20, cfg.ShimJSONBodyLimitBytes)
+	require.EqualValues(t, 48<<20, cfg.RetrievalFileUploadMaxBytes)
+	require.Equal(t, 9, cfg.RetrievalMaxConcurrentSearches)
+	require.Equal(t, 5, cfg.RetrievalMaxSearchQueries)
+	require.Equal(t, 11, cfg.RetrievalMaxGroundingChunks)
+	require.Equal(t, 7, cfg.ResponsesCodeInterpreterMaxConcurrentRuns)
 	require.Equal(t, 25*time.Second, cfg.LlamaTimeout)
 	require.Equal(t, slog.LevelWarn, cfg.LogLevel)
 	require.Equal(t, "./override.log", cfg.LogFilePath)
@@ -170,6 +241,10 @@ responses:
 	require.Equal(t, config.ResponsesCodeInterpreterInputFileURLPolicyUnsafeAllowHTTPHTTPS, cfg.ResponsesCodeInterpreterInputFileURLPolicy)
 	require.Equal(t, []string{"files.example.com", "*.trusted.internal"}, cfg.ResponsesCodeInterpreterInputFileURLAllowHosts)
 	require.Equal(t, 90*time.Second, cfg.ResponsesCodeInterpreterCleanupInterval)
+	require.Equal(t, 5, cfg.ResponsesCodeInterpreterGeneratedFiles)
+	require.EqualValues(t, 4<<20, cfg.ResponsesCodeInterpreterGeneratedFileBytes)
+	require.EqualValues(t, 10<<20, cfg.ResponsesCodeInterpreterGeneratedTotalBytes)
+	require.EqualValues(t, 25<<20, cfg.ResponsesCodeInterpreterRemoteInputFileBytes)
 }
 
 func TestLoadUsesCodexSafeDefaults(t *testing.T) {
@@ -183,6 +258,19 @@ func TestLoadUsesCodexSafeDefaults(t *testing.T) {
 
 	cfg, err := config.Load("")
 	require.NoError(t, err)
+	require.Equal(t, config.ShimAuthModeDisabled, cfg.ShimAuthMode)
+	require.Empty(t, cfg.ShimAuthBearerTokens)
+	require.False(t, cfg.ShimRateLimitEnabled)
+	require.Equal(t, 120, cfg.ShimRateLimitRequestsPerMinute)
+	require.Equal(t, 60, cfg.ShimRateLimitBurst)
+	require.True(t, cfg.ShimMetricsEnabled)
+	require.Equal(t, "/metrics", cfg.ShimMetricsPath)
+	require.EqualValues(t, 1<<20, cfg.ShimJSONBodyLimitBytes)
+	require.EqualValues(t, 64<<20, cfg.RetrievalFileUploadMaxBytes)
+	require.Equal(t, 8, cfg.RetrievalMaxConcurrentSearches)
+	require.Equal(t, 4, cfg.RetrievalMaxSearchQueries)
+	require.Equal(t, 20, cfg.RetrievalMaxGroundingChunks)
+	require.Equal(t, 2, cfg.ResponsesCodeInterpreterMaxConcurrentRuns)
 	require.Equal(t, "lexical", cfg.RetrievalIndexBackend)
 	require.Equal(t, "disabled", cfg.RetrievalEmbedderBackend)
 	require.Empty(t, cfg.RetrievalEmbedderBaseURL)
@@ -203,6 +291,10 @@ func TestLoadUsesCodexSafeDefaults(t *testing.T) {
 	require.Equal(t, config.ResponsesCodeInterpreterInputFileURLPolicyDisabled, cfg.ResponsesCodeInterpreterInputFileURLPolicy)
 	require.Empty(t, cfg.ResponsesCodeInterpreterInputFileURLAllowHosts)
 	require.Equal(t, time.Minute, cfg.ResponsesCodeInterpreterCleanupInterval)
+	require.Equal(t, 8, cfg.ResponsesCodeInterpreterGeneratedFiles)
+	require.EqualValues(t, 2<<20, cfg.ResponsesCodeInterpreterGeneratedFileBytes)
+	require.EqualValues(t, 8<<20, cfg.ResponsesCodeInterpreterGeneratedTotalBytes)
+	require.EqualValues(t, 50<<20, cfg.ResponsesCodeInterpreterRemoteInputFileBytes)
 }
 
 func TestLoadSupportsLegacyUnsafeHostAlias(t *testing.T) {
