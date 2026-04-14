@@ -23,25 +23,33 @@ const (
 	responsesCreateRouteLocalState
 	responsesCreateRouteLocalStateViaUpstream
 	responsesCreateRouteLocalOnlyUnsupported
+	responsesCreateRouteLocalWebSearchDisabled
 	responsesCreateRouteLocalImageGenerationDisabled
 	responsesCreateRouteLocalComputerDisabled
 	responsesCreateRouteLocalCodeInterpreterDisabled
 )
 
 type responsesCreateRouteInputs struct {
-	HasLocalState                 bool
-	LocalToolLoop                 bool
-	LocalToolSearch               bool
-	LocalFileSearch               bool
-	LocalWebSearch                bool
-	LocalImageGenerationRequested bool
-	LocalImageGeneration          bool
-	LocalComputerRequested        bool
-	LocalComputer                 bool
-	LocalMCP                      bool
-	LocalCodeInterpreterRequested bool
-	LocalCodeInterpreter          bool
-	LocalSupported                bool
+	HasLocalState                      bool
+	LocalToolLoop                      bool
+	LocalToolSearchRequested           bool
+	LocalToolSearch                    bool
+	LocalFileSearch                    bool
+	LocalWebSearchRequested            bool
+	LocalWebSearchRuntimeEnabled       bool
+	LocalWebSearch                     bool
+	LocalImageGenerationRequested      bool
+	LocalImageGenerationRuntimeEnabled bool
+	LocalImageGeneration               bool
+	LocalComputerRequested             bool
+	LocalComputerRuntimeEnabled        bool
+	LocalComputer                      bool
+	LocalMCPRequested                  bool
+	LocalMCP                           bool
+	LocalCodeInterpreterRequested      bool
+	LocalCodeInterpreterRuntimeEnabled bool
+	LocalCodeInterpreter               bool
+	LocalSupported                     bool
 }
 
 func selectResponsesCreateRoute(responsesMode string, profile responsesCreateRouteInputs) responsesCreateRoute {
@@ -52,26 +60,44 @@ func selectResponsesCreateRoute(responsesMode string, profile responsesCreateRou
 	switch {
 	case profile.LocalWebSearch:
 		return responsesCreateRouteLocalWebSearch
+	case profile.LocalWebSearchRequested && responsesMode == config.ResponsesModeLocalOnly:
+		if !profile.LocalWebSearchRuntimeEnabled {
+			return responsesCreateRouteLocalWebSearchDisabled
+		}
+		return responsesCreateRouteLocalWebSearch
 	case profile.LocalImageGeneration:
+		return responsesCreateRouteLocalImageGeneration
+	case profile.LocalImageGenerationRequested && responsesMode == config.ResponsesModeLocalOnly:
+		if !profile.LocalImageGenerationRuntimeEnabled {
+			return responsesCreateRouteLocalImageGenerationDisabled
+		}
 		return responsesCreateRouteLocalImageGeneration
 	case profile.LocalFileSearch:
 		return responsesCreateRouteLocalFileSearch
 	case profile.LocalComputer:
 		return responsesCreateRouteLocalComputer
+	case profile.LocalComputerRequested && responsesMode == config.ResponsesModeLocalOnly:
+		if !profile.LocalComputerRuntimeEnabled {
+			return responsesCreateRouteLocalComputerDisabled
+		}
+		return responsesCreateRouteLocalComputer
 	case profile.LocalMCP:
+		return responsesCreateRouteLocalMCP
+	case profile.LocalMCPRequested && responsesMode == config.ResponsesModeLocalOnly:
 		return responsesCreateRouteLocalMCP
 	case profile.LocalToolSearch:
 		return responsesCreateRouteLocalToolSearch
+	case profile.LocalToolSearchRequested && responsesMode == config.ResponsesModeLocalOnly:
+		return responsesCreateRouteLocalToolSearch
 	case profile.LocalCodeInterpreter:
+		return responsesCreateRouteLocalCodeInterpreter
+	case profile.LocalCodeInterpreterRequested && responsesMode == config.ResponsesModeLocalOnly:
+		if !profile.LocalCodeInterpreterRuntimeEnabled {
+			return responsesCreateRouteLocalCodeInterpreterDisabled
+		}
 		return responsesCreateRouteLocalCodeInterpreter
 	case profile.LocalToolLoop:
 		return responsesCreateRouteLocalToolLoop
-	case profile.LocalComputerRequested && responsesMode == config.ResponsesModeLocalOnly:
-		return responsesCreateRouteLocalComputerDisabled
-	case profile.LocalImageGenerationRequested && responsesMode == config.ResponsesModeLocalOnly:
-		return responsesCreateRouteLocalImageGenerationDisabled
-	case profile.LocalCodeInterpreterRequested && responsesMode == config.ResponsesModeLocalOnly:
-		return responsesCreateRouteLocalCodeInterpreterDisabled
 	case profile.LocalSupported:
 		return responsesCreateRouteLocalState
 	case profile.HasLocalState && responsesMode == config.ResponsesModeLocalOnly:
@@ -99,18 +125,25 @@ func buildResponsesCreateRouteInputs(
 	localMCPUnsupported := hasUnsupportedLocalMCPTools(rawFields)
 
 	return responsesCreateRouteInputs{
-		HasLocalState:                 hasLocalState,
-		LocalToolLoop:                 supportsLocalToolLoop(rawFields),
-		LocalToolSearch:               supportsLocalToolSearch(rawFields),
-		LocalFileSearch:               supportsLocalFileSearch(rawFields),
-		LocalWebSearch:                supportsLocalWebSearch(rawFields, webSearchProvider),
-		LocalImageGenerationRequested: isLocalImageGenerationToolRequest(rawFields),
-		LocalImageGeneration:          supportsLocalImageGeneration(rawFields, imageGenerationProvider),
-		LocalComputerRequested:        isLocalComputerToolRequest(rawFields),
-		LocalComputer:                 supportsLocalComputer(rawFields, localComputer),
-		LocalMCP:                      localMCPSupported || localMCPUnsupported || hasLocalMCPApprovalResponse(rawFields) || (hasLocalMCPState && !localMCPConnector),
-		LocalCodeInterpreterRequested: isLocalCodeInterpreterToolRequest(rawFields),
-		LocalCodeInterpreter:          supportsLocalCodeInterpreter(rawFields, localCodeInterpreter),
-		LocalSupported:                supportsLocalShimState(rawFields),
+		HasLocalState:                      hasLocalState,
+		LocalToolLoop:                      supportsLocalToolLoop(rawFields),
+		LocalToolSearchRequested:           hasLocalToolSearchRequest(rawFields),
+		LocalToolSearch:                    supportsLocalToolSearch(rawFields),
+		LocalFileSearch:                    supportsLocalFileSearch(rawFields),
+		LocalWebSearchRequested:            isLocalWebSearchToolRequest(rawFields),
+		LocalWebSearchRuntimeEnabled:       webSearchProvider != nil,
+		LocalWebSearch:                     supportsLocalWebSearch(rawFields, webSearchProvider),
+		LocalImageGenerationRequested:      isLocalImageGenerationToolRequest(rawFields),
+		LocalImageGenerationRuntimeEnabled: imageGenerationProvider != nil,
+		LocalImageGeneration:               supportsLocalImageGeneration(rawFields, imageGenerationProvider),
+		LocalComputerRequested:             isLocalComputerToolRequest(rawFields),
+		LocalComputerRuntimeEnabled:        localComputer.Enabled(),
+		LocalComputer:                      supportsLocalComputer(rawFields, localComputer),
+		LocalMCPRequested:                  hasDeclaredMCPTools(rawFields),
+		LocalMCP:                           localMCPSupported || localMCPUnsupported || hasLocalMCPApprovalResponse(rawFields) || (hasLocalMCPState && !localMCPConnector),
+		LocalCodeInterpreterRequested:      isLocalCodeInterpreterToolRequest(rawFields),
+		LocalCodeInterpreterRuntimeEnabled: localCodeInterpreter.Enabled(),
+		LocalCodeInterpreter:               supportsLocalCodeInterpreter(rawFields, localCodeInterpreter),
+		LocalSupported:                     supportsLocalShimState(rawFields),
 	}
 }

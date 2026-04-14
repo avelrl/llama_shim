@@ -146,12 +146,38 @@ func TestSelectResponsesCreateRoute(t *testing.T) {
 			want: responsesCreateRouteLocalMCP,
 		},
 		{
+			name: "local only returns explicit web search disabled route",
+			mode: config.ResponsesModeLocalOnly,
+			profile: responsesCreateRouteInputs{
+				LocalWebSearchRequested: true,
+			},
+			want: responsesCreateRouteLocalWebSearchDisabled,
+		},
+		{
+			name: "local only routes web search parser errors when runtime is enabled",
+			mode: config.ResponsesModeLocalOnly,
+			profile: responsesCreateRouteInputs{
+				LocalWebSearchRequested:      true,
+				LocalWebSearchRuntimeEnabled: true,
+			},
+			want: responsesCreateRouteLocalWebSearch,
+		},
+		{
 			name: "local only returns explicit image generation disabled route",
 			mode: config.ResponsesModeLocalOnly,
 			profile: responsesCreateRouteInputs{
 				LocalImageGenerationRequested: true,
 			},
 			want: responsesCreateRouteLocalImageGenerationDisabled,
+		},
+		{
+			name: "local only routes image generation parser errors when runtime is enabled",
+			mode: config.ResponsesModeLocalOnly,
+			profile: responsesCreateRouteInputs{
+				LocalImageGenerationRequested:      true,
+				LocalImageGenerationRuntimeEnabled: true,
+			},
+			want: responsesCreateRouteLocalImageGeneration,
 		},
 		{
 			name: "local only returns explicit computer disabled route",
@@ -162,12 +188,46 @@ func TestSelectResponsesCreateRoute(t *testing.T) {
 			want: responsesCreateRouteLocalComputerDisabled,
 		},
 		{
+			name: "local only routes computer parser errors when runtime is enabled",
+			mode: config.ResponsesModeLocalOnly,
+			profile: responsesCreateRouteInputs{
+				LocalComputerRequested:      true,
+				LocalComputerRuntimeEnabled: true,
+			},
+			want: responsesCreateRouteLocalComputer,
+		},
+		{
 			name: "local only returns explicit code interpreter disabled route",
 			mode: config.ResponsesModeLocalOnly,
 			profile: responsesCreateRouteInputs{
 				LocalCodeInterpreterRequested: true,
 			},
 			want: responsesCreateRouteLocalCodeInterpreterDisabled,
+		},
+		{
+			name: "local only routes code interpreter parser errors when runtime is enabled",
+			mode: config.ResponsesModeLocalOnly,
+			profile: responsesCreateRouteInputs{
+				LocalCodeInterpreterRequested:      true,
+				LocalCodeInterpreterRuntimeEnabled: true,
+			},
+			want: responsesCreateRouteLocalCodeInterpreter,
+		},
+		{
+			name: "local only routes unsupported hosted tool search requests into local parser",
+			mode: config.ResponsesModeLocalOnly,
+			profile: responsesCreateRouteInputs{
+				LocalToolSearchRequested: true,
+			},
+			want: responsesCreateRouteLocalToolSearch,
+		},
+		{
+			name: "local only routes connector mcp requests into local parser",
+			mode: config.ResponsesModeLocalOnly,
+			profile: responsesCreateRouteInputs{
+				LocalMCPRequested: true,
+			},
+			want: responsesCreateRouteLocalMCP,
 		},
 		{
 			name: "local only rejects unsupported local state fields",

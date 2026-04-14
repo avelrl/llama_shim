@@ -18,9 +18,9 @@ import (
 )
 
 const (
-	defaultLocalWebSearchQueryLimit     = 4
-	defaultLocalWebSearchCitationLimit  = 3
-	defaultLocalWebSearchPageExcerptRunes = 6000
+	defaultLocalWebSearchQueryLimit        = 4
+	defaultLocalWebSearchCitationLimit     = 3
+	defaultLocalWebSearchPageExcerptRunes  = 6000
 	defaultLocalWebSearchMatchExcerptRunes = 220
 )
 
@@ -74,6 +74,19 @@ type localWebSearchRun struct {
 type localWebSearchAnnotationRange struct {
 	Start int
 	End   int
+}
+
+func isLocalWebSearchToolRequest(rawFields map[string]json.RawMessage) bool {
+	tools := decodeToolList(rawFields)
+	if len(tools) != 1 {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(asString(tools[0]["type"]))) {
+	case "web_search", "web_search_preview":
+		return true
+	default:
+		return false
+	}
 }
 
 func supportsLocalWebSearch(rawFields map[string]json.RawMessage, provider websearch.Provider) bool {
@@ -255,6 +268,10 @@ func parseLocalWebSearchConfig(rawFields map[string]json.RawMessage) (localWebSe
 		Filters:           filters,
 		UserLocation:      userLocation,
 	}, nil
+}
+
+func localWebSearchDisabledError() error {
+	return domain.NewValidationError("tools", "shim-local web_search runtime is disabled; set responses.web_search.backend to searxng or use responses.mode=prefer_upstream")
 }
 
 func parseLocalWebSearchFilters(toolType string, value any) ([]string, error) {
@@ -674,8 +691,8 @@ func buildLocalWebSearchSearchItem(run localWebSearchRun) (domain.Item, error) {
 		})
 	}
 	action := map[string]any{
-		"type":   "search",
-		"query":  "",
+		"type":    "search",
+		"query":   "",
 		"queries": nil,
 		"sources": sources,
 	}

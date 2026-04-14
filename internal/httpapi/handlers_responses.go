@@ -150,6 +150,9 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 				h.logger.WarnContext(r.Context(), "local web search stream failed", "request_id", RequestIDFromContext(r.Context()), "err", err)
 			}
 			return
+		case responsesCreateRouteLocalWebSearchDisabled:
+			h.writeError(w, r, localWebSearchDisabledError())
+			return
 		case responsesCreateRouteLocalImageGeneration:
 			response, artifacts, err := h.createLocalImageGenerationResponse(r.Context(), request, requestJSON, rawFields)
 			if err != nil {
@@ -353,6 +356,9 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		WriteJSON(w, http.StatusOK, response)
+		return
+	case responsesCreateRouteLocalWebSearchDisabled:
+		h.writeError(w, r, localWebSearchDisabledError())
 		return
 	case responsesCreateRouteLocalComputer:
 		response, err := h.createLocalComputerResponse(r.Context(), request, requestJSON, rawFields)

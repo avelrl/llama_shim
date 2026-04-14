@@ -98,9 +98,9 @@ proxy-first escape hatch for standalone hosted/native requests, while
 | local `computer` | local subset when backend is configured | proxy first | local subset or explicit disabled-runtime error | Current subset is screenshot-first external-loop planning |
 | local `code_interpreter` | local subset when backend is configured | proxy first | local subset or explicit disabled-runtime error | Current subset stays explicitly dev-only/local |
 | remote MCP `server_url` | local subset | proxy first | local subset, or reject requests outside the local subset | Connector semantics remain separate from `server_url` semantics |
-| remote MCP `connector_id` | proxy-only compatibility bridge | proxy-only compatibility bridge | reject | The shim validates/sanitizes connector-aware requests, but does not claim a local connector runtime |
+| remote MCP `connector_id` | proxy-only compatibility bridge | proxy-only compatibility bridge | reject with MCP-specific validation error | The shim validates/sanitizes connector-aware requests, but does not claim a local connector runtime |
 | `tool_search` hosted/server subset | local subset | proxy first | local subset | Client execution remains proxy-only |
-| `tool_search` client execution | proxy-only | proxy-only | reject | The shim preserves typed items and replay, but does not run client tool search locally |
+| `tool_search` client execution | proxy-only | proxy-only | reject with tool-search-specific validation error | The shim preserves typed items and replay, but does not run client tool search locally |
 
 ## Shim-Owned Operational Surface
 

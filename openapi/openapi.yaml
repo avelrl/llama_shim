@@ -157,8 +157,11 @@ paths:
         - `responses.mode=prefer_upstream` keeps standalone create requests
           proxy-first even when a shim-local subset exists
         - `responses.mode=local_only` never calls upstream; disabled local
-          runtimes for `image_generation`, `computer`, and
-          `code_interpreter` return explicit validation errors
+          runtimes for `web_search`, `image_generation`, `computer`, and
+          `code_interpreter` return explicit validation errors, while
+          proxy-only hosted forms like MCP connectors and client
+          `tool_search` return local validation errors instead of a generic
+          unsupported-mode response
         - unsupported fields may be proxied to upstream `/v1/responses` when
           `responses.mode` allows it
 
@@ -217,6 +220,9 @@ paths:
           configurable SearXNG backend for search, heuristic `open_page` /
           `find_in_page` follow-up when the prompt clearly asks to inspect a
           page, and final assistant `url_citation` annotations
+        - when `responses.mode=local_only` selects this subset without a
+          configured backend, the shim returns an explicit validation error
+          pointing at `responses.web_search.backend`
         - `web_search.external_web_access=false` is not emulated locally; when
           local routing is selected, this shape falls back or errors according
           to `responses.mode`
@@ -320,7 +326,8 @@ paths:
           and shim-local `responses.mode=prefer_local|local_only` now
           supports a hosted/server `tool_search` subset over deferred
           top-level functions and all-deferred namespaces while client
-          execution remains proxy-only
+          execution remains proxy-only and is rejected with a local
+          validation error in `responses.mode=local_only`
         - shim-local `responses.mode=prefer_local|local_only` also supports a
           pragmatic remote MCP subset for request-declared `mcp`
           `server_url` tools: imported tools are surfaced through
@@ -331,7 +338,10 @@ paths:
           `headers`, and both legacy HTTP/SSE and basic streamable HTTP MCP
           transports; connectors remain an upstream-only compatibility bridge
           for execution, but connector-aware MCP validation and visible
-          request-surface sanitization are now part of the shim-owned subset
+          request-surface sanitization are now part of the shim-owned subset,
+          and `responses.mode=local_only` rejects `connector_id` requests
+          with the MCP-specific local validation error instead of a generic
+          mode failure
         - live upstream traces now confirm that ordinary Python/tool errors in
           Code Interpreter complete as `response.status=completed` with
           `code_interpreter_call.status=completed`, empty `outputs`, no

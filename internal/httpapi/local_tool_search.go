@@ -37,6 +37,15 @@ type localToolSearchPath struct {
 	LoadedFunctions []map[string]any
 }
 
+func hasLocalToolSearchRequest(rawFields map[string]json.RawMessage) bool {
+	for _, tool := range decodeToolList(rawFields) {
+		if strings.EqualFold(strings.TrimSpace(asString(tool["type"])), "tool_search") {
+			return true
+		}
+	}
+	return false
+}
+
 func supportsLocalToolSearch(rawFields map[string]json.RawMessage) bool {
 	for key := range rawFields {
 		if _, ok := shimLocalStateBaseFields[key]; ok {
@@ -139,7 +148,7 @@ func (h *responseHandler) createLocalToolSearchResponse(ctx context.Context, req
 
 func parseLocalToolSearchConfig(rawFields map[string]json.RawMessage) (localToolSearchConfig, error) {
 	tools := decodeToolList(rawFields)
-	if len(tools) < 2 {
+	if len(tools) == 0 {
 		return localToolSearchConfig{}, domain.NewValidationError("tools", "shim-local tool_search requires one tool_search tool plus deferred functions or namespaces")
 	}
 	if err := validateLocalToolSearchToolChoice(rawFields["tool_choice"]); err != nil {
@@ -147,6 +156,22 @@ func parseLocalToolSearchConfig(rawFields map[string]json.RawMessage) (localTool
 	}
 	if err := validateLocalToolSearchParallelToolCalls(rawFields["parallel_tool_calls"]); err != nil {
 		return localToolSearchConfig{}, err
+	}
+	var searchToolCount int
+	for _, tool := range tools {
+		if !strings.EqualFold(strings.TrimSpace(asString(tool["type"])), "tool_search") {
+			continue
+		}
+		searchToolCount++
+		if searchToolCount > 1 {
+			return localToolSearchConfig{}, domain.NewValidationError("tools", "shim-local tool_search supports exactly one tool_search tool")
+		}
+		if strings.EqualFold(strings.TrimSpace(asString(tool["execution"])), "client") {
+			return localToolSearchConfig{}, domain.NewValidationError("tools", "shim-local tool_search only supports hosted/server execution; client execution remains proxy-only")
+		}
+	}
+	if len(tools) < 2 {
+		return localToolSearchConfig{}, domain.NewValidationError("tools", "shim-local tool_search requires one tool_search tool plus deferred functions or namespaces")
 	}
 
 	var (

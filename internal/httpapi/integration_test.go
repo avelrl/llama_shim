@@ -1701,6 +1701,43 @@ func TestResponsesCreateHostedToolSearchProxyPassthrough(t *testing.T) {
 	require.Equal(t, "function_call", got.Output[2].Type)
 }
 
+func TestResponsesCreateHostedToolSearchPreferUpstreamStaysProxyFirst(t *testing.T) {
+	app := testutil.NewTestAppWithResponsesMode(t, config.ResponsesModePreferUpstream)
+
+	response := postResponse(t, app, map[string]any{
+		"model": "gpt-5.4",
+		"store": true,
+		"input": "Find the shipping ETA tool first, then use it for order_42.",
+		"tools": []map[string]any{
+			{
+				"type":        "tool_search",
+				"description": "Find the project-specific tools needed to continue the task.",
+			},
+			{
+				"type":          "function",
+				"name":          "get_shipping_eta",
+				"description":   "Look up shipping ETA details for an order.",
+				"defer_loading": true,
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"order_id": map[string]any{"type": "string"},
+					},
+					"required":             []string{"order_id"},
+					"additionalProperties": false,
+				},
+			},
+		},
+		"parallel_tool_calls": false,
+	})
+
+	require.Equal(t, "upstream_resp_1", response.ID)
+	require.Len(t, response.Output, 3)
+	require.Equal(t, "tool_search_call", response.Output[0].Type)
+	require.Equal(t, "tool_search_output", response.Output[1].Type)
+	require.Equal(t, "function_call", response.Output[2].Type)
+}
+
 func TestResponsesCreateClientToolSearchFollowupLoadsDeferredFunction(t *testing.T) {
 	app := testutil.NewTestAppWithResponsesMode(t, config.ResponsesModePreferUpstream)
 
@@ -1778,6 +1815,36 @@ func TestResponsesCreateClientToolSearchFollowupLoadsDeferredFunction(t *testing
 	require.Equal(t, "tool_search_call", asStringAny(inputItems.Data[0]["type"]))
 	require.Equal(t, "tool_search_output", asStringAny(inputItems.Data[1]["type"]))
 	require.Equal(t, callID, asStringAny(inputItems.Data[1]["call_id"]))
+}
+
+func TestResponsesCreateClientToolSearchLocalOnlyRejectsProxyOnlyMode(t *testing.T) {
+	app := testutil.NewTestAppWithResponsesMode(t, config.ResponsesModeLocalOnly)
+
+	status, payload := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model": "gpt-5.4",
+		"input": "Find the shipping ETA tool first, then use it for order_42.",
+		"tools": []map[string]any{
+			{
+				"type":        "tool_search",
+				"execution":   "client",
+				"description": "Find the project-specific tools needed to continue the task.",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"goal": map[string]any{"type": "string"},
+					},
+					"required":             []string{"goal"},
+					"additionalProperties": false,
+				},
+			},
+		},
+	})
+
+	require.Equal(t, http.StatusBadRequest, status)
+	errorPayload, ok := payload["error"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "invalid_request_error", asStringAny(errorPayload["type"]))
+	require.Contains(t, asStringAny(errorPayload["message"]), "client execution remains proxy-only")
 }
 
 func TestResponsesGetStreamReplaysToolSearchAsGenericOutputItemReplay(t *testing.T) {
@@ -4417,6 +4484,75 @@ func TestResponsesEnabledWebSearchToolFallsBackToUpstreamWhenNoLocalProvider(t *
 
 	require.Equal(t, "upstream_resp_1", response.ID)
 	require.Equal(t, "UPSTREAM", response.OutputText)
+}
+
+func TestResponsesPreferUpstreamWebSearchStaysProxyFirstEvenWhenLocalProviderExists(t *testing.T) {
+	provider := &testutil.FakeWebSearchProvider{}
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		ResponsesMode:     config.ResponsesModePreferUpstream,
+		WebSearchProvider: provider,
+	})
+
+	response := postResponse(t, app, map[string]any{
+		"model": "test-model",
+		"input": "Search the web",
+		"tools": []map[string]any{
+			{
+				"type": "web_search",
+			},
+		},
+	})
+
+	require.Equal(t, "upstream_resp_1", response.ID)
+	require.Equal(t, "UPSTREAM", response.OutputText)
+	require.Empty(t, provider.SearchCalls)
+}
+
+func TestResponsesLocalOnlyWebSearchRequiresBackend(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		ResponsesMode: config.ResponsesModeLocalOnly,
+	})
+
+	status, payload := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model": "test-model",
+		"input": "Search the web",
+		"tools": []map[string]any{
+			{
+				"type": "web_search",
+			},
+		},
+	})
+
+	require.Equal(t, http.StatusBadRequest, status)
+	errorPayload, ok := payload["error"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "invalid_request_error", asStringAny(errorPayload["type"]))
+	require.Contains(t, asStringAny(errorPayload["message"]), "responses.web_search.backend")
+}
+
+func TestResponsesLocalOnlyWebSearchUnsupportedShapeUsesParserErrorWhenBackendExists(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		ResponsesMode:     config.ResponsesModeLocalOnly,
+		WebSearchProvider: &testutil.FakeWebSearchProvider{},
+	})
+
+	status, payload := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model": "test-model",
+		"input": "Search the web",
+		"tools": []map[string]any{
+			{
+				"type":                "web_search",
+				"external_web_access": false,
+			},
+		},
+	})
+
+	require.Equal(t, http.StatusBadRequest, status)
+	errorPayload, ok := payload["error"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "invalid_request_error", asStringAny(errorPayload["type"]))
+	require.Contains(t, asStringAny(errorPayload["message"]), "input shape is not supported when responses.mode=local_only")
+	require.NotContains(t, asStringAny(errorPayload["message"]), "responses.web_search.backend")
 }
 
 func TestResponsesLocalWebSearchUsesProviderAndAnnotatesSources(t *testing.T) {
@@ -7795,6 +7931,38 @@ func TestResponsesCreateLocalComputerLocalOnlyRequiresPlannerRuntime(t *testing.
 	require.Contains(t, asStringAny(errorPayload["message"]), "responses.computer.backend")
 }
 
+func TestResponsesCreateLocalWebSearchStreamLocalOnlyRequiresBackend(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		ResponsesMode: config.ResponsesModeLocalOnly,
+	})
+
+	req, err := http.NewRequest(http.MethodPost, app.Server.URL+"/v1/responses", bytes.NewReader(mustJSON(t, map[string]any{
+		"model":  "test-model",
+		"stream": true,
+		"input":  "Search the web",
+		"tools": []map[string]any{
+			{
+				"type": "web_search",
+			},
+		},
+	})))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+
+	var payload map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&payload))
+	errorPayload, ok := payload["error"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "invalid_request_error", asStringAny(errorPayload["type"]))
+	require.Contains(t, asStringAny(errorPayload["message"]), "responses.web_search.backend")
+}
+
 func TestResponsesCreateLocalImageGenerationStreamLocalOnlyRequiresRuntime(t *testing.T) {
 	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
 		ResponsesMode: config.ResponsesModeLocalOnly,
@@ -9475,6 +9643,72 @@ func TestResponsesCreateConnectorMCPFallsBackToUpstreamEvenWithPreviousLocalMCPS
 	require.True(t, ok)
 	require.Len(t, output, 1)
 	require.Equal(t, "message", asStringAny(output[0].(map[string]any)["type"]))
+}
+
+func TestResponsesCreateRemoteMCPPreferUpstreamStaysProxyFirst(t *testing.T) {
+	mcpServer := testutil.NewFakeMCPServer(t, []testutil.FakeMCPTool{
+		{
+			Name:        "roll",
+			Description: "Roll dice from a dice expression.",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"diceRollExpression": map[string]any{"type": "string"},
+				},
+				"required":             []string{"diceRollExpression"},
+				"additionalProperties": false,
+			},
+			OutputText: "4",
+		},
+	})
+	defer mcpServer.Close()
+
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		ResponsesMode: config.ResponsesModePreferUpstream,
+	})
+
+	response := postResponse(t, app, map[string]any{
+		"model":       "test-model",
+		"input":       "Roll 2d4+1 and return only the numeric result.",
+		"tool_choice": "required",
+		"tools": []map[string]any{
+			{
+				"type":             "mcp",
+				"server_label":     "dmcp",
+				"server_url":       mcpServer.URL + "/sse",
+				"require_approval": "never",
+			},
+		},
+	})
+
+	require.Equal(t, "upstream_resp_1", response.ID)
+	require.NotEmpty(t, response.OutputText)
+}
+
+func TestResponsesCreateConnectorMCPLocalOnlyRejectsProxyOnlyMode(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		ResponsesMode: config.ResponsesModeLocalOnly,
+	})
+
+	status, body := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model": "test-model",
+		"input": "Say OK and nothing else.",
+		"tools": []map[string]any{
+			{
+				"type":             "mcp",
+				"server_label":     "google_calendar",
+				"connector_id":     "connector_googlecalendar",
+				"authorization":    "connector-access-token",
+				"require_approval": "never",
+			},
+		},
+	})
+
+	require.Equal(t, http.StatusBadRequest, status)
+	errorPayload, ok := body["error"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "invalid_request_error", asStringAny(errorPayload["type"]))
+	require.Contains(t, asStringAny(errorPayload["message"]), "connectors remain upstream-only")
 }
 
 func TestResponsesMCPToolSurfaceSanitizesSensitiveRequestFields(t *testing.T) {

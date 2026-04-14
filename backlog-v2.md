@@ -109,10 +109,12 @@
   ordering across stream and non-stream paths: the repo now has a centralized
   per-tool mode selector for `prefer_local`, `prefer_upstream`, and
   `local_only`
-- `local_only` disabled-runtime errors for `image_generation`, `computer`, and
-  `code_interpreter` are now explicit and symmetric in the shared create
-  routing contract instead of leaking through generic unsupported-field
-  branches
+- `local_only` routing for hosted/native Responses tools is now stricter and
+  more specific: disabled-runtime errors are explicit for `web_search`,
+  `image_generation`, `computer`, and `code_interpreter`, while proxy-only
+  forms like MCP `connector_id` and client `tool_search` now fail through
+  their tool-specific local validation paths instead of a generic
+  unsupported-mode branch
 - `/readyz` теперь реально проверяет SQLite и upstream llama backend, а при
   `sqlite_vec` + readiness-aware embedder ещё и retrieval embedder, а не просто
   отвечает `200`
