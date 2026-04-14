@@ -105,6 +105,14 @@
   of the local subset, while connectors remain upstream-only for execution;
   connector-aware MCP validation and request-surface sanitization are now
   closed in create/retrieve paths
+- `/v1/responses create` routing no longer depends on duplicated `switch`
+  ordering across stream and non-stream paths: the repo now has a centralized
+  per-tool mode selector for `prefer_local`, `prefer_upstream`, and
+  `local_only`
+- `local_only` disabled-runtime errors for `image_generation`, `computer`, and
+  `code_interpreter` are now explicit and symmetric in the shared create
+  routing contract instead of leaking through generic unsupported-field
+  branches
 - `/readyz` теперь реально проверяет SQLite и upstream llama backend, а при
   `sqlite_vec` + readiness-aware embedder ещё и retrieval embedder, а не просто
   отвечает `200`
@@ -196,9 +204,21 @@
 
 ## Что делаем дальше
 
+Release framing as of April 14, 2026:
+
+- V2 = broad compatibility facade over the current official OpenAI surface
+  already exposed by the shim
+- V2 добивает compatibility gaps и contract clarity, а не растит новые
+  non-OpenAI capabilities just because they are interesting
+- per-surface source of truth теперь живет в
+  [docs/compatibility-matrix.md](docs/compatibility-matrix.md)
+- post-V2 expansion parking lot теперь живет в
+  [docs/v3-scope.md](docs/v3-scope.md)
+
 - [x] - local-first ownership для `/v1/responses` и Codex tool loop ([детали](#task-local-first-responses))
 - [x] - shim-native constrained custom tools (`grammar`, `regex`) ([детали](#task-constrained-custom-tools))
 - [x] - OpenAPI spec и docs для текущего surface shim ([детали](#task-openapi-docs))
+- [x] - per-surface compatibility matrix for V2 planning ([doc](docs/compatibility-matrix.md))
 - [x] - `GET /v1/conversations/{id}` и честный read-model разговора ([детали](#task-get-conversation))
 - [x] - `POST /v1/conversations/{id}/items` и canonical append flow ([детали](#task-conversation-append))
 - [x] - `GET /v1/conversations/{id}/items/{item_id}` и single-item read path ([детали](#task-conversation-get-item))
@@ -218,7 +238,6 @@
 - [x] - docs-backed `tool_search` passthrough contract and generic SSE replay for stored Responses items ([детали](#task-streaming-replay-tool-search))
 - [x] - shim-local hosted/server `tool_search` runtime subset ([детали](#task-local-tool-search-runtime))
 - [x] - shim-local remote MCP runtime subset for public `server_url` servers ([детали](#task-local-remote-mcp-runtime))
-- [ ] - hosted/native tool-specific SSE replay beyond core shim item families ([детали](#task-streaming-replay-hosted))
 - [x] - compatibility для `/responses/compact` и `/responses/input_tokens` ([детали](#task-compaction-and-token-counting))
 - [x] - local retrieval substrate: files + vector stores + lexical search ([детали](#task-retrieval-substrate-local))
 - [x] - retrieval-compatible local `file_search` execution inside `/v1/responses` ([детали](#task-retrieval-layer))
@@ -234,9 +253,8 @@
 - [x] - local-first stored Chat Completions CRUD surface for proxy completions ([детали](#task-chat-stored-surface-local))
 - [x] - `/readyz` checks SQLite, upstream llama backend, configured retrieval embedder readiness, and configured local tool backends ([детали](#task-ops-hardening))
 - [x] - shim-owned ops hardening subset: ingress auth, request rate limiting, quotas, metrics, structured observability ([детали](#task-ops-hardening))
+- [ ] - V2 ops floor: retention cleanup, maintenance path, and local DX packaging ([детали](#task-ops-hardening))
 - [ ] - stored Chat Completions compatibility surface ([детали](#task-chat-stored-surface))
-- [ ] - broader operational hardening: retention, maintenance, tenanting, richer quotas/exporters ([детали](#task-ops-hardening))
-- [ ] - true constrained decoder/runtime для `grammar` / `regex` custom tools ([детали](#task-true-constrained-runtime))
 
 ## <a id="task-local-first-responses"></a>Local-first ownership для `/v1/responses` и Codex tool loop
 
@@ -1093,6 +1111,15 @@ Definition of done:
 
 ## <a id="task-streaming-replay-hosted"></a>Hosted/native tool-specific SSE replay beyond core shim item families
 
+Статус release planning на 14 апреля 2026:
+
+- это больше не V2 ship blocker; broad compatibility facade может честно жить
+  на current docs-backed / trace-backed core replay subset плюс generic replay
+  там, где official docs и fixtures не фиксируют exact hosted family
+- work остаётся полезным, но теперь staged в
+  [docs/v3-scope.md](docs/v3-scope.md) до тех пор, пока не появится
+  fixture-backed или client-driven reason брать exact replay дальше
+
 Почему это отдельно:
 
 - для hosted/native tools official docs сейчас явно перечисляют event families, но exact payload schema через docs tooling доступна фрагментарно
@@ -1684,6 +1711,16 @@ Definition of done:
 - hosted/native tools не “просачиваются” в код через ad-hoc special cases, а идут через осознанную модель item/tool semantics
 - docs/config/tests позволяют проверить поведение `prefer_local`, `prefer_upstream` и `local_only` для каждого поддерживаемого tool family
 
+Статус после актуализации 14 апреля 2026:
+
+- central create-route selector для `/v1/responses` уже landed и покрыт unit
+  tests для основных mode/tool routing веток
+- explicit local-only disabled-runtime errors уже зафиксированы для
+  `image_generation`, `computer`, и `code_interpreter`
+- remaining work здесь — не “ещё один ad-hoc branch”, а расширение matrix/docs
+  coverage и per-tool integration coverage для всех hosted/native tool
+  families
+
 Полезные reference:
 
 - [Migrate to Responses: About the Responses API](https://developers.openai.com/api/docs/guides/migrate-to-responses#about-the-responses-api)
@@ -1846,14 +1883,21 @@ Definition of done:
 
 Что остается здесь open:
 
+V2 ship bar:
+
 - retention cleanup job
 - backup / restore / vacuum / optimize path
-- `Makefile`, dev script, `Dockerfile`, `docker-compose` или их осознанный минимальный subset
+- `Makefile`, dev script, `Dockerfile`, `docker-compose` или их осознанный
+  минимальный subset
+
+Moved out of V2 into V3 staging:
+
 - multi-tenant authz / tenanting
 - distributed/shared rate limiting
 - richer quotas beyond current request/upload/runtime knobs
 - dashboards / exporters / admin tooling beyond the built-in `/metrics`
-- governance work: redact logs, hard delete vs soft delete, optional encryption at rest
+- governance work: redact logs, hard delete vs soft delete, optional
+  encryption at rest
 
 Definition of done:
 
@@ -1862,10 +1906,16 @@ Definition of done:
 - readiness and maintenance story are documented
 - remaining infra work is explicitly tracked and not hidden behind overclaims
 
-## Более поздние milestone-пункты
+## V3 staging
 
-Это не “делаем прямо сейчас”, но важно не потерять:
+Это уже не часть V2 ship bar. Source of truth:
+[docs/v3-scope.md](docs/v3-scope.md)
 
+Что уже осознанно staged туда:
+
+- alternative image backends и richer provider-specific image pipelines
+- exact hosted/native tool-specific SSE replay beyond current core replay subset
+- true constrained decoder/runtime для `grammar` / `regex` custom tools
 - Postgres / multi-instance mode без abstraction zoo
 - multi-tenant authz / tenanting / richer quotas
 - governance: redact logs, hard delete vs soft delete, optional encryption at rest
@@ -1883,6 +1933,14 @@ Definition of done:
 - spec-first discipline нужна до того, как surface вырастет еще на несколько endpoints
 
 ## <a id="task-true-constrained-runtime"></a>True constrained decoder/runtime для `grammar` / `regex` custom tools
+
+Статус release planning на 14 апреля 2026:
+
+- это больше не V2 ship blocker; V2 может честно shipped-иться с текущим
+  broad constrained subset, если docs/OpenAPI/backlog явно не overclaim-ят
+  strict constrained decoding parity
+- task moved to [docs/v3-scope.md](docs/v3-scope.md) как post-V2 runtime
+  expansion track
 
 Когда делать:
 

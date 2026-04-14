@@ -14,6 +14,14 @@ v1 поддерживает:
 - SQLite-backed историю диалогов для `conversation`
 - fallback proxying для остальных маршрутов напрямую в upstream backend
 
+## Совместимость и roadmap
+
+- цель V2: broad compatibility facade поверх текущего official OpenAI surface,
+  который shim уже экспонирует
+- matrix по surface-ам: [docs/compatibility-matrix.md](docs/compatibility-matrix.md)
+- подробный backlog по V2: [backlog-v2.md](backlog-v2.md)
+- parking lot для post-V2 expansion: [docs/v3-scope.md](docs/v3-scope.md)
+
 ## Архитектура
 
 - `cmd/shim`: bootstrap процесса и запуск HTTP-сервера

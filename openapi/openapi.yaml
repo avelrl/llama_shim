@@ -152,6 +152,13 @@ paths:
         - `background` is passed through to upstream `/v1/responses`; the shim
           does not execute background responses locally
         - a supported local subset is executed entirely inside the shim
+        - `responses.mode=prefer_local` is the default and runs supported
+          shim-local subsets first
+        - `responses.mode=prefer_upstream` keeps standalone create requests
+          proxy-first even when a shim-local subset exists
+        - `responses.mode=local_only` never calls upstream; disabled local
+          runtimes for `image_generation`, `computer`, and
+          `code_interpreter` return explicit validation errors
         - unsupported fields may be proxied to upstream `/v1/responses` when
           `responses.mode` allows it
 

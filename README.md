@@ -22,6 +22,14 @@ v1 supports:
 - SQLite-backed conversation history for `conversation`
 - fallback proxying for non-shim routes directly to the upstream backend
 
+## Compatibility Roadmap
+
+- V2 target: a broad compatibility facade over the current official OpenAI
+  surface already exposed by the shim
+- per-surface status: [docs/compatibility-matrix.md](docs/compatibility-matrix.md)
+- detailed task history and remaining V2 gaps: [backlog-v2.md](backlog-v2.md)
+- post-V2 capability expansion parking lot: [docs/v3-scope.md](docs/v3-scope.md)
+
 ## Architecture
 
 - `cmd/shim`: process bootstrap and HTTP server startup

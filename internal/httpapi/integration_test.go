@@ -7774,6 +7774,61 @@ func TestResponsesCreateLocalComputerRequestsScreenshot(t *testing.T) {
 	require.Equal(t, "computer_call", got.Output[0].Type)
 }
 
+func TestResponsesCreateLocalComputerLocalOnlyRequiresPlannerRuntime(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		ResponsesMode: config.ResponsesModeLocalOnly,
+	})
+
+	status, payload := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model":       "test-model",
+		"input":       "Use the computer tool to inspect the page.",
+		"tool_choice": "required",
+		"tools": []map[string]any{
+			{"type": "computer"},
+		},
+	})
+
+	require.Equal(t, http.StatusBadRequest, status)
+	errorPayload, ok := payload["error"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "invalid_request_error", asStringAny(errorPayload["type"]))
+	require.Contains(t, asStringAny(errorPayload["message"]), "responses.computer.backend")
+}
+
+func TestResponsesCreateLocalImageGenerationStreamLocalOnlyRequiresRuntime(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		ResponsesMode: config.ResponsesModeLocalOnly,
+	})
+
+	req, err := http.NewRequest(http.MethodPost, app.Server.URL+"/v1/responses", bytes.NewReader(mustJSON(t, map[string]any{
+		"model":  "test-model",
+		"stream": true,
+		"input":  "Generate a cat illustration.",
+		"tools": []map[string]any{
+			{
+				"type":          "image_generation",
+				"output_format": "png",
+			},
+		},
+		"tool_choice": map[string]any{"type": "image_generation"},
+	})))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+
+	var payload map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&payload))
+	errorPayload, ok := payload["error"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "invalid_request_error", asStringAny(errorPayload["type"]))
+	require.Contains(t, asStringAny(errorPayload["message"]), "responses.image_generation.backend")
+}
+
 func TestResponsesCreateLocalComputerFollowUpUsesScreenshotInput(t *testing.T) {
 	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
 		ComputerBackend: httpapi.LocalComputerBackendChatCompletions,

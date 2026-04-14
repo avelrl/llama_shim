@@ -1,0 +1,129 @@
+# V2 Compatibility Matrix
+
+Last updated: April 14, 2026.
+
+This document is the release-planning view for `llama_shim` V2.
+
+V2 is scoped as a broad compatibility facade over the current official OpenAI
+surface already exposed by the shim. The goal is not exact hosted orchestration
+for every tool family. The goal is a predictable, docs-aligned contract with
+explicit boundaries.
+
+Status legend:
+
+- `Implemented`: shipped and not currently blocking V2
+- `Broad subset`: usable and documented, but intentionally not full hosted parity
+- `Partial`: important V2 work remains
+- `Shim-owned`: useful local surface, but not an OpenAI compatibility claim
+- `V3`: intentionally moved out of the V2 ship bar
+
+Primary official references reviewed for this matrix:
+
+- [Migrate to the Responses API](https://developers.openai.com/api/docs/guides/migrate-to-responses)
+- [Using tools](https://developers.openai.com/api/docs/guides/tools)
+- [Conversation state](https://developers.openai.com/api/docs/guides/conversation-state)
+- [Compaction](https://developers.openai.com/api/docs/guides/compaction)
+- [Counting tokens](https://developers.openai.com/api/docs/guides/token-counting)
+- current official API endpoint list, including
+  `/v1/responses`, `/v1/conversations`, `/v1/chat/completions`,
+  `/v1/files`, and `/v1/vector_stores`
+
+Detailed task notes and implementation history still live in
+[backlog-v2.md](../backlog-v2.md).
+
+## Responses And Conversations
+
+| Surface | Current shim status | V2 target | Notes |
+| --- | --- | --- | --- |
+| `POST /v1/responses` | Broad subset | Close remaining hosted/native tool contract and mode behavior | Local-first path is real and stateful; unsupported/rare semantics must stay explicit |
+| `GET /v1/responses/{id}` | Implemented | Keep docs and OpenAPI aligned | Stored response ownership is already in the shim |
+| `DELETE /v1/responses/{id}` and `POST /v1/responses/{id}/cancel` | Implemented | Keep lifecycle semantics honest | No known V2 blocker beyond lifecycle wording |
+| `GET /v1/responses/{id}/input_items` | Implemented | Keep item-history semantics stable | Effective input snapshot is already persisted |
+| create-stream and retrieve-stream | Broad subset | Keep core SSE stable; do not overclaim exact hosted choreography | Generic replay is accepted where docs or fixtures do not lock down tool-specific event families |
+| `responses.mode=prefer_local|prefer_upstream|local_only` | Partial | Finish the remaining per-tool coverage and wording | The route selector and initial mode tests are in place, but the facade contract still needs broader per-tool documentation/tests |
+| `POST /v1/conversations` | Implemented | Keep aligned with Responses state model | Durable conversation ids are already part of the baseline |
+| `GET /v1/conversations/{id}` | Implemented | Keep read-model honest | |
+| `GET/POST/DELETE /v1/conversations/{id}/items*` | Implemented | Keep canonical append/delete flow centralized | |
+| `/v1/responses/input_tokens` | Broad subset | Keep “local deterministic estimate” wording explicit | V2 does not require exact upstream tokenization parity |
+| `/v1/responses/compact` | Broad subset | Keep standalone compaction subset explicit | Exact hosted encrypted compaction state is not a V2 requirement |
+| server-side compaction via `context_management.compact_threshold` | Partial | Decide whether to implement a minimal subset or keep explicit not-supported status | This is a contract-clarity task, not a feature-expansion task |
+
+## Chat Completions
+
+| Surface | Current shim status | V2 target | Notes |
+| --- | --- | --- | --- |
+| `POST /v1/chat/completions` | Broad subset | Keep sanitization, streaming, and store policy explicit | Still a major compatibility surface even though Responses is primary |
+| stored Chat Completions `list/get/update/delete/messages` | Partial | Finalize the local-first compatibility contract | This remains a V2 blocker |
+| stored Chat Completions upstream merge/fallback behavior | Partial | Make implemented vs upstream-only behavior explicit in docs and tests | The shim should not imply full hosted stored-chat ownership |
+| streamed shadow-store reconstruction | Broad subset | Keep current boundaries explicit | Current subset covers practical assistant-text and tool-call-heavy flows, not every possible hosted chunk shape |
+
+## Files, Vector Stores, And Retrieval
+
+| Surface | Current shim status | V2 target | Notes |
+| --- | --- | --- | --- |
+| `/v1/files` CRUD | Implemented | Keep retrieval/file-input contract explicit | Shim owns local storage |
+| `/v1/vector_stores` CRUD | Implemented | Keep local retrieval subset explicit | |
+| `/v1/vector_stores/{id}/files*` | Implemented | Keep failed-binary indexing behavior explicit | |
+| `/v1/vector_stores/{id}/search` lexical + semantic + hybrid local subsets | Broad subset | Keep ranking semantics and filters explicit | Local substrate is already usable |
+| hosted reranked retrieval parity | Partial | Close the remaining hosted reranking gap or narrow the claim explicitly | This remains a V2 blocker |
+
+## Tools In Responses
+
+| Surface | Current shim status | V2 target | Notes |
+| --- | --- | --- | --- |
+| custom functions / custom tools | Broad subset | Keep request/repair/fallback/error behavior explicit | This is part of the facade contract |
+| constrained custom tools `grammar` / `regex` | Broad subset | Ship V2 with honest subset wording | True constrained decoding is staged for V3, not required for V2 |
+| local `file_search` | Broad subset | Keep retrieval/result/citation subset explicit | Already usable end-to-end |
+| local `web_search` | Broad subset | Close exact hosted-vs-local boundary and mode behavior | Exact hosted search parity is still open |
+| local `image_generation` | Broad subset | Keep separate image-backend contract explicit | Current subset is docs-aligned, not exact hosted planner parity |
+| local `computer` | Broad subset | Keep external-loop contract explicit | Current subset is screenshot-first and intentionally generic on replay |
+| local `code_interpreter` | Broad subset | Keep dev-only/local boundary explicit | Current contract is useful but not hosted-equivalent |
+| remote MCP | Broad subset | Close connector/runtime boundary and mode behavior | `server_url` subset is implemented; connector semantics still need clearer V2 wording |
+| `tool_search` | Broad subset | Keep runtime and passthrough boundaries explicit | Current subset is already docs-backed |
+| hosted/native tool-specific SSE beyond current core traces | V3 | Only take on exact replay work when docs or fixtures make it necessary | Not a V2 ship blocker anymore |
+
+## Current Mode Matrix
+
+This is the current V2-facing routing contract for `POST /v1/responses` as of
+April 14, 2026. It is intentionally conservative: `prefer_upstream` remains a
+proxy-first escape hatch for standalone hosted/native requests, while
+`prefer_local` is the default mode for the shim facade.
+
+| Tool or surface | `prefer_local` | `prefer_upstream` | `local_only` | Notes |
+| --- | --- | --- | --- | --- |
+| core local Responses subset | local first, fallback upstream on unsupported subset | proxy first for standalone requests; local-state follow-up still uses shim-owned state handling | reject unsupported fields | This covers the shim-owned stateful baseline |
+| local `file_search` | local subset | proxy first | local subset or validation error | Current local subset is useful, but `prefer_upstream` does not silently replace hosted behavior |
+| local `web_search` | local subset when backend is configured; fallback upstream on unsupported shape/runtime absence | proxy first | local subset or explicit local-only error | Exact hosted search behavior remains out of scope for V2 |
+| local `image_generation` | local subset when backend is configured; fallback upstream before local dispatch when runtime/subset is unavailable | proxy first | local subset or explicit disabled-runtime error | Stream and non-stream now share the same disabled-runtime behavior |
+| local `computer` | local subset when backend is configured | proxy first | local subset or explicit disabled-runtime error | Current subset is screenshot-first external-loop planning |
+| local `code_interpreter` | local subset when backend is configured | proxy first | local subset or explicit disabled-runtime error | Current subset stays explicitly dev-only/local |
+| remote MCP `server_url` | local subset | proxy first | local subset, or reject requests outside the local subset | Connector semantics remain separate from `server_url` semantics |
+| remote MCP `connector_id` | proxy-only compatibility bridge | proxy-only compatibility bridge | reject | The shim validates/sanitizes connector-aware requests, but does not claim a local connector runtime |
+| `tool_search` hosted/server subset | local subset | proxy first | local subset | Client execution remains proxy-only |
+| `tool_search` client execution | proxy-only | proxy-only | reject | The shim preserves typed items and replay, but does not run client tool search locally |
+
+## Shim-Owned Operational Surface
+
+| Surface | Current shim status | V2 target | Notes |
+| --- | --- | --- | --- |
+| `/healthz`, `/readyz`, `/metrics` | Shim-owned | Keep documented and stable | Useful operator surface, not OpenAI compatibility surface |
+| ingress auth, rate limiting, quotas, structured logs | Shim-owned | Keep minimum operator floor stable | |
+| retention cleanup, maintenance path, and local DX packaging | Partial | Close the minimum V2 operator floor | This remains a V2 blocker |
+| multi-tenant authz, shared rate limiting, richer exporters/admin tooling | V3 | Stage after V2 | Valuable, but not required for a broad compatibility facade |
+
+## V2 Ship Blockers
+
+These are the remaining items that still look like real V2 blockers as of
+April 14, 2026:
+
+- per-tool compatibility and mode matrix for `prefer_local`,
+  `prefer_upstream`, and `local_only`
+- remaining hosted/native Responses tools parity work
+- hosted reranked retrieval parity behind local `vector_stores`
+- stored Chat Completions contract finalization
+- minimum operator floor: retention cleanup, maintenance path, and local DX
+
+## Staged For V3
+
+Items intentionally staged for post-V2 expansion now live in
+[docs/v3-scope.md](v3-scope.md).

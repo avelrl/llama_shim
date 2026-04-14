@@ -104,6 +104,101 @@ func TestShouldFallbackLocalState(t *testing.T) {
 	require.False(t, shouldFallbackLocalState(config.ResponsesModePreferLocal, domain.NewValidationError("input", "input is required")))
 }
 
+func TestSelectResponsesCreateRoute(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		mode    string
+		profile responsesCreateRouteInputs
+		want    responsesCreateRoute
+	}{
+		{
+			name: "prefer upstream proxies standalone hosted requests",
+			mode: config.ResponsesModePreferUpstream,
+			profile: responsesCreateRouteInputs{
+				LocalWebSearch: true,
+			},
+			want: responsesCreateRouteProxy,
+		},
+		{
+			name: "prefer local runs local file search",
+			mode: config.ResponsesModePreferLocal,
+			profile: responsesCreateRouteInputs{
+				LocalFileSearch: true,
+			},
+			want: responsesCreateRouteLocalFileSearch,
+		},
+		{
+			name: "prefer local runs local tool search",
+			mode: config.ResponsesModePreferLocal,
+			profile: responsesCreateRouteInputs{
+				LocalToolSearch: true,
+			},
+			want: responsesCreateRouteLocalToolSearch,
+		},
+		{
+			name: "prefer local runs local mcp subset",
+			mode: config.ResponsesModePreferLocal,
+			profile: responsesCreateRouteInputs{
+				LocalMCP: true,
+			},
+			want: responsesCreateRouteLocalMCP,
+		},
+		{
+			name: "local only returns explicit image generation disabled route",
+			mode: config.ResponsesModeLocalOnly,
+			profile: responsesCreateRouteInputs{
+				LocalImageGenerationRequested: true,
+			},
+			want: responsesCreateRouteLocalImageGenerationDisabled,
+		},
+		{
+			name: "local only returns explicit computer disabled route",
+			mode: config.ResponsesModeLocalOnly,
+			profile: responsesCreateRouteInputs{
+				LocalComputerRequested: true,
+			},
+			want: responsesCreateRouteLocalComputerDisabled,
+		},
+		{
+			name: "local only returns explicit code interpreter disabled route",
+			mode: config.ResponsesModeLocalOnly,
+			profile: responsesCreateRouteInputs{
+				LocalCodeInterpreterRequested: true,
+			},
+			want: responsesCreateRouteLocalCodeInterpreterDisabled,
+		},
+		{
+			name: "local only rejects unsupported local state fields",
+			mode: config.ResponsesModeLocalOnly,
+			profile: responsesCreateRouteInputs{
+				HasLocalState: true,
+			},
+			want: responsesCreateRouteLocalOnlyUnsupported,
+		},
+		{
+			name: "prefer local reuses local state via upstream when no local subset matches",
+			mode: config.ResponsesModePreferLocal,
+			profile: responsesCreateRouteInputs{
+				HasLocalState: true,
+			},
+			want: responsesCreateRouteLocalStateViaUpstream,
+		},
+		{
+			name: "local only rejects unsupported standalone requests",
+			mode: config.ResponsesModeLocalOnly,
+			want: responsesCreateRouteLocalOnlyUnsupported,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, selectResponsesCreateRoute(tt.mode, tt.profile))
+		})
+	}
+}
+
 func TestShouldRetryLocalStateWithDirectProxyBody(t *testing.T) {
 	request := CreateResponseRequest{PreviousResponseID: "resp_prev"}
 

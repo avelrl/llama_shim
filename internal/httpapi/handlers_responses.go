@@ -112,27 +112,22 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	localToolLoop := supportsLocalToolLoop(rawFields)
-	localToolSearch := supportsLocalToolSearch(rawFields)
-	localFileSearch := supportsLocalFileSearch(rawFields)
-	localWebSearch := supportsLocalWebSearch(rawFields, h.webSearchProvider)
-	localImageGenerationRequested := isLocalImageGenerationToolRequest(rawFields)
-	localImageGeneration := supportsLocalImageGeneration(rawFields, h.imageGenerationProvider)
-	localComputerRequested := isLocalComputerToolRequest(rawFields)
-	localComputer := supportsLocalComputer(rawFields, h.localComputer)
-	localMCPSupported := supportsLocalMCP(rawFields)
-	localMCPConnector := hasConnectorMCPTools(rawFields)
-	localMCPUnsupported := hasUnsupportedLocalMCPTools(rawFields)
-	localMCP := localMCPSupported || localMCPUnsupported || hasLocalMCPApprovalResponse(rawFields) || (h.hasLocalMCPState(r.Context(), request) && !localMCPConnector)
-	localCodeInterpreterRequested := isLocalCodeInterpreterToolRequest(rawFields)
-	localCodeInterpreter := supportsLocalCodeInterpreter(rawFields, h.localCodeInterpreter)
-	localSupported := supportsLocalShimState(rawFields)
+	localMCPState := h.hasLocalMCPState(r.Context(), request)
+	createRoute := selectResponsesCreateRoute(h.responsesMode, buildResponsesCreateRouteInputs(
+		hasLocalState,
+		rawFields,
+		h.webSearchProvider,
+		h.imageGenerationProvider,
+		h.localComputer,
+		h.localCodeInterpreter,
+		localMCPState,
+	))
 	generationOptions := buildGenerationOptions(rawFields)
 	if request.Stream != nil && *request.Stream {
-		switch {
-		case h.responsesMode == config.ResponsesModePreferUpstream && !hasLocalState:
+		switch createRoute {
+		case responsesCreateRouteProxy:
 			h.proxyCreateStream(w, r, request, requestJSON, rawFields, streamOptions)
-		case localWebSearch:
+		case responsesCreateRouteLocalWebSearch:
 			response, err := h.createLocalWebSearchResponse(r.Context(), request, requestJSON, rawFields)
 			if err != nil {
 				if shouldFallbackLocalState(h.responsesMode, err) {
@@ -155,7 +150,7 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 				h.logger.WarnContext(r.Context(), "local web search stream failed", "request_id", RequestIDFromContext(r.Context()), "err", err)
 			}
 			return
-		case localImageGeneration:
+		case responsesCreateRouteLocalImageGeneration:
 			response, artifacts, err := h.createLocalImageGenerationResponse(r.Context(), request, requestJSON, rawFields)
 			if err != nil {
 				if shouldFallbackLocalState(h.responsesMode, err) {
@@ -173,7 +168,7 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 				h.logger.WarnContext(r.Context(), "local image generation stream failed", "request_id", RequestIDFromContext(r.Context()), "err", err)
 			}
 			return
-		case localComputer:
+		case responsesCreateRouteLocalComputer:
 			response, err := h.createLocalComputerResponse(r.Context(), request, requestJSON, rawFields)
 			if err != nil {
 				h.writeError(w, r, normalizeLocalOnlyCreateError(h.responsesMode, err))
@@ -188,7 +183,7 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 				h.logger.WarnContext(r.Context(), "local computer stream failed", "request_id", RequestIDFromContext(r.Context()), "err", err)
 			}
 			return
-		case localFileSearch:
+		case responsesCreateRouteLocalFileSearch:
 			response, err := h.createLocalFileSearchResponse(r.Context(), request, requestJSON, rawFields)
 			if err != nil {
 				h.writeError(w, r, normalizeLocalOnlyCreateError(h.responsesMode, err))
@@ -203,7 +198,7 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 				h.logger.WarnContext(r.Context(), "local file search stream failed", "request_id", RequestIDFromContext(r.Context()), "err", err)
 			}
 			return
-		case localMCP:
+		case responsesCreateRouteLocalMCP:
 			response, err := h.createLocalMCPResponse(r.Context(), request, requestJSON, rawFields)
 			if err != nil {
 				if shouldFallbackLocalState(h.responsesMode, err) {
@@ -226,7 +221,7 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 				h.logger.WarnContext(r.Context(), "local MCP stream failed", "request_id", RequestIDFromContext(r.Context()), "err", err)
 			}
 			return
-		case localToolSearch:
+		case responsesCreateRouteLocalToolSearch:
 			response, err := h.createLocalToolSearchResponse(r.Context(), request, requestJSON, rawFields)
 			if err != nil {
 				h.writeError(w, r, normalizeLocalOnlyCreateError(h.responsesMode, err))
@@ -241,7 +236,7 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 				h.logger.WarnContext(r.Context(), "local tool search stream failed", "request_id", RequestIDFromContext(r.Context()), "err", err)
 			}
 			return
-		case localCodeInterpreter:
+		case responsesCreateRouteLocalCodeInterpreter:
 			response, err := h.createLocalCodeInterpreterResponse(r.Context(), request, requestJSON, rawFields)
 			if err != nil {
 				h.writeError(w, r, normalizeLocalOnlyCreateError(h.responsesMode, err))
@@ -256,7 +251,7 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 				h.logger.WarnContext(r.Context(), "local code interpreter stream failed", "request_id", RequestIDFromContext(r.Context()), "err", err)
 			}
 			return
-		case localToolLoop:
+		case responsesCreateRouteLocalToolLoop:
 			response, err := h.createLocalToolLoopResponse(r.Context(), request, requestJSON, rawFields)
 			if err == nil {
 				rawResponse, marshalErr := json.Marshal(response)
@@ -278,13 +273,16 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			h.writeError(w, r, normalizeLocalOnlyCreateError(h.responsesMode, err))
-		case localComputerRequested && h.responsesMode == config.ResponsesModeLocalOnly:
+		case responsesCreateRouteLocalComputerDisabled:
 			h.writeError(w, r, localComputerDisabledError())
 			return
-		case localCodeInterpreterRequested && h.responsesMode == config.ResponsesModeLocalOnly:
+		case responsesCreateRouteLocalImageGenerationDisabled:
+			h.writeError(w, r, localImageGenerationDisabledError())
+			return
+		case responsesCreateRouteLocalCodeInterpreterDisabled:
 			h.writeError(w, r, localCodeInterpreterDisabledError())
 			return
-		case localSupported:
+		case responsesCreateRouteLocalState:
 			if err := h.createStream(w, r, request, requestJSON, generationOptions, streamOptions); err != nil {
 				if shouldFallbackLocalState(h.responsesMode, err) {
 					h.createStreamViaUpstream(w, r, request, requestJSON, rawFields, streamOptions)
@@ -292,25 +290,19 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 				}
 				h.writeError(w, r, normalizeLocalOnlyCreateError(h.responsesMode, err))
 			}
-		case hasLocalState:
-			if h.responsesMode == config.ResponsesModeLocalOnly {
-				h.writeError(w, r, newLocalOnlyUnsupportedFieldsError(rawFields))
-				return
-			}
+		case responsesCreateRouteLocalStateViaUpstream:
 			h.createStreamViaUpstream(w, r, request, requestJSON, rawFields, streamOptions)
-		case h.responsesMode == config.ResponsesModeLocalOnly:
+		case responsesCreateRouteLocalOnlyUnsupported:
 			h.writeError(w, r, newLocalOnlyUnsupportedFieldsError(rawFields))
-		default:
-			h.proxyCreateStream(w, r, request, requestJSON, rawFields, streamOptions)
 		}
 		return
 	}
 
-	switch {
-	case h.responsesMode == config.ResponsesModePreferUpstream && !hasLocalState:
+	switch createRoute {
+	case responsesCreateRouteProxy:
 		h.proxyCreateWithShadowStore(w, r, request, rawBody, requestJSON, rawFields)
 		return
-	case localWebSearch:
+	case responsesCreateRouteLocalWebSearch:
 		response, err := h.createLocalWebSearchResponse(r.Context(), request, requestJSON, rawFields)
 		if err != nil {
 			if shouldFallbackLocalState(h.responsesMode, err) {
@@ -332,7 +324,7 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 		}
 		WriteJSON(w, http.StatusOK, response)
 		return
-	case localImageGeneration:
+	case responsesCreateRouteLocalImageGeneration:
 		response, _, err := h.createLocalImageGenerationResponse(r.Context(), request, requestJSON, rawFields)
 		if err != nil {
 			if shouldFallbackLocalState(h.responsesMode, err) {
@@ -354,7 +346,7 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 		}
 		WriteJSON(w, http.StatusOK, response)
 		return
-	case localFileSearch:
+	case responsesCreateRouteLocalFileSearch:
 		response, err := h.createLocalFileSearchResponse(r.Context(), request, requestJSON, rawFields)
 		if err != nil {
 			h.writeError(w, r, normalizeLocalOnlyCreateError(h.responsesMode, err))
@@ -362,7 +354,7 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 		}
 		WriteJSON(w, http.StatusOK, response)
 		return
-	case localComputer:
+	case responsesCreateRouteLocalComputer:
 		response, err := h.createLocalComputerResponse(r.Context(), request, requestJSON, rawFields)
 		if err != nil {
 			h.writeError(w, r, normalizeLocalOnlyCreateError(h.responsesMode, err))
@@ -370,10 +362,10 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 		}
 		WriteJSON(w, http.StatusOK, response)
 		return
-	case localComputerRequested && h.responsesMode == config.ResponsesModeLocalOnly:
+	case responsesCreateRouteLocalComputerDisabled:
 		h.writeError(w, r, localComputerDisabledError())
 		return
-	case localMCP:
+	case responsesCreateRouteLocalMCP:
 		response, err := h.createLocalMCPResponse(r.Context(), request, requestJSON, rawFields)
 		if err != nil {
 			if shouldFallbackLocalState(h.responsesMode, err) {
@@ -395,7 +387,7 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 		}
 		WriteJSON(w, http.StatusOK, response)
 		return
-	case localToolSearch:
+	case responsesCreateRouteLocalToolSearch:
 		response, err := h.createLocalToolSearchResponse(r.Context(), request, requestJSON, rawFields)
 		if err != nil {
 			h.writeError(w, r, normalizeLocalOnlyCreateError(h.responsesMode, err))
@@ -403,7 +395,7 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 		}
 		WriteJSON(w, http.StatusOK, response)
 		return
-	case localCodeInterpreter:
+	case responsesCreateRouteLocalCodeInterpreter:
 		response, err := h.createLocalCodeInterpreterResponse(r.Context(), request, requestJSON, rawFields)
 		if err != nil {
 			h.writeError(w, r, normalizeLocalOnlyCreateError(h.responsesMode, err))
@@ -411,7 +403,7 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 		}
 		WriteJSON(w, http.StatusOK, response)
 		return
-	case localToolLoop:
+	case responsesCreateRouteLocalToolLoop:
 		response, err := h.createLocalToolLoopResponse(r.Context(), request, requestJSON, rawFields)
 		if err == nil {
 			WriteJSON(w, http.StatusOK, response)
@@ -433,7 +425,7 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 		}
 		h.writeError(w, r, normalizeLocalOnlyCreateError(h.responsesMode, err))
 		return
-	case localSupported:
+	case responsesCreateRouteLocalState:
 		response, err := h.service.Create(r.Context(), service.CreateResponseInput{
 			Model:              request.Model,
 			Input:              request.Input,
@@ -462,17 +454,13 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 		}
 		h.writeError(w, r, normalizeLocalOnlyCreateError(h.responsesMode, err))
 		return
-	case localImageGenerationRequested && h.responsesMode == config.ResponsesModeLocalOnly:
+	case responsesCreateRouteLocalImageGenerationDisabled:
 		h.writeError(w, r, localImageGenerationDisabledError())
 		return
-	case localCodeInterpreterRequested && h.responsesMode == config.ResponsesModeLocalOnly:
+	case responsesCreateRouteLocalCodeInterpreterDisabled:
 		h.writeError(w, r, localCodeInterpreterDisabledError())
 		return
-	case hasLocalState:
-		if h.responsesMode == config.ResponsesModeLocalOnly {
-			h.writeError(w, r, newLocalOnlyUnsupportedFieldsError(rawFields))
-			return
-		}
+	case responsesCreateRouteLocalStateViaUpstream:
 		response, err := h.createLocalStateViaUpstream(r.Context(), request, requestJSON, rawFields)
 		if err != nil {
 			h.writeError(w, r, err)
@@ -480,7 +468,7 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 		}
 		WriteJSON(w, http.StatusOK, response)
 		return
-	case h.responsesMode == config.ResponsesModeLocalOnly:
+	case responsesCreateRouteLocalOnlyUnsupported:
 		h.writeError(w, r, newLocalOnlyUnsupportedFieldsError(rawFields))
 		return
 	}
