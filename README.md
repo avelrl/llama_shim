@@ -335,7 +335,9 @@ The shim now supports a pragmatic local-first remote MCP subset inside
 Boundaries of the current local subset:
 
 - connectors (`connector_id`) remain an upstream-only compatibility bridge,
-  not a shim-local runtime
+  not a shim-local runtime; the shim now validates connector-aware MCP tool
+  definitions and sanitizes `authorization`, `headers`, and `server_url`
+  from visible Response request surfaces on both create and retrieve
 - broader hosted failure/status parity remains open
 
 This keeps the local runtime useful without overclaiming parity for MCP

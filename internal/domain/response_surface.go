@@ -17,7 +17,7 @@ var (
 )
 
 func HydrateResponseRequestSurface(response Response, requestJSON string) Response {
-	fields := parseResponseRequestFields(requestJSON)
+	fields := parseResponseRequestFields(SanitizeResponseRequestSurfaceJSON(requestJSON))
 
 	response.Instructions = coalesceRawMessage(response.Instructions, fields["instructions"], rawJSONNull)
 	response.MaxOutputTokens = coalesceRawMessage(response.MaxOutputTokens, fields["max_output_tokens"], rawJSONNull)
@@ -40,6 +40,28 @@ func HydrateResponseRequestSurface(response Response, requestJSON string) Respon
 	return response
 }
 
+func SanitizeResponseRequestSurfaceJSON(requestJSON string) string {
+	trimmed := strings.TrimSpace(requestJSON)
+	if trimmed == "" {
+		return ""
+	}
+
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(trimmed), &fields); err != nil {
+		return requestJSON
+	}
+
+	if rawTools, ok := fields["tools"]; ok {
+		fields["tools"] = sanitizeResponseRequestToolsRaw(rawTools)
+	}
+
+	sanitized, err := json.Marshal(fields)
+	if err != nil {
+		return requestJSON
+	}
+	return string(sanitized)
+}
+
 func parseResponseRequestFields(requestJSON string) map[string]json.RawMessage {
 	trimmed := strings.TrimSpace(requestJSON)
 	if trimmed == "" {
@@ -51,6 +73,46 @@ func parseResponseRequestFields(requestJSON string) map[string]json.RawMessage {
 		return nil
 	}
 	return fields
+}
+
+func sanitizeResponseRequestToolsRaw(raw json.RawMessage) json.RawMessage {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return cloneRawMessage(raw)
+	}
+
+	var tools []map[string]any
+	if err := json.Unmarshal(trimmed, &tools); err != nil {
+		return cloneRawMessage(raw)
+	}
+
+	changed := false
+	for _, tool := range tools {
+		if strings.TrimSpace(asString(tool["type"])) != "mcp" {
+			continue
+		}
+		if _, ok := tool["authorization"]; ok {
+			delete(tool, "authorization")
+			changed = true
+		}
+		if _, ok := tool["headers"]; ok {
+			delete(tool, "headers")
+			changed = true
+		}
+		if _, ok := tool["server_url"]; ok {
+			delete(tool, "server_url")
+			changed = true
+		}
+	}
+	if !changed {
+		return cloneRawMessage(raw)
+	}
+
+	sanitized, err := json.Marshal(tools)
+	if err != nil {
+		return cloneRawMessage(raw)
+	}
+	return sanitized
 }
 
 func cloneRawMessage(raw json.RawMessage) json.RawMessage {

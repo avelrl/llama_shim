@@ -99,7 +99,9 @@
   approvals flow through `mcp_approval_request` /
   `mcp_approval_response`, and successful tool execution emits real
   `mcp_call`; auth-backed `server_url` tools and streamable HTTP are now part
-  of the local subset, while connectors remain upstream-only/open
+  of the local subset, while connectors remain upstream-only for execution;
+  connector-aware MCP validation and request-surface sanitization are now
+  closed in create/retrieve paths
 - `/readyz` теперь реально проверяет SQLite и upstream llama backend, а при
   `sqlite_vec` + readiness-aware embedder ещё и retrieval embedder, а не просто
   отвечает `200`
@@ -1030,8 +1032,8 @@ Definition of done:
 
 Что не входит:
 
-- connectors (`connector_id`)
-- auth-backed connectors or OpenAI-managed connector semantics
+- shim-local execution for connectors (`connector_id`)
+- auth-backed connectors as a local runtime or OpenAI-managed connector semantics
 - exact hosted failure/status parity for every remote MCP edge case
 
 Статус на 14 апреля 2026:
@@ -1043,7 +1045,10 @@ Definition of done:
   streamable HTTP transport, and create-stream replay
 - connector flows remain conservative: local runtime is not claimed, but
   upstream passthrough/bridge remains available when the configured backend
-  supports connector routes
+  supports connector routes; connector-aware MCP validation now rejects
+  invalid `connector_id`, duplicate `server_label`, ambiguous
+  `server_url`+`connector_id`, and connector `headers.Authorization`, while
+  create/retrieve request surfaces sanitize secret MCP fields
 
 Definition of done:
 
@@ -1056,7 +1061,8 @@ Definition of done:
 - follow-up turns can reuse cached `mcp_list_tools` state through
   `previous_response_id`
 - docs/spec do not overclaim local connector runtime or exact hosted MCP
-  failure semantics
+  failure semantics, but do reflect connector-aware validation and sanitized
+  visible request surfaces
 
 ## <a id="task-streaming-replay-hosted"></a>Hosted/native tool-specific SSE replay beyond core shim item families
 

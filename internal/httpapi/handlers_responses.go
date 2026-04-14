@@ -1043,10 +1043,14 @@ func decodeCreateResponseRequestBody(rawBody []byte, allowEmpty bool) (CreateRes
 	if err != nil {
 		return CreateResponseRequest{}, nil, "", err
 	}
+	if err := validateMCPToolDefinitions(rawFields); err != nil {
+		return CreateResponseRequest{}, nil, "", err
+	}
 	requestJSON, err := compactBody(trimmed)
 	if err != nil {
 		return CreateResponseRequest{}, nil, "", err
 	}
+	requestJSON = domain.SanitizeResponseRequestSurfaceJSON(requestJSON)
 	conversationID, err := decodeCreateResponseConversationID(payload.Conversation)
 	if err != nil {
 		return CreateResponseRequest{}, nil, "", err
@@ -1383,6 +1387,8 @@ func (h *responseHandler) proxyCreateWithShadowStore(w http.ResponseWriter, r *h
 	}
 
 	responseBody := body
+	var parsed domain.Response
+	parsedOK := false
 	if response.StatusCode >= 200 && response.StatusCode < 300 {
 		remappedBody, err := normalizeUpstreamResponseBody(body, plan)
 		if err != nil {
@@ -1392,6 +1398,22 @@ func (h *responseHandler) proxyCreateWithShadowStore(w http.ResponseWriter, r *h
 			)
 		} else {
 			responseBody = remappedBody
+		}
+		parsed, err = domain.ParseUpstreamResponse(responseBody)
+		if err == nil && (parsed.OutputText != "" || len(parsed.Output) > 0) {
+			parsed = annotateResponseCustomToolMetadata(parsed, plan)
+			parsedOK = true
+			if hasMCPToolDefinitions(rawFields) {
+				hydrated := domain.HydrateResponseRequestSurface(parsed, requestJSON)
+				if hydratedBody, marshalErr := json.Marshal(hydrated); marshalErr == nil {
+					responseBody = hydratedBody
+				} else {
+					h.logger.WarnContext(r.Context(), "mcp request surface hydration failed",
+						"request_id", RequestIDFromContext(r.Context()),
+						"err", marshalErr,
+					)
+				}
+			}
 		}
 	} else if shouldRetryToolChoiceWithAutoBody(response.StatusCode, body, plan) {
 		rawResponse, err := h.retryResponseWithAuto(r.Context(), upstreamBody, plan)
@@ -1438,11 +1460,9 @@ func (h *responseHandler) proxyCreateWithShadowStore(w http.ResponseWriter, r *h
 		return
 	}
 
-	parsed, err := domain.ParseUpstreamResponse(responseBody)
-	if err != nil || (parsed.OutputText == "" && len(parsed.Output) == 0) {
+	if !parsedOK {
 		return
 	}
-	parsed = annotateResponseCustomToolMetadata(parsed, plan)
 
 	_, err = h.service.SaveExternalResponse(r.Context(), prepared, input, parsed)
 	if err != nil {

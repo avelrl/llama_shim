@@ -8849,6 +8849,181 @@ func TestResponsesCreateConnectorMCPFallsBackToUpstreamEvenWithPreviousLocalMCPS
 	require.Equal(t, "message", asStringAny(output[0].(map[string]any)["type"]))
 }
 
+func TestResponsesMCPToolSurfaceSanitizesSensitiveRequestFields(t *testing.T) {
+	mcpServer := testutil.NewFakeMCPServerWithOptions(t, []testutil.FakeMCPTool{
+		{
+			Name:        "roll",
+			Description: "Roll dice from a dice expression.",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"diceRollExpression": map[string]any{"type": "string"},
+				},
+				"required":             []string{"diceRollExpression"},
+				"additionalProperties": false,
+			},
+			OutputText: "4",
+		},
+	}, testutil.FakeMCPServerOptions{
+		ExpectedAuthorization: "Bearer local-mcp-token",
+		ExpectedHeaders: map[string]string{
+			"X-MCP-Test": "shim",
+		},
+	})
+	defer mcpServer.Close()
+
+	app := testutil.NewTestApp(t)
+
+	local := postResponse(t, app, map[string]any{
+		"model":       "test-model",
+		"store":       true,
+		"input":       "Roll 2d4+1 and return only the numeric result.",
+		"tool_choice": "required",
+		"tools": []map[string]any{
+			{
+				"type":             "mcp",
+				"server_label":     "dmcp",
+				"server_url":       mcpServer.URL + "/mcp",
+				"authorization":    "local-mcp-token",
+				"headers":          map[string]any{"X-MCP-Test": "shim"},
+				"require_approval": "never",
+			},
+		},
+	})
+	var localTools []map[string]any
+	require.NoError(t, json.Unmarshal(local.Tools, &localTools))
+	require.Len(t, localTools, 1)
+	require.Equal(t, "dmcp", asStringAny(localTools[0]["server_label"]))
+	require.NotContains(t, localTools[0], "server_url")
+	require.NotContains(t, localTools[0], "authorization")
+	require.NotContains(t, localTools[0], "headers")
+
+	localStored := getResponse(t, app, local.ID)
+	localTools = nil
+	require.NoError(t, json.Unmarshal(localStored.Tools, &localTools))
+	require.Len(t, localTools, 1)
+	require.NotContains(t, localTools[0], "server_url")
+	require.NotContains(t, localTools[0], "authorization")
+	require.NotContains(t, localTools[0], "headers")
+
+	connectorStatus, connectorBody := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model": "test-model",
+		"store": true,
+		"input": "Say OK and nothing else.",
+		"tools": []map[string]any{
+			{
+				"type":             "mcp",
+				"server_label":     "google_calendar",
+				"connector_id":     "connector_googlecalendar",
+				"authorization":    "connector-access-token",
+				"headers":          map[string]any{"X-Ignored": "value"},
+				"require_approval": "never",
+			},
+		},
+	})
+	require.Equal(t, http.StatusOK, connectorStatus)
+	connectorTools, ok := connectorBody["tools"].([]any)
+	require.True(t, ok)
+	require.Len(t, connectorTools, 1)
+	connectorTool := connectorTools[0].(map[string]any)
+	require.Equal(t, "connector_googlecalendar", asStringAny(connectorTool["connector_id"]))
+	require.NotContains(t, connectorTool, "authorization")
+	require.NotContains(t, connectorTool, "headers")
+	require.NotContains(t, connectorTool, "server_url")
+
+	connectorStored := getResponse(t, app, asStringAny(connectorBody["id"]))
+	var storedConnectorTools []map[string]any
+	require.NoError(t, json.Unmarshal(connectorStored.Tools, &storedConnectorTools))
+	require.Len(t, storedConnectorTools, 1)
+	require.Equal(t, "connector_googlecalendar", asStringAny(storedConnectorTools[0]["connector_id"]))
+	require.NotContains(t, storedConnectorTools[0], "authorization")
+	require.NotContains(t, storedConnectorTools[0], "headers")
+	require.NotContains(t, storedConnectorTools[0], "server_url")
+}
+
+func TestResponsesCreateRejectsInvalidMCPConnectorAndDefinitionShapes(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	cases := []struct {
+		name    string
+		payload map[string]any
+		want    string
+	}{
+		{
+			name: "invalid connector id",
+			payload: map[string]any{
+				"model": "test-model",
+				"input": "Hello",
+				"tools": []map[string]any{{
+					"type":         "mcp",
+					"server_label": "calendar",
+					"connector_id": "connector_not_real",
+				}},
+			},
+			want: "invalid mcp.connector_id",
+		},
+		{
+			name: "connector authorization header",
+			payload: map[string]any{
+				"model": "test-model",
+				"input": "Hello",
+				"tools": []map[string]any{{
+					"type":          "mcp",
+					"server_label":  "calendar",
+					"connector_id":  "connector_googlecalendar",
+					"headers":       map[string]any{"Authorization": "Bearer bad"},
+					"authorization": "connector-token",
+				}},
+			},
+			want: "headers.Authorization",
+		},
+		{
+			name: "both connector and server url",
+			payload: map[string]any{
+				"model": "test-model",
+				"input": "Hello",
+				"tools": []map[string]any{{
+					"type":         "mcp",
+					"server_label": "calendar",
+					"connector_id": "connector_googlecalendar",
+					"server_url":   "https://example.com/mcp",
+				}},
+			},
+			want: "exactly one of server_url or connector_id",
+		},
+		{
+			name: "duplicate server label",
+			payload: map[string]any{
+				"model": "test-model",
+				"input": "Hello",
+				"tools": []map[string]any{
+					{
+						"type":         "mcp",
+						"server_label": "dup",
+						"connector_id": "connector_googlecalendar",
+					},
+					{
+						"type":         "mcp",
+						"server_label": "dup",
+						"connector_id": "connector_dropbox",
+					},
+				},
+			},
+			want: "duplicate mcp.server_label",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			status, body := rawRequest(t, app, http.MethodPost, "/v1/responses", tc.payload)
+			require.Equal(t, http.StatusBadRequest, status)
+			errorPayload, ok := body["error"].(map[string]any)
+			require.True(t, ok)
+			require.Contains(t, asStringAny(errorPayload["message"]), tc.want)
+		})
+	}
+}
+
 func TestResponsesCreateLocalMCPApprovalFlowWorksWithoutRepeatingTools(t *testing.T) {
 	mcpServer := testutil.NewFakeMCPServer(t, []testutil.FakeMCPTool{
 		{

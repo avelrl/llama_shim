@@ -262,6 +262,8 @@ paths:
           and the shim-local client now supports `authorization`, custom
           `headers`, and both legacy HTTP/SSE and basic streamable HTTP MCP
           transports; connectors remain an upstream-only compatibility bridge
+          for execution, but connector-aware MCP validation and visible
+          request-surface sanitization are now part of the shim-owned subset
         - live upstream traces now confirm that ordinary Python/tool errors in
           Code Interpreter complete as `response.status=completed` with
           `code_interpreter_call.status=completed`, empty `outputs`, no
