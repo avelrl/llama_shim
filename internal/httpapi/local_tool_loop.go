@@ -277,7 +277,7 @@ func buildChatCompletionMessagesFromItems(items []domain.Item) ([]map[string]any
 			if name == "" {
 				return nil, domain.ErrUnsupportedShape
 			}
-			callID, err := ensureLocalToolCallID(item.CallID())
+			callID, err := ensureLocalToolCallID(localChatToolCallID(item))
 			if err != nil {
 				return nil, err
 			}
@@ -315,7 +315,43 @@ func buildChatCompletionMessagesFromItems(items []domain.Item) ([]map[string]any
 				"content":      output,
 			})
 			lastTextMessage = -1
-		case "tool_search_call", "tool_search_output":
+		case "mcp_call", "mcp_tool_call":
+			name := strings.TrimSpace(item.Name())
+			if item.Meta != nil && strings.TrimSpace(item.Meta.SyntheticName) != "" {
+				name = strings.TrimSpace(item.Meta.SyntheticName)
+			}
+			if name == "" {
+				return nil, domain.ErrUnsupportedShape
+			}
+			callID, err := ensureLocalToolCallID(localChatToolCallID(item))
+			if err != nil {
+				return nil, err
+			}
+			messages = append(messages, map[string]any{
+				"role":    "assistant",
+				"content": nil,
+				"tool_calls": []map[string]any{
+					{
+						"id":   callID,
+						"type": "function",
+						"function": map[string]any{
+							"name":      name,
+							"arguments": normalizeJSONStringField(item.RawField("arguments")),
+						},
+					},
+				},
+			})
+			output, err := stringifyMCPToolOutput(item)
+			if err != nil {
+				return nil, err
+			}
+			messages = append(messages, map[string]any{
+				"role":         "tool",
+				"tool_call_id": callID,
+				"content":      output,
+			})
+			lastTextMessage = -1
+		case "tool_search_call", "tool_search_output", "mcp_list_tools", "mcp_approval_request", "mcp_approval_response":
 			continue
 		default:
 			return nil, domain.ErrUnsupportedShape
@@ -331,6 +367,13 @@ func ensureLocalToolCallID(callID string) (string, error) {
 		return callID, nil
 	}
 	return domain.NewPrefixedID("call")
+}
+
+func localChatToolCallID(item domain.Item) string {
+	if id := strings.TrimSpace(item.ID()); id != "" {
+		return id
+	}
+	return strings.TrimSpace(item.CallID())
 }
 
 func normalizeJSONStringField(raw json.RawMessage) string {
@@ -372,6 +415,28 @@ func stringifyToolOutput(raw json.RawMessage) (string, error) {
 	}
 
 	compacted, err := domain.CompactJSON(trimmed)
+	if err != nil {
+		return "", err
+	}
+	return compacted, nil
+}
+
+func stringifyMCPToolOutput(item domain.Item) (string, error) {
+	if output, err := stringifyToolOutput(item.OutputRaw()); err == nil && strings.TrimSpace(output) != "" {
+		return output, nil
+	}
+
+	rawError := bytes.TrimSpace(item.RawField("error"))
+	if len(rawError) == 0 || bytes.Equal(rawError, []byte("null")) {
+		return "", nil
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(rawError, &payload); err == nil {
+		if message := strings.TrimSpace(asString(payload["message"])); message != "" {
+			return message, nil
+		}
+	}
+	compacted, err := domain.CompactJSON(rawError)
 	if err != nil {
 		return "", err
 	}

@@ -105,6 +105,7 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 	localToolLoop := supportsLocalToolLoop(rawFields)
 	localToolSearch := supportsLocalToolSearch(rawFields)
 	localFileSearch := supportsLocalFileSearch(rawFields)
+	localMCP := supportsLocalMCP(rawFields) || hasLocalMCPApprovalResponse(rawFields) || h.hasLocalMCPState(r.Context(), request)
 	localCodeInterpreterRequested := isLocalCodeInterpreterToolRequest(rawFields)
 	localCodeInterpreter := supportsLocalCodeInterpreter(rawFields, h.localCodeInterpreter)
 	localSupported := supportsLocalShimState(rawFields)
@@ -126,6 +127,21 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 			}
 			if err := writeCompletedResponseAsSSE(r.Context(), h.logger, w, rawResponse, customToolTransportPlan{}, streamOptions.IncludeObfuscation); err != nil && !shouldIgnoreStreamProxyError(err) {
 				h.logger.WarnContext(r.Context(), "local file search stream failed", "request_id", RequestIDFromContext(r.Context()), "err", err)
+			}
+			return
+		case localMCP:
+			response, err := h.createLocalMCPResponse(r.Context(), request, requestJSON, rawFields)
+			if err != nil {
+				h.writeError(w, r, normalizeLocalOnlyCreateError(h.responsesMode, err))
+				return
+			}
+			rawResponse, marshalErr := json.Marshal(response)
+			if marshalErr != nil {
+				h.writeError(w, r, marshalErr)
+				return
+			}
+			if err := writeCompletedResponseAsSSE(r.Context(), h.logger, w, rawResponse, customToolTransportPlan{}, streamOptions.IncludeObfuscation); err != nil && !shouldIgnoreStreamProxyError(err) {
+				h.logger.WarnContext(r.Context(), "local MCP stream failed", "request_id", RequestIDFromContext(r.Context()), "err", err)
 			}
 			return
 		case localToolSearch:
@@ -211,6 +227,14 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	case localFileSearch:
 		response, err := h.createLocalFileSearchResponse(r.Context(), request, requestJSON, rawFields)
+		if err != nil {
+			h.writeError(w, r, normalizeLocalOnlyCreateError(h.responsesMode, err))
+			return
+		}
+		WriteJSON(w, http.StatusOK, response)
+		return
+	case localMCP:
+		response, err := h.createLocalMCPResponse(r.Context(), request, requestJSON, rawFields)
 		if err != nil {
 			h.writeError(w, r, normalizeLocalOnlyCreateError(h.responsesMode, err))
 			return

@@ -20,6 +20,9 @@ type ItemMeta struct {
 	CanonicalType string `json:"canonical_type,omitempty"`
 	ToolName      string `json:"tool_name,omitempty"`
 	ToolNamespace string `json:"tool_namespace,omitempty"`
+	MCPServerURL  string `json:"mcp_server_url,omitempty"`
+	MCPApproval   string `json:"mcp_approval,omitempty"`
+	MCPToolNames  []string `json:"mcp_tool_names,omitempty"`
 }
 
 type Item struct {

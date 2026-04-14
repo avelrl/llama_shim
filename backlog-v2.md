@@ -93,6 +93,13 @@
   top-level functions and all-deferred namespaces, generic create/retrieve
   replay, and lineage-safe follow-up local tool loops; client execution stays
   proxy-only
+- shim-local remote MCP now supports a public `server_url` subset in
+  `responses.mode=prefer_local|local_only`: request-declared MCP servers are
+  imported into `mcp_list_tools`, cached across `previous_response_id`,
+  approvals flow through `mcp_approval_request` /
+  `mcp_approval_response`, and successful tool execution emits real
+  `mcp_call`; connectors, auth-backed MCP servers, and streamable HTTP
+  transport remain proxy-only/open
 - `/readyz` теперь реально проверяет SQLite и upstream llama backend, а при
   `sqlite_vec` + readiness-aware embedder ещё и retrieval embedder, а не просто
   отвечает `200`
@@ -184,6 +191,7 @@
 - [x] - docs-backed `mcp_list_tools` generic SSE replay for stored Responses items ([детали](#task-streaming-replay-mcp-list-tools))
 - [x] - docs-backed `tool_search` passthrough contract and generic SSE replay for stored Responses items ([детали](#task-streaming-replay-tool-search))
 - [x] - shim-local hosted/server `tool_search` runtime subset ([детали](#task-local-tool-search-runtime))
+- [x] - shim-local remote MCP runtime subset for public `server_url` servers ([детали](#task-local-remote-mcp-runtime))
 - [ ] - hosted/native tool-specific SSE replay beyond core shim item families ([детали](#task-streaming-replay-hosted))
 - [x] - compatibility для `/responses/compact` и `/responses/input_tokens` ([детали](#task-compaction-and-token-counting))
 - [x] - local retrieval substrate: files + vector stores + lexical search ([детали](#task-retrieval-substrate-local))
@@ -983,6 +991,66 @@ Definition of done:
 - backlog/OpenAPI wording stays conservative about client mode, mixed
   namespaces, and dedicated SSE families
 
+## <a id="task-local-remote-mcp-runtime"></a>Shim-local remote MCP runtime subset for public `server_url` servers
+
+Почему это отдельно:
+
+- official MCP docs на 14 апреля 2026 clearly describe `mcp_list_tools`,
+  `mcp_call`, `mcp_approval_request`, and follow-up
+  `mcp_approval_response`, but a usable shim still needs a real runtime path,
+  not only stored replay
+- remote MCP is a meaningful functional block on its own: tool import,
+  lineage-safe caching, approvals, and actual remote tool execution must stay
+  aligned
+- connector-backed and auth-backed MCP flows have different trust and auth
+  semantics, so the first local subset should stay narrow and explicit
+
+Что входит:
+
+- shim-local `responses.mode=prefer_local|local_only` accepts request-declared
+  MCP tools that use public `server_url`
+- shim imports remote tools into a stored `mcp_list_tools` item, caches that
+  import across `previous_response_id`, and can reuse cached tool definitions
+  without repeating the `tools` array
+- shim honors `require_approval="never"`, default approval-required behavior,
+  and `{never:{tool_names:[...]}}`, emits `mcp_approval_request`, accepts
+  follow-up `mcp_approval_response`, and continues the same logical tool turn
+- successful execution emits a real `mcp_call` item; create-stream replay
+  stays generic-only for `mcp_list_tools` / `mcp_approval_request` and reuses
+  existing `mcp_call` replay semantics
+- local tool-loop follow-up context ignores stored `mcp_list_tools` /
+  `mcp_approval_request` noise but preserves `mcp_call` as tool history
+
+Что не входит:
+
+- connectors (`connector_id`)
+- authorization-backed MCP servers
+- streamable HTTP MCP transport; the current local subset is legacy SSE
+  endpoint based
+- exact hosted failure/status parity for every remote MCP edge case
+
+Статус на 14 апреля 2026:
+
+- закрыт pragmatic local-first runtime subset for public `server_url` MCP
+  servers
+- coverage есть на import+call happy path, approval flow without repeating
+  tools, cached follow-up via `previous_response_id`, and create-stream replay
+- backlog/OpenAPI remain conservative about connectors, auth-backed servers,
+  and transport parity
+
+Definition of done:
+
+- a local request with public `mcp` `server_url` tools can import tools,
+  execute one of them, and produce a final assistant answer in the same
+  Response
+- approval-required flows can continue through
+  `mcp_approval_request` / `mcp_approval_response` without repeating the tool
+  definition
+- follow-up turns can reuse cached `mcp_list_tools` state through
+  `previous_response_id`
+- docs/spec do not overclaim support for connectors, auth-backed servers, or
+  streamable HTTP MCP transport
+
 ## <a id="task-streaming-replay-hosted"></a>Hosted/native tool-specific SSE replay beyond core shim item families
 
 Почему это отдельно:
@@ -1014,6 +1082,9 @@ Definition of done:
 - docs-backed `tool_search` passthrough contract и generic replay вынесены в
   закрытый item выше; shim-local runtime и dedicated
   `response.tool_search.*` family без traces не заявляются
+- shim-local public `server_url` remote MCP runtime вынесен в закрытый item
+  выше; remaining remote MCP work here is connectors, auth-backed servers,
+  streamable HTTP transport parity, and broader hosted failure semantics
 - для remaining hosted/native families без live source event log replay все
   еще может деградировать до generic `response.output_item.*`
 
@@ -1388,6 +1459,9 @@ Definition of done:
 - по официальным OpenAI docs Responses API это не только `message` и `function_call`, а полноценный agentic surface с built-in tools и typed items
 - без отдельного плана по hosted/native tools shim легко “застрянет” в text + function subset и будет выглядеть совместимым только частично
 - часть этой поверхности уже пересекается с retrieval, но `web_search`, `computer_use`, `code_interpreter`, `image_generation`, `remote MCP` и `tool_search` требуют отдельной архитектурной рамки
+- current state already includes a pragmatic local remote MCP subset for
+  public `server_url` servers; remaining remote MCP work is connector/auth
+  parity and broader hosted transport/failure semantics
 
 Что входит:
 
@@ -1398,6 +1472,10 @@ Definition of done:
 - решить по каждому tool type, где shim эмулирует hosted semantics локально, а где честно возвращает `not supported`
 - `tool_search` passthrough contract и generic stored replay уже закрыты
   отдельным item выше; remaining work здесь это runtime/parity beyond that
+- pragmatic local remote MCP runtime for public `server_url` servers is
+  already closed above; remaining work here is not first-use runtime but
+  broader parity for connectors, auth-backed servers, transport variants, and
+  hosted semantics
 - зафиксировать parity по reasoning items / reasoning summaries для tool-heavy flows, где это влияет на качество follow-up шагов
 - описать границы между local-first shim tools, passthrough/proxy режимом и controlled fallback policy
 

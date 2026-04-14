@@ -624,10 +624,13 @@ func chatMessageContent(message map[string]any) string {
 func fakeToolOutputReplyFromChatMessages(messages []map[string]any) (string, bool) {
 	for i := len(messages) - 1; i >= 0; i-- {
 		message := messages[i]
-		if !strings.EqualFold(strings.TrimSpace(asString(message["role"])), "tool") {
-			continue
+		role := strings.TrimSpace(asString(message["role"]))
+		switch {
+		case strings.EqualFold(role, "tool"):
+			return chatMessageContent(message), true
+		case strings.EqualFold(role, "user"):
+			return "", false
 		}
-		return chatMessageContent(message), true
 	}
 	return "", false
 }
@@ -1239,11 +1242,16 @@ func fakeToolArguments(name string) string {
 		return `{"input":"4 + 4"}`
 	case "get_shipping_eta":
 		return `{"order_id":"order_42"}`
+	case "roll":
+		return `{"diceRollExpression":"2d4 + 1"}`
 	case "exec_command":
 		return `{"cmd":"cd /tmp/snake_test && go test ./game -v 2>&1","sandbox_permissions":"require_escalated","justification":"Need approval to run tests"}`
 	case "add":
 		return `{"a":1,"b":2}`
 	default:
+		if strings.Contains(name, "roll") {
+			return `{"diceRollExpression":"2d4 + 1"}`
+		}
 		return `{"input":"tool input"}`
 	}
 }

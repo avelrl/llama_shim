@@ -253,6 +253,14 @@ paths:
           supports a hosted/server `tool_search` subset over deferred
           top-level functions and all-deferred namespaces while client
           execution remains proxy-only
+        - shim-local `responses.mode=prefer_local|local_only` also supports a
+          pragmatic remote MCP subset for request-declared public `mcp`
+          `server_url` tools: imported tools are surfaced through
+          `mcp_list_tools`, cached across `previous_response_id`, approvals
+          flow through `mcp_approval_request` /
+          `mcp_approval_response`, and successful execution emits real
+          `mcp_call`; connectors, auth-backed MCP servers, and streamable HTTP
+          transport remain proxy-only / open
         - live upstream traces now confirm that ordinary Python/tool errors in
           Code Interpreter complete as `response.status=completed` with
           `code_interpreter_call.status=completed`, empty `outputs`, no

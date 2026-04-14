@@ -315,6 +315,32 @@ When `retrieval.index.backend=sqlite_vec` is enabled, `/readyz` also checks the 
 
 For a step-by-step local setup and a smoke test script, see [docs/semantic-retrieval-embedanything.md](docs/semantic-retrieval-embedanything.md).
 
+## Remote MCP in local mode
+
+The shim now supports a pragmatic local-first remote MCP subset inside
+`/v1/responses`:
+
+- request-declared `mcp` tools that use public `server_url`
+- import into stored `mcp_list_tools`, with cached reuse across
+  `previous_response_id`
+- approvals via `mcp_approval_request` and follow-up
+  `mcp_approval_response`
+- real `mcp_call` execution and same-turn assistant completion
+- generic create/retrieve replay for `mcp_list_tools` /
+  `mcp_approval_request` and existing `mcp_call` replay semantics
+
+Boundaries of the current local subset:
+
+- connectors (`connector_id`) remain proxy-only
+- auth-backed MCP servers remain proxy-only
+- streamable HTTP MCP transport is not claimed in the local runtime yet; the
+  current local subset targets legacy SSE MCP endpoints such as
+  `https://.../sse`
+- broader hosted failure/status parity remains open
+
+This keeps the local runtime useful without overclaiming parity for MCP
+surfaces that have different trust, auth, or transport semantics.
+
 ## curl examples
 
 ### POST `/v1/responses`
