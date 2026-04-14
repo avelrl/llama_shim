@@ -17,6 +17,7 @@ import (
 	"llama_shim/internal/sandbox"
 	"llama_shim/internal/service"
 	"llama_shim/internal/storage/sqlite"
+	"llama_shim/internal/websearch"
 )
 
 func main() {
@@ -80,6 +81,16 @@ func main() {
 		logger.Error("build code interpreter runtime", "err", err)
 		os.Exit(1)
 	}
+	webSearchProvider, err := websearch.NewProvider(websearch.Config{
+		Backend:   cfg.ResponsesWebSearchBackend,
+		BaseURL:   cfg.ResponsesWebSearchBaseURL,
+		Timeout:   cfg.ResponsesWebSearchTimeout,
+		MaxResults: cfg.ResponsesWebSearchMaxResults,
+	})
+	if err != nil {
+		logger.Error("build web search provider", "err", err)
+		os.Exit(1)
+	}
 	httpapi.StartLocalCodeInterpreterCleanupLoop(processCtx, logger, localCodeInterpreter, store, store, cfg.ResponsesCodeInterpreterCleanupInterval)
 
 	server := &http.Server{
@@ -106,6 +117,7 @@ func main() {
 			ResponsesCustomToolsMode:              cfg.ResponsesCustomToolsMode,
 			ResponsesCodexEnableCompatibility:     cfg.ResponsesCodexEnableCompatibility,
 			ResponsesCodexForceToolChoiceRequired: cfg.ResponsesCodexForceToolChoiceRequired,
+			WebSearchProvider:                     webSearchProvider,
 			LocalCodeInterpreter:                  localCodeInterpreter,
 			RetrievalIndexBackend:                 cfg.RetrievalIndexBackend,
 			RetrievalEmbedder:                     retrievalEmbedder,
@@ -145,6 +157,10 @@ func main() {
 		"responses_custom_tools_mode", cfg.ResponsesCustomToolsMode,
 		"responses_codex_enable_compatibility", cfg.ResponsesCodexEnableCompatibility,
 		"responses_codex_force_tool_choice_required", cfg.ResponsesCodexForceToolChoiceRequired,
+		"responses_web_search_backend", cfg.ResponsesWebSearchBackend,
+		"responses_web_search_base_url", cfg.ResponsesWebSearchBaseURL,
+		"responses_web_search_timeout", cfg.ResponsesWebSearchTimeout,
+		"responses_web_search_max_results", cfg.ResponsesWebSearchMaxResults,
 		"responses_code_interpreter_backend", cfg.ResponsesCodeInterpreterBackend,
 		"responses_code_interpreter_python_binary", cfg.ResponsesCodeInterpreterPythonBinary,
 		"responses_code_interpreter_docker_binary", cfg.ResponsesCodeInterpreterDockerBinary,

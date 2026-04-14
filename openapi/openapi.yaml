@@ -61,10 +61,12 @@ paths:
         `GET /v1/models` with a models-list payload, and, when
         `retrieval.index.backend=sqlite_vec` is enabled with a readiness-aware
         embedder backend such as `embedanything`, the local retrieval embedder
-        is also reachable.
+        is also reachable. When `responses.web_search.backend=searxng` is
+        enabled, `/readyz` also checks that the configured web-search backend
+        is reachable.
       responses:
         "200":
-          description: SQLite store, upstream backend, and any configured retrieval embedder are reachable
+          description: SQLite store, upstream backend, and any configured retrieval or web-search backends are reachable
           content:
             application/json:
               schema:
@@ -195,6 +197,22 @@ paths:
           `{type,index,file_id,filename}` annotations for top-ranked retrieved
           files; exact hosted file-citation placement/selection parity remains
           open
+
+        Notes for the local `web_search` subset:
+        - the shim can execute one `web_search` or `web_search_preview` tool
+          locally when `responses.web_search.backend` is configured
+        - the local subset accepts `search_context_size`,
+          `include=["web_search_call.action.sources"]`, and a pragmatic
+          `filters` subset for `web_search`
+        - local execution uses deterministic query planning/rewrite, a
+          configurable SearXNG backend for search, heuristic `open_page` /
+          `find_in_page` follow-up when the prompt clearly asks to inspect a
+          page, and final assistant `url_citation` annotations
+        - `web_search.external_web_access=false` is not emulated locally; when
+          local routing is selected, this shape falls back or errors according
+          to `responses.mode`
+        - exact hosted planner behavior, broader live-web semantics, and full
+          hosted failure choreography remain open
 
         Notes for the local `code_interpreter` subset:
         - the shim executes one `code_interpreter` tool locally only when

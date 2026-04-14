@@ -10,6 +10,7 @@ import (
 	"llama_shim/internal/retrieval"
 	"llama_shim/internal/service"
 	"llama_shim/internal/storage/sqlite"
+	"llama_shim/internal/websearch"
 )
 
 type RouterDeps struct {
@@ -27,6 +28,7 @@ type RouterDeps struct {
 	ResponsesCustomToolsMode              string
 	ResponsesCodexEnableCompatibility     bool
 	ResponsesCodexForceToolChoiceRequired bool
+	WebSearchProvider                     websearch.Provider
 	LocalCodeInterpreter                  LocalCodeInterpreterRuntimeConfig
 	RetrievalIndexBackend                 string
 	RetrievalEmbedder                     retrieval.Embedder
@@ -58,6 +60,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 		deps.ResponsesCustomToolsMode,
 		deps.ResponsesCodexEnableCompatibility,
 		deps.ResponsesCodexForceToolChoiceRequired,
+		deps.WebSearchProvider,
 		deps.LocalCodeInterpreter,
 		deps.Store,
 		deps.Store,
@@ -106,6 +109,15 @@ func NewRouter(deps RouterDeps) http.Handler {
 					WriteError(w, http.StatusServiceUnavailable, "service_unavailable", "retrieval embedder is not ready", "")
 					return
 				}
+			}
+		}
+		checker, ok := deps.WebSearchProvider.(websearch.ReadyChecker)
+		if ok {
+			webSearchCtx, cancel := context.WithTimeout(r.Context(), readyzUpstreamTimeout)
+			defer cancel()
+			if err := checker.CheckReady(webSearchCtx); err != nil {
+				WriteError(w, http.StatusServiceUnavailable, "service_unavailable", "web search backend is not ready", "")
+				return
 			}
 		}
 		WriteJSON(w, http.StatusOK, map[string]string{"status": "ready"})

@@ -196,6 +196,10 @@ Supported environment overrides:
 - `CHAT_COMPLETIONS_DEFAULT_STORE_WHEN_OMITTED` overrides `chat_completions.default_store_when_omitted`
 - `RESPONSES_MODE` overrides `responses.mode`; supported values: `prefer_local`, `prefer_upstream`, `local_only`
   `prefer_local` is the default: the shim owns `/v1/responses` whenever the request fits the locally-supported subset, and falls back to upstream `/v1/responses` only for unsupported features.
+- `RESPONSES_WEB_SEARCH_BACKEND` overrides `responses.web_search.backend`; supported values: `disabled`, `searxng`
+- `RESPONSES_WEB_SEARCH_BASE_URL` overrides `responses.web_search.base_url`
+- `RESPONSES_WEB_SEARCH_TIMEOUT` overrides `responses.web_search.timeout`
+- `RESPONSES_WEB_SEARCH_MAX_RESULTS` overrides `responses.web_search.max_results`
 - `RESPONSES_CUSTOM_TOOLS_MODE` overrides `responses.custom_tools.mode`; supported values: `bridge`, `auto`, `passthrough`
   Use `auto` for the default path: it keeps bridge behavior for plain-text custom tools, routes supported `grammar` / `regex` custom tools into the shim-local constrained path, uses backend-native structured generation of raw `input` for named constrained custom tools and `tool_choice: "required"` with a single constrained tool, and in broader auto/mixed cases runs a shim-local tool selector before backend-native constrained generation for the selected custom tool. Shim-local `tool_choice.type=allowed_tools` is supported for function/custom subsets. The old validation/repair loop remains only as an error fallback, not the happy path.
 - `RESPONSES_CODEX_ENABLE_COMPATIBILITY` overrides `responses.codex.enable_compatibility`; when disabled, the shim stops injecting Codex-specific instructions/context and skips Codex-specific response normalization
@@ -313,7 +317,22 @@ EMBEDANYTHING_DIR=../EmbedAnything ./scripts/embedanything-actix-local.sh
 
 When `retrieval.index.backend=sqlite_vec` is enabled, `/readyz` also checks the retrieval embedder. For `embedanything`, the shim probes the sidecar `GET /health_check` endpoint before returning `ready`.
 
+When `responses.web_search.backend=searxng` is enabled, `/readyz` also checks that the configured web search backend answers before returning `ready`.
+
 For a step-by-step local setup and a smoke test script, see [docs/semantic-retrieval-embedanything.md](docs/semantic-retrieval-embedanything.md).
+
+## Local web search
+
+The shim now has a pragmatic local `web_search` / `web_search_preview` subset inside `/v1/responses`:
+
+- one `web_search` or `web_search_preview` tool in `responses.mode=prefer_local|local_only`
+- deterministic query planning and rewrite through the same local planner family used by retrieval
+- a configurable `searxng` backend for the search step
+- heuristic `open_page` and `find_in_page` follow-up when the prompt clearly asks to inspect a page or find an exact phrase
+- final assistant messages carry a pragmatic `url_citation` subset with visible source links
+- `include=["web_search_call.action.sources"]` is accepted in the local subset
+
+This is intentionally not a claim of full hosted browsing parity. Exact hosted planner behavior, broader live-web semantics, and full hosted failure choreography remain separate follow-up work.
 
 ## Remote MCP in local mode
 

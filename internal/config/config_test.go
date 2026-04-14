@@ -58,6 +58,11 @@ chat_completions:
   default_store_when_omitted: false
 responses:
   mode: prefer_upstream
+  web_search:
+    backend: searxng
+    base_url: http://127.0.0.1:8084
+    timeout: 9s
+    max_results: 7
   custom_tools:
     mode: bridge
   codex:
@@ -115,6 +120,10 @@ responses:
 	require.Equal(t, "snowflake-arctic-embed-l-v2.0", cfg.RetrievalEmbedderModel)
 	require.False(t, cfg.ChatCompletionsStoreWhenOmitted)
 	require.Equal(t, config.ResponsesModePreferUpstream, cfg.ResponsesMode)
+	require.Equal(t, "searxng", cfg.ResponsesWebSearchBackend)
+	require.Equal(t, "http://127.0.0.1:8084", cfg.ResponsesWebSearchBaseURL)
+	require.Equal(t, 9*time.Second, cfg.ResponsesWebSearchTimeout)
+	require.Equal(t, 7, cfg.ResponsesWebSearchMaxResults)
 	require.Equal(t, "bridge", cfg.ResponsesCustomToolsMode)
 	require.True(t, cfg.ResponsesCodexEnableCompatibility)
 	require.True(t, cfg.ResponsesCodexForceToolChoiceRequired)
@@ -185,6 +194,10 @@ responses:
 	t.Setenv("RETRIEVAL_EMBEDDER_MODEL", "text-embedding-3-small")
 	t.Setenv("CHAT_COMPLETIONS_DEFAULT_STORE_WHEN_OMITTED", "true")
 	t.Setenv("RESPONSES_MODE", "local_only")
+	t.Setenv("RESPONSES_WEB_SEARCH_BACKEND", "searxng")
+	t.Setenv("RESPONSES_WEB_SEARCH_BASE_URL", "http://127.0.0.1:8181")
+	t.Setenv("RESPONSES_WEB_SEARCH_TIMEOUT", "8s")
+	t.Setenv("RESPONSES_WEB_SEARCH_MAX_RESULTS", "6")
 	t.Setenv("RESPONSES_CODEX_ENABLE_COMPATIBILITY", "true")
 	t.Setenv("RESPONSES_CODEX_FORCE_TOOL_CHOICE_REQUIRED", "true")
 	t.Setenv("RESPONSES_CODE_INTERPRETER_BACKEND", "unsafe_host")
@@ -228,6 +241,10 @@ responses:
 	require.Equal(t, "text-embedding-3-small", cfg.RetrievalEmbedderModel)
 	require.True(t, cfg.ChatCompletionsStoreWhenOmitted)
 	require.Equal(t, config.ResponsesModeLocalOnly, cfg.ResponsesMode)
+	require.Equal(t, "searxng", cfg.ResponsesWebSearchBackend)
+	require.Equal(t, "http://127.0.0.1:8181", cfg.ResponsesWebSearchBaseURL)
+	require.Equal(t, 8*time.Second, cfg.ResponsesWebSearchTimeout)
+	require.Equal(t, 6, cfg.ResponsesWebSearchMaxResults)
 	require.True(t, cfg.ResponsesCodexEnableCompatibility)
 	require.True(t, cfg.ResponsesCodexForceToolChoiceRequired)
 	require.Equal(t, config.ResponsesCodeInterpreterBackendUnsafeHost, cfg.ResponsesCodeInterpreterBackend)

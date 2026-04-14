@@ -28,6 +28,7 @@ import (
 	"llama_shim/internal/sandbox"
 	"llama_shim/internal/storage/sqlite"
 	"llama_shim/internal/testutil"
+	"llama_shim/internal/websearch"
 )
 
 type semanticTestEmbedder struct{}
@@ -228,6 +229,27 @@ func TestReadyzReturns503WhenRetrievalEmbedderIsUnavailable(t *testing.T) {
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&payload))
 	require.Equal(t, "service_unavailable", payload["error"]["type"])
 	require.Equal(t, "retrieval embedder is not ready", payload["error"]["message"])
+}
+
+func TestReadyzReturns503WhenWebSearchBackendIsUnavailable(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		WebSearchProvider: &testutil.FakeWebSearchProvider{
+			ReadyErr: errors.New("web search backend unavailable"),
+		},
+	})
+
+	req, err := http.NewRequest(http.MethodGet, app.Server.URL+"/readyz", nil)
+	require.NoError(t, err)
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
+	var payload map[string]map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&payload))
+	require.Equal(t, "service_unavailable", payload["error"]["type"])
+	require.Equal(t, "web search backend is not ready", payload["error"]["message"])
 }
 
 func TestShimStaticBearerAuthProtectsAPISurfaceButSkipsHealthChecks(t *testing.T) {
@@ -4357,10 +4379,10 @@ func TestResponsesDisabledWebSearchToolIsDroppedForUpstreamCompatibility(t *test
 	require.Equal(t, "OK", response.OutputText)
 }
 
-func TestResponsesEnabledWebSearchToolReturnsValidationError(t *testing.T) {
+func TestResponsesEnabledWebSearchToolFallsBackToUpstreamWhenNoLocalProvider(t *testing.T) {
 	app := testutil.NewTestApp(t)
 
-	status, payload := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+	response := postResponse(t, app, map[string]any{
 		"model": "test-model",
 		"input": "Search the web",
 		"tools": []map[string]any{
@@ -4370,9 +4392,170 @@ func TestResponsesEnabledWebSearchToolReturnsValidationError(t *testing.T) {
 		},
 	})
 
-	require.Equal(t, http.StatusBadRequest, status)
-	require.Equal(t, "invalid_request_error", payload["error"].(map[string]any)["type"])
-	require.Equal(t, "tools", payload["error"].(map[string]any)["param"])
+	require.Equal(t, "upstream_resp_1", response.ID)
+	require.Equal(t, "UPSTREAM", response.OutputText)
+}
+
+func TestResponsesLocalWebSearchUsesProviderAndAnnotatesSources(t *testing.T) {
+	provider := &testutil.FakeWebSearchProvider{
+		SearchFunc: func(_ context.Context, request websearch.SearchRequest) (websearch.SearchResponse, error) {
+			require.NotEmpty(t, strings.TrimSpace(request.Query))
+			return websearch.SearchResponse{
+				Results: []websearch.SearchResult{
+					{
+						Title:   "Example News",
+						URL:     "https://news.example/sunbeam",
+						Snippet: "Project Sunbeam launched successfully.",
+					},
+				},
+			}, nil
+		},
+	}
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		WebSearchProvider: provider,
+	})
+
+	status, body := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model": "test-model",
+		"store": true,
+		"input": "Project Sunbeam launch update",
+		"tools": []map[string]any{
+			{
+				"type": "web_search",
+			},
+		},
+	})
+
+	require.Equal(t, http.StatusOK, status)
+	require.NotEqual(t, "upstream_resp_1", asStringAny(body["id"]))
+	require.Equal(t, "completed", asStringAny(body["status"]))
+
+	output, ok := body["output"].([]any)
+	require.True(t, ok)
+	require.Len(t, output, 2)
+
+	searchItem, ok := output[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "web_search_call", asStringAny(searchItem["type"]))
+	require.Equal(t, "completed", asStringAny(searchItem["status"]))
+	action, ok := searchItem["action"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "search", asStringAny(action["type"]))
+	require.NotEmpty(t, asStringAny(action["query"]))
+	sources, ok := action["sources"].([]any)
+	require.True(t, ok)
+	require.Len(t, sources, 1)
+	source, ok := sources[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "url", asStringAny(source["type"]))
+	require.Equal(t, "https://news.example/sunbeam", asStringAny(source["url"]))
+
+	messageItem, ok := output[1].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "message", asStringAny(messageItem["type"]))
+	content, ok := messageItem["content"].([]any)
+	require.True(t, ok)
+	require.Len(t, content, 1)
+	textPart, ok := content[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "output_text", asStringAny(textPart["type"]))
+	require.Equal(t, "Example News says Project Sunbeam launched successfully.", asStringAny(textPart["text"]))
+	annotations, ok := textPart["annotations"].([]any)
+	require.True(t, ok)
+	require.Len(t, annotations, 1)
+	annotation, ok := annotations[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "url_citation", asStringAny(annotation["type"]))
+	require.Equal(t, "https://news.example/sunbeam", asStringAny(annotation["url"]))
+	require.Equal(t, "Example News", asStringAny(annotation["title"]))
+	require.NotEmpty(t, provider.SearchCalls)
+}
+
+func TestResponsesLocalWebSearchStreamReplayIncludesOpenPageAndFindInPage(t *testing.T) {
+	provider := &testutil.FakeWebSearchProvider{
+		SearchFunc: func(_ context.Context, request websearch.SearchRequest) (websearch.SearchResponse, error) {
+			return websearch.SearchResponse{
+				Results: []websearch.SearchResult{
+					{
+						Title:   "OpenAI Web Search Guide",
+						URL:     "https://developers.openai.com/api/docs/guides/tools-web-search",
+						Snippet: "Supported in reasoning models can browse pages after search.",
+					},
+				},
+			}, nil
+		},
+		OpenPageFunc: func(_ context.Context, rawURL string) (websearch.Page, error) {
+			require.Equal(t, "https://developers.openai.com/api/docs/guides/tools-web-search", rawURL)
+			return websearch.Page{
+				Title: "OpenAI Web Search Guide",
+				URL:   rawURL,
+				Text:  "Supported in reasoning models means the web search tool can use open_page and find_in_page after search.",
+			}, nil
+		},
+	}
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		WebSearchProvider: provider,
+	})
+
+	reqBody, err := json.Marshal(map[string]any{
+		"model":  "test-model",
+		"store":  true,
+		"stream": true,
+		"input":  `Find the exact phrase "Supported in reasoning models" in the OpenAI Web Search Guide and say what it refers to.`,
+		"tools": []map[string]any{
+			{
+				"type": "web_search",
+			},
+		},
+		"tool_choice": "required",
+	})
+	require.NoError(t, err)
+
+	req, err := http.NewRequest(http.MethodPost, app.Server.URL+"/v1/responses", bytes.NewReader(reqBody))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Contains(t, resp.Header.Get("Content-Type"), "text/event-stream")
+
+	events := readSSEEvents(t, resp.Body)
+	require.Equal(t, "response.created", events[0].Event)
+	require.Len(t, findEvents(events, "response.web_search_call.completed"), 3)
+	require.Contains(t, eventTypes(events), "response.output_text.annotation.added")
+
+	completed := findEvent(t, events, "response.completed").Data
+	responsePayload, ok := completed["response"].(map[string]any)
+	require.True(t, ok)
+	responseID := asStringAny(responsePayload["id"])
+	require.NotEmpty(t, responseID)
+
+	output, ok := responsePayload["output"].([]any)
+	require.True(t, ok)
+	require.Len(t, output, 4)
+	searchItem, ok := output[0].(map[string]any)
+	require.True(t, ok)
+	openItem, ok := output[1].(map[string]any)
+	require.True(t, ok)
+	findItem, ok := output[2].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "search", asStringAny(searchItem["action"].(map[string]any)["type"]))
+	require.Equal(t, "open_page", asStringAny(openItem["action"].(map[string]any)["type"]))
+	require.Equal(t, "find_in_page", asStringAny(findItem["action"].(map[string]any)["type"]))
+	require.NotEmpty(t, provider.OpenPageCalls)
+
+	retrieveReq, err := http.NewRequest(http.MethodGet, app.Server.URL+"/v1/responses/"+responseID+"?stream=true", nil)
+	require.NoError(t, err)
+	retrieveResp, err := app.Client().Do(retrieveReq)
+	require.NoError(t, err)
+	defer retrieveResp.Body.Close()
+	require.Equal(t, http.StatusOK, retrieveResp.StatusCode)
+
+	replayEvents := readSSEEvents(t, retrieveResp.Body)
+	require.Len(t, findEvents(replayEvents, "response.web_search_call.completed"), 3)
+	require.Contains(t, eventTypes(replayEvents), "response.output_text.annotation.added")
 }
 
 func TestResponsesWithJSONTextFormatKeepLocalConversationState(t *testing.T) {

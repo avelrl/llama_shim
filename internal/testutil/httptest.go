@@ -17,6 +17,7 @@ import (
 	"llama_shim/internal/sandbox"
 	"llama_shim/internal/service"
 	"llama_shim/internal/storage/sqlite"
+	"llama_shim/internal/websearch"
 )
 
 type TestApp struct {
@@ -78,6 +79,7 @@ type TestAppOptions struct {
 	LlamaBaseURL                          string
 	RetrievalConfig                       retrieval.Config
 	RetrievalEmbedder                     retrieval.Embedder
+	WebSearchProvider                     websearch.Provider
 	CodeInterpreterBackend                sandbox.Backend
 	CodeInterpreterInputFileURLPolicy     string
 	CodeInterpreterInputFileURLAllowHosts []string
@@ -154,6 +156,7 @@ func NewTestAppWithOptions(t *testing.T, options TestAppOptions) *TestApp {
 		ResponsesCustomToolsMode:              options.CustomToolsMode,
 		ResponsesCodexEnableCompatibility:     options.CodexCompatibilityEnabled,
 		ResponsesCodexForceToolChoiceRequired: options.ForceToolChoiceRequired,
+		WebSearchProvider:                     options.WebSearchProvider,
 		LocalCodeInterpreter:                  localCodeInterpreter,
 		RetrievalIndexBackend:                 options.RetrievalConfig.IndexBackend,
 		RetrievalEmbedder:                     options.RetrievalEmbedder,

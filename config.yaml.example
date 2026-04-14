@@ -93,6 +93,16 @@ responses:
   # prefer_upstream: preserve the legacy proxy-first behavior for standalone requests.
   # local_only: never call upstream /v1/responses; reject unsupported features instead.
   mode: prefer_local
+  web_search:
+    # disabled: no shim-local web_search runtime
+    # searxng: query a local or remote SearXNG-compatible backend
+    backend: disabled
+    # Base URL of the web search backend, for example http://127.0.0.1:8084
+    base_url: ""
+    # Timeout per search/open_page request to the web search backend.
+    timeout: 10s
+    # Maximum results requested from the web search backend per rewritten query.
+    max_results: 10
   custom_tools:
     # How custom tools are transported to the upstream.
     # auto: recommended default; bridge plain-text custom tools when possible

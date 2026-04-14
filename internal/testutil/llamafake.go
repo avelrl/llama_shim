@@ -539,6 +539,9 @@ func fakeLlamaOutputFromChatMessages(messages []map[string]any) string {
 	if output, ok := fakeLocalCodeInterpreterFinalOutput(last, joined); ok {
 		return output
 	}
+	if output, ok := fakeLocalWebSearchOutput(last, joined); ok {
+		return output
+	}
 	if output, ok := fakeStructuredJSONOutput(last, joined); ok {
 		return output
 	}
@@ -633,6 +636,24 @@ func fakeStructuredJSONOutput(last, joined string) (string, bool) {
 	}
 }
 
+func fakeLocalWebSearchOutput(last, joined string) (string, bool) {
+	if !strings.Contains(joined, "shim-local web search results") {
+		return "", false
+	}
+	switch {
+	case strings.Contains(joined, "project sunbeam"):
+		return "Example News says Project Sunbeam launched successfully.", true
+	case strings.Contains(joined, "supported in reasoning models"):
+		return "OpenAI Web Search Guide says it refers to open_page and find_in_page.", true
+	case strings.Contains(joined, "local-only weather check"):
+		return "Weather.example reports clear skies today.", true
+	case strings.Contains(last, "search the web"):
+		return "Used web search results.", true
+	default:
+		return "Used web search results from Example Search.", true
+	}
+}
+
 func chatMessageContent(message map[string]any) string {
 	if message == nil {
 		return ""
@@ -680,6 +701,9 @@ func fakeLlamaOutput(messages []fakeLlamaMessage) string {
 		return output
 	}
 	if output, ok := fakeLocalCodeInterpreterFinalOutput(last, joined); ok {
+		return output
+	}
+	if output, ok := fakeLocalWebSearchOutput(last, joined); ok {
 		return output
 	}
 	if output, ok := fakeStructuredJSONOutput(last, joined); ok {
@@ -1000,7 +1024,7 @@ func firstUnsupportedToolType(tools []any) string {
 			continue
 		}
 		switch strings.TrimSpace(asString(payload["type"])) {
-		case "function", "custom", "custom_tool", "tool_search", "namespace", "mcp":
+		case "function", "custom", "custom_tool", "tool_search", "namespace", "mcp", "web_search", "web_search_preview":
 			continue
 		case "":
 			continue

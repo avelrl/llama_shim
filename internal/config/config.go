@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"llama_shim/internal/retrieval"
+	"llama_shim/internal/websearch"
 
 	"github.com/spf13/viper"
 )
@@ -45,6 +46,10 @@ type Config struct {
 	RetrievalEmbedderBackend                       string
 	RetrievalEmbedderBaseURL                       string
 	RetrievalEmbedderModel                         string
+	ResponsesWebSearchBackend                      string
+	ResponsesWebSearchBaseURL                      string
+	ResponsesWebSearchTimeout                      time.Duration
+	ResponsesWebSearchMaxResults                   int
 	ChatCompletionsStoreWhenOmitted                bool
 	ResponsesMode                                  string
 	ResponsesCustomToolsMode                       string
@@ -105,6 +110,8 @@ func Load(configPath string) (Config, error) {
 		RetrievalEmbedderBackend:                       strings.TrimSpace(v.GetString("retrieval.embedder.backend")),
 		RetrievalEmbedderBaseURL:                       strings.TrimSpace(v.GetString("retrieval.embedder.base_url")),
 		RetrievalEmbedderModel:                         strings.TrimSpace(v.GetString("retrieval.embedder.model")),
+		ResponsesWebSearchBackend:                      strings.ToLower(strings.TrimSpace(v.GetString("responses.web_search.backend"))),
+		ResponsesWebSearchBaseURL:                      strings.TrimSpace(v.GetString("responses.web_search.base_url")),
 		ChatCompletionsStoreWhenOmitted:                v.GetBool("chat_completions.default_store_when_omitted"),
 		ResponsesMode:                                  strings.ToLower(strings.TrimSpace(v.GetString("responses.mode"))),
 		ResponsesCustomToolsMode:                       strings.ToLower(strings.TrimSpace(v.GetString("responses.custom_tools.mode"))),
@@ -160,6 +167,16 @@ func Load(configPath string) (Config, error) {
 	cfg.RetrievalEmbedderBackend = normalizedRetrieval.Embedder.Backend
 	cfg.RetrievalEmbedderBaseURL = normalizedRetrieval.Embedder.BaseURL
 	cfg.RetrievalEmbedderModel = normalizedRetrieval.Embedder.Model
+	normalizedWebSearch, err := websearch.NormalizeConfig(websearch.Config{
+		Backend:   cfg.ResponsesWebSearchBackend,
+		BaseURL:   cfg.ResponsesWebSearchBaseURL,
+		MaxResults: 0,
+	})
+	if err != nil {
+		return Config{}, fmt.Errorf("parse responses.web_search config: %w", err)
+	}
+	cfg.ResponsesWebSearchBackend = normalizedWebSearch.Backend
+	cfg.ResponsesWebSearchBaseURL = normalizedWebSearch.BaseURL
 	if err := parseResponsesMode(cfg.ResponsesMode); err != nil {
 		return Config{}, fmt.Errorf("parse responses.mode: %w", err)
 	}
@@ -215,6 +232,9 @@ func Load(configPath string) (Config, error) {
 	if err := parseDuration(v.GetString("responses.code_interpreter.execution_timeout"), &cfg.ResponsesCodeInterpreterTimeout); err != nil {
 		return Config{}, fmt.Errorf("parse responses.code_interpreter.execution_timeout: %w", err)
 	}
+	if err := parseDuration(v.GetString("responses.web_search.timeout"), &cfg.ResponsesWebSearchTimeout); err != nil {
+		return Config{}, fmt.Errorf("parse responses.web_search.timeout: %w", err)
+	}
 	if err := parseDuration(v.GetString("responses.code_interpreter.cleanup_interval"), &cfg.ResponsesCodeInterpreterCleanupInterval); err != nil {
 		return Config{}, fmt.Errorf("parse responses.code_interpreter.cleanup_interval: %w", err)
 	}
@@ -258,6 +278,11 @@ func Load(configPath string) (Config, error) {
 		return Config{}, fmt.Errorf("parse responses.code_interpreter.limits.remote_input_file_bytes: %w", err)
 	}
 	cfg.ResponsesCodeInterpreterRemoteInputFileBytes = remoteInputFileBytes
+	webSearchMaxResults, err := parsePositiveInt(v.GetString("responses.web_search.max_results"))
+	if err != nil {
+		return Config{}, fmt.Errorf("parse responses.web_search.max_results: %w", err)
+	}
+	cfg.ResponsesWebSearchMaxResults = webSearchMaxResults
 
 	return cfg, nil
 }
@@ -294,6 +319,10 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("responses.custom_tools.mode", "auto")
 	v.SetDefault("responses.codex.enable_compatibility", true)
 	v.SetDefault("responses.codex.force_tool_choice_required", true)
+	v.SetDefault("responses.web_search.backend", websearch.BackendDisabled)
+	v.SetDefault("responses.web_search.base_url", "")
+	v.SetDefault("responses.web_search.timeout", "10s")
+	v.SetDefault("responses.web_search.max_results", "10")
 	v.SetDefault("responses.code_interpreter.backend", "")
 	v.SetDefault("responses.code_interpreter.enable_unsafe_host_executor", false)
 	v.SetDefault("responses.code_interpreter.python_binary", "python3")

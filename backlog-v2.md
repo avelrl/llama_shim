@@ -56,8 +56,9 @@
 - `POST /v1/responses` with `stream: true` over SSE
 - `GET /v1/responses/{id}?stream=true` with local SSE replay
 - `/healthz`
-- `/readyz` с проверкой SQLite, upstream llama backend, и retrieval embedder
-  readiness when semantic retrieval is enabled
+- `/readyz` с проверкой SQLite, upstream llama backend, retrieval embedder
+  readiness when semantic retrieval is enabled, and optional web-search
+  backend readiness when shim-local `web_search` is configured
 - `/metrics` как shim-owned Prometheus-text endpoint when metrics are enabled
 - SQLite migrations, `WAL`, default `busy_timeout`
 - local-first `responses.mode=prefer_local` по умолчанию с controlled upstream fallback
@@ -139,6 +140,12 @@
   `include=["file_search_call.results"]`, pragmatic final `file_citation`
   subset, и follow-up turns не ломаются из-за stored tool items в локальном
   generation context
+- local `/v1/responses` теперь умеет shim-local `web_search` /
+  `web_search_preview` subset over a configurable `searxng` backend:
+  deterministic query planning/rewrite, pragmatic `filters` subset,
+  heuristic `open_page` / `find_in_page`, stored/streaming
+  `web_search_call` items, pragmatic final `url_citation` annotations, and
+  proxy fallback when local web search is unavailable or not selected
 - local `/v1/responses` теперь умеет dev-only shim-local `code_interpreter`
   execution в pragmatic subset:
   один `code_interpreter` tool с `container.type=auto` или explicit
@@ -198,12 +205,13 @@
 - [x] - compatibility для `/responses/compact` и `/responses/input_tokens` ([детали](#task-compaction-and-token-counting))
 - [x] - local retrieval substrate: files + vector stores + lexical search ([детали](#task-retrieval-substrate-local))
 - [x] - retrieval-compatible local `file_search` execution inside `/v1/responses` ([детали](#task-retrieval-layer))
+- [x] - shim-local `web_search` runtime subset inside `/v1/responses` ([детали](#task-local-web-search-runtime))
 - [x] - dev-only local `code_interpreter` execution inside `/v1/responses` ([детали](#task-local-code-interpreter-runtime))
 - [x] - exact dense semantic/vector retrieval subset behind local `vector_stores` ([детали](#task-retrieval-semantic-backend))
 - [x] - weighted hybrid retrieval subset behind local `vector_stores` ([детали](#task-retrieval-semantic-backend))
 - [x] - local reranked retrieval subset behind local `vector_stores` ([детали](#task-retrieval-semantic-backend))
 - [ ] - hosted reranked retrieval parity behind local `vector_stores` ([детали](#task-retrieval-semantic-backend))
-- [ ] - parity для hosted/native Responses tools (`web_search`, `computer_use`, `code_interpreter`, `image_generation`, `remote MCP`, `tool_search`) ([детали](#task-hosted-tools-parity))
+- [ ] - remaining parity для hosted/native Responses tools (`computer_use`, `code_interpreter`, `image_generation`, `remote MCP`, `tool_search`, exact hosted `web_search`) ([детали](#task-hosted-tools-parity))
 - [x] - local-first stored Chat Completions CRUD surface for proxy completions ([детали](#task-chat-stored-surface-local))
 - [x] - `/readyz` checks SQLite, upstream llama backend, and configured retrieval embedder readiness ([детали](#task-ops-hardening))
 - [x] - shim-owned ops hardening subset: ingress auth, request rate limiting, quotas, metrics, structured observability ([детали](#task-ops-hardening))
@@ -1335,6 +1343,53 @@ Definition of done:
 - phase 3: move from the current local reranker to a stronger hosted-grade
   reranking pipeline where it is worth the complexity
 - phase 4: revisit citations/annotations parity for final assistant messages
+
+## <a id="task-local-web-search-runtime"></a>Shim-local `web_search` runtime subset inside `/v1/responses`
+
+Почему это отдельный pragmatic subset:
+
+- без shim-local `web_search` built-in web tool surface слишком сильно
+  зависит от того, умеет ли конкретный upstream hosted browsing вообще
+- tool-specific stored replay для `web_search_call` уже был закрыт, так что
+  следующий полезный шаг это execution/runtime, а не ещё один replay-only
+  item
+- usable local subset даёт реальную практическую ценность без претензии на
+  full hosted browsing parity
+
+Что закрыто сейчас:
+
+- shim-local `/v1/responses` supports one `web_search` or
+  `web_search_preview` tool in `responses.mode=prefer_local|local_only`
+- execution uses deterministic query planning/rewrite over the same local
+  planner family as retrieval and a configurable
+  `responses.web_search.backend=searxng`
+- pragmatic `filters` subset for `web_search` is supported locally
+- local runtime can emit search-only flows as well as heuristic `open_page` /
+  `find_in_page` follow-up when the prompt clearly asks to inspect a page or
+  search inside it
+- final local assistant messages carry a pragmatic `url_citation` subset with
+  visible sources, and streaming/retrieve replay stays consistent with stored
+  `web_search_call` items
+- built-in `web_search` no longer fails proxy/upstream create just because the
+  shim remaps custom tools; supported built-in `web_search` now passes
+  through unchanged when the local runtime is unavailable or not selected
+- `/readyz` now checks the configured shim-local web-search backend when
+  `responses.web_search.backend` is enabled
+
+Что остаётся open:
+
+- exact hosted planner/query-rewrite behavior
+- broader live-web semantics and source selection behavior
+- full hosted failure/status choreography
+- provider diversity beyond the current `searxng` backend
+
+Definition of done:
+
+- local `web_search` is actually usable inside `/v1/responses`
+- proxy/upstream path still accepts supported built-in `web_search` when the
+  shim does not own execution
+- backlog/OpenAPI/docs explicitly describe this as a shim-local subset, not
+  full hosted browsing parity
 
 ## <a id="task-local-code-interpreter-runtime"></a>Dev-only local `code_interpreter` execution inside `/v1/responses`
 

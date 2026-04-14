@@ -197,10 +197,6 @@ func buildCustomToolTransportPlan(rawFields map[string]json.RawMessage, configur
 			customDescriptors = append(customDescriptors, descriptor)
 			continue
 		}
-		if isUnsupportedBuiltinToolType(toolType) {
-			return customToolTransportPlan{}, nil, domain.NewValidationError("tools", "tool type "+`"`+toolType+`"`+" is not supported by this shim backend")
-		}
-
 		filteredTools = append(filteredTools, tool)
 
 		if name := strings.TrimSpace(asString(tool["name"])); name != "" {
@@ -319,12 +315,8 @@ func remapToolChoice(raw json.RawMessage, rawFields map[string]json.RawMessage, 
 	if err := json.Unmarshal(raw, &choice); err != nil {
 		return nil, domain.NewValidationError("tool_choice", "tool_choice must be a string or object")
 	}
-	toolType := strings.TrimSpace(asString(choice["type"]))
 	if isDisabledWebSearchTool(choice) {
 		return nil, domain.NewValidationError("tool_choice", "tool_choice references a disabled web_search tool")
-	}
-	if isUnsupportedBuiltinToolType(toolType) {
-		return nil, domain.NewValidationError("tool_choice", "tool_choice type "+`"`+toolType+`"`+" is not supported by this shim backend")
 	}
 	if !plan.Bridge.Active() {
 		return choice, nil

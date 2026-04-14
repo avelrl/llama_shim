@@ -283,18 +283,31 @@ func TestRemapCustomToolsPayloadDropsDisabledWebSearchTool(t *testing.T) {
 	require.Equal(t, "exec_command", tool["name"])
 }
 
-func TestRemapCustomToolsPayloadRejectsSupportedWebSearchBuiltIn(t *testing.T) {
+func TestRemapCustomToolsPayloadPreservesSupportedWebSearchBuiltIn(t *testing.T) {
 	rawFields := map[string]json.RawMessage{
+		"tool_choice": json.RawMessage(`{"type":"web_search"}`),
 		"tools": json.RawMessage(`[
 			{"type":"web_search","external_web_access":true}
 		]`),
 	}
 
-	_, _, err := remapCustomToolsPayload(rawFields, "bridge", false, false)
+	body, plan, err := remapCustomToolsPayload(rawFields, "bridge", false, false)
 
-	var validationErr *domain.ValidationError
-	require.ErrorAs(t, err, &validationErr)
-	require.Equal(t, "tools", validationErr.Param)
+	require.NoError(t, err)
+	require.False(t, plan.BridgeActive())
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(body, &payload))
+	tools, ok := payload["tools"].([]any)
+	require.True(t, ok)
+	require.Len(t, tools, 1)
+	tool, ok := tools[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "web_search", tool["type"])
+	require.Equal(t, true, tool["external_web_access"])
+	toolChoice, ok := payload["tool_choice"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "web_search", toolChoice["type"])
 }
 
 func TestRemapCustomToolsPayloadForcesRequiredToolChoiceForCodexAuto(t *testing.T) {
