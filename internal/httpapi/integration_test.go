@@ -137,6 +137,7 @@ func TestResponsesStoreAndGet(t *testing.T) {
 		"metadata": map[string]any{"topic": "demo"},
 		"input":    "Say OK and nothing else",
 	})
+	t.Logf("local mcp response=%s", mustJSON(t, response))
 
 	require.NotEmpty(t, response.ID)
 	require.NotEmpty(t, response.OutputText)
@@ -577,6 +578,7 @@ func TestResponsesGetIncludesExpandedResponseSurface(t *testing.T) {
 		"top_p":       0.25,
 		"input":       "Say OK and nothing else",
 	})
+	t.Logf("local mcp streamable response=%s", mustJSON(t, response))
 
 	require.JSONEq(t, `"Be terse."`, string(response.Instructions))
 	require.JSONEq(t, "null", string(response.MaxOutputTokens))
@@ -6259,7 +6261,6 @@ func TestResponsesCreateExecutesLocalFileSearch(t *testing.T) {
 		},
 		"tool_choice": "required",
 	})
-
 	require.Equal(t, "completed", response.Status)
 	require.Equal(t, "777", response.OutputText)
 	require.Len(t, response.Output, 2)
@@ -6360,7 +6361,6 @@ func TestResponsesCreateLocalFileSearchUsesMultipleChunksFromSameFile(t *testing
 		},
 		"tool_choice": "required",
 	})
-
 	require.Equal(t, "completed", response.Status)
 	require.Equal(t, "777", response.OutputText)
 	fileSearchPayload := response.Output[0].Map()
@@ -8452,6 +8452,153 @@ func TestResponsesCreateLocalMCPImportsCallsAndAnswers(t *testing.T) {
 	require.Len(t, followUp.Output, 2)
 	require.Equal(t, "mcp_call", followUp.Output[0].Type)
 	require.Equal(t, "message", followUp.Output[1].Type)
+}
+
+func TestResponsesCreateLocalMCPStreamableHTTPWithAuthHeadersAndCachedReuse(t *testing.T) {
+	mcpServer := testutil.NewFakeMCPServerWithOptions(t, []testutil.FakeMCPTool{
+		{
+			Name:        "roll",
+			Description: "Roll dice from a dice expression.",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"diceRollExpression": map[string]any{"type": "string"},
+				},
+				"required":             []string{"diceRollExpression"},
+				"additionalProperties": false,
+			},
+			OutputText: "4",
+		},
+	}, testutil.FakeMCPServerOptions{
+		ExpectedAuthorization: "Bearer local-mcp-token",
+		ExpectedHeaders: map[string]string{
+			"X-MCP-Test": "shim",
+		},
+	})
+	defer mcpServer.Close()
+
+	app := testutil.NewTestApp(t)
+
+	response := postResponse(t, app, map[string]any{
+		"model":       "test-model",
+		"input":       "Roll 2d4+1 and return only the numeric result.",
+		"tool_choice": "required",
+		"tools": []map[string]any{
+			{
+				"type":             "mcp",
+				"server_label":     "dmcp",
+				"server_url":       mcpServer.URL + "/mcp",
+				"authorization":    "local-mcp-token",
+				"headers":          map[string]any{"X-MCP-Test": "shim"},
+				"require_approval": "never",
+			},
+		},
+	})
+
+	require.Equal(t, "completed", response.Status)
+	require.Equal(t, "4", response.OutputText)
+	require.Len(t, response.Output, 3)
+	require.Equal(t, "mcp_list_tools", response.Output[0].Type)
+	require.Equal(t, "mcp_call", response.Output[1].Type)
+	require.Equal(t, "message", response.Output[2].Type)
+
+	followUp := postResponse(t, app, map[string]any{
+		"model":                "test-model",
+		"previous_response_id": response.ID,
+		"input":                "Roll again and return only the numeric result.",
+	})
+
+	require.Equal(t, "completed", followUp.Status)
+	require.Equal(t, "4", followUp.OutputText)
+	require.Len(t, followUp.Output, 2)
+	require.Equal(t, "mcp_call", followUp.Output[0].Type)
+	require.Equal(t, "message", followUp.Output[1].Type)
+}
+
+func TestResponsesCreateLocalMCPRejectsAuthorizationAndHeadersAuthorization(t *testing.T) {
+	mcpServer := testutil.NewFakeMCPServer(t, nil)
+	defer mcpServer.Close()
+
+	app := testutil.NewTestApp(t)
+
+	status, body := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model": "test-model",
+		"input": "Hello",
+		"tools": []map[string]any{
+			{
+				"type":          "mcp",
+				"server_label":  "dmcp",
+				"server_url":    mcpServer.URL + "/mcp",
+				"authorization": "local-mcp-token",
+				"headers": map[string]any{
+					"Authorization": "Bearer other-token",
+				},
+			},
+		},
+	})
+
+	require.Equal(t, http.StatusBadRequest, status)
+	errorPayload, ok := body["error"].(map[string]any)
+	require.True(t, ok)
+	require.Contains(t, asStringAny(errorPayload["message"]), "headers.Authorization")
+}
+
+func TestResponsesCreateConnectorMCPFallsBackToUpstreamEvenWithPreviousLocalMCPState(t *testing.T) {
+	mcpServer := testutil.NewFakeMCPServer(t, []testutil.FakeMCPTool{
+		{
+			Name:        "roll",
+			Description: "Roll dice from a dice expression.",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"diceRollExpression": map[string]any{"type": "string"},
+				},
+				"required":             []string{"diceRollExpression"},
+				"additionalProperties": false,
+			},
+			OutputText: "4",
+		},
+	})
+	defer mcpServer.Close()
+
+	app := testutil.NewTestApp(t)
+
+	local := postResponse(t, app, map[string]any{
+		"model":       "test-model",
+		"input":       "Roll 2d4+1 and return only the numeric result.",
+		"tool_choice": "required",
+		"tools": []map[string]any{
+			{
+				"type":             "mcp",
+				"server_label":     "dmcp",
+				"server_url":       mcpServer.URL + "/sse",
+				"require_approval": "never",
+			},
+		},
+	})
+	require.Equal(t, "completed", local.Status)
+
+	status, body := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model":                "test-model",
+		"previous_response_id": local.ID,
+		"input":                "Say OK and nothing else.",
+		"tools": []map[string]any{
+			{
+				"type":             "mcp",
+				"server_label":     "google_calendar",
+				"connector_id":     "connector_googlecalendar",
+				"authorization":    "connector-access-token",
+				"require_approval": "never",
+			},
+		},
+	})
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, "completed", asStringAny(body["status"]))
+	require.NotEmpty(t, asStringAny(body["output_text"]))
+	output, ok := body["output"].([]any)
+	require.True(t, ok)
+	require.Len(t, output, 1)
+	require.Equal(t, "message", asStringAny(output[0].(map[string]any)["type"]))
 }
 
 func TestResponsesCreateLocalMCPApprovalFlowWorksWithoutRepeatingTools(t *testing.T) {

@@ -23,6 +23,10 @@ var shimLocalMCPFields = map[string]struct{}{
 type localMCPServerConfig struct {
 	ServerLabel       string
 	ServerURL         string
+	ConnectorID       string
+	Authorization     string
+	Headers           map[string]string
+	Transport         string
 	ServerDescription string
 	AllowedTools      []string
 	ApprovalPolicy    localMCPApprovalPolicy
@@ -81,6 +85,31 @@ func supportsLocalMCP(rawFields map[string]json.RawMessage) bool {
 
 	_, err := parseLocalMCPToolConfigs(rawFields)
 	return err == nil
+}
+
+func hasDeclaredMCPTools(rawFields map[string]json.RawMessage) bool {
+	for _, tool := range decodeToolList(rawFields) {
+		if strings.TrimSpace(asString(tool["type"])) == "mcp" {
+			return true
+		}
+	}
+	return false
+}
+
+func hasConnectorMCPTools(rawFields map[string]json.RawMessage) bool {
+	for _, tool := range decodeToolList(rawFields) {
+		if strings.TrimSpace(asString(tool["type"])) != "mcp" {
+			continue
+		}
+		if strings.TrimSpace(asString(tool["connector_id"])) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func hasUnsupportedLocalMCPTools(rawFields map[string]json.RawMessage) bool {
+	return hasDeclaredMCPTools(rawFields) && !hasConnectorMCPTools(rawFields) && !supportsLocalMCP(rawFields)
 }
 
 func hasLocalMCPApprovalResponse(rawFields map[string]json.RawMessage) bool {
@@ -152,6 +181,9 @@ func (h *responseHandler) createLocalMCPResponse(ctx context.Context, request Cr
 
 	currentConfigs, configErr := parseLocalMCPToolConfigs(rawFields)
 	if configErr != nil && !hasLocalMCPApprovalResponse(rawFields) && !hasCachedLocalMCPServers(prepared.EffectiveInput) {
+		if strings.TrimSpace(request.PreviousResponseID) != "" && !hasDeclaredMCPTools(rawFields) {
+			return domain.Response{}, domain.ErrUnsupportedShape
+		}
 		return domain.Response{}, configErr
 	}
 
@@ -164,7 +196,7 @@ func (h *responseHandler) createLocalMCPResponse(ctx context.Context, request Cr
 		return domain.Response{}, err
 	}
 	if len(servers) == 0 {
-		return domain.Response{}, domain.NewValidationError("tools", "shim-local remote MCP requires at least one public server_url tool or cached mcp_list_tools state")
+		return domain.Response{}, domain.NewValidationError("tools", "shim-local remote MCP requires at least one server_url tool or cached mcp_list_tools state")
 	}
 
 	toolChoice, err := parseLocalMCPToolChoice(rawFields["tool_choice"])
@@ -315,10 +347,11 @@ func (h *responseHandler) resolveLocalMCPServers(ctx context.Context, current []
 			continue
 		}
 
-		tools, err := client.ListTools(ctx, config.ServerURL)
+		tools, transport, err := client.ListTools(ctx, config)
 		if err != nil {
 			return nil, nil, fmt.Errorf("import MCP tools from %s: %w", config.ServerLabel, err)
 		}
+		config.Transport = transport
 		server := localMCPRuntimeServer{
 			Config: config,
 			Tools:  filterAndNormalizeLocalMCPTools(config, tools),
@@ -348,7 +381,7 @@ func parseLocalMCPToolConfigs(rawFields map[string]json.RawMessage) ([]localMCPS
 	for _, tool := range tools {
 		for key := range tool {
 			switch key {
-			case "type", "server_label", "server_description", "server_url", "allowed_tools", "require_approval":
+			case "type", "server_label", "server_description", "server_url", "connector_id", "authorization", "headers", "allowed_tools", "require_approval":
 			default:
 				return nil, domain.NewValidationError("tools", "unsupported mcp tool field "+`"`+key+`"`+" in shim-local mode")
 			}
@@ -366,10 +399,28 @@ func parseLocalMCPToolConfigs(rawFields map[string]json.RawMessage) ([]localMCPS
 		seenLabels[serverLabel] = struct{}{}
 
 		serverURL := strings.TrimSpace(asString(tool["server_url"]))
-		if serverURL == "" {
-			return nil, domain.NewValidationError("tools", "shim-local remote MCP supports only public server_url tools; connectors and authorization-backed servers remain proxy-only")
+		connectorID := strings.TrimSpace(asString(tool["connector_id"]))
+		switch {
+		case serverURL != "" && connectorID != "":
+			return nil, domain.NewValidationError("tools", "mcp tools in shim-local mode must set exactly one of server_url or connector_id")
+		case serverURL == "" && connectorID == "":
+			return nil, domain.NewValidationError("tools", "mcp.server_url is required in shim-local mode")
+		case connectorID != "":
+			return nil, domain.NewValidationError("tools", "shim-local remote MCP supports server_url tools; connectors remain upstream-only")
 		}
 
+		headers, err := parseLocalMCPHeaders(tool["headers"])
+		if err != nil {
+			return nil, err
+		}
+		authorization := strings.TrimSpace(asString(tool["authorization"]))
+		if authorization != "" {
+			for key := range headers {
+				if strings.EqualFold(strings.TrimSpace(key), "Authorization") {
+					return nil, domain.NewValidationError("tools", "shim-local remote MCP does not allow both authorization and headers.Authorization")
+				}
+			}
+		}
 		allowedTools, err := parseLocalMCPAllowedTools(tool["allowed_tools"])
 		if err != nil {
 			return nil, err
@@ -382,6 +433,9 @@ func parseLocalMCPToolConfigs(rawFields map[string]json.RawMessage) ([]localMCPS
 		configs = append(configs, localMCPServerConfig{
 			ServerLabel:       serverLabel,
 			ServerURL:         serverURL,
+			ConnectorID:       connectorID,
+			Authorization:     authorization,
+			Headers:           headers,
 			ServerDescription: strings.TrimSpace(asString(tool["server_description"])),
 			AllowedTools:      allowedTools,
 			ApprovalPolicy:    approvalPolicy,
@@ -408,6 +462,29 @@ func parseLocalMCPAllowedTools(value any) ([]string, error) {
 		out = append(out, name)
 	}
 	return out, nil
+}
+
+func parseLocalMCPHeaders(value any) (map[string]string, error) {
+	if value == nil {
+		return nil, nil
+	}
+	raw, ok := value.(map[string]any)
+	if !ok {
+		return nil, domain.NewValidationError("tools", "mcp.headers must be an object of string values")
+	}
+	headers := make(map[string]string, len(raw))
+	for key, entry := range raw {
+		name := strings.TrimSpace(key)
+		if name == "" {
+			return nil, domain.NewValidationError("tools", "mcp.headers must not contain empty names")
+		}
+		value, ok := entry.(string)
+		if !ok {
+			return nil, domain.NewValidationError("tools", "mcp.headers must be an object of string values")
+		}
+		headers[name] = value
+	}
+	return headers, nil
 }
 
 func parseLocalMCPApprovalPolicy(value any) (localMCPApprovalPolicy, string, error) {
@@ -506,9 +583,18 @@ func collectCachedLocalMCPServers(items []domain.Item) (map[string]localMCPRunti
 		config := localMCPServerConfig{
 			ServerLabel:    strings.TrimSpace(item.StringField("server_label")),
 			ServerURL:      strings.TrimSpace(item.Meta.MCPServerURL),
+			ConnectorID:    strings.TrimSpace(item.Meta.MCPConnectorID),
+			Authorization:  strings.TrimSpace(item.Meta.MCPAuthorization),
 			ApprovalPolicy: localMCPApprovalPolicy{NeverTools: map[string]struct{}{}},
 			ApprovalRaw:    strings.TrimSpace(item.Meta.MCPApproval),
 			AllowedTools:   append([]string(nil), item.Meta.MCPToolNames...),
+			Transport:      strings.TrimSpace(item.Meta.MCPTransport),
+		}
+		if len(item.Meta.MCPHeaders) > 0 {
+			config.Headers = make(map[string]string, len(item.Meta.MCPHeaders))
+			for key, value := range item.Meta.MCPHeaders {
+				config.Headers[key] = value
+			}
 		}
 		if config.ServerLabel == "" || config.ServerURL == "" {
 			continue
@@ -564,8 +650,21 @@ func decodeLocalMCPListToolsItem(item domain.Item) ([]localMCPToolDefinition, er
 }
 
 func localMCPServerConfigEqual(left, right localMCPServerConfig) bool {
-	if left.ServerLabel != right.ServerLabel || left.ServerURL != right.ServerURL || left.ApprovalRaw != right.ApprovalRaw {
+	if left.ServerLabel != right.ServerLabel ||
+		left.ServerURL != right.ServerURL ||
+		left.ConnectorID != right.ConnectorID ||
+		left.Authorization != right.Authorization ||
+		left.Transport != right.Transport ||
+		left.ApprovalRaw != right.ApprovalRaw {
 		return false
+	}
+	if len(left.Headers) != len(right.Headers) {
+		return false
+	}
+	for key, value := range left.Headers {
+		if right.Headers[key] != value {
+			return false
+		}
 	}
 	if len(left.AllowedTools) != len(right.AllowedTools) {
 		return false
@@ -743,9 +842,13 @@ func buildLocalMCPListToolsItem(server localMCPRuntimeServer) (domain.Item, erro
 		return domain.Item{}, err
 	}
 	return item.WithMeta(domain.ItemMeta{
-		MCPServerURL: server.Config.ServerURL,
-		MCPApproval:  server.Config.ApprovalRaw,
-		MCPToolNames: toolNames,
+		MCPServerURL:     server.Config.ServerURL,
+		MCPConnectorID:   server.Config.ConnectorID,
+		MCPAuthorization: server.Config.Authorization,
+		MCPApproval:      server.Config.ApprovalRaw,
+		MCPTransport:     server.Config.Transport,
+		MCPToolNames:     toolNames,
+		MCPHeaders:       server.Config.Headers,
 	}), nil
 }
 
@@ -819,7 +922,7 @@ func (h *responseHandler) executeLocalMCPTool(ctx context.Context, binding local
 	if err != nil {
 		return domain.Item{}, err
 	}
-	result, callErr := newLocalMCPClient().CallTool(ctx, binding.Server.Config.ServerURL, binding.Tool.Name, json.RawMessage(arguments))
+	result, callErr := newLocalMCPClient().CallTool(ctx, binding.Server.Config, binding.Tool.Name, json.RawMessage(arguments))
 	if callErr != nil {
 		return buildLocalMCPCallItem(callID, binding, arguments, approvalRequestID, "", callErr, true)
 	}
@@ -868,9 +971,13 @@ func buildLocalMCPCallItem(id string, binding localMCPToolBinding, arguments str
 		return domain.Item{}, err
 	}
 	return item.WithMeta(domain.ItemMeta{
-		SyntheticName: binding.Tool.SyntheticName,
-		MCPServerURL:  binding.Server.Config.ServerURL,
-		MCPApproval:   binding.Server.Config.ApprovalRaw,
+		SyntheticName:    binding.Tool.SyntheticName,
+		MCPServerURL:     binding.Server.Config.ServerURL,
+		MCPConnectorID:   binding.Server.Config.ConnectorID,
+		MCPAuthorization: binding.Server.Config.Authorization,
+		MCPApproval:      binding.Server.Config.ApprovalRaw,
+		MCPTransport:     binding.Server.Config.Transport,
+		MCPHeaders:       binding.Server.Config.Headers,
 	}), nil
 }
 

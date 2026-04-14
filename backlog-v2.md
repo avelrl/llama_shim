@@ -93,13 +93,13 @@
   top-level functions and all-deferred namespaces, generic create/retrieve
   replay, and lineage-safe follow-up local tool loops; client execution stays
   proxy-only
-- shim-local remote MCP now supports a public `server_url` subset in
+- shim-local remote MCP now supports a broader `server_url` subset in
   `responses.mode=prefer_local|local_only`: request-declared MCP servers are
   imported into `mcp_list_tools`, cached across `previous_response_id`,
   approvals flow through `mcp_approval_request` /
   `mcp_approval_response`, and successful tool execution emits real
-  `mcp_call`; connectors, auth-backed MCP servers, and streamable HTTP
-  transport remain proxy-only/open
+  `mcp_call`; auth-backed `server_url` tools and streamable HTTP are now part
+  of the local subset, while connectors remain upstream-only/open
 - `/readyz` теперь реально проверяет SQLite и upstream llama backend, а при
   `sqlite_vec` + readiness-aware embedder ещё и retrieval embedder, а не просто
   отвечает `200`
@@ -993,7 +993,7 @@ Definition of done:
 - backlog/OpenAPI wording stays conservative about client mode, mixed
   namespaces, and dedicated SSE families
 
-## <a id="task-local-remote-mcp-runtime"></a>Shim-local remote MCP runtime subset for public `server_url` servers
+## <a id="task-local-remote-mcp-runtime"></a>Shim-local remote MCP runtime subset for `server_url` servers
 
 Почему это отдельно:
 
@@ -1004,19 +1004,24 @@ Definition of done:
 - remote MCP is a meaningful functional block on its own: tool import,
   lineage-safe caching, approvals, and actual remote tool execution must stay
   aligned
-- connector-backed and auth-backed MCP flows have different trust and auth
-  semantics, so the first local subset should stay narrow and explicit
+- connector-backed MCP flows have different trust and auth semantics, so the
+  local subset should stay explicit about what is actually shim-owned
 
 Что входит:
 
 - shim-local `responses.mode=prefer_local|local_only` accepts request-declared
-  MCP tools that use public `server_url`
+  MCP tools that use `server_url`
 - shim imports remote tools into a stored `mcp_list_tools` item, caches that
   import across `previous_response_id`, and can reuse cached tool definitions
   without repeating the `tools` array
 - shim honors `require_approval="never"`, default approval-required behavior,
   and `{never:{tool_names:[...]}}`, emits `mcp_approval_request`, accepts
   follow-up `mcp_approval_response`, and continues the same logical tool turn
+- shim-local MCP requests now honor `authorization` and custom `headers`, with
+  validation that `authorization` and `headers.Authorization` are not both set
+- shim-local MCP client now supports both legacy HTTP/SSE endpoints and basic
+  streamable HTTP MCP endpoints, with cached transport reuse across
+  `previous_response_id`
 - successful execution emits a real `mcp_call` item; create-stream replay
   stays generic-only for `mcp_list_tools` / `mcp_approval_request` and reuses
   existing `mcp_call` replay semantics
@@ -1026,23 +1031,23 @@ Definition of done:
 Что не входит:
 
 - connectors (`connector_id`)
-- authorization-backed MCP servers
-- streamable HTTP MCP transport; the current local subset is legacy SSE
-  endpoint based
+- auth-backed connectors or OpenAI-managed connector semantics
 - exact hosted failure/status parity for every remote MCP edge case
 
 Статус на 14 апреля 2026:
 
-- закрыт pragmatic local-first runtime subset for public `server_url` MCP
+- закрыт pragmatic local-first runtime subset for `server_url` MCP
   servers
 - coverage есть на import+call happy path, approval flow without repeating
-  tools, cached follow-up via `previous_response_id`, and create-stream replay
-- backlog/OpenAPI remain conservative about connectors, auth-backed servers,
-  and transport parity
+  tools, cached follow-up via `previous_response_id`, auth/header validation,
+  streamable HTTP transport, and create-stream replay
+- connector flows remain conservative: local runtime is not claimed, but
+  upstream passthrough/bridge remains available when the configured backend
+  supports connector routes
 
 Definition of done:
 
-- a local request with public `mcp` `server_url` tools can import tools,
+- a local request with `mcp` `server_url` tools can import tools,
   execute one of them, and produce a final assistant answer in the same
   Response
 - approval-required flows can continue through
@@ -1050,8 +1055,8 @@ Definition of done:
   definition
 - follow-up turns can reuse cached `mcp_list_tools` state through
   `previous_response_id`
-- docs/spec do not overclaim support for connectors, auth-backed servers, or
-  streamable HTTP MCP transport
+- docs/spec do not overclaim local connector runtime or exact hosted MCP
+  failure semantics
 
 ## <a id="task-streaming-replay-hosted"></a>Hosted/native tool-specific SSE replay beyond core shim item families
 
@@ -1085,9 +1090,9 @@ Definition of done:
 - docs-backed `tool_search` passthrough contract и generic replay вынесены в
   закрытый item выше; shim-local runtime и dedicated
   `response.tool_search.*` family без traces не заявляются
-- shim-local public `server_url` remote MCP runtime вынесен в закрытый item
-  выше; remaining remote MCP work here is connectors, auth-backed servers,
-  streamable HTTP transport parity, and broader hosted failure semantics
+- shim-local `server_url` remote MCP runtime вынесен в закрытый item выше;
+  remaining remote MCP work here is connectors and broader hosted failure
+  semantics
 - для remaining hosted/native families без live source event log replay все
   еще может деградировать до generic `response.output_item.*`
 
@@ -1463,8 +1468,8 @@ Definition of done:
 - без отдельного плана по hosted/native tools shim легко “застрянет” в text + function subset и будет выглядеть совместимым только частично
 - часть этой поверхности уже пересекается с retrieval, но `web_search`, `computer_use`, `code_interpreter`, `image_generation`, `remote MCP` и `tool_search` требуют отдельной архитектурной рамки
 - current state already includes a pragmatic local remote MCP subset for
-  public `server_url` servers; remaining remote MCP work is connector/auth
-  parity and broader hosted transport/failure semantics
+  `server_url` servers; remaining remote MCP work is connector parity and
+  broader hosted transport/failure semantics
 
 Что входит:
 
@@ -1475,10 +1480,10 @@ Definition of done:
 - решить по каждому tool type, где shim эмулирует hosted semantics локально, а где честно возвращает `not supported`
 - `tool_search` passthrough contract и generic stored replay уже закрыты
   отдельным item выше; remaining work здесь это runtime/parity beyond that
-- pragmatic local remote MCP runtime for public `server_url` servers is
-  already closed above; remaining work here is not first-use runtime but
-  broader parity for connectors, auth-backed servers, transport variants, and
-  hosted semantics
+- pragmatic local remote MCP runtime for `server_url` servers is already
+  closed above; remaining work here is not first-use runtime but broader
+  parity for connectors, OpenAI-managed connector semantics, and hosted
+  failure/status behavior
 - зафиксировать parity по reasoning items / reasoning summaries для tool-heavy flows, где это влияет на качество follow-up шагов
 - описать границы между local-first shim tools, passthrough/proxy режимом и controlled fallback policy
 

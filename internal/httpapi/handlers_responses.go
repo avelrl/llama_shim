@@ -107,7 +107,10 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 	localToolLoop := supportsLocalToolLoop(rawFields)
 	localToolSearch := supportsLocalToolSearch(rawFields)
 	localFileSearch := supportsLocalFileSearch(rawFields)
-	localMCP := supportsLocalMCP(rawFields) || hasLocalMCPApprovalResponse(rawFields) || h.hasLocalMCPState(r.Context(), request)
+	localMCPSupported := supportsLocalMCP(rawFields)
+	localMCPConnector := hasConnectorMCPTools(rawFields)
+	localMCPUnsupported := hasUnsupportedLocalMCPTools(rawFields)
+	localMCP := localMCPSupported || localMCPUnsupported || hasLocalMCPApprovalResponse(rawFields) || (h.hasLocalMCPState(r.Context(), request) && !localMCPConnector)
 	localCodeInterpreterRequested := isLocalCodeInterpreterToolRequest(rawFields)
 	localCodeInterpreter := supportsLocalCodeInterpreter(rawFields, h.localCodeInterpreter)
 	localSupported := supportsLocalShimState(rawFields)
@@ -134,6 +137,14 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 		case localMCP:
 			response, err := h.createLocalMCPResponse(r.Context(), request, requestJSON, rawFields)
 			if err != nil {
+				if shouldFallbackLocalState(h.responsesMode, err) {
+					if hasLocalState {
+						h.createStreamViaUpstream(w, r, request, requestJSON, rawFields, streamOptions)
+						return
+					}
+					h.proxyCreateStream(w, r, request, requestJSON, rawFields, streamOptions)
+					return
+				}
 				h.writeError(w, r, normalizeLocalOnlyCreateError(h.responsesMode, err))
 				return
 			}
@@ -238,6 +249,20 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 	case localMCP:
 		response, err := h.createLocalMCPResponse(r.Context(), request, requestJSON, rawFields)
 		if err != nil {
+			if shouldFallbackLocalState(h.responsesMode, err) {
+				var response domain.Response
+				var fallbackErr error
+				if hasLocalState {
+					response, fallbackErr = h.createLocalStateViaUpstream(r.Context(), request, requestJSON, rawFields)
+				} else {
+					response, fallbackErr = h.createProxyResponseViaUpstream(r.Context(), request, requestJSON, rawFields)
+				}
+				if fallbackErr == nil {
+					WriteJSON(w, http.StatusOK, response)
+					return
+				}
+				err = fallbackErr
+			}
 			h.writeError(w, r, normalizeLocalOnlyCreateError(h.responsesMode, err))
 			return
 		}

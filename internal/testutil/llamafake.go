@@ -966,7 +966,7 @@ func firstUnsupportedToolType(tools []any) string {
 			continue
 		}
 		switch strings.TrimSpace(asString(payload["type"])) {
-		case "function", "custom", "custom_tool", "tool_search", "namespace":
+		case "function", "custom", "custom_tool", "tool_search", "namespace", "mcp":
 			continue
 		case "":
 			continue

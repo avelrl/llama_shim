@@ -15,14 +15,18 @@ type TextPart struct {
 }
 
 type ItemMeta struct {
-	Transport     string `json:"transport,omitempty"`
-	SyntheticName string `json:"synthetic_name,omitempty"`
-	CanonicalType string `json:"canonical_type,omitempty"`
-	ToolName      string `json:"tool_name,omitempty"`
-	ToolNamespace string `json:"tool_namespace,omitempty"`
-	MCPServerURL  string `json:"mcp_server_url,omitempty"`
-	MCPApproval   string `json:"mcp_approval,omitempty"`
-	MCPToolNames  []string `json:"mcp_tool_names,omitempty"`
+	Transport        string            `json:"transport,omitempty"`
+	SyntheticName    string            `json:"synthetic_name,omitempty"`
+	CanonicalType    string            `json:"canonical_type,omitempty"`
+	ToolName         string            `json:"tool_name,omitempty"`
+	ToolNamespace    string            `json:"tool_namespace,omitempty"`
+	MCPServerURL     string            `json:"mcp_server_url,omitempty"`
+	MCPConnectorID   string            `json:"mcp_connector_id,omitempty"`
+	MCPAuthorization string            `json:"mcp_authorization,omitempty"`
+	MCPApproval      string            `json:"mcp_approval,omitempty"`
+	MCPTransport     string            `json:"mcp_transport,omitempty"`
+	MCPToolNames     []string          `json:"mcp_tool_names,omitempty"`
+	MCPHeaders       map[string]string `json:"mcp_headers,omitempty"`
 }
 
 type Item struct {
@@ -377,6 +381,15 @@ func cloneItemMeta(meta *ItemMeta) *ItemMeta {
 		return nil
 	}
 	cloned := *meta
+	if len(meta.MCPToolNames) > 0 {
+		cloned.MCPToolNames = append([]string(nil), meta.MCPToolNames...)
+	}
+	if len(meta.MCPHeaders) > 0 {
+		cloned.MCPHeaders = make(map[string]string, len(meta.MCPHeaders))
+		for key, value := range meta.MCPHeaders {
+			cloned.MCPHeaders[key] = value
+		}
+	}
 	return &cloned
 }
 

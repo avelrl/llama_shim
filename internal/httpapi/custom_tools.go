@@ -854,7 +854,7 @@ func isCustomToolType(value string) bool {
 
 func isUnsupportedBuiltinToolType(value string) bool {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "web_search", "web_search_preview", "code_interpreter", "computer", "computer_use", "file_search", "image_generation", "mcp":
+	case "web_search", "web_search_preview", "code_interpreter", "computer", "computer_use", "file_search", "image_generation":
 		return true
 	default:
 		return false
