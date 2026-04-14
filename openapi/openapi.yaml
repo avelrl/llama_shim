@@ -300,11 +300,15 @@ paths:
         - plain-text custom tools stay on the bridge/function-call compatibility path
         - supported `grammar` / `regex` custom tools stay shim-local and preserve
           native `custom_tool_call` output items
-        - when `tool_choice` names a supported constrained custom tool, the shim
-          first attempts backend-native structured generation of raw `input`
-          through `/v1/chat/completions`; broader auto/mixed constrained-tool
-          cases still rely on shim-local validation/repair compatibility rather
-          than full spec-equivalent constrained decoding
+        - when `tool_choice` names a supported constrained custom tool, or
+          `tool_choice: "required"` is used with a single constrained custom
+          tool, the shim first attempts backend-native structured generation of
+          raw `input` through `/v1/chat/completions`; broader auto/mixed
+          constrained-tool cases still use the normal local tool loop for tool
+          selection, then attempt backend-native constrained regeneration of an
+          invalid selected `input`, and only then fall back to shim-local
+          validation/repair compatibility rather than full spec-equivalent
+          constrained decoding
       requestBody:
         required: true
         content:

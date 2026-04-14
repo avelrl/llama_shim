@@ -3715,6 +3715,36 @@ func TestResponsesStreamRepairsInvalidGrammarCustomToolOutput(t *testing.T) {
 	require.Equal(t, "4 + 4", doneItem["input"])
 }
 
+func TestResponsesPreferLocalFallsBackToRepairWhenNativeConstrainedRuntimeReturnsInvalidOutput(t *testing.T) {
+	app := testutil.NewTestAppWithCustomToolsMode(t, "auto")
+
+	status, body := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model": "test-model",
+		"input": "Invalid grammar first attempt. Invalid native constrained runtime output. Use grammar tool",
+		"tools": []map[string]any{
+			{
+				"type": "custom",
+				"name": "math_exp",
+				"format": map[string]any{
+					"type":       "grammar",
+					"syntax":     "lark",
+					"definition": "start: expr\nexpr: term (SP ADD SP term)* -> add\n| term\nterm: INT\nSP: \" \"\nADD: \"+\"\n%import common.INT",
+				},
+			},
+		},
+	})
+
+	require.Equal(t, http.StatusOK, status)
+	output, ok := body["output"].([]any)
+	require.True(t, ok)
+	require.Len(t, output, 1)
+	item, ok := output[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "custom_tool_call", item["type"])
+	require.Equal(t, "math_exp", item["name"])
+	require.Equal(t, "4 + 4", item["input"])
+}
+
 func TestResponsesPreferLocalUsesBackendConstrainedRuntimeForNamedGrammarCustomTool(t *testing.T) {
 	app := testutil.NewTestAppWithCustomToolsMode(t, "auto")
 
@@ -3822,7 +3852,38 @@ func TestResponsesLocalOnlyUsesBackendConstrainedRuntimeForNamedRegexCustomTool(
 	require.Equal(t, "hello 42", item["input"])
 }
 
-func TestResponsesPreferLocalFailsWhenGrammarCustomToolRepairIsExhausted(t *testing.T) {
+func TestResponsesPreferLocalUsesBackendConstrainedRuntimeForRequiredSingleGrammarCustomTool(t *testing.T) {
+	app := testutil.NewTestAppWithCustomToolsMode(t, "auto")
+
+	status, body := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model":       "test-model",
+		"tool_choice": "required",
+		"input":       "Always invalid grammar tool. Use grammar tool",
+		"tools": []map[string]any{
+			{
+				"type": "custom",
+				"name": "math_exp",
+				"format": map[string]any{
+					"type":       "grammar",
+					"syntax":     "lark",
+					"definition": "start: expr\nexpr: term (SP ADD SP term)* -> add\n| term\nterm: INT\nSP: \" \"\nADD: \"+\"\n%import common.INT",
+				},
+			},
+		},
+	})
+
+	require.Equal(t, http.StatusOK, status)
+	output, ok := body["output"].([]any)
+	require.True(t, ok)
+	require.Len(t, output, 1)
+	item, ok := output[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "custom_tool_call", item["type"])
+	require.Equal(t, "math_exp", item["name"])
+	require.Equal(t, "4 + 4", item["input"])
+}
+
+func TestResponsesPreferLocalRecoversInvalidGrammarCustomToolWithNativeRuntime(t *testing.T) {
 	app := testutil.NewTestAppWithCustomToolsMode(t, "auto")
 
 	status, payload := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
@@ -3841,10 +3902,56 @@ func TestResponsesPreferLocalFailsWhenGrammarCustomToolRepairIsExhausted(t *test
 		},
 	})
 
-	require.Equal(t, http.StatusBadGateway, status)
-	errorPayload := payload["error"].(map[string]any)
-	require.Equal(t, "upstream_error", errorPayload["type"])
-	require.Equal(t, "llama.cpp request failed", errorPayload["message"])
+	require.Equal(t, http.StatusOK, status)
+	output, ok := payload["output"].([]any)
+	require.True(t, ok)
+	require.Len(t, output, 1)
+	item, ok := output[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "custom_tool_call", item["type"])
+	require.Equal(t, "math_exp", item["name"])
+	require.Equal(t, "4 + 4", item["input"])
+}
+
+func TestResponsesStreamPreferLocalRecoversInvalidGrammarCustomToolWithNativeRuntime(t *testing.T) {
+	app := testutil.NewTestAppWithCustomToolsMode(t, "auto")
+
+	reqBody, err := json.Marshal(map[string]any{
+		"model":  "test-model",
+		"stream": true,
+		"input": []map[string]any{
+			{"role": "user", "content": "Always invalid grammar tool. Use grammar tool"},
+		},
+		"tools": []map[string]any{
+			{
+				"type": "custom",
+				"name": "math_exp",
+				"format": map[string]any{
+					"type":       "grammar",
+					"syntax":     "lark",
+					"definition": "start: expr\nexpr: term (SP ADD SP term)* -> add\n| term\nterm: INT\nSP: \" \"\nADD: \"+\"\n%import common.INT",
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	req, err := http.NewRequest(http.MethodPost, app.Server.URL+"/v1/responses", bytes.NewReader(reqBody))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	events := readSSEEvents(t, resp.Body)
+	done := findEvent(t, events, "response.custom_tool_call_input.done").Data
+	doneItem, ok := done["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "custom_tool_call", doneItem["type"])
+	require.Equal(t, "math_exp", doneItem["name"])
+	require.Equal(t, "4 + 4", doneItem["input"])
 }
 
 func TestResponsesLocalOnlyRejectsUnsupportedGrammarCustomTools(t *testing.T) {

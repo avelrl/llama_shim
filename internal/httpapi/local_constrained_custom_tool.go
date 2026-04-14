@@ -3,10 +3,12 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
 	"llama_shim/internal/domain"
+	"llama_shim/internal/llama"
 	"llama_shim/internal/service"
 )
 
@@ -22,39 +24,59 @@ func (h *responseHandler) tryRunPreparedLocalConstrainedCustomToolResponse(ctx c
 		return domain.Response{}, false, err
 	}
 
-	descriptor, ok := selectNamedLocalConstrainedCustomTool(plan)
+	descriptor, ok := selectDirectLocalConstrainedCustomTool(plan, effectiveTools)
 	if !ok {
 		return domain.Response{}, false, nil
 	}
 
-	items, err := buildLocalConstrainedCustomToolRuntimeItems(prepared.ContextItems, len(prepared.NormalizedInput), descriptor)
+	response, err := h.runPreparedLocalConstrainedCustomToolResponse(ctx, input, prepared, rawFields, responseID, plan, descriptor, nil, "")
 	if err != nil {
+		if shouldFallbackLocalConstrainedRuntimeError(err) {
+			return domain.Response{}, false, nil
+		}
 		return domain.Response{}, true, err
 	}
-	options, err := buildLocalConstrainedCustomToolRuntimeOptions(buildGenerationOptions(rawFields), descriptor)
-	if err != nil {
-		return domain.Response{}, true, err
+	return response, true, nil
+}
+
+func (h *responseHandler) tryRecoverPreparedLocalConstrainedCustomToolResponse(ctx context.Context, input service.CreateResponseInput, prepared service.PreparedResponseContext, rawFields map[string]json.RawMessage, responseID string, plan customToolTransportPlan, validationErr *constrainedCustomToolValidationError) (domain.Response, bool, error) {
+	if validationErr == nil || validationErr.Descriptor.Constraint == nil {
+		return domain.Response{}, false, nil
 	}
 
-	chatBody, err := buildLocalConstrainedCustomToolRuntimeChatCompletionBody(input.Model, items, options)
+	response, err := h.runPreparedLocalConstrainedCustomToolResponse(
+		ctx,
+		input,
+		prepared,
+		rawFields,
+		responseID,
+		plan,
+		validationErr.Descriptor,
+		validationErr.PrefixItems,
+		validationErr.CallID,
+	)
 	if err != nil {
+		if shouldFallbackLocalConstrainedRuntimeError(err) {
+			return domain.Response{}, false, nil
+		}
 		return domain.Response{}, true, err
 	}
-	rawOutput, err := h.proxy.client.CreateChatCompletionText(ctx, chatBody)
+	return response, true, nil
+}
+
+func (h *responseHandler) runPreparedLocalConstrainedCustomToolResponse(ctx context.Context, input service.CreateResponseInput, prepared service.PreparedResponseContext, rawFields map[string]json.RawMessage, responseID string, plan customToolTransportPlan, descriptor customToolDescriptor, prefixItems []domain.Item, callID string) (domain.Response, error) {
+	toolInput, err := h.generateLocalConstrainedCustomToolInput(ctx, input.Model, prepared.ContextItems, len(prepared.NormalizedInput), buildGenerationOptions(rawFields), descriptor)
 	if err != nil {
-		return domain.Response{}, true, err
+		return domain.Response{}, err
 	}
 
-	toolInput, err := parseLocalConstrainedCustomToolRuntimeOutput(rawOutput, descriptor)
+	callItem, err := buildLocalConstrainedCustomToolCallItem(descriptor, toolInput, callID)
 	if err != nil {
-		return domain.Response{}, true, err
+		return domain.Response{}, err
 	}
 
-	callItem, err := buildLocalConstrainedCustomToolCallItem(descriptor, toolInput)
-	if err != nil {
-		return domain.Response{}, true, err
-	}
-
+	output := append([]domain.Item(nil), prefixItems...)
+	output = append(output, callItem)
 	response := domain.Response{
 		ID:                 responseID,
 		Object:             "response",
@@ -62,12 +84,31 @@ func (h *responseHandler) tryRunPreparedLocalConstrainedCustomToolResponse(ctx c
 		PreviousResponseID: input.PreviousResponseID,
 		Conversation:       domain.NewConversationReference(input.ConversationID),
 		OutputText:         "",
-		Output:             []domain.Item{callItem},
+		Output:             output,
 	}
 	if err := enforceToolChoiceContract(response, plan.ToolChoiceContract); err != nil {
-		return domain.Response{}, true, err
+		return domain.Response{}, err
 	}
-	return annotateResponseCustomToolMetadata(response, plan), true, nil
+	return annotateResponseCustomToolMetadata(response, plan), nil
+}
+
+func selectDirectLocalConstrainedCustomTool(plan customToolTransportPlan, tools []map[string]any) (customToolDescriptor, bool) {
+	if descriptor, ok := selectNamedLocalConstrainedCustomTool(plan); ok {
+		return descriptor, true
+	}
+
+	if plan.ToolChoiceContract.Mode != toolChoiceContractRequiredAny || len(tools) != 1 {
+		return customToolDescriptor{}, false
+	}
+	name, namespace := customToolIdentity(tools[0])
+	if name == "" {
+		return customToolDescriptor{}, false
+	}
+	descriptor, ok := plan.Bridge.ByCanonicalIdentity(name, namespace)
+	if !ok || descriptor.Constraint == nil {
+		return customToolDescriptor{}, false
+	}
+	return descriptor, true
 }
 
 func selectNamedLocalConstrainedCustomTool(plan customToolTransportPlan) (customToolDescriptor, bool) {
@@ -79,6 +120,33 @@ func selectNamedLocalConstrainedCustomTool(plan customToolTransportPlan) (custom
 		return customToolDescriptor{}, false
 	}
 	return descriptor, true
+}
+
+func (h *responseHandler) generateLocalConstrainedCustomToolInput(ctx context.Context, model string, items []domain.Item, currentInputLen int, options map[string]json.RawMessage, descriptor customToolDescriptor) (string, error) {
+	runtimeItems, err := buildLocalConstrainedCustomToolRuntimeItems(items, currentInputLen, descriptor)
+	if err != nil {
+		return "", err
+	}
+	runtimeOptions, err := buildLocalConstrainedCustomToolRuntimeOptions(options, descriptor)
+	if err != nil {
+		return "", err
+	}
+	chatBody, err := buildLocalConstrainedCustomToolRuntimeChatCompletionBody(model, runtimeItems, runtimeOptions)
+	if err != nil {
+		return "", err
+	}
+	rawOutput, err := h.proxy.client.CreateChatCompletionText(ctx, chatBody)
+	if err != nil {
+		return "", err
+	}
+	return parseLocalConstrainedCustomToolRuntimeOutput(rawOutput, descriptor)
+}
+
+func shouldFallbackLocalConstrainedRuntimeError(err error) bool {
+	var upstreamErr *llama.UpstreamError
+	var timeoutErr *llama.TimeoutError
+	var invalidErr *llama.InvalidResponseError
+	return errors.As(err, &upstreamErr) || errors.As(err, &timeoutErr) || errors.As(err, &invalidErr)
 }
 
 func buildLocalConstrainedCustomToolRuntimeItems(items []domain.Item, currentInputLen int, descriptor customToolDescriptor) ([]domain.Item, error) {
@@ -156,37 +224,40 @@ func buildLocalConstrainedCustomToolRuntimeChatCompletionBody(model string, item
 func parseLocalConstrainedCustomToolRuntimeOutput(raw string, descriptor customToolDescriptor) (string, error) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
-		return "", fmt.Errorf("shim-local constrained custom tool %s returned empty structured output", descriptor.Name)
+		return "", &llama.InvalidResponseError{Message: fmt.Sprintf("shim-local constrained custom tool %s returned empty structured output", descriptor.Name)}
 	}
 
 	var payload map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(trimmed), &payload); err != nil {
-		return "", fmt.Errorf("shim-local constrained custom tool %s did not return valid JSON: %w", descriptor.Name, err)
+		return "", &llama.InvalidResponseError{Message: fmt.Sprintf("shim-local constrained custom tool %s did not return valid JSON: %v", descriptor.Name, err)}
 	}
 
 	rawInput, ok := payload["input"]
 	if !ok {
-		return "", fmt.Errorf("shim-local constrained custom tool %s did not return required input field", descriptor.Name)
+		return "", &llama.InvalidResponseError{Message: fmt.Sprintf("shim-local constrained custom tool %s did not return required input field", descriptor.Name)}
 	}
 
 	var input string
 	if err := json.Unmarshal(rawInput, &input); err != nil {
-		return "", fmt.Errorf("shim-local constrained custom tool %s input field must be a string", descriptor.Name)
+		return "", &llama.InvalidResponseError{Message: fmt.Sprintf("shim-local constrained custom tool %s input field must be a string", descriptor.Name)}
 	}
 	if err := descriptor.Constraint.Validate(input); err != nil {
-		return "", err
+		return "", &llama.InvalidResponseError{Message: fmt.Sprintf("shim-local constrained custom tool %s returned invalid constrained input: %v", descriptor.Name, err)}
 	}
 	return input, nil
 }
 
-func buildLocalConstrainedCustomToolCallItem(descriptor customToolDescriptor, input string) (domain.Item, error) {
+func buildLocalConstrainedCustomToolCallItem(descriptor customToolDescriptor, input string, callID string) (domain.Item, error) {
 	itemID, err := domain.NewPrefixedID("item")
 	if err != nil {
 		return domain.Item{}, err
 	}
-	callID, err := domain.NewPrefixedID("call")
-	if err != nil {
-		return domain.Item{}, err
+	callID = strings.TrimSpace(callID)
+	if callID == "" {
+		callID, err = domain.NewPrefixedID("call")
+		if err != nil {
+			return domain.Item{}, err
+		}
 	}
 
 	payload := map[string]any{

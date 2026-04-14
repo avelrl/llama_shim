@@ -491,7 +491,7 @@ func parseLocalToolLoopChatCompletion(raw []byte, responseID string, model strin
 		if err != nil {
 			return domain.Response{}, err
 		}
-		if err := validateLocalConstrainedToolCall(item, plan.Bridge); err != nil {
+		if err := validateLocalConstrainedToolCall(item, plan.Bridge, toolCalls); err != nil {
 			return domain.Response{}, err
 		}
 		toolCalls = append(toolCalls, item)

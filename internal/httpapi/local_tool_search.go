@@ -523,6 +523,14 @@ func (h *responseHandler) runPreparedLocalToolLoopResponse(ctx context.Context, 
 		}
 
 		var validationErr *constrainedCustomToolValidationError
+		if errors.As(err, &validationErr) {
+			if recovered, handled, recoverErr := h.tryRecoverPreparedLocalConstrainedCustomToolResponse(ctx, input, prepared, rawFields, responseID, plan, validationErr); handled {
+				if recoverErr == nil {
+					return recovered, nil
+				}
+				return domain.Response{}, recoverErr
+			}
+		}
 		if errors.As(err, &validationErr) && hasConstrainedCustomTools(plan.Bridge) && attempt < maxLocalConstrainedCustomToolRepairAttempts {
 			repairPrompt = buildConstrainedCustomToolRepairPrompt(validationErr)
 			continue

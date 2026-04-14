@@ -559,6 +559,8 @@ func fakeConstrainedCustomToolJSONOutput(joined string) (string, bool) {
 		return "", false
 	}
 	switch {
+	case strings.Contains(joined, "invalid native constrained runtime output") && strings.Contains(joined, "`math_exp`"):
+		return `{"input":"4+4"}`, true
 	case strings.Contains(joined, "`math_exp`"):
 		return `{"input":"4 + 4"}`, true
 	case strings.Contains(joined, "`exact_text`"):

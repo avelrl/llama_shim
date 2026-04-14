@@ -12,9 +12,11 @@ import (
 const maxLocalConstrainedCustomToolRepairAttempts = 3
 
 type constrainedCustomToolValidationError struct {
-	Descriptor customToolDescriptor
-	Input      string
-	Cause      error
+	Descriptor  customToolDescriptor
+	Input       string
+	Cause       error
+	CallID      string
+	PrefixItems []domain.Item
 }
 
 func (e *constrainedCustomToolValidationError) Error() string {
@@ -295,7 +297,7 @@ func insertLocalToolLoopInstructions(items []domain.Item, currentInputLen int, i
 	return out
 }
 
-func validateLocalConstrainedToolCall(item domain.Item, bridge customToolBridge) error {
+func validateLocalConstrainedToolCall(item domain.Item, bridge customToolBridge, prefixItems []domain.Item) error {
 	if item.Type != "custom_tool_call" {
 		return nil
 	}
@@ -304,10 +306,13 @@ func validateLocalConstrainedToolCall(item domain.Item, bridge customToolBridge)
 		return nil
 	}
 	if err := descriptor.Constraint.Validate(item.Input()); err != nil {
+		clonedPrefix := append([]domain.Item(nil), prefixItems...)
 		return &constrainedCustomToolValidationError{
-			Descriptor: descriptor,
-			Input:      item.Input(),
-			Cause:      err,
+			Descriptor:  descriptor,
+			Input:       item.Input(),
+			Cause:       err,
+			CallID:      item.CallID(),
+			PrefixItems: clonedPrefix,
 		}
 	}
 	return nil
