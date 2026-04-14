@@ -107,6 +107,7 @@ func main() {
 		os.Exit(1)
 	}
 	httpapi.StartLocalCodeInterpreterCleanupLoop(processCtx, logger, localCodeInterpreter, store, store, cfg.ResponsesCodeInterpreterCleanupInterval)
+	startSQLiteMaintenanceCleanupLoop(processCtx, logger, store, cfg.SQLiteMaintenanceCleanupInterval)
 
 	server := &http.Server{
 		Addr: cfg.Addr,
@@ -150,6 +151,7 @@ func main() {
 		"addr", cfg.Addr,
 		"llama_base_url", cfg.LlamaBaseURL,
 		"sqlite_path", cfg.SQLitePath,
+		"sqlite_maintenance_cleanup_interval", cfg.SQLiteMaintenanceCleanupInterval,
 		"config_file", cfg.ConfigFile,
 		"log_file_path", cfg.LogFilePath,
 		"shim_auth_mode", cfg.ShimAuthMode,

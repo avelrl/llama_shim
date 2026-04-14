@@ -19,6 +19,7 @@ import (
 type Config struct {
 	Addr                                           string
 	SQLitePath                                     string
+	SQLiteMaintenanceCleanupInterval               time.Duration
 	LlamaBaseURL                                   string
 	LlamaTimeout                                   time.Duration
 	ReadTimeout                                    time.Duration
@@ -104,6 +105,7 @@ func Load(configPath string) (Config, error) {
 	cfg := Config{
 		Addr:                                           strings.TrimSpace(v.GetString("shim.addr")),
 		SQLitePath:                                     strings.TrimSpace(v.GetString("sqlite.path")),
+		SQLiteMaintenanceCleanupInterval:               0,
 		LlamaBaseURL:                                   strings.TrimRight(strings.TrimSpace(v.GetString("llama.base_url")), "/"),
 		ConfigFile:                                     v.ConfigFileUsed(),
 		ShimAuthMode:                                   strings.ToLower(strings.TrimSpace(v.GetString("shim.auth.mode"))),
@@ -146,6 +148,9 @@ func Load(configPath string) (Config, error) {
 
 	if err := parseDuration(v.GetString("llama.timeout"), &cfg.LlamaTimeout); err != nil {
 		return Config{}, fmt.Errorf("parse llama.timeout: %w", err)
+	}
+	if err := parseDuration(v.GetString("sqlite.maintenance.cleanup_interval"), &cfg.SQLiteMaintenanceCleanupInterval); err != nil {
+		return Config{}, fmt.Errorf("parse sqlite.maintenance.cleanup_interval: %w", err)
 	}
 	if err := parseDuration(v.GetString("shim.read_timeout"), &cfg.ReadTimeout); err != nil {
 		return Config{}, fmt.Errorf("parse shim.read_timeout: %w", err)
@@ -332,6 +337,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("shim.limits.retrieval_max_grounding_chunks", "20")
 	v.SetDefault("shim.limits.code_interpreter_max_concurrent_runs", "2")
 	v.SetDefault("sqlite.path", "./data/shim.db")
+	v.SetDefault("sqlite.maintenance.cleanup_interval", "15m")
 	v.SetDefault("llama.base_url", "http://127.0.0.1:8081")
 	v.SetDefault("llama.timeout", "60s")
 	v.SetDefault("log.level", "info")

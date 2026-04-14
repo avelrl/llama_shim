@@ -108,15 +108,12 @@ proxy-first escape hatch for standalone hosted/native requests, while
 | --- | --- | --- | --- |
 | `/healthz`, `/readyz`, `/metrics` | Shim-owned | Keep documented and stable | Useful operator surface, not OpenAI compatibility surface |
 | ingress auth, rate limiting, quotas, structured logs | Shim-owned | Keep minimum operator floor stable | |
-| retention cleanup, maintenance path, and local DX packaging | Partial | Close the minimum V2 operator floor | This remains a V2 blocker |
+| retention cleanup, maintenance path, and local DX packaging | Implemented | Keep the operator workflow explicit | SQLite cleanup is limited to explicit `expires_at` resources; backup/restore/vacuum/optimize ship via `shimctl` |
 | multi-tenant authz, shared rate limiting, richer exporters/admin tooling | V3 | Stage after V2 | Valuable, but not required for a broad compatibility facade |
 
 ## V2 Ship Blockers
 
-This is the remaining item that still looks like a real V2 blocker as of
-April 15, 2026:
-
-- minimum operator floor: retention cleanup, maintenance path, and local DX
+No remaining V2 ship blockers are currently tracked as of April 15, 2026.
 
 ## Staged For V3
 

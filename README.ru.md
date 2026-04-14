@@ -85,6 +85,8 @@ shim:
 
 sqlite:
   path: ./data/shim.db
+  maintenance:
+    cleanup_interval: 15m
 
 llama:
   base_url: http://127.0.0.1:8081
@@ -127,6 +129,7 @@ SHIM_CONFIG=./config.yaml go run ./cmd/shim
 - `LOG_FILE_PATH` переопределяет `log.file_path`; если задан, логи пишутся и в stdout, и в файл
 - `LLAMA_BASE_URL` переопределяет `llama.base_url`
 - `SQLITE_PATH` переопределяет `sqlite.path`
+- `SQLITE_MAINTENANCE_CLEANUP_INTERVAL` переопределяет `sqlite.maintenance.cleanup_interval`
 - `SHIM_ADDR` переопределяет `shim.addr`
 - `RESPONSES_MODE` переопределяет `responses.mode`; поддерживаются `prefer_local`, `prefer_upstream`, `local_only`
   `prefer_local` теперь используется по умолчанию: shim сам ведет `/v1/responses` для локально-поддерживаемого subset и обращается к upstream `/v1/responses` только для неподдерживаемых фич.
@@ -140,6 +143,48 @@ SHIM_CONFIG=./config.yaml go run ./cmd/shim
 - standalone-объекты `/v1/responses` следуют outward `store` contract, который возвращается в самом response object
 - conversation-attached items живут по lifecycle разговора, а не по retention standalone response
 - shim может хранить внутренние hidden response rows для локального `previous_response_id` replay даже когда outward response сообщает `store=false`
+
+## Maintenance
+
+В shim теперь есть минимальный operator maintenance path:
+
+- фоновый SQLite retention cleanup через `sqlite.maintenance.cleanup_interval`
+- one-shot maintenance команды через `./cmd/shimctl`
+- локальная packaging-обвязка через `Makefile`, `Dockerfile` и `docker-compose.yml`
+
+`sqlite.maintenance.cleanup_interval` сейчас чистит только локальные ресурсы
+с явным `expires_at`:
+
+- expired `/v1/files`
+- expired `/v1/vector_stores`
+
+Expiry для `code_interpreter` контейнеров по-прежнему живёт отдельно в
+`responses.code_interpreter.cleanup_interval`.
+
+Примеры:
+
+```bash
+go run ./cmd/shimctl -config ./config.yaml cleanup
+go run ./cmd/shimctl -config ./config.yaml optimize
+go run ./cmd/shimctl -config ./config.yaml vacuum
+go run ./cmd/shimctl -config ./config.yaml backup -out ./.data/shim-backup.db
+go run ./cmd/shimctl -config ./config.yaml restore -from ./.data/shim-backup.db
+```
+
+Restore-путь намеренно offline-oriented: перед заменой SQLite-файла лучше
+остановить запущенный shim.
+
+## Local DX
+
+Минимальная локальная packaging-обвязка теперь лежит в репе:
+
+- `make run`, `make test`, `make build`
+- `make maint-cleanup`, `make maint-optimize`, `make maint-vacuum`, `make maint-backup`
+- `docker build -t llama-shim:local .`
+- `docker compose up --build`
+
+Compose-манифест монтирует `./config.yaml` в контейнер и хранит SQLite state в
+`./.data`.
 
 ## Примеры curl
 

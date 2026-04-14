@@ -41,6 +41,8 @@ shim:
     code_interpreter_max_concurrent_runs: 4
 sqlite:
   path: ./tmp/test.db
+  maintenance:
+    cleanup_interval: 17m
 llama:
   base_url: http://127.0.0.1:9091
   timeout: 12s
@@ -100,6 +102,7 @@ responses:
 	require.NoError(t, err)
 	require.Equal(t, ":9090", cfg.Addr)
 	require.Equal(t, "./tmp/test.db", cfg.SQLitePath)
+	require.Equal(t, 17*time.Minute, cfg.SQLiteMaintenanceCleanupInterval)
 	require.Equal(t, "http://127.0.0.1:9091", cfg.LlamaBaseURL)
 	require.Equal(t, 12*time.Second, cfg.LlamaTimeout)
 	require.Equal(t, 5*time.Second, cfg.ReadTimeout)
@@ -195,6 +198,7 @@ responses:
 	t.Setenv("SHIM_LIMITS_RETRIEVAL_MAX_SEARCH_QUERIES", "5")
 	t.Setenv("SHIM_LIMITS_RETRIEVAL_MAX_GROUNDING_CHUNKS", "11")
 	t.Setenv("SHIM_LIMITS_CODE_INTERPRETER_MAX_CONCURRENT_RUNS", "7")
+	t.Setenv("SQLITE_MAINTENANCE_CLEANUP_INTERVAL", "21m")
 	t.Setenv("LLAMA_TIMEOUT", "25s")
 	t.Setenv("LOG_LEVEL", "warn")
 	t.Setenv("LOG_FILE_PATH", "./override.log")
@@ -233,6 +237,7 @@ responses:
 	cfg, err := config.Load(configPath)
 	require.NoError(t, err)
 	require.Equal(t, ":7070", cfg.Addr)
+	require.Equal(t, 21*time.Minute, cfg.SQLiteMaintenanceCleanupInterval)
 	require.Equal(t, config.ShimAuthModeStaticBearer, cfg.ShimAuthMode)
 	require.Equal(t, []string{"token-1", "token-2"}, cfg.ShimAuthBearerTokens)
 	require.True(t, cfg.ShimRateLimitEnabled)
@@ -306,6 +311,7 @@ func TestLoadUsesCodexSafeDefaults(t *testing.T) {
 	require.Equal(t, 4, cfg.RetrievalMaxSearchQueries)
 	require.Equal(t, 20, cfg.RetrievalMaxGroundingChunks)
 	require.Equal(t, 2, cfg.ResponsesCodeInterpreterMaxConcurrentRuns)
+	require.Equal(t, 15*time.Minute, cfg.SQLiteMaintenanceCleanupInterval)
 	require.Equal(t, "lexical", cfg.RetrievalIndexBackend)
 	require.Equal(t, "disabled", cfg.RetrievalEmbedderBackend)
 	require.Empty(t, cfg.RetrievalEmbedderBaseURL)

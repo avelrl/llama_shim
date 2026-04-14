@@ -277,7 +277,7 @@ Release framing as of April 15, 2026:
 - [x] - local-first stored Chat Completions CRUD surface for proxy completions ([детали](#task-chat-stored-surface-local))
 - [x] - `/readyz` checks SQLite, upstream llama backend, configured retrieval embedder readiness, and configured local tool backends ([детали](#task-ops-hardening))
 - [x] - shim-owned ops hardening subset: ingress auth, request rate limiting, quotas, metrics, structured observability ([детали](#task-ops-hardening))
-- [ ] - V2 ops floor: retention cleanup, maintenance path, and local DX packaging ([детали](#task-ops-hardening))
+- [x] - V2 ops floor: retention cleanup, maintenance path, and local DX packaging ([детали](#task-ops-hardening))
 - [x] - stored Chat Completions compatibility contract: local-first subset plus optional upstream bridge ([детали](#task-chat-stored-surface))
 
 ## <a id="task-local-first-responses"></a>Local-first ownership для `/v1/responses` и Codex tool loop
@@ -848,7 +848,7 @@ Definition of done:
 - create-time capture/persistence layer for irrecoverable streamed replay
   artifacts, currently used for `response.image_generation_call.partial_image`
 
-Статус на 14 апреля 2026:
+Статус на 15 апреля 2026:
 
 - закрыто для stored `image_generation_call`: retrieve replay и
   completed-only normalization теперь synthesize
@@ -1942,15 +1942,14 @@ Definition of done:
 - when shim ingress auth is enabled, ingress `Authorization` is consumed by the
   shim and not forwarded upstream; `X-Client-Request-Id` still propagates
 - OpenAPI/README/tests синхронизированы с этим operational subset
+- SQLite maintenance floor теперь закрыт консервативно:
+  `sqlite.maintenance.cleanup_interval` запускает background sweep для local
+  retrieval resources with explicit `expires_at`, and `cmd/shimctl` gives an
+  operator path for `cleanup`, `optimize`, `vacuum`, `backup`, and `restore`
+- minimal local DX packaging now ships in-repo as a deliberate small subset:
+  `Makefile`, `Dockerfile`, and `docker-compose.yml`
 
 Что остается здесь open:
-
-V2 ship bar:
-
-- retention cleanup job
-- backup / restore / vacuum / optimize path
-- `Makefile`, dev script, `Dockerfile`, `docker-compose` или их осознанный
-  минимальный subset
 
 Moved out of V2 into V3 staging:
 

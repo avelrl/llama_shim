@@ -45,6 +45,9 @@ shim:
 sqlite:
   # Path to the SQLite file that stores responses and conversations.
   path: ./.data/shim.db
+  maintenance:
+    # Sweep interval for expired local retrieval resources with `expires_at`.
+    cleanup_interval: 15m
 
 # Upstream OpenAI-compatible backend.
 llama:

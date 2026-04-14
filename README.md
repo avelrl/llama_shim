@@ -112,6 +112,8 @@ shim:
 
 sqlite:
   path: ./data/shim.db
+  maintenance:
+    cleanup_interval: 15m
 
 llama:
   base_url: http://127.0.0.1:8081
@@ -194,6 +196,7 @@ Supported environment overrides:
 - `LOG_FILE_PATH` overrides `log.file_path`; when set, logs are duplicated to stdout and the configured file
 - `LLAMA_BASE_URL` overrides `llama.base_url`
 - `SQLITE_PATH` overrides `sqlite.path`
+- `SQLITE_MAINTENANCE_CLEANUP_INTERVAL` overrides `sqlite.maintenance.cleanup_interval`
 - `SHIM_ADDR` overrides `shim.addr`
 - `SHIM_AUTH_MODE` overrides `shim.auth.mode`; supported values: `disabled`, `static_bearer`
 - `SHIM_AUTH_BEARER_TOKENS` overrides `shim.auth.bearer_tokens` as a comma-separated list
@@ -248,6 +251,48 @@ Response retention notes:
 - standalone `/v1/responses` objects follow the outward `store` contract returned on the response object
 - conversation-attached items follow the conversation lifecycle instead of standalone response retention
 - the shim may keep hidden response rows needed for local `previous_response_id` replay even when the outward response reports `store=false`
+
+## Maintenance
+
+The shim now includes a minimal operator maintenance path:
+
+- background SQLite retention cleanup via `sqlite.maintenance.cleanup_interval`
+- one-shot maintenance commands via `./cmd/shimctl`
+- local DX packaging via `Makefile`, `Dockerfile`, and `docker-compose.yml`
+
+`sqlite.maintenance.cleanup_interval` currently sweeps only local resources
+with explicit `expires_at` retention:
+
+- expired `/v1/files`
+- expired `/v1/vector_stores`
+
+`code_interpreter` container expiry remains controlled separately by
+`responses.code_interpreter.cleanup_interval`.
+
+Examples:
+
+```bash
+go run ./cmd/shimctl -config ./config.yaml cleanup
+go run ./cmd/shimctl -config ./config.yaml optimize
+go run ./cmd/shimctl -config ./config.yaml vacuum
+go run ./cmd/shimctl -config ./config.yaml backup -out ./.data/shim-backup.db
+go run ./cmd/shimctl -config ./config.yaml restore -from ./.data/shim-backup.db
+```
+
+The restore path is intentionally offline-oriented: stop the running shim
+before replacing the SQLite file.
+
+## Local DX
+
+Minimal local packaging is now checked into the repo:
+
+- `make run`, `make test`, `make build`
+- `make maint-cleanup`, `make maint-optimize`, `make maint-vacuum`, `make maint-backup`
+- `docker build -t llama-shim:local .`
+- `docker compose up --build`
+
+The compose setup mounts `./config.yaml` into the container and keeps SQLite
+state in `./.data`.
 
 ## Ops hardening
 
