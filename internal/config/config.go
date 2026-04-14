@@ -54,6 +54,7 @@ type Config struct {
 	ResponsesImageGenerationBackend                string
 	ResponsesImageGenerationBaseURL                string
 	ResponsesImageGenerationTimeout                time.Duration
+	ResponsesComputerBackend                       string
 	ChatCompletionsStoreWhenOmitted                bool
 	ResponsesMode                                  string
 	ResponsesCustomToolsMode                       string
@@ -82,6 +83,8 @@ const (
 	ResponsesCodeInterpreterBackendDisabled                        = "disabled"
 	ResponsesCodeInterpreterBackendUnsafeHost                      = "unsafe_host"
 	ResponsesCodeInterpreterBackendDocker                          = "docker"
+	ResponsesComputerBackendDisabled                               = "disabled"
+	ResponsesComputerBackendChatCompletions                        = "chat_completions"
 	ResponsesCodeInterpreterInputFileURLPolicyDisabled             = "disabled"
 	ResponsesCodeInterpreterInputFileURLPolicyAllowlist            = "allowlist"
 	ResponsesCodeInterpreterInputFileURLPolicyUnsafeAllowHTTPHTTPS = "unsafe_allow_http_https"
@@ -118,6 +121,7 @@ func Load(configPath string) (Config, error) {
 		ResponsesWebSearchBaseURL:                      strings.TrimSpace(v.GetString("responses.web_search.base_url")),
 		ResponsesImageGenerationBackend:                strings.ToLower(strings.TrimSpace(v.GetString("responses.image_generation.backend"))),
 		ResponsesImageGenerationBaseURL:                strings.TrimSpace(v.GetString("responses.image_generation.base_url")),
+		ResponsesComputerBackend:                       strings.ToLower(strings.TrimSpace(v.GetString("responses.computer.backend"))),
 		ChatCompletionsStoreWhenOmitted:                v.GetBool("chat_completions.default_store_when_omitted"),
 		ResponsesMode:                                  strings.ToLower(strings.TrimSpace(v.GetString("responses.mode"))),
 		ResponsesCustomToolsMode:                       strings.ToLower(strings.TrimSpace(v.GetString("responses.custom_tools.mode"))),
@@ -188,6 +192,9 @@ func Load(configPath string) (Config, error) {
 	}
 	if err := parseCustomToolsMode(cfg.ResponsesCustomToolsMode); err != nil {
 		return Config{}, fmt.Errorf("parse responses.custom_tools.mode: %w", err)
+	}
+	if err := parseComputerBackend(cfg.ResponsesComputerBackend); err != nil {
+		return Config{}, fmt.Errorf("parse responses.computer.backend: %w", err)
 	}
 	if err := parseCodeInterpreterBackend(cfg.ResponsesCodeInterpreterBackend); err != nil {
 		return Config{}, fmt.Errorf("parse responses.code_interpreter.backend: %w", err)
@@ -345,6 +352,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("responses.image_generation.backend", imagegen.BackendDisabled)
 	v.SetDefault("responses.image_generation.base_url", "")
 	v.SetDefault("responses.image_generation.timeout", "60s")
+	v.SetDefault("responses.computer.backend", ResponsesComputerBackendDisabled)
 	v.SetDefault("responses.code_interpreter.backend", "")
 	v.SetDefault("responses.code_interpreter.enable_unsafe_host_executor", false)
 	v.SetDefault("responses.code_interpreter.python_binary", "python3")
@@ -451,6 +459,15 @@ func parseShimAuthMode(value string) error {
 func parseCodeInterpreterBackend(value string) error {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case ResponsesCodeInterpreterBackendDisabled, ResponsesCodeInterpreterBackendUnsafeHost, ResponsesCodeInterpreterBackendDocker:
+		return nil
+	default:
+		return strconv.ErrSyntax
+	}
+}
+
+func parseComputerBackend(value string) error {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", ResponsesComputerBackendDisabled, ResponsesComputerBackendChatCompletions:
 		return nil
 	default:
 		return strconv.ErrSyntax

@@ -155,6 +155,14 @@
   shim-owned `input`, and persisted
   `response.image_generation_call.partial_image` artifacts replayed on
   stored retrieve-stream
+- local `/v1/responses` теперь умеет shim-local `computer` subset over the
+  configured `/v1/chat/completions` backend:
+  один `computer` tool, screenshot-first external loop through
+  `computer_call` / `computer_call_output`, multimodal planner turns that
+  project screenshot input as text+image context, non-stream and stream
+  create, stored retrieve plus `/input_items`, and generic-only
+  `response.output_item.*` replay without invented
+  `response.computer_call.*`
 - local `/v1/responses` теперь умеет dev-only shim-local `code_interpreter`
   execution в pragmatic subset:
   один `code_interpreter` tool с `container.type=auto` или explicit
@@ -216,6 +224,7 @@
 - [x] - retrieval-compatible local `file_search` execution inside `/v1/responses` ([детали](#task-retrieval-layer))
 - [x] - shim-local `web_search` runtime subset inside `/v1/responses` ([детали](#task-local-web-search-runtime))
 - [x] - shim-local `image_generation` runtime subset inside `/v1/responses` ([детали](#task-local-image-generation-runtime))
+- [x] - shim-local `computer` runtime subset inside `/v1/responses` ([детали](#task-local-computer-runtime))
 - [x] - dev-only local `code_interpreter` execution inside `/v1/responses` ([детали](#task-local-code-interpreter-runtime))
 - [x] - exact dense semantic/vector retrieval subset behind local `vector_stores` ([детали](#task-retrieval-semantic-backend))
 - [x] - weighted hybrid retrieval subset behind local `vector_stores` ([детали](#task-retrieval-semantic-backend))
@@ -1447,6 +1456,66 @@ Definition of done:
   `partial_image` artifacts when the backend emitted them
 - backlog/OpenAPI/docs explicitly describe this as a shim-local subset over a
   dedicated Responses-compatible image backend, not full hosted parity
+
+## <a id="task-local-computer-runtime"></a>Shim-local `computer` runtime subset inside `/v1/responses`
+
+Почему это отдельный pragmatic subset:
+
+- trace-backed generic replay для stored `computer_call` уже был закрыт, но
+  это не делало shim usable как local computer-use runtime
+- official docs подтверждают built-in `computer` loop через
+  `computer_call` / `computer_call_output`, но не фиксируют отдельную
+  stored `response.computer_call.*` SSE family, так что безопасный следующий
+  шаг это docs-aligned external loop без overclaim про hosted choreography
+- docs rechecked on April 14, 2026 against the official Computer use guide
+  and `/v1/responses` reference before closing this subset
+
+Что закрыто в pragmatic subset:
+
+- local `/v1/responses` path теперь умеет ровно один `tools[]` entry с
+  `type=computer`
+- local runtime теперь explicit opt-in через
+  `responses.computer.backend=chat_completions`
+- поддержаны `tool_choice=auto|required`, `parallel_tool_calls`, и
+  `include=["computer_call_output.output.image_url"]` как docs-backed
+  compatibility subset
+- local execution следует docs-aligned external loop:
+  первый turn может вернуть screenshot-first `computer_call`,
+  follow-up turn может прислать `computer_call_output` со screenshot payload,
+  а planner затем возвращает либо следующий `computer_call`, либо финальный
+  assistant `message`
+- current-turn `computer_call_output` screenshots теперь project-ятся в
+  shim-owned planner request как text+image context, а stored
+  `previous_response_id` lineage сохраняет latest loop state для follow-up
+  turns
+- non-stream create, stream create, stored retrieve, и stored
+  `/v1/responses/{id}/input_items` теперь покрывают typed
+  `computer_call` / `computer_call_output` subset без proxy-only fallback
+- create-stream и stored retrieve-stream остаются generic-only через
+  `response.output_item.*`; shim не invent-ит undocumented
+  `response.computer_call.*`
+- existing fake `/v1/chat/completions` backend получил маленькую dedicated
+  planner branch по marker phrases, чтобы happy path, follow-up, и generic
+  stream replay тестировались без ломания больших existing fake flows
+
+Что осталось открытым:
+
+- это не exact hosted computer-use parity; локальный subset intentionally
+  использует existing `/v1/chat/completions` backend как planner, а не
+  претендует на hosted orchestration internals
+- exact hosted action-shape details beyond the verified screenshot/click/type
+  subset остаются открытыми там, где public docs их не фиксируют жёстко
+- broader hosted failure/status semantics и richer live-stream choreography
+  beyond generic `response.output_item.*` replay всё ещё open
+
+Definition of done:
+
+- local shim может реально отработать базовый screenshot-first `computer`
+  request и follow-up `computer_call_output` turn внутри `/v1/responses`
+- config/README/OpenAPI/backlog явно фиксируют conservative local subset и не
+  overclaim-ят hosted parity
+- integration tests покрывают create, follow-up, generic stream replay, и
+  stored retrieve/input-items semantics для нового runtime path
 
 ## <a id="task-local-code-interpreter-runtime"></a>Dev-only local `code_interpreter` execution inside `/v1/responses`
 

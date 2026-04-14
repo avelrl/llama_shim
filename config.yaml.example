@@ -112,6 +112,11 @@ responses:
     base_url: ""
     # Timeout per local image generation request to the image backend.
     timeout: 60s
+  computer:
+    # disabled: no shim-local computer runtime
+    # chat_completions: use the configured upstream /v1/chat/completions
+    # backend as a local computer planner for screenshot-first external loops
+    backend: disabled
   custom_tools:
     # How custom tools are transported to the upstream.
     # auto: recommended default; bridge plain-text custom tools when possible

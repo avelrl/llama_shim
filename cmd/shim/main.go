@@ -77,6 +77,11 @@ func main() {
 	responseService := service.NewResponseService(store, store, llamaClient)
 	conversationService := service.NewConversationService(store)
 	metrics := httpapi.NewMetrics()
+	localComputer, err := buildLocalComputerRuntimeConfig(cfg)
+	if err != nil {
+		logger.Error("build computer runtime", "err", err)
+		os.Exit(1)
+	}
 	localCodeInterpreter, err := buildLocalCodeInterpreterRuntimeConfig(cfg)
 	if err != nil {
 		logger.Error("build code interpreter runtime", "err", err)
@@ -129,6 +134,7 @@ func main() {
 			ResponsesCodexForceToolChoiceRequired: cfg.ResponsesCodexForceToolChoiceRequired,
 			WebSearchProvider:                     webSearchProvider,
 			ImageGenerationProvider:               imageGenerationProvider,
+			LocalComputer:                         localComputer,
 			LocalCodeInterpreter:                  localCodeInterpreter,
 			RetrievalIndexBackend:                 cfg.RetrievalIndexBackend,
 			RetrievalEmbedder:                     retrievalEmbedder,
@@ -175,6 +181,7 @@ func main() {
 		"responses_image_generation_backend", cfg.ResponsesImageGenerationBackend,
 		"responses_image_generation_base_url", cfg.ResponsesImageGenerationBaseURL,
 		"responses_image_generation_timeout", cfg.ResponsesImageGenerationTimeout,
+		"responses_computer_backend", cfg.ResponsesComputerBackend,
 		"responses_code_interpreter_backend", cfg.ResponsesCodeInterpreterBackend,
 		"responses_code_interpreter_python_binary", cfg.ResponsesCodeInterpreterPythonBinary,
 		"responses_code_interpreter_docker_binary", cfg.ResponsesCodeInterpreterDockerBinary,
@@ -194,6 +201,19 @@ func main() {
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		logger.Error("server stopped", "err", err)
 		os.Exit(1)
+	}
+}
+
+func buildLocalComputerRuntimeConfig(cfg config.Config) (httpapi.LocalComputerRuntimeConfig, error) {
+	switch cfg.ResponsesComputerBackend {
+	case "", config.ResponsesComputerBackendDisabled:
+		return httpapi.LocalComputerRuntimeConfig{}, nil
+	case config.ResponsesComputerBackendChatCompletions:
+		return httpapi.LocalComputerRuntimeConfig{
+			Backend: httpapi.LocalComputerBackendChatCompletions,
+		}, nil
+	default:
+		return httpapi.LocalComputerRuntimeConfig{}, fmt.Errorf("unsupported computer backend %q", cfg.ResponsesComputerBackend)
 	}
 }
 

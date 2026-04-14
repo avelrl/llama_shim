@@ -236,6 +236,27 @@ paths:
         - exact hosted live-stream timing and broader hosted
           planner/failure choreography remain open
 
+        Notes for the local `computer` subset:
+        - the shim can execute one `computer` tool locally when
+          `responses.computer.backend=chat_completions` is configured
+        - the local subset accepts `tool_choice=auto|required`,
+          `parallel_tool_calls`, and
+          `include=["computer_call_output.output.image_url"]`
+        - local execution uses a docs-aligned external loop:
+          screenshot-first `computer_call`, follow-up
+          `computer_call_output` screenshot input, and either another
+          `computer_call` or a final assistant `message`
+        - current-turn `computer_call_output` screenshots are projected into
+          the shim-owned planner request as multimodal image context, and
+          stored `previous_response_id` lineage preserves the latest loop
+          state across follow-up turns
+        - create-stream and stored retrieve-stream stay generic through
+          `response.output_item.*`; current upstream captures do not document
+          a dedicated `response.computer_call.*` SSE family, so the shim does
+          not invent one
+        - exact hosted computer-use planner behavior, broader action-shape
+          edge cases, and full hosted failure/status choreography remain open
+
         Notes for the local `code_interpreter` subset:
         - the shim executes one `code_interpreter` tool locally only when
           `responses.code_interpreter.backend` is set to `docker` or
@@ -450,6 +471,17 @@ paths:
                   tool_choice: required
                   include:
                     - code_interpreter_call.outputs
+              computer_local:
+                summary: Docs-aligned local computer loop over chat completions
+                value:
+                  model: test-model
+                  store: true
+                  input: Use the computer tool. First request a screenshot.
+                  tools:
+                    - type: computer
+                  tool_choice: required
+                  include:
+                    - computer_call_output.output.image_url
       responses:
         "200":
           description: JSON response or SSE stream
@@ -2260,6 +2292,11 @@ components:
           `tool_choice=auto|required`,
           `parallel_tool_calls`, and
           `include=["code_interpreter_call.outputs"]`
+        - pragmatic local `computer` execution with:
+          one `tools[]` entry of `type=computer`,
+          `tool_choice=auto|required`,
+          `parallel_tool_calls`, and
+          `include=["computer_call_output.output.image_url"]`
 
         The local `file_search` subset uses deterministic lexical retrieval by
         default and can use exact dense semantic search via per-store
@@ -2327,6 +2364,24 @@ components:
         `code_interpreter_call.outputs` parity beyond the currently verified
         logs-only subset, exact hosted citation placement parity, or richer
         hosted failure/artifact semantics.
+
+        The local `computer` subset is guarded by
+        `responses.computer.backend=chat_completions`. The shim runs a
+        docs-aligned external loop over the configured `/v1/chat/completions`
+        backend: the first local turn can return a screenshot-first
+        `computer_call`, follow-up turns can send
+        `computer_call_output` with a screenshot payload, and the planner can
+        then return another `computer_call` or a final assistant `message`.
+        Current-turn `computer_call_output` screenshots are projected into the
+        planner request as multimodal image context, while stored
+        `previous_response_id` lineage keeps the latest local loop state.
+        Streamed create and stored retrieve stay generic through
+        `response.output_item.*`; the shim does not invent a dedicated
+        `response.computer_call.*` family because the public guide confirms
+        the loop shape but current upstream captures do not document a
+        specialized stored replay family. Exact hosted computer-use planner
+        behavior, broader action payload parity, and richer hosted
+        failure/status semantics remain open.
 
         `background` is forwarded upstream for long-running responses and is not
         executed locally by the shim.

@@ -82,6 +82,7 @@ type TestAppOptions struct {
 	RetrievalEmbedder                     retrieval.Embedder
 	WebSearchProvider                     websearch.Provider
 	ImageGenerationProvider               imagegen.Provider
+	ComputerBackend                       string
 	CodeInterpreterBackend                sandbox.Backend
 	CodeInterpreterInputFileURLPolicy     string
 	CodeInterpreterInputFileURLAllowHosts []string
@@ -129,6 +130,9 @@ func NewTestAppWithOptions(t *testing.T, options TestAppOptions) *TestApp {
 		InputFileURLPolicy:     options.CodeInterpreterInputFileURLPolicy,
 		InputFileURLAllowHosts: append([]string(nil), options.CodeInterpreterInputFileURLAllowHosts...),
 	}
+	localComputer := httpapi.LocalComputerRuntimeConfig{
+		Backend: options.ComputerBackend,
+	}
 	metricsEnabled := true
 	if options.MetricsEnabled != nil {
 		metricsEnabled = *options.MetricsEnabled
@@ -160,6 +164,7 @@ func NewTestAppWithOptions(t *testing.T, options TestAppOptions) *TestApp {
 		ResponsesCodexForceToolChoiceRequired: options.ForceToolChoiceRequired,
 		WebSearchProvider:                     options.WebSearchProvider,
 		ImageGenerationProvider:               options.ImageGenerationProvider,
+		LocalComputer:                         localComputer,
 		LocalCodeInterpreter:                  localCodeInterpreter,
 		RetrievalIndexBackend:                 options.RetrievalConfig.IndexBackend,
 		RetrievalEmbedder:                     options.RetrievalEmbedder,

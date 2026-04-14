@@ -31,6 +31,7 @@ type RouterDeps struct {
 	ResponsesCodexForceToolChoiceRequired bool
 	WebSearchProvider                     websearch.Provider
 	ImageGenerationProvider               imagegen.Provider
+	LocalComputer                         LocalComputerRuntimeConfig
 	LocalCodeInterpreter                  LocalCodeInterpreterRuntimeConfig
 	RetrievalIndexBackend                 string
 	RetrievalEmbedder                     retrieval.Embedder
@@ -64,6 +65,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 		deps.ResponsesCodexForceToolChoiceRequired,
 		deps.WebSearchProvider,
 		deps.ImageGenerationProvider,
+		deps.LocalComputer,
 		deps.LocalCodeInterpreter,
 		deps.Store,
 		deps.Store,

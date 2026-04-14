@@ -48,12 +48,13 @@ type responseHandler struct {
 	forceCodexToolChoiceRequired bool
 	webSearchProvider            websearch.Provider
 	imageGenerationProvider      imagegen.Provider
+	localComputer                LocalComputerRuntimeConfig
 	localCodeInterpreter         LocalCodeInterpreterRuntimeConfig
 	localCodeInterpreterFiles    LocalCodeInterpreterFileStore
 	localCodeInterpreterSessions LocalCodeInterpreterSessionStore
 }
 
-func newResponseHandler(logger *slog.Logger, service *service.ResponseService, proxy *proxyHandler, responsesMode string, customToolsMode string, codexCompatibilityEnabled bool, forceCodexToolChoiceRequired bool, webSearchProvider websearch.Provider, imageGenerationProvider imagegen.Provider, localCodeInterpreter LocalCodeInterpreterRuntimeConfig, localCodeInterpreterFiles LocalCodeInterpreterFileStore, localCodeInterpreterSessions LocalCodeInterpreterSessionStore, metrics *Metrics, serviceLimits ServiceLimits, retrievalGate *concurrencyGate, codeInterpreterGate *concurrencyGate) *responseHandler {
+func newResponseHandler(logger *slog.Logger, service *service.ResponseService, proxy *proxyHandler, responsesMode string, customToolsMode string, codexCompatibilityEnabled bool, forceCodexToolChoiceRequired bool, webSearchProvider websearch.Provider, imageGenerationProvider imagegen.Provider, localComputer LocalComputerRuntimeConfig, localCodeInterpreter LocalCodeInterpreterRuntimeConfig, localCodeInterpreterFiles LocalCodeInterpreterFileStore, localCodeInterpreterSessions LocalCodeInterpreterSessionStore, metrics *Metrics, serviceLimits ServiceLimits, retrievalGate *concurrencyGate, codeInterpreterGate *concurrencyGate) *responseHandler {
 	return &responseHandler{
 		logger:                       logger,
 		service:                      service,
@@ -68,6 +69,7 @@ func newResponseHandler(logger *slog.Logger, service *service.ResponseService, p
 		forceCodexToolChoiceRequired: forceCodexToolChoiceRequired,
 		webSearchProvider:            webSearchProvider,
 		imageGenerationProvider:      imageGenerationProvider,
+		localComputer:                localComputer,
 		localCodeInterpreter:         localCodeInterpreter,
 		localCodeInterpreterFiles:    localCodeInterpreterFiles,
 		localCodeInterpreterSessions: localCodeInterpreterSessions,
@@ -116,6 +118,8 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 	localWebSearch := supportsLocalWebSearch(rawFields, h.webSearchProvider)
 	localImageGenerationRequested := isLocalImageGenerationToolRequest(rawFields)
 	localImageGeneration := supportsLocalImageGeneration(rawFields, h.imageGenerationProvider)
+	localComputerRequested := isLocalComputerToolRequest(rawFields)
+	localComputer := supportsLocalComputer(rawFields, h.localComputer)
 	localMCPSupported := supportsLocalMCP(rawFields)
 	localMCPConnector := hasConnectorMCPTools(rawFields)
 	localMCPUnsupported := hasUnsupportedLocalMCPTools(rawFields)
@@ -167,6 +171,21 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 			}
 			if err := writeResponseReplayAsSSE(w, response, artifacts, 0, streamOptions.IncludeObfuscation); err != nil && !shouldIgnoreStreamProxyError(err) {
 				h.logger.WarnContext(r.Context(), "local image generation stream failed", "request_id", RequestIDFromContext(r.Context()), "err", err)
+			}
+			return
+		case localComputer:
+			response, err := h.createLocalComputerResponse(r.Context(), request, requestJSON, rawFields)
+			if err != nil {
+				h.writeError(w, r, normalizeLocalOnlyCreateError(h.responsesMode, err))
+				return
+			}
+			rawResponse, marshalErr := json.Marshal(response)
+			if marshalErr != nil {
+				h.writeError(w, r, marshalErr)
+				return
+			}
+			if err := writeCompletedResponseAsSSE(r.Context(), h.logger, w, rawResponse, customToolTransportPlan{}, streamOptions.IncludeObfuscation); err != nil && !shouldIgnoreStreamProxyError(err) {
+				h.logger.WarnContext(r.Context(), "local computer stream failed", "request_id", RequestIDFromContext(r.Context()), "err", err)
 			}
 			return
 		case localFileSearch:
@@ -259,6 +278,9 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			h.writeError(w, r, normalizeLocalOnlyCreateError(h.responsesMode, err))
+		case localComputerRequested && h.responsesMode == config.ResponsesModeLocalOnly:
+			h.writeError(w, r, localComputerDisabledError())
+			return
 		case localCodeInterpreterRequested && h.responsesMode == config.ResponsesModeLocalOnly:
 			h.writeError(w, r, localCodeInterpreterDisabledError())
 			return
@@ -339,6 +361,17 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		WriteJSON(w, http.StatusOK, response)
+		return
+	case localComputer:
+		response, err := h.createLocalComputerResponse(r.Context(), request, requestJSON, rawFields)
+		if err != nil {
+			h.writeError(w, r, normalizeLocalOnlyCreateError(h.responsesMode, err))
+			return
+		}
+		WriteJSON(w, http.StatusOK, response)
+		return
+	case localComputerRequested && h.responsesMode == config.ResponsesModeLocalOnly:
+		h.writeError(w, r, localComputerDisabledError())
 		return
 	case localMCP:
 		response, err := h.createLocalMCPResponse(r.Context(), request, requestJSON, rawFields)

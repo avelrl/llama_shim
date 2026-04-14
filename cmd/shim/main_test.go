@@ -79,6 +79,26 @@ func TestBuildLocalCodeInterpreterRuntimeConfigDocker(t *testing.T) {
 	require.Equal(t, 3<<20, runtime.Limits.RemoteInputFileBytes)
 }
 
+func TestBuildLocalComputerRuntimeConfig(t *testing.T) {
+	t.Parallel()
+
+	runtime, err := buildLocalComputerRuntimeConfig(config.Config{
+		ResponsesComputerBackend: config.ResponsesComputerBackendChatCompletions,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "chat_completions", runtime.Backend)
+}
+
+func TestBuildLocalComputerRuntimeConfigDisabled(t *testing.T) {
+	t.Parallel()
+
+	runtime, err := buildLocalComputerRuntimeConfig(config.Config{
+		ResponsesComputerBackend: config.ResponsesComputerBackendDisabled,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "", runtime.Backend)
+}
+
 func TestBuildLocalCodeInterpreterRuntimeConfigUnsafeHost(t *testing.T) {
 	t.Parallel()
 

@@ -24,6 +24,7 @@ import (
 
 	"llama_shim/internal/config"
 	"llama_shim/internal/domain"
+	"llama_shim/internal/httpapi"
 	"llama_shim/internal/imagegen"
 	"llama_shim/internal/retrieval"
 	"llama_shim/internal/sandbox"
@@ -7742,6 +7743,180 @@ func TestResponsesCreateLocalCodeInterpreterUsesExplicitContainerAndRestoresPers
 	require.Equal(t, "completed", response.Status)
 	require.Equal(t, "777", response.OutputText)
 	require.Equal(t, containerID, asStringAny(response.Output[0].Map()["container_id"]))
+}
+
+func TestResponsesCreateLocalComputerRequestsScreenshot(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		ComputerBackend: httpapi.LocalComputerBackendChatCompletions,
+	})
+
+	response := postResponse(t, app, map[string]any{
+		"model": "test-model",
+		"store": true,
+		"input": "Use the computer tool. First request a screenshot and do not take any other action until you receive it.",
+		"tools": []map[string]any{
+			{"type": "computer"},
+		},
+		"tool_choice": "required",
+	})
+
+	require.Equal(t, "completed", response.Status)
+	require.Empty(t, response.OutputText)
+	require.Len(t, response.Output, 1)
+	require.Equal(t, "computer_call", response.Output[0].Type)
+	actions, ok := response.Output[0].Map()["actions"].([]any)
+	require.True(t, ok)
+	require.Len(t, actions, 1)
+	require.Equal(t, "screenshot", asStringAny(actions[0].(map[string]any)["type"]))
+
+	got := getResponse(t, app, response.ID)
+	require.Len(t, got.Output, 1)
+	require.Equal(t, "computer_call", got.Output[0].Type)
+}
+
+func TestResponsesCreateLocalComputerFollowUpUsesScreenshotInput(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		ComputerBackend: httpapi.LocalComputerBackendChatCompletions,
+	})
+
+	first := postResponse(t, app, map[string]any{
+		"model": "test-model",
+		"store": true,
+		"input": "Use the computer tool. First request a screenshot and do not take any other action until you receive it. After you receive the screenshot, if there is a clearly visible text input or search field, click it and type penguin.",
+		"tools": []map[string]any{
+			{"type": "computer"},
+		},
+		"tool_choice": "required",
+	})
+	callID := first.Output[0].CallID()
+	require.NotEmpty(t, callID)
+
+	second := postResponse(t, app, map[string]any{
+		"model":                "test-model",
+		"store":                true,
+		"previous_response_id": first.ID,
+		"include":              []string{"computer_call_output.output.image_url"},
+		"input": []map[string]any{
+			{
+				"type":    "computer_call_output",
+				"call_id": callID,
+				"output": map[string]any{
+					"type":      "computer_screenshot",
+					"image_url": "data:image/png;base64,ZmFrZS1zY3JlZW5zaG90",
+				},
+			},
+		},
+		"tools": []map[string]any{
+			{"type": "computer"},
+		},
+		"tool_choice": "required",
+	})
+
+	require.Equal(t, "completed", second.Status)
+	require.Empty(t, second.OutputText)
+	require.Len(t, second.Output, 1)
+	require.Equal(t, "computer_call", second.Output[0].Type)
+	actions, ok := second.Output[0].Map()["actions"].([]any)
+	require.True(t, ok)
+	require.Len(t, actions, 2)
+	require.Equal(t, "click", asStringAny(actions[0].(map[string]any)["type"]))
+	require.Equal(t, "type", asStringAny(actions[1].(map[string]any)["type"]))
+	require.Equal(t, "penguin", asStringAny(actions[1].(map[string]any)["text"]))
+
+	items := getResponseInputItemsWithQuery(t, app, second.ID, "?order=asc")
+	require.NotEmpty(t, items.Data)
+	last := items.Data[len(items.Data)-1]
+	require.Equal(t, "computer_call_output", asStringAny(last["type"]))
+	require.Equal(t, callID, asStringAny(last["call_id"]))
+	output, ok := last["output"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "data:image/png;base64,ZmFrZS1zY3JlZW5zaG90", asStringAny(output["image_url"]))
+}
+
+func TestResponsesCreateLocalComputerFollowUpCanReturnAssistantMessage(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		ComputerBackend: httpapi.LocalComputerBackendChatCompletions,
+	})
+
+	first := postResponse(t, app, map[string]any{
+		"model": "test-model",
+		"store": true,
+		"input": "Use the computer tool. First request a screenshot and do not take any other action until you receive it. After you receive the screenshot, if the UI is not suitable for a typing action, stop and explain that the UI is not suitable for a typing action.",
+		"tools": []map[string]any{
+			{"type": "computer"},
+		},
+		"tool_choice": "auto",
+	})
+
+	second := postResponse(t, app, map[string]any{
+		"model":                "test-model",
+		"store":                true,
+		"previous_response_id": first.ID,
+		"input": []map[string]any{
+			{
+				"type":    "computer_call_output",
+				"call_id": first.Output[0].CallID(),
+				"output": map[string]any{
+					"type":      "computer_screenshot",
+					"image_url": "data:image/png;base64,ZmFrZS1zY3JlZW5zaG90",
+				},
+			},
+		},
+		"tools": []map[string]any{
+			{"type": "computer"},
+		},
+		"tool_choice": "auto",
+	})
+
+	require.Equal(t, "completed", second.Status)
+	require.Equal(t, "The UI is not suitable for a typing action.", second.OutputText)
+	require.Len(t, second.Output, 1)
+	require.Equal(t, "message", second.Output[0].Type)
+}
+
+func TestResponsesCreateLocalComputerStreamUsesGenericReplay(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		ComputerBackend: httpapi.LocalComputerBackendChatCompletions,
+	})
+
+	req, err := http.NewRequest(http.MethodPost, app.Server.URL+"/v1/responses", bytes.NewReader(mustJSON(t, map[string]any{
+		"model":  "test-model",
+		"store":  true,
+		"stream": true,
+		"input":  "Use the computer tool. First request a screenshot and do not take any other action until you receive it.",
+		"tools": []map[string]any{
+			{"type": "computer"},
+		},
+		"tool_choice": "required",
+	})))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	events := readSSEEvents(t, resp.Body)
+	for _, eventType := range eventTypes(events) {
+		require.NotContains(t, eventType, "response.computer_call")
+	}
+
+	added := findEvent(t, events, "response.output_item.added").Data
+	addedItem, ok := added["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "computer_call", asStringAny(addedItem["type"]))
+	_, hasActions := addedItem["actions"]
+	require.False(t, hasActions)
+
+	done := findEvent(t, events, "response.output_item.done").Data
+	doneItem, ok := done["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "computer_call", asStringAny(doneItem["type"]))
+	actions, ok := doneItem["actions"].([]any)
+	require.True(t, ok)
+	require.Len(t, actions, 1)
+	require.Equal(t, "screenshot", asStringAny(actions[0].(map[string]any)["type"]))
 }
 
 func TestResponsesCreateExecutesLocalCodeInterpreter(t *testing.T) {

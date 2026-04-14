@@ -533,6 +533,9 @@ func fakeLlamaOutputFromChatMessages(messages []map[string]any) string {
 	if output, ok := fakeConstrainedCustomToolJSONOutput(joined); ok {
 		return output
 	}
+	if output, ok := fakeLocalComputerPlannerOutput(joined); ok {
+		return output
+	}
 	if output, ok := fakeLocalCodeInterpreterPlannerOutput(joined); ok {
 		return output
 	}
@@ -651,6 +654,22 @@ func fakeLocalWebSearchOutput(last, joined string) (string, bool) {
 		return "Used web search results.", true
 	default:
 		return "Used web search results from Example Search.", true
+	}
+}
+
+func fakeLocalComputerPlannerOutput(joined string) (string, bool) {
+	if !strings.Contains(joined, "shim-local computer planner") {
+		return "", false
+	}
+	switch {
+	case !strings.Contains(joined, "computer_call_output screenshot received"):
+		return `{"decision":"computer_call","actions":[{"type":"screenshot"}]}`, true
+	case strings.Contains(joined, "ui is not suitable for a typing action"):
+		return `{"decision":"assistant","message":"The UI is not suitable for a typing action."}`, true
+	case strings.Contains(joined, "type penguin"):
+		return `{"decision":"computer_call","actions":[{"type":"click","button":"left","keys":null,"x":636,"y":343},{"type":"type","text":"penguin"}]}`, true
+	default:
+		return `{"decision":"assistant","message":"The UI is not suitable for a typing action."}`, true
 	}
 }
 

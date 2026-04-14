@@ -135,6 +135,8 @@ responses:
     backend: disabled
     base_url: ""
     timeout: 60s
+  computer:
+    backend: disabled
   custom_tools:
     mode: auto
   codex:
@@ -212,6 +214,7 @@ Supported environment overrides:
 - `RESPONSES_IMAGE_GENERATION_BACKEND` overrides `responses.image_generation.backend`; supported values: `disabled`, `responses`
 - `RESPONSES_IMAGE_GENERATION_BASE_URL` overrides `responses.image_generation.base_url`
 - `RESPONSES_IMAGE_GENERATION_TIMEOUT` overrides `responses.image_generation.timeout`
+- `RESPONSES_COMPUTER_BACKEND` overrides `responses.computer.backend`; supported values: `disabled`, `chat_completions`
 - `RESPONSES_CUSTOM_TOOLS_MODE` overrides `responses.custom_tools.mode`; supported values: `bridge`, `auto`, `passthrough`
   Use `auto` for the default path: it keeps bridge behavior for plain-text custom tools, routes supported `grammar` / `regex` custom tools into the shim-local constrained path, uses backend-native structured generation of raw `input` for named constrained custom tools and `tool_choice: "required"` with a single constrained tool, and in broader auto/mixed cases runs a shim-local tool selector before backend-native constrained generation for the selected custom tool. Shim-local `tool_choice.type=allowed_tools` is supported for function/custom subsets. The old validation/repair loop remains only as an error fallback, not the happy path.
 - `RESPONSES_CODEX_ENABLE_COMPATIBILITY` overrides `responses.codex.enable_compatibility`; when disabled, the shim stops injecting Codex-specific instructions/context and skips Codex-specific response normalization
@@ -370,6 +373,29 @@ This is intentionally not a claim of exact hosted live-stream timing or full
 hosted planner/failure choreography. The current local subset delegates image
 tool execution to a dedicated Responses-compatible backend and then replays the
 stored result through the shim-owned Responses surface.
+
+## Local computer use
+
+The shim now has a pragmatic local `computer` subset inside `/v1/responses`:
+
+- one `computer` tool in `responses.mode=prefer_local|local_only`
+- explicit enablement via `responses.computer.backend=chat_completions`
+- a screenshot-first external loop through stored `computer_call` and
+  follow-up `computer_call_output` items
+- multimodal planner turns: current-turn `computer_call_output` screenshot
+  inputs are projected into the shim-owned planner request as text plus image
+  context, and `previous_response_id` lineage keeps the latest loop state
+- non-stream create, stream create, stored retrieve, and stored
+  `/v1/responses/{id}/input_items` preserve the typed
+  `computer_call` / `computer_call_output` subset
+- create-stream and retrieve-stream stay generic through
+  `response.output_item.*`; the shim does not invent a
+  `response.computer_call.*` SSE family
+
+This is intentionally not a claim of exact hosted planner behavior or full
+hosted computer-use choreography. The current local subset is a docs-aligned
+external loop over the existing `/v1/chat/completions` backend, with exact
+hosted action-shape edge cases and broader failure/status parity left open.
 
 ## Remote MCP in local mode
 
