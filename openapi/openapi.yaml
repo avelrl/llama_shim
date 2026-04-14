@@ -1717,8 +1717,8 @@ paths:
       description: |
         Returns a local-first stored-chat view. Shim-owned shadow-stored Chat
         Completion resources are the core path; upstream-owned stored Chat
-        Completions are only added as an optional compatibility bridge when
-        the configured backend supports official stored-chat routes.
+        Completions are only added opportunistically as a compatibility bridge
+        when the configured backend supports official stored-chat routes.
 
         Current local shadow-store subset includes:
         non-streaming JSON responses, reconstructed streamed responses built
@@ -1764,7 +1764,7 @@ paths:
             default: asc
       responses:
         "200":
-          description: Stored chat completion list from the shim local-first surface
+          description: Stored chat completion list from the shim local-first surface, with optional upstream history when available
           content:
             application/json:
               schema:

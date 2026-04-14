@@ -97,7 +97,7 @@
   explicit `store: true` и при omitted `store`, когда включен shim-owned
   `chat_completions.default_store_when_omitted`; stored read surface теперь
   local-first, а upstream-owned history добирается только как optional
-  compatibility bridge через official routes when available
+  compatibility bridge через official routes when available, не как обязательная зависимость shim
   `GET /v1/chat/completions`, `GET /v1/chat/completions/{completion_id}`,
   `POST /v1/chat/completions/{completion_id}`,
   `DELETE /v1/chat/completions/{completion_id}`,
@@ -1444,7 +1444,8 @@ Definition of done:
   through list/get/update/delete/messages handlers
 - stored read routes are now local-first with upstream fallback, and list
   may merge in upstream-owned historical stored chat completions only when the
-  backend supports official stored-chat routes
+  backend supports official stored-chat routes; core stored-chat surface does
+  not depend on this path
 - streamed stored chat completions now shadow-store through a
   local reconstructed final `chat.completion` object built from sanitized
   upstream chunks; current coverage includes assistant-text and tool-call-heavy
