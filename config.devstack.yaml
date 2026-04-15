@@ -1,0 +1,83 @@
+shim:
+  addr: ":8080"
+  read_timeout: 15s
+  write_timeout: 90s
+  idle_timeout: 60s
+  auth:
+    mode: disabled
+    bearer_tokens: []
+  rate_limit:
+    enabled: false
+    requests_per_minute: 120
+    burst: 60
+  metrics:
+    enabled: true
+    path: /metrics
+  limits:
+    json_body_bytes: 1MiB
+    retrieval_file_upload_bytes: 64MiB
+    retrieval_max_concurrent_searches: 8
+    retrieval_max_search_queries: 4
+    retrieval_max_grounding_chunks: 20
+    code_interpreter_max_concurrent_runs: 2
+
+sqlite:
+  path: ./.data/devstack/shim.db
+  maintenance:
+    cleanup_interval: 15m
+
+llama:
+  base_url: http://fixture:8081
+  timeout: 30s
+
+log:
+  level: info
+  file_path: ./.data/devstack/shim.log
+
+retrieval:
+  index:
+    backend: lexical
+  embedder:
+    backend: disabled
+    base_url: ""
+    model: ""
+
+chat_completions:
+  default_store_when_omitted: true
+
+responses:
+  mode: prefer_local
+  web_search:
+    backend: searxng
+    base_url: http://fixture:8081
+    timeout: 10s
+    max_results: 10
+  image_generation:
+    backend: responses
+    base_url: http://fixture:8081
+    timeout: 30s
+  computer:
+    backend: disabled
+  custom_tools:
+    mode: auto
+  codex:
+    enable_compatibility: true
+    force_tool_choice_required: true
+  code_interpreter:
+    backend: disabled
+    python_binary: python3
+    execution_timeout: 20s
+    docker:
+      binary: docker
+      image: python:3.12-slim
+      memory_limit: 1g
+      cpu_limit: "0.5"
+      pids_limit: 64
+    input_file_url_policy: disabled
+    input_file_url_allow_hosts: []
+    cleanup_interval: 1m
+    limits:
+      generated_files: 8
+      generated_file_bytes: 2MiB
+      generated_total_bytes: 8MiB
+      remote_input_file_bytes: 50MiB

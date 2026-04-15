@@ -1,0 +1,19 @@
+services:
+  fixture:
+    build:
+      context: .
+    command: ["/usr/local/bin/devstack-fixture", "-addr", ":8081"]
+    ports:
+      - "18081:8081"
+
+  shim:
+    build:
+      context: .
+    command: ["/usr/local/bin/shim", "-config", "/app/config.yaml"]
+    depends_on:
+      - fixture
+    ports:
+      - "18080:8080"
+    volumes:
+      - ./config.devstack.yaml:/app/config.yaml:ro
+      - ./.data:/app/.data

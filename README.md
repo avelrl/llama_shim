@@ -28,6 +28,7 @@ v1 supports:
   OpenAI surface already exposed by the shim
 - per-surface status: [docs/compatibility-matrix.md](docs/compatibility-matrix.md)
 - frozen V2 release ledger: [docs/v2-scope.md](docs/v2-scope.md)
+- V3 preflight substrate: [docs/v3-preflight.md](docs/v3-preflight.md)
 - post-V2 capability expansion parking lot: [docs/v3-scope.md](docs/v3-scope.md)
 - extension and plugin directions after the compatibility core:
   [docs/v4-scope.md](docs/v4-scope.md)
@@ -38,6 +39,9 @@ v1 supports:
 - V2 release notes: [docs/release-notes-v2.md](docs/release-notes-v2.md)
 - API contract and boundaries: [docs/compatibility-matrix.md](docs/compatibility-matrix.md)
 - V2 release scope: [docs/v2-scope.md](docs/v2-scope.md)
+- V3 preflight substrate: [docs/v3-preflight.md](docs/v3-preflight.md)
+- deterministic dev stack and smoke path: [docs/guides/devstack.md](docs/guides/devstack.md)
+- V3 expansion staging: [docs/v3-scope.md](docs/v3-scope.md)
 - V4 extensions and plugin model: [docs/v4-scope.md](docs/v4-scope.md)
 - OpenAPI spec: [openapi/openapi.yaml](openapi/openapi.yaml)
 
@@ -301,9 +305,13 @@ Minimal local packaging is now checked into the repo:
 - `make maint-cleanup`, `make maint-optimize`, `make maint-vacuum`, `make maint-backup`
 - `docker build -t llama-shim:local .`
 - `docker compose up --build`
+- `make devstack-up`, `make devstack-smoke`, `make devstack-down`
 
 The compose setup mounts `./config.yaml` into the container and keeps SQLite
 state in `./.data`.
+
+For a deterministic two-process dev stack with a repo-owned smoke path, see
+[docs/guides/devstack.md](docs/guides/devstack.md).
 
 ## Ops hardening
 
@@ -311,6 +319,7 @@ The shim now has a shim-owned operational layer that is separate from route-cont
 
 - optional ingress bearer auth via `shim.auth.mode=static_bearer`
 - optional in-memory per-client request rate limiting via `shim.rate_limit.*`
+- optional shim-owned capability manifest at `/debug/capabilities`
 - optional Prometheus-text metrics at `shim.metrics.path` (default `/metrics`)
 - configurable request, upload, retrieval, and local `code_interpreter` limits
 - structured JSON logs with `request_id`, optional `client_request_id`, stable route labels, auth subject fingerprints, and retrieval/runtime events
@@ -318,6 +327,7 @@ The shim now has a shim-owned operational layer that is separate from route-cont
 Important behavior:
 
 - `/healthz` and `/readyz` stay unauthenticated and unthrottled so external probes keep working
+- `/debug/capabilities` is a shim-owned operator/debug route that reports current surfaces, routing classes, runtime config, and dependency probe state; it returns `200` even when some dependencies are degraded, and shares normal shim auth and request rate limiting
 - `/metrics` is skipped by the request rate limiter but still shares ingress auth when shim auth is enabled
 - when shim ingress auth is enabled, the ingress `Authorization` header is consumed by the shim and is not forwarded to the upstream text-generation backend; `X-Client-Request-Id` still propagates upstream
 - request rate limiting is currently a shim-owned in-memory subset with request-based headers:

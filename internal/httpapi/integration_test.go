@@ -275,6 +275,139 @@ func TestReadyzReturns503WhenImageGenerationBackendIsUnavailable(t *testing.T) {
 	require.Equal(t, "image generation backend is not ready", payload["error"]["message"])
 }
 
+func TestCapabilitiesEndpointReportsConfiguredRuntime(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		ResponsesMode:                     config.ResponsesModeLocalOnly,
+		CustomToolsMode:                   "bridge",
+		CodexCompatibilityEnabled:         true,
+		ForceToolChoiceRequired:           true,
+		RateLimitEnabled:                  true,
+		RateLimitRequestsPerMinute:        90,
+		RetrievalConfig:                   retrieval.Config{IndexBackend: retrieval.IndexBackendSQLiteVec},
+		RetrievalEmbedder:                 semanticTestEmbedder{},
+		WebSearchProvider:                 &testutil.FakeWebSearchProvider{},
+		ImageGenerationProvider:           &testutil.FakeImageGenerationProvider{},
+		ComputerBackend:                   httpapi.LocalComputerBackendChatCompletions,
+		CodeInterpreterBackend:            testutil.FakeSandboxBackend{KindValue: "docker"},
+		CodeInterpreterInputFileURLPolicy: "allowlist",
+	})
+
+	status, payload := rawRequest(t, app, http.MethodGet, "/debug/capabilities", nil)
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, "shim.capabilities", asStringAny(payload["object"]))
+	require.Equal(t, true, payload["ready"])
+
+	surfaces := payload["surfaces"].(map[string]any)
+	responsesSurface := surfaces["responses"].(map[string]any)
+	require.Equal(t, true, responsesSurface["enabled"])
+	require.Equal(t, true, responsesSurface["compact"])
+	require.Equal(t, config.ResponsesModeLocalOnly, asStringAny(responsesSurface["mode"]))
+
+	containersSurface := surfaces["containers"].(map[string]any)
+	require.Equal(t, true, containersSurface["enabled"])
+	require.Equal(t, true, containersSurface["create"])
+	require.Equal(t, true, containersSurface["files"])
+
+	chatSurface := surfaces["chat_completions"].(map[string]any)
+	require.Equal(t, true, chatSurface["stored"])
+	require.Equal(t, true, chatSurface["default_store_when_omitted"])
+
+	runtime := payload["runtime"].(map[string]any)
+	require.Equal(t, config.ResponsesModeLocalOnly, asStringAny(runtime["responses_mode"]))
+	require.Equal(t, "bridge", asStringAny(runtime["custom_tools_mode"]))
+
+	codex := runtime["codex"].(map[string]any)
+	require.Equal(t, true, codex["compatibility_enabled"])
+	require.Equal(t, true, codex["force_tool_choice_required"])
+
+	persistence := runtime["persistence"].(map[string]any)
+	require.Equal(t, "sqlite", asStringAny(persistence["backend"]))
+	require.Equal(t, true, persistence["expected_durable"])
+
+	retrievalRuntime := runtime["retrieval"].(map[string]any)
+	require.Equal(t, retrieval.IndexBackendSQLiteVec, asStringAny(retrievalRuntime["index_backend"]))
+
+	ops := runtime["ops"].(map[string]any)
+	require.Equal(t, config.ShimAuthModeDisabled, asStringAny(ops["auth_mode"]))
+	require.Equal(t, true, ops["health_public"])
+	require.Equal(t, true, ops["readyz_public"])
+
+	rateLimit := ops["rate_limit"].(map[string]any)
+	require.Equal(t, true, rateLimit["enabled"])
+	require.Equal(t, float64(90), rateLimit["requests_per_minute"])
+	require.Equal(t, float64(60), rateLimit["burst"])
+
+	metrics := ops["metrics"].(map[string]any)
+	require.Equal(t, true, metrics["enabled"])
+	require.Equal(t, "/metrics", asStringAny(metrics["path"]))
+
+	tools := payload["tools"].(map[string]any)
+	computerTool := tools["computer"].(map[string]any)
+	require.Equal(t, "local_subset_when_configured", asStringAny(computerTool["support"]))
+	require.Equal(t, httpapi.LocalComputerBackendChatCompletions, asStringAny(computerTool["backend"]))
+	require.Equal(t, true, computerTool["enabled"])
+
+	codeInterpreterTool := tools["code_interpreter"].(map[string]any)
+	require.Equal(t, "docker", asStringAny(codeInterpreterTool["backend"]))
+	require.Equal(t, true, codeInterpreterTool["enabled"])
+
+	mcpConnectorTool := tools["mcp_connector_id"].(map[string]any)
+	require.Equal(t, "proxy_only", asStringAny(mcpConnectorTool["support"]))
+	mcpConnectorRouting := mcpConnectorTool["routing"].(map[string]any)
+	require.Equal(t, "reject_with_mcp_validation_error", asStringAny(mcpConnectorRouting["local_only"]))
+
+	probes := payload["probes"].(map[string]any)
+	retrievalProbe := probes["retrieval_embedder"].(map[string]any)
+	require.Equal(t, true, retrievalProbe["enabled"])
+	require.Equal(t, false, retrievalProbe["checked"])
+	require.Equal(t, true, retrievalProbe["ready"])
+
+	webSearchProbe := probes["web_search_backend"].(map[string]any)
+	require.Equal(t, true, webSearchProbe["enabled"])
+	require.Equal(t, true, webSearchProbe["checked"])
+	require.Equal(t, true, webSearchProbe["ready"])
+
+	imageGenerationProbe := probes["image_generation_backend"].(map[string]any)
+	require.Equal(t, true, imageGenerationProbe["enabled"])
+	require.Equal(t, true, imageGenerationProbe["checked"])
+	require.Equal(t, true, imageGenerationProbe["ready"])
+}
+
+func TestCapabilitiesEndpointReportsDegradedProbesWithoutFailingRoute(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		RetrievalConfig: retrieval.Config{
+			IndexBackend: retrieval.IndexBackendSQLiteVec,
+		},
+		RetrievalEmbedder: failingReadyEmbedder{},
+		WebSearchProvider: &testutil.FakeWebSearchProvider{
+			ReadyErr: errors.New("web search backend unavailable"),
+		},
+		ImageGenerationProvider: &testutil.FakeImageGenerationProvider{
+			ReadyErr: errors.New("image generation backend unavailable"),
+		},
+	})
+
+	status, payload := rawRequest(t, app, http.MethodGet, "/debug/capabilities", nil)
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, false, payload["ready"])
+
+	probes := payload["probes"].(map[string]any)
+	retrievalProbe := probes["retrieval_embedder"].(map[string]any)
+	require.Equal(t, true, retrievalProbe["checked"])
+	require.Equal(t, false, retrievalProbe["ready"])
+	require.Equal(t, "retrieval embedder is not ready", asStringAny(retrievalProbe["error"]))
+
+	webSearchProbe := probes["web_search_backend"].(map[string]any)
+	require.Equal(t, true, webSearchProbe["checked"])
+	require.Equal(t, false, webSearchProbe["ready"])
+	require.Equal(t, "web search backend is not ready", asStringAny(webSearchProbe["error"]))
+
+	imageGenerationProbe := probes["image_generation_backend"].(map[string]any)
+	require.Equal(t, true, imageGenerationProbe["checked"])
+	require.Equal(t, false, imageGenerationProbe["ready"])
+	require.Equal(t, "image generation backend is not ready", asStringAny(imageGenerationProbe["error"]))
+}
+
 func TestShimStaticBearerAuthProtectsAPISurfaceButSkipsHealthChecks(t *testing.T) {
 	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
 		AuthMode:     config.ShimAuthModeStaticBearer,
@@ -316,6 +449,36 @@ func TestShimStaticBearerAuthProtectsAPISurfaceButSkipsHealthChecks(t *testing.T
 	})
 	require.Equal(t, http.StatusOK, status)
 	require.Equal(t, "response", asStringAny(authorized["object"]))
+}
+
+func TestCapabilitiesEndpointSharesIngressAuthAndRateLimit(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		AuthMode:                   config.ShimAuthModeStaticBearer,
+		BearerTokens:               []string{"shim-secret"},
+		RateLimitEnabled:           true,
+		RateLimitRequestsPerMinute: 1,
+		RateLimitBurst:             1,
+	})
+
+	status, _, unauthorized := rawRequestWithHeaders(t, app, http.MethodGet, "/debug/capabilities", nil, nil)
+	require.Equal(t, http.StatusUnauthorized, status)
+	require.Equal(t, "authentication_error", asStringAny(unauthorized["error"].(map[string]any)["type"]))
+
+	headers := map[string]string{"Authorization": "Bearer shim-secret"}
+	status, rateHeaders, authorized := rawRequestWithHeaders(t, app, http.MethodGet, "/debug/capabilities", nil, headers)
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, "1", rateHeaders.Get("X-RateLimit-Limit-Requests"))
+	require.Equal(t, "0", rateHeaders.Get("X-RateLimit-Remaining-Requests"))
+	require.NotEmpty(t, rateHeaders.Get("X-RateLimit-Reset-Requests"))
+	require.Equal(t, "shim.capabilities", asStringAny(authorized["object"]))
+
+	status, rateHeaders, limited := rawRequestWithHeaders(t, app, http.MethodGet, "/debug/capabilities", nil, headers)
+	require.Equal(t, http.StatusTooManyRequests, status)
+	require.Equal(t, "1", rateHeaders.Get("X-RateLimit-Limit-Requests"))
+	require.Equal(t, "0", rateHeaders.Get("X-RateLimit-Remaining-Requests"))
+	require.NotEmpty(t, rateHeaders.Get("X-RateLimit-Reset-Requests"))
+	require.Equal(t, "rate_limit_error", asStringAny(limited["error"].(map[string]any)["type"]))
+	require.Equal(t, "rate_limit_exceeded", asStringAny(limited["error"].(map[string]any)["code"]))
 }
 
 func TestShimStaticBearerAuthDoesNotLeakIngressAuthorizationUpstream(t *testing.T) {

@@ -132,6 +132,56 @@ paths:
                   code: null
         "405":
           $ref: "#/components/responses/ErrorResponse"
+  /debug/capabilities:
+    get:
+      tags: [ops]
+      summary: Shim-owned capability manifest
+      x-shim-status: implemented
+      description: |
+        Returns a shim-owned capability manifest describing the current
+        process configuration, locally owned surfaces, local-vs-proxy tool
+        routing classes, and dependency probe state.
+
+        Notes:
+        - this route is shim-owned operator/debug surface, not an OpenAI API
+          parity claim
+        - unlike `/healthz` and `/readyz`, this route shares normal shim
+          ingress auth and request rate limiting
+        - the route returns `200` even when one or more dependencies are
+          degraded; inspect top-level `ready` and `probes.*`
+      responses:
+        "200":
+          description: Capability manifest for the current shim process
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShimCapabilitiesResponse"
+        "401":
+          description: Missing or invalid shim ingress bearer token when auth is enabled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                error:
+                  message: missing or invalid bearer token
+                  type: authentication_error
+                  param: null
+                  code: null
+        "429":
+          description: Shim ingress request rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                error:
+                  message: request rate limit exceeded
+                  type: rate_limit_error
+                  param: null
+                  code: rate_limit_exceeded
+        "405":
+          $ref: "#/components/responses/ErrorResponse"
   /v1/responses:
     post:
       tags: [responses]
@@ -2245,6 +2295,243 @@ components:
       required: [status]
       properties:
         status:
+          type: string
+    ShimCapabilitiesResponse:
+      type: object
+      required: [object, ready, surfaces, runtime, tools, probes]
+      properties:
+        object:
+          type: string
+          enum: [shim.capabilities]
+        ready:
+          type: boolean
+        surfaces:
+          $ref: "#/components/schemas/ShimCapabilitySurfaceSet"
+        runtime:
+          $ref: "#/components/schemas/ShimCapabilityRuntime"
+        tools:
+          $ref: "#/components/schemas/ShimCapabilityToolSet"
+        probes:
+          $ref: "#/components/schemas/ShimCapabilityProbeSet"
+    ShimCapabilitySurfaceSet:
+      type: object
+      required: [responses, conversations, chat_completions, files, vector_stores, containers]
+      properties:
+        responses:
+          $ref: "#/components/schemas/ShimCapabilityResponsesSurface"
+        conversations:
+          $ref: "#/components/schemas/ShimCapabilityConversationsSurface"
+        chat_completions:
+          $ref: "#/components/schemas/ShimCapabilityChatSurface"
+        files:
+          $ref: "#/components/schemas/ShimCapabilitySimpleSurface"
+        vector_stores:
+          $ref: "#/components/schemas/ShimCapabilitySimpleSurface"
+        containers:
+          $ref: "#/components/schemas/ShimCapabilityContainersSurface"
+    ShimCapabilityResponsesSurface:
+      type: object
+      required: [enabled, stateful, retrieve, delete, cancel, input_items, create_stream, retrieve_stream, input_tokens, compact, mode]
+      properties:
+        enabled:
+          type: boolean
+        stateful:
+          type: boolean
+        retrieve:
+          type: boolean
+        delete:
+          type: boolean
+        cancel:
+          type: boolean
+        input_items:
+          type: boolean
+        create_stream:
+          type: boolean
+        retrieve_stream:
+          type: boolean
+        input_tokens:
+          type: boolean
+        compact:
+          type: boolean
+        mode:
+          type: string
+    ShimCapabilityConversationsSurface:
+      type: object
+      required: [enabled, create, retrieve, items]
+      properties:
+        enabled:
+          type: boolean
+        create:
+          type: boolean
+        retrieve:
+          type: boolean
+        items:
+          type: boolean
+    ShimCapabilityChatSurface:
+      type: object
+      required: [enabled, stored, default_store_when_omitted]
+      properties:
+        enabled:
+          type: boolean
+        stored:
+          type: boolean
+        default_store_when_omitted:
+          type: boolean
+    ShimCapabilitySimpleSurface:
+      type: object
+      required: [enabled]
+      properties:
+        enabled:
+          type: boolean
+    ShimCapabilityContainersSurface:
+      type: object
+      required: [enabled, create, files]
+      properties:
+        enabled:
+          type: boolean
+        create:
+          type: boolean
+        files:
+          type: boolean
+    ShimCapabilityRuntime:
+      type: object
+      required: [responses_mode, custom_tools_mode, codex, persistence, retrieval, ops]
+      properties:
+        responses_mode:
+          type: string
+        custom_tools_mode:
+          type: string
+        codex:
+          $ref: "#/components/schemas/ShimCapabilityCodexConfig"
+        persistence:
+          $ref: "#/components/schemas/ShimCapabilityPersistence"
+        retrieval:
+          $ref: "#/components/schemas/ShimCapabilityRetrievalRuntime"
+        ops:
+          $ref: "#/components/schemas/ShimCapabilityOpsConfig"
+    ShimCapabilityCodexConfig:
+      type: object
+      required: [compatibility_enabled, force_tool_choice_required]
+      properties:
+        compatibility_enabled:
+          type: boolean
+        force_tool_choice_required:
+          type: boolean
+    ShimCapabilityPersistence:
+      type: object
+      required: [backend, expected_durable]
+      properties:
+        backend:
+          type: string
+        expected_durable:
+          type: boolean
+    ShimCapabilityRetrievalRuntime:
+      type: object
+      required: [index_backend]
+      properties:
+        index_backend:
+          type: string
+    ShimCapabilityOpsConfig:
+      type: object
+      required: [auth_mode, rate_limit, metrics, health_public, readyz_public]
+      properties:
+        auth_mode:
+          type: string
+        rate_limit:
+          $ref: "#/components/schemas/ShimCapabilityRateLimit"
+        metrics:
+          $ref: "#/components/schemas/ShimCapabilityMetrics"
+        health_public:
+          type: boolean
+        readyz_public:
+          type: boolean
+    ShimCapabilityRateLimit:
+      type: object
+      required: [enabled, requests_per_minute, burst]
+      properties:
+        enabled:
+          type: boolean
+        requests_per_minute:
+          type: integer
+        burst:
+          type: integer
+    ShimCapabilityMetrics:
+      type: object
+      required: [enabled, path]
+      properties:
+        enabled:
+          type: boolean
+        path:
+          type: string
+    ShimCapabilityToolSet:
+      type: object
+      required: [file_search, web_search, image_generation, computer, code_interpreter, mcp_server_url, mcp_connector_id, tool_search_hosted, tool_search_client]
+      properties:
+        file_search:
+          $ref: "#/components/schemas/ShimCapabilityTool"
+        web_search:
+          $ref: "#/components/schemas/ShimCapabilityTool"
+        image_generation:
+          $ref: "#/components/schemas/ShimCapabilityTool"
+        computer:
+          $ref: "#/components/schemas/ShimCapabilityTool"
+        code_interpreter:
+          $ref: "#/components/schemas/ShimCapabilityTool"
+        mcp_server_url:
+          $ref: "#/components/schemas/ShimCapabilityTool"
+        mcp_connector_id:
+          $ref: "#/components/schemas/ShimCapabilityTool"
+        tool_search_hosted:
+          $ref: "#/components/schemas/ShimCapabilityTool"
+        tool_search_client:
+          $ref: "#/components/schemas/ShimCapabilityTool"
+    ShimCapabilityTool:
+      type: object
+      required: [support, enabled, routing]
+      properties:
+        support:
+          type: string
+        backend:
+          type: string
+        enabled:
+          type: boolean
+        routing:
+          $ref: "#/components/schemas/ShimCapabilityToolRouting"
+    ShimCapabilityToolRouting:
+      type: object
+      required: [prefer_local, prefer_upstream, local_only]
+      properties:
+        prefer_local:
+          type: string
+        prefer_upstream:
+          type: string
+        local_only:
+          type: string
+    ShimCapabilityProbeSet:
+      type: object
+      required: [sqlite, llama, retrieval_embedder, web_search_backend, image_generation_backend]
+      properties:
+        sqlite:
+          $ref: "#/components/schemas/ShimCapabilityProbe"
+        llama:
+          $ref: "#/components/schemas/ShimCapabilityProbe"
+        retrieval_embedder:
+          $ref: "#/components/schemas/ShimCapabilityProbe"
+        web_search_backend:
+          $ref: "#/components/schemas/ShimCapabilityProbe"
+        image_generation_backend:
+          $ref: "#/components/schemas/ShimCapabilityProbe"
+    ShimCapabilityProbe:
+      type: object
+      required: [enabled, checked, ready]
+      properties:
+        enabled:
+          type: boolean
+        checked:
+          type: boolean
+        ready:
+          type: boolean
+        error:
           type: string
     ErrorEnvelope:
       type: object

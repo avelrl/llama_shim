@@ -73,6 +73,7 @@ The freeze wording was re-checked on April 15, 2026 against:
 - V2 release notes: [release-notes-v2.md](release-notes-v2.md)
 - Current surface truth: [compatibility-matrix.md](compatibility-matrix.md)
 - V2 release ledger: [v2-scope.md](v2-scope.md)
+- V3 preflight substrate: [v3-preflight.md](v3-preflight.md)
 - Completed narrow V2 follow-up ledger: [v2-followups.md](v2-followups.md)
 - Post-V2 expansion parking lot: [v3-scope.md](v3-scope.md)
 - V4 extensions and plugin model: [v4-scope.md](v4-scope.md)

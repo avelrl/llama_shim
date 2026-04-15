@@ -34,11 +34,13 @@ Assumptions:
 ## Operations
 
 - [Operations](operations.md): running, probing, backing up, and maintaining the shim
+- [Dev Stack](devstack.md): deterministic local stack and smoke path
 
 ## Related Reference Docs
 
 - [V2 Scope](../v2-scope.md)
 - [Compatibility Matrix](../compatibility-matrix.md)
+- [V3 Preflight](../v3-preflight.md)
 - [V3 Scope](../v3-scope.md)
 - [V4 Extensions and Plugin Model](../v4-scope.md)
 - [OpenAPI spec](../../openapi/openapi.yaml)

@@ -1,14 +1,15 @@
-.PHONY: run build test maint-cleanup maint-optimize maint-vacuum maint-backup docker-build compose-up compose-down
+.PHONY: run build test maint-cleanup maint-optimize maint-vacuum maint-backup docker-build compose-up compose-down devstack-up devstack-down devstack-smoke
 
 CONFIG ?= config.yaml
 BACKUP ?= ./.data/shim-backup.db
 IMAGE ?= llama-shim:local
+DEVSTACK_COMPOSE ?= docker-compose.devstack.yml
 
 run:
 	go run ./cmd/shim -config $(CONFIG)
 
 build:
-	go build ./cmd/shim ./cmd/shimctl ./cmd/upstream-sse-capture
+	go build ./cmd/shim ./cmd/shimctl ./cmd/upstream-sse-capture ./cmd/devstack-fixture
 
 test:
 	go test ./...
@@ -33,3 +34,12 @@ compose-up:
 
 compose-down:
 	docker compose down
+
+devstack-up:
+	docker compose -f $(DEVSTACK_COMPOSE) up -d --build
+
+devstack-down:
+	docker compose -f $(DEVSTACK_COMPOSE) down --remove-orphans
+
+devstack-smoke:
+	bash ./scripts/devstack-smoke.sh

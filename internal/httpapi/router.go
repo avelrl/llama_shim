@@ -29,6 +29,8 @@ type RouterDeps struct {
 	ResponsesCustomToolsMode              string
 	ResponsesCodexEnableCompatibility     bool
 	ResponsesCodexForceToolChoiceRequired bool
+	ResponsesWebSearchBackend             string
+	ResponsesImageGenerationBackend       string
 	WebSearchProvider                     websearch.Provider
 	ImageGenerationProvider               imagegen.Provider
 	LocalComputer                         LocalComputerRuntimeConfig
@@ -135,6 +137,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 		}
 		WriteJSON(w, http.StatusOK, map[string]string{"status": "ready"})
 	})
+	mux.HandleFunc("/debug/capabilities", capabilityHandler(deps))
 	if metricsConfig.Enabled && deps.Metrics != nil {
 		mux.Handle(metricsConfig.Path, deps.Metrics.Handler())
 	}

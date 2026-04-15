@@ -6,6 +6,7 @@ This guide covers the shim-owned operational surface:
 
 - `/healthz`
 - `/readyz`
+- `/debug/capabilities`
 - `/metrics`
 - `shimctl`
 - Docker and Compose packaging
@@ -42,7 +43,18 @@ docker compose up --build
 - `/healthz`: process liveness
 - `/readyz`: readiness of SQLite, upstream text backend, and any configured
   local retrieval or tool backends
+- `/debug/capabilities`: shim-owned capability manifest for operators, testers,
+  and autonomous agents; always returns a JSON manifest with current surfaces,
+  routing classes, runtime config, and dependency probe state
 - `/metrics`: Prometheus-style metrics endpoint when enabled
+
+Important distinction:
+
+- `/readyz` is a terse public probe and returns `503` when a required
+  dependency is unavailable
+- `/debug/capabilities` remains a normal shim route, so it shares shim ingress
+  auth and request rate limiting, and reports degraded dependencies inside
+  `ready` and `probes.*` instead of failing the route itself
 
 ## Maintenance
 
@@ -82,4 +94,5 @@ The shim also supports:
 ## Related Docs
 
 - [README](../../README.md)
+- [Dev Stack](devstack.md)
 - [V2 Scope](../v2-scope.md)

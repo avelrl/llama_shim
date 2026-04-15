@@ -108,7 +108,7 @@ proxy-first escape hatch for standalone hosted/native requests, while
 
 | Surface | Current shim status | Freeze guidance | Notes |
 | --- | --- | --- | --- |
-| `/healthz`, `/readyz`, `/metrics` | Shim-owned | Keep documented and stable | Useful operator surface, not OpenAI compatibility surface |
+| `/healthz`, `/readyz`, `/debug/capabilities`, `/metrics` | Shim-owned | Keep documented and stable | Useful operator surface, not OpenAI compatibility surface |
 | ingress auth, rate limiting, quotas, structured logs | Shim-owned | Keep minimum operator floor stable | |
 | retention cleanup, maintenance path, and local DX packaging | Implemented | Keep the operator workflow explicit | SQLite cleanup is limited to explicit `expires_at` resources; backup/restore/vacuum/optimize ship via `shimctl` |
 | multi-tenant authz, shared rate limiting, richer exporters/admin tooling | V3 | Stage after V2 | Valuable, but not required for a broad compatibility facade |

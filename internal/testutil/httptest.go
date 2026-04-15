@@ -162,6 +162,8 @@ func NewTestAppWithOptions(t *testing.T, options TestAppOptions) *TestApp {
 		ResponsesCustomToolsMode:              options.CustomToolsMode,
 		ResponsesCodexEnableCompatibility:     options.CodexCompatibilityEnabled,
 		ResponsesCodexForceToolChoiceRequired: options.ForceToolChoiceRequired,
+		ResponsesWebSearchBackend:             capabilityWebSearchBackend(options),
+		ResponsesImageGenerationBackend:       capabilityImageGenerationBackend(options),
 		WebSearchProvider:                     options.WebSearchProvider,
 		ImageGenerationProvider:               options.ImageGenerationProvider,
 		LocalComputer:                         localComputer,
@@ -190,6 +192,20 @@ func NewTestAppWithOptions(t *testing.T, options TestAppOptions) *TestApp {
 		LlamaServer: llamaServer,
 		close:       closeFn,
 	}
+}
+
+func capabilityWebSearchBackend(options TestAppOptions) string {
+	if options.WebSearchProvider != nil {
+		return "searxng"
+	}
+	return "disabled"
+}
+
+func capabilityImageGenerationBackend(options TestAppOptions) string {
+	if options.ImageGenerationProvider != nil {
+		return "responses"
+	}
+	return "disabled"
 }
 
 func (a *TestApp) Client() *http.Client {

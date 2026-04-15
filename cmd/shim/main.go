@@ -133,6 +133,8 @@ func main() {
 			ResponsesCustomToolsMode:              cfg.ResponsesCustomToolsMode,
 			ResponsesCodexEnableCompatibility:     cfg.ResponsesCodexEnableCompatibility,
 			ResponsesCodexForceToolChoiceRequired: cfg.ResponsesCodexForceToolChoiceRequired,
+			ResponsesWebSearchBackend:             cfg.ResponsesWebSearchBackend,
+			ResponsesImageGenerationBackend:       cfg.ResponsesImageGenerationBackend,
 			WebSearchProvider:                     webSearchProvider,
 			ImageGenerationProvider:               imageGenerationProvider,
 			LocalComputer:                         localComputer,
