@@ -4668,6 +4668,28 @@ func TestResponsesLocalOnlyWebSearchPreviewRejectsFiltersWhenBackendExists(t *te
 	require.NotContains(t, asStringAny(errorPayload["message"]), "responses.web_search.backend")
 }
 
+func TestResponsesLocalOnlyRejectsContextManagementUntilAutomaticCompactionShips(t *testing.T) {
+	app := testutil.NewTestAppWithResponsesMode(t, config.ResponsesModeLocalOnly)
+
+	status, payload := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model": "test-model",
+		"input": "hello",
+		"context_management": []map[string]any{
+			{
+				"type":              "compaction",
+				"compact_threshold": 200000,
+			},
+		},
+	})
+
+	require.Equal(t, http.StatusBadRequest, status)
+	errorPayload, ok := payload["error"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "invalid_request_error", asStringAny(errorPayload["type"]))
+	require.Contains(t, asStringAny(errorPayload["message"]), "context_management")
+	require.Contains(t, asStringAny(errorPayload["message"]), "responses.mode=local_only")
+}
+
 func TestResponsesLocalWebSearchUsesProviderAndAnnotatesSources(t *testing.T) {
 	provider := &testutil.FakeWebSearchProvider{
 		SearchFunc: func(_ context.Context, request websearch.SearchRequest) (websearch.SearchResponse, error) {

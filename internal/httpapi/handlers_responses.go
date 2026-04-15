@@ -1151,6 +1151,7 @@ func decodeCreateResponseRequestBody(rawBody []byte, allowEmpty bool) (CreateRes
 		Input              json.RawMessage `json:"input"`
 		Text               json.RawMessage `json:"text,omitempty"`
 		Metadata           json.RawMessage `json:"metadata,omitempty"`
+		ContextManagement  json.RawMessage `json:"context_management,omitempty"`
 		Store              *bool           `json:"store,omitempty"`
 		Stream             *bool           `json:"stream,omitempty"`
 		StreamOptions      json.RawMessage `json:"stream_options,omitempty"`
@@ -1170,6 +1171,9 @@ func decodeCreateResponseRequestBody(rawBody []byte, allowEmpty bool) (CreateRes
 	if err := validateMCPToolDefinitions(rawFields); err != nil {
 		return CreateResponseRequest{}, nil, "", err
 	}
+	if err := validateCreateResponseContextManagement(payload.ContextManagement); err != nil {
+		return CreateResponseRequest{}, nil, "", err
+	}
 	requestJSON, err := compactBody(trimmed)
 	if err != nil {
 		return CreateResponseRequest{}, nil, "", err
@@ -1185,6 +1189,7 @@ func decodeCreateResponseRequestBody(rawBody []byte, allowEmpty bool) (CreateRes
 		Input:              payload.Input,
 		Text:               payload.Text,
 		Metadata:           payload.Metadata,
+		ContextManagement:  payload.ContextManagement,
 		Store:              payload.Store,
 		Stream:             payload.Stream,
 		StreamOptions:      payload.StreamOptions,
@@ -1217,6 +1222,64 @@ func decodeCreateResponseConversationID(raw json.RawMessage) (string, error) {
 	}
 
 	return "", domain.NewValidationError("conversation", "conversation must be a string or object with id")
+}
+
+func validateCreateResponseContextManagement(raw json.RawMessage) error {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return nil
+	}
+
+	var entries []json.RawMessage
+	if err := json.Unmarshal(trimmed, &entries); err != nil {
+		return domain.NewValidationError("context_management", "context_management must be an array")
+	}
+	for _, entry := range entries {
+		if err := validateCreateResponseContextManagementEntry(entry); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateCreateResponseContextManagementEntry(raw json.RawMessage) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return domain.NewValidationError("context_management", "context_management entries must be objects")
+	}
+
+	typeRaw, ok := fields["type"]
+	if !ok {
+		return domain.NewValidationError("context_management", "context_management entries require type")
+	}
+
+	var policyType string
+	if err := json.Unmarshal(typeRaw, &policyType); err != nil || strings.TrimSpace(policyType) == "" {
+		return domain.NewValidationError("context_management", "context_management entries require type")
+	}
+
+	switch policyType {
+	case "compaction":
+		for key := range fields {
+			if key == "type" || key == "compact_threshold" {
+				continue
+			}
+			return domain.NewValidationError("context_management", "unsupported context_management field "+`"`+key+`"`+" in compaction policy")
+		}
+
+		var payload struct {
+			CompactThreshold *int64 `json:"compact_threshold"`
+		}
+		if err := json.Unmarshal(raw, &payload); err != nil {
+			return domain.NewValidationError("context_management", "context_management entries must be objects")
+		}
+		if payload.CompactThreshold == nil || *payload.CompactThreshold <= 0 {
+			return domain.NewValidationError("context_management", "context_management compaction policy requires compact_threshold > 0")
+		}
+		return nil
+	default:
+		return domain.NewValidationError("context_management", "unsupported context_management type "+`"`+policyType+`"`)
+	}
 }
 
 var shimLocalGenerationFields = map[string]struct{}{

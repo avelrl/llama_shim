@@ -2288,6 +2288,8 @@ components:
           additionalProperties:
             type: string
             maxLength: 512
+        context_management:
+          $ref: "#/components/schemas/ResponseContextManagement"
         store:
           type: boolean
         stream:
@@ -2312,6 +2314,10 @@ components:
         - `text.format.type=json_object`
         - `text.format.type=json_schema` with a limited schema subset
         - `metadata` follows the documented OpenAI string key/value limits
+        - `context_management=[{"type":"compaction","compact_threshold":N}]`
+          is accepted as a docs-aligned request contract and can still proxy
+          upstream, but shim-local automatic server-side compaction is not yet
+          executed in the local runtime
         - `stream_options.include_obfuscation` for shim-owned SSE and replay
         - pragmatic local `file_search` execution with:
           one `tools[]` entry of `type=file_search`, local `vector_store_ids`,
@@ -2421,6 +2427,31 @@ components:
 
         `background` is forwarded upstream for long-running responses and is not
         executed locally by the shim.
+    ResponseContextManagement:
+      type: array
+      description: |
+        Docs-aligned `context_management` policy array for `POST /v1/responses`.
+
+        Current shim-local validation accepts only the documented compaction
+        policy subset:
+        - `[{ "type": "compaction", "compact_threshold": <positive integer> }]`
+
+        The shim does not yet execute automatic server-side compaction in the
+        local runtime. Requests using this field can still proxy upstream
+        according to `responses.mode`.
+      items:
+        $ref: "#/components/schemas/ResponseContextManagementCompactionPolicy"
+    ResponseContextManagementCompactionPolicy:
+      type: object
+      additionalProperties: false
+      required: [type, compact_threshold]
+      properties:
+        type:
+          type: string
+          enum: [compaction]
+        compact_threshold:
+          type: integer
+          minimum: 1
     ResponseInputTokensRequest:
       type: object
       additionalProperties: true

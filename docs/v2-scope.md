@@ -73,5 +73,6 @@ The freeze wording was re-checked on April 15, 2026 against:
 - V2 release notes: [release-notes-v2.md](release-notes-v2.md)
 - Current surface truth: [compatibility-matrix.md](compatibility-matrix.md)
 - V2 release ledger: [v2-scope.md](v2-scope.md)
+- Tracked narrow V2 follow-up candidates: [v2-followups.md](v2-followups.md)
 - Post-V2 expansion parking lot: [v3-scope.md](v3-scope.md)
 - Historical implementation detail: Git history before the V2 freeze refactor

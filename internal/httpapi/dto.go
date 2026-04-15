@@ -9,6 +9,7 @@ type CreateResponseRequest struct {
 	Input              json.RawMessage `json:"input"`
 	Text               json.RawMessage `json:"text,omitempty"`
 	Metadata           json.RawMessage `json:"metadata,omitempty"`
+	ContextManagement  json.RawMessage `json:"context_management,omitempty"`
 	Store              *bool           `json:"store,omitempty"`
 	Stream             *bool           `json:"stream,omitempty"`
 	StreamOptions      json.RawMessage `json:"stream_options,omitempty"`

@@ -90,6 +90,56 @@ func TestParseCreateResponseStreamOptionsRejectsUnsupportedField(t *testing.T) {
 	require.Contains(t, validationErr.Message, "unsupported stream_options field")
 }
 
+func TestDecodeCreateResponseRequestBodyAcceptsContextManagementCompactionPolicy(t *testing.T) {
+	request, rawFields, _, err := decodeCreateResponseRequestBody([]byte(`{
+		"model":"test-model",
+		"input":"hello",
+		"context_management":[{"type":"compaction","compact_threshold":200000}]
+	}`), false)
+	require.NoError(t, err)
+	require.JSONEq(t, `[{"type":"compaction","compact_threshold":200000}]`, string(request.ContextManagement))
+	require.Contains(t, rawFields, "context_management")
+}
+
+func TestDecodeCreateResponseRequestBodyRejectsInvalidContextManagementShape(t *testing.T) {
+	_, _, _, err := decodeCreateResponseRequestBody([]byte(`{
+		"model":"test-model",
+		"input":"hello",
+		"context_management":{"type":"compaction","compact_threshold":200000}
+	}`), false)
+
+	var validationErr *domain.ValidationError
+	require.ErrorAs(t, err, &validationErr)
+	require.Equal(t, "context_management", validationErr.Param)
+	require.Contains(t, validationErr.Message, "must be an array")
+}
+
+func TestDecodeCreateResponseRequestBodyRejectsInvalidContextManagementCompactionPolicy(t *testing.T) {
+	_, _, _, err := decodeCreateResponseRequestBody([]byte(`{
+		"model":"test-model",
+		"input":"hello",
+		"context_management":[{"type":"compaction","compact_threshold":0}]
+	}`), false)
+
+	var validationErr *domain.ValidationError
+	require.ErrorAs(t, err, &validationErr)
+	require.Equal(t, "context_management", validationErr.Param)
+	require.Contains(t, validationErr.Message, "compact_threshold > 0")
+}
+
+func TestDecodeCreateResponseRequestBodyRejectsUnsupportedContextManagementType(t *testing.T) {
+	_, _, _, err := decodeCreateResponseRequestBody([]byte(`{
+		"model":"test-model",
+		"input":"hello",
+		"context_management":[{"type":"summary","compact_threshold":200000}]
+	}`), false)
+
+	var validationErr *domain.ValidationError
+	require.ErrorAs(t, err, &validationErr)
+	require.Equal(t, "context_management", validationErr.Param)
+	require.Contains(t, validationErr.Message, `unsupported context_management type "summary"`)
+}
+
 func TestShouldFallbackLocalState(t *testing.T) {
 	require.True(t, shouldFallbackLocalState(config.ResponsesModePreferUpstream, &llama.UpstreamError{
 		StatusCode: 500,
@@ -265,6 +315,17 @@ func TestSelectResponsesCreateRoute(t *testing.T) {
 			require.Equal(t, tt.want, selectResponsesCreateRoute(tt.mode, tt.profile))
 		})
 	}
+}
+
+func TestSupportsLocalShimStateRejectsContextManagementUntilAutomaticCompactionShips(t *testing.T) {
+	rawFields := map[string]json.RawMessage{
+		"model":              json.RawMessage(`"test-model"`),
+		"input":              json.RawMessage(`"hello"`),
+		"context_management": json.RawMessage(`[{"type":"compaction","compact_threshold":200000}]`),
+	}
+
+	require.False(t, supportsLocalShimState(rawFields))
+	require.Equal(t, []string{"context_management"}, unsupportedLocalShimFields(rawFields))
 }
 
 func TestShouldRetryLocalStateWithDirectProxyBody(t *testing.T) {
