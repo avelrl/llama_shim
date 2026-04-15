@@ -1,8 +1,9 @@
 # V3 Expansion Staging
 
-Last updated: April 14, 2026.
+Last updated: April 15, 2026.
 
-This document is the parking lot for work that should not block V2.
+This document is the parking lot for work that did not make the V2 ship bar
+and should not be reintroduced into the frozen V2 scope.
 
 V2 is the broad compatibility facade release. V3 is where the project can
 expand capabilities, add more backend diversity, and take on more expensive
@@ -10,15 +11,16 @@ runtime work without muddying the V2 release contract.
 
 ## V3 Entry Criteria
 
-V3 should start only after the repo can honestly ship V2 as a broad
-compatibility facade:
+V3 starts from a frozen V2 release ledger and a current compatibility matrix:
 
 - the per-surface status in [docs/compatibility-matrix.md](compatibility-matrix.md)
   is current
-- remaining V2 blockers in [backlog-v2.md](../backlog-v2.md) are either closed
-  or explicitly downgraded
+- the frozen release framing in [v2-scope.md](v2-scope.md) remains
+  truthful
 - OpenAPI, README, and backlog no longer imply exact hosted parity where the
   shim only offers a documented subset
+- detailed historical notes remain recoverable from Git history before the V2
+  freeze refactor
 
 ## Already Moved Out Of V2
 
@@ -26,6 +28,9 @@ These items are useful, but they are no longer part of the V2 ship bar:
 
 - exact hosted/native tool-specific SSE replay beyond the current
   docs-backed and trace-backed core shim families
+- exact hosted/native tool choreography and failure/status fidelity where docs
+  alone do not pin the wire behavior down
+- server-side compaction via `context_management.compact_threshold`
 - true constrained decoder/runtime for `grammar` / `regex` custom tools
 - multi-tenant authz / tenanting / shared rate limiting
 - richer exporters, dashboards, admin tooling, and governance-heavy storage work
@@ -69,7 +74,7 @@ requirement.
 
 ## V3 Anti-Scope For Now
 
-These items should not jump ahead of unfinished V2 compatibility work:
+These items should not jump ahead of keeping the frozen V2 contract honest:
 
 - new novelty backends just because they are easy to prototype
 - new local-only features that force OpenAPI/backlog wording to become less

@@ -24,11 +24,19 @@ v1 supports:
 
 ## Compatibility Roadmap
 
-- V2 target: a broad compatibility facade over the current official OpenAI
-  surface already exposed by the shim
+- V2 release framing: a broad compatibility facade over the current official
+  OpenAI surface already exposed by the shim
 - per-surface status: [docs/compatibility-matrix.md](docs/compatibility-matrix.md)
-- detailed task history and remaining V2 gaps: [backlog-v2.md](backlog-v2.md)
+- frozen V2 release ledger: [docs/v2-scope.md](docs/v2-scope.md)
 - post-V2 capability expansion parking lot: [docs/v3-scope.md](docs/v3-scope.md)
+
+## Documentation
+
+- practical guides: [docs/guides/README.md](docs/guides/README.md)
+- V2 release notes: [docs/release-notes-v2.md](docs/release-notes-v2.md)
+- API contract and boundaries: [docs/compatibility-matrix.md](docs/compatibility-matrix.md)
+- V2 release scope: [docs/v2-scope.md](docs/v2-scope.md)
+- OpenAPI spec: [openapi/openapi.yaml](openapi/openapi.yaml)
 
 ## Architecture
 

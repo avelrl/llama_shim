@@ -397,7 +397,7 @@ func TestShimRejectsInvalidClientRequestID(t *testing.T) {
 	app := testutil.NewTestApp(t)
 
 	testCases := []string{
-		"привет",
+		"héllo",
 		strings.Repeat("a", 513),
 	}
 	for _, headerValue := range testCases {

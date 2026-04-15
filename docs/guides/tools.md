@@ -1,0 +1,127 @@
+# Tools Overview
+
+## What It Is
+
+The shim supports a practical subset of the OpenAI tool model inside
+`/v1/responses`.
+
+This is where the V2 facade becomes useful: the shim can own local state,
+preserve typed tool items, and execute a subset of built-in tools locally when
+configured to do so.
+
+## Tool Routing Modes
+
+`responses.mode` controls how `/v1/responses` behaves:
+
+- `prefer_local`: default. Use the shim-local subset first, fall back upstream
+  for unsupported shapes.
+- `prefer_upstream`: proxy-first escape hatch.
+- `local_only`: never call upstream.
+
+## Current Practical Tool Surface
+
+| Tool family | Practical V2 behavior |
+| --- | --- |
+| `file_search` | local subset |
+| `web_search` / `web_search_preview` | local subset when configured |
+| `image_generation` | local subset when configured |
+| `computer` | local screenshot-first subset when configured |
+| `code_interpreter` | local dev-oriented subset when configured |
+| remote `mcp` with `server_url` | local subset |
+| `mcp` with `connector_id` | proxy-only compatibility bridge |
+| `tool_search` hosted/server subset | local subset |
+| `tool_search` client execution | proxy-only |
+
+For the exact contract, see the [compatibility matrix](../compatibility-matrix.md).
+
+## Minimal Patterns
+
+### Local tool call
+
+```bash
+curl http://127.0.0.1:8080/v1/responses \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "<model>",
+    "input": "Use retrieval to answer this question.",
+    "tools": [
+      {"type": "file_search", "vector_store_ids": ["vs_..."]}
+    ]
+  }'
+```
+
+### Remote MCP server
+
+```bash
+curl http://127.0.0.1:8080/v1/responses \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "<model>",
+    "input": "Roll 2d4+1.",
+    "tools": [
+      {
+        "type": "mcp",
+        "server_label": "dmcp",
+        "server_url": "https://dmcp-server.deno.dev/sse",
+        "require_approval": "never"
+      }
+    ]
+  }'
+```
+
+### Hosted/server tool search
+
+```bash
+curl http://127.0.0.1:8080/v1/responses \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "<model>",
+    "input": "Find the billing tool and use it.",
+    "tools": [
+      {"type": "tool_search"},
+      {
+        "type": "namespace",
+        "name": "billing_tools",
+        "description": "Billing and invoice tools.",
+        "functions": [
+          {
+            "name": "get_invoice",
+            "description": "Fetch one invoice.",
+            "defer_loading": true,
+            "parameters": {
+              "type": "object",
+              "properties": {"invoice_id": {"type": "string"}},
+              "required": ["invoice_id"],
+              "additionalProperties": false
+            }
+          }
+        ]
+      }
+    ]
+  }'
+```
+
+## Shim-Specific Notes
+
+- The shim preserves typed output items and does not flatten everything into a
+  generic text-only contract.
+- `connector_id` is not a local runtime in V2. It remains a proxy-only bridge.
+- Client `tool_search` is also proxy-only in V2; hosted/server `tool_search`
+  is the local practical subset.
+- Tool-heavy create-stream and retrieve-stream flows may use generic
+  `response.output_item.*` replay where no exact hosted tool-specific SSE
+  family is claimed.
+
+## Gotchas
+
+- `prefer_upstream` should be treated as an escape hatch, not the normal mode.
+- If a local runtime is disabled and you use `local_only`, you will get an
+  explicit validation error rather than an upstream fallback.
+
+## Related Docs
+
+- [Web Search](web-search.md)
+- [Image Generation](image-generation.md)
+- [Computer Use](computer.md)
+- [Code Interpreter](code-interpreter.md)
+- [Official tools guide](https://developers.openai.com/api/docs/guides/tools)

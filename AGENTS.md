@@ -80,14 +80,17 @@ generic/docs-backed subset without claiming exact hosted choreography.
   or examples.
 - When linking to files from repo markdown, prefer relative markdown links.
 
-## Backlog rules
+## V2 scope rules
 
-When updating [`backlog-v2.md`](backlog-v2.md):
+When updating [`docs/v2-scope.md`](docs/v2-scope.md):
 
-- Keep the top-level baseline and “current patch” sections in sync with the actual router and handlers.
-- A checked box means the implementation, OpenAPI, tests, and docs-aware behavior are aligned closely enough for that task’s stated scope.
-- If parity is only partial, keep the item open or split the remaining gap into an explicit follow-up task.
-- Use exact dates when re-validating the backlog against docs.
+- Treat it as the frozen V2 release ledger, not as a live scratch backlog.
+- Keep shipped scope and non-goals aligned with the actual router, handlers,
+  tests, and OpenAPI.
+- If parity is only partial, document that boundary in
+  [`docs/compatibility-matrix.md`](docs/compatibility-matrix.md) instead of
+  silently widening the V2 claim.
+- Use exact dates when re-validating the scope wording against docs.
 
 ## Implementation rules for this repo
 

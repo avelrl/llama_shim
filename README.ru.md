@@ -2,49 +2,70 @@
 
 Русская версия README. Английская версия: [README.md](README.md).
 
-`llama_shim` это небольшой HTTP-сервис на Go 1.26, который дает минимальный OpenAI-совместимый слой для Responses + Conversations и при этом использует `llama.cpp` как неизменяемый stateless backend.
+`llama_shim` — небольшой сетевой сервис на Go 1.26. Он дает совместимую с
+OpenAI прослойку поверх `llama.cpp`, оставляя внешний сервер без собственного
+состояния и забирая всю логику хранения состояния на свою сторону.
 
-v1 поддерживает:
+В текущем состоянии сервис поддерживает:
 
 - `POST /v1/responses`
 - `GET /v1/responses/{id}`
 - `POST /v1/conversations`
-- `POST /v1/responses` с `stream: true` через SSE
-- SQLite-backed восстановление состояния для `previous_response_id`
-- SQLite-backed историю диалогов для `conversation`
-- fallback proxying для остальных маршрутов напрямую в upstream backend
+- `POST /v1/responses` с полем `stream: true` через `SSE`
+- локальное восстановление состояния по `previous_response_id`
+- локальную историю диалога по `conversation`
+- локально хранимую поверхность сохраненных `Chat Completions`:
+  `GET /v1/chat/completions`,
+  `GET/POST/DELETE /v1/chat/completions/{completion_id}`,
+  `GET /v1/chat/completions/{completion_id}/messages`
+- прямую пересылку всех остальных маршрутов, которыми сервис сам не владеет,
+  во внешний сервер
 
-## Совместимость и roadmap
+## Совместимость и план релиза
 
-- цель V2: broad compatibility facade поверх текущего official OpenAI surface,
-  который shim уже экспонирует
-- matrix по surface-ам: [docs/compatibility-matrix.md](docs/compatibility-matrix.md)
-- подробный backlog по V2: [backlog-v2.md](backlog-v2.md)
-- parking lot для post-V2 expansion: [docs/v3-scope.md](docs/v3-scope.md)
+- V2 оформлен как широкий совместимый фасад для тех поверхностей OpenAI,
+  которые сервис уже предоставляет
+- текущее состояние по поверхностям: [docs/compatibility-matrix.md](docs/compatibility-matrix.md)
+- зафиксированные рамки V2: [docs/v2-scope.md](docs/v2-scope.md)
+- заметки к релизу V2: [docs/release-notes-v2.md](docs/release-notes-v2.md)
+- задачи, вынесенные за V2: [docs/v3-scope.md](docs/v3-scope.md)
 
-## Архитектура
+## Документация
 
-- `cmd/shim`: bootstrap процесса и запуск HTTP-сервера
-- `internal/httpapi`: тонкие handlers, JSON error mapping, request ID и middleware для логирования запросов
-- `internal/service`: orchestration для генерации ответов и создания conversations
-- `internal/storage/sqlite`: явный SQL, migrations, WAL mode, foreign keys, busy timeout
-- `internal/llama`: адаптер для `llama.cpp` `POST /v1/chat/completions`
-- `internal/domain`: normalизация входа, восстановление контекста, генерация ID, normalизация response
+- практические руководства: [docs/guides/README.md](docs/guides/README.md)
+- контракт API и границы совместимости: [docs/compatibility-matrix.md](docs/compatibility-matrix.md)
+- рамки релиза V2: [docs/v2-scope.md](docs/v2-scope.md)
+- спецификация OpenAPI: [openapi/openapi.yaml](openapi/openapi.yaml)
+
+## Устройство проекта
+
+- `cmd/shim`: запуск процесса и сетевого сервера
+- `internal/httpapi`: обработчики, преобразование ошибок в JSON, `request_id`
+  и промежуточные обработчики для журналирования запросов
+- `internal/service`: оркестрация генерации ответов и создания conversations
+- `internal/storage/sqlite`: явный SQL, миграции, `WAL`, внешние ключи и
+  `busy_timeout`
+- `internal/llama`: адаптер к `llama.cpp` для `POST /v1/chat/completions`
+- `internal/domain`: нормализация входа, восстановление контекста, генерация
+  идентификаторов и приведение ответов к каноническому виду
 
 Ключевые решения:
 
-- `llama.cpp` остается stateless, всей state-семантикой владеет shim
-- в v1 единственное постоянное хранилище это SQLite
-- write transactions короткие; сервис не держит DB transaction открытой во время генерации
-- response и conversation используют компактную и стабильную JSON-форму
-- не-shim маршруты upstream можно стримить через shim через SSE passthrough
+- `llama.cpp` остается без собственного состояния, а состояние разговора
+  контролирует сам сервис
+- основное постоянное хранилище — `SQLite`
+- транзакции записи короткие; сервис не держит транзакцию открытой во время
+  генерации
+- объекты response и conversation имеют компактную и устойчивую JSON-форму
+- маршруты, которыми сервис не владеет, можно прозрачно передавать во внешний
+  сервер, в том числе через `SSE`
 
 ## Требования
 
 - Go 1.26+
-- запущенный `llama.cpp` сервер с `POST /v1/chat/completions`
+- запущенный `llama.cpp` с маршрутом `POST /v1/chat/completions`
 
-## Локальный запуск llama.cpp
+## Локальный запуск `llama.cpp`
 
 Один из возможных вариантов:
 
@@ -55,15 +76,14 @@ v1 поддерживает:
   --port 8081
 ```
 
-Этот README предполагает, что `llama.cpp` уже запущен отдельно и доступен по:
+Ниже предполагается, что `llama.cpp` уже запущен отдельно и доступен по
+`POST /v1/chat/completions`.
 
-```text
-POST /v1/chat/completions
-```
+## Запуск сервиса
 
-## Запуск shim
-
-Сервис можно запускать через переменные окружения, YAML-конфиг или их комбинацию. Переменные окружения имеют приоритет над YAML.
+Сервис можно запускать через переменные окружения, через файл конфигурации
+`YAML` или в смешанном режиме. Переменные окружения имеют приоритет над
+`YAML`.
 
 ```bash
 LLAMA_BASE_URL=http://127.0.0.1:8081 \
@@ -72,7 +92,7 @@ SHIM_ADDR=:8080 \
 go run ./cmd/shim
 ```
 
-### YAML-конфиг
+### Файл конфигурации YAML
 
 Пример лежит в [config.yaml.example](config.yaml.example).
 
@@ -105,60 +125,76 @@ responses:
     force_tool_choice_required: true
 ```
 
-Запуск с явным конфигом:
+Запуск с явным файлом конфигурации:
 
 ```bash
 go run ./cmd/shim -config ./config.yaml
 ```
 
-Или через переменную окружения:
+Запуск через переменную окружения:
 
 ```bash
 SHIM_CONFIG=./config.yaml go run ./cmd/shim
 ```
 
-Если `-config` и `SHIM_CONFIG` не заданы, сервис также попробует автоматически загрузить `./config.yaml` или `./config.yml`, если файл существует.
+Если `-config` и `SHIM_CONFIG` не заданы, сервис попробует автоматически
+загрузить `./config.yaml` или `./config.yml`, если такой файл существует.
 
-Поддерживаемые environment overrides:
+### Поддерживаемые переопределения через переменные окружения
 
-- `LLAMA_TIMEOUT`, значение по умолчанию `60s`
-- `SHIM_READ_TIMEOUT`, значение по умолчанию `15s`
-- `SHIM_WRITE_TIMEOUT`, значение по умолчанию `90s`
-- `SHIM_IDLE_TIMEOUT`, значение по умолчанию `60s`
-- `LOG_LEVEL`, значение по умолчанию `info`; `debug` добавляет отдельную debug-запись с телами request/response
-- `LOG_FILE_PATH` переопределяет `log.file_path`; если задан, логи пишутся и в stdout, и в файл
+- `LLAMA_TIMEOUT`, по умолчанию `60s`
+- `SHIM_READ_TIMEOUT`, по умолчанию `15s`
+- `SHIM_WRITE_TIMEOUT`, по умолчанию `90s`
+- `SHIM_IDLE_TIMEOUT`, по умолчанию `60s`
+- `LOG_LEVEL`, по умолчанию `info`; значение `debug` включает дополнительную
+  отладочную запись с телами запроса и ответа
+- `LOG_FILE_PATH` переопределяет `log.file_path`; если задано, журналы пишутся
+  и в `stdout`, и в файл
 - `LLAMA_BASE_URL` переопределяет `llama.base_url`
 - `SQLITE_PATH` переопределяет `sqlite.path`
-- `SQLITE_MAINTENANCE_CLEANUP_INTERVAL` переопределяет `sqlite.maintenance.cleanup_interval`
+- `SQLITE_MAINTENANCE_CLEANUP_INTERVAL` переопределяет
+  `sqlite.maintenance.cleanup_interval`
 - `SHIM_ADDR` переопределяет `shim.addr`
-- `RESPONSES_MODE` переопределяет `responses.mode`; поддерживаются `prefer_local`, `prefer_upstream`, `local_only`
-  `prefer_local` теперь используется по умолчанию: shim сам ведет `/v1/responses` для локально-поддерживаемого subset и обращается к upstream `/v1/responses` только для неподдерживаемых фич.
-- `RESPONSES_CUSTOM_TOOLS_MODE` переопределяет `responses.custom_tools.mode`; поддерживаются `bridge`, `auto`, `passthrough`
-  Для дефолтного режима лучше `auto`: он сохраняет bridge для обычных text custom tools и не ломает grammar-constrained инструменты, пропуская их passthrough.
-- `RESPONSES_CODEX_ENABLE_COMPATIBILITY` переопределяет `responses.codex.enable_compatibility`; если выключено, shim перестает добавлять Codex-specific instructions/context и пропускает Codex-specific normalизацию response
-- `RESPONSES_CODEX_FORCE_TOOL_CHOICE_REQUIRED` переопределяет `responses.codex.force_tool_choice_required`; если включено, Codex-like запросы с `tool_choice: "auto"` переписываются в `required`
+- `RESPONSES_MODE` переопределяет `responses.mode`; поддерживаются
+  `prefer_local`, `prefer_upstream`, `local_only`
+  `prefer_local` используется по умолчанию: сервис сам обрабатывает
+  `/v1/responses` для поддерживаемого локального подмножества и обращается к
+  внешнему `/v1/responses` только для неподдерживаемых возможностей
+- `RESPONSES_CUSTOM_TOOLS_MODE` переопределяет `responses.custom_tools.mode`;
+  поддерживаются `bridge`, `auto`, `passthrough`
+  Для обычного режима рекомендуется `auto`: он сохраняет bridge-путь для
+  простых custom tools и не ломает grammar-constrained инструменты
+- `RESPONSES_CODEX_ENABLE_COMPATIBILITY` переопределяет
+  `responses.codex.enable_compatibility`; если выключить, сервис перестанет
+  добавлять Codex-специфический контекст и нормализацию
+- `RESPONSES_CODEX_FORCE_TOOL_CHOICE_REQUIRED` переопределяет
+  `responses.codex.force_tool_choice_required`; если включить, Codex-подобные
+  запросы с `tool_choice: "auto"` будут переписываться в `required`
 
-Заметки по retention для responses:
+### Замечания по хранению `Responses`
 
-- standalone-объекты `/v1/responses` следуют outward `store` contract, который возвращается в самом response object
-- conversation-attached items живут по lifecycle разговора, а не по retention standalone response
-- shim может хранить внутренние hidden response rows для локального `previous_response_id` replay даже когда outward response сообщает `store=false`
+- отдельные объекты `/v1/responses` следуют внешнему контракту `store`, который
+  возвращается в самом объекте response
+- элементы, привязанные к conversation, живут по жизненному циклу разговора, а
+  не по правилам хранения отдельного response
+- сервис может сохранять скрытые внутренние записи response, если они нужны
+  для локального воспроизведения `previous_response_id`
 
-## Maintenance
+## Обслуживание
 
-В shim теперь есть минимальный operator maintenance path:
+В проекте есть минимальный набор средств для эксплуатации:
 
-- фоновый SQLite retention cleanup через `sqlite.maintenance.cleanup_interval`
-- one-shot maintenance команды через `./cmd/shimctl`
-- локальная packaging-обвязка через `Makefile`, `Dockerfile` и `docker-compose.yml`
+- фоновая очистка SQLite через `sqlite.maintenance.cleanup_interval`
+- разовые команды обслуживания через `./cmd/shimctl`
+- локальная упаковка через `Makefile`, `Dockerfile` и `docker-compose.yml`
 
-`sqlite.maintenance.cleanup_interval` сейчас чистит только локальные ресурсы
-с явным `expires_at`:
+`sqlite.maintenance.cleanup_interval` сейчас чистит только локальные ресурсы с
+явным `expires_at`:
 
-- expired `/v1/files`
-- expired `/v1/vector_stores`
+- просроченные `/v1/files`
+- просроченные `/v1/vector_stores`
 
-Expiry для `code_interpreter` контейнеров по-прежнему живёт отдельно в
+Срок жизни контейнеров `code_interpreter` настраивается отдельно через
 `responses.code_interpreter.cleanup_interval`.
 
 Примеры:
@@ -171,22 +207,23 @@ go run ./cmd/shimctl -config ./config.yaml backup -out ./.data/shim-backup.db
 go run ./cmd/shimctl -config ./config.yaml restore -from ./.data/shim-backup.db
 ```
 
-Restore-путь намеренно offline-oriented: перед заменой SQLite-файла лучше
-остановить запущенный shim.
+Восстановление намеренно рассчитано на автономный режим: перед заменой файла
+`SQLite` лучше остановить работающий сервис.
 
-## Local DX
+## Локальная разработка
 
-Минимальная локальная packaging-обвязка теперь лежит в репе:
+В репозитории уже есть минимальная обвязка для локальной работы:
 
 - `make run`, `make test`, `make build`
-- `make maint-cleanup`, `make maint-optimize`, `make maint-vacuum`, `make maint-backup`
+- `make maint-cleanup`, `make maint-optimize`, `make maint-vacuum`,
+  `make maint-backup`
 - `docker build -t llama-shim:local .`
 - `docker compose up --build`
 
-Compose-манифест монтирует `./config.yaml` в контейнер и хранит SQLite state в
-`./.data`.
+`docker-compose.yml` монтирует `./config.yaml` в контейнер и хранит данные
+SQLite в `./.data`.
 
-## Примеры curl
+## Примеры `curl`
 
 ### POST `/v1/responses`
 
@@ -225,7 +262,7 @@ curl -s http://127.0.0.1:8080/v1/responses \
   -d '{"model":"test-model","store":true,"input":"Remember: my code = 123. Reply OK"}'
 ```
 
-Продолжение с использованием возвращенного response ID:
+Продолжение с использованием возвращенного `response.id`:
 
 ```bash
 curl -s http://127.0.0.1:8080/v1/responses \
@@ -253,7 +290,7 @@ curl -s http://127.0.0.1:8080/v1/responses \
   }'
 ```
 
-### POST `/v1/responses` с `stream: true`
+### POST `/v1/responses` с полем `stream: true`
 
 ```bash
 curl -N http://127.0.0.1:8080/v1/responses \
@@ -266,7 +303,7 @@ curl -N http://127.0.0.1:8080/v1/responses \
   }'
 ```
 
-Shim отправляет SSE events, включая:
+Сервис отправляет `SSE`-события, включая:
 
 - `response.created`
 - `response.output_item.added`
@@ -277,12 +314,16 @@ Shim отправляет SSE events, включая:
 
 ## Примечания по API
 
-- versioned OpenAPI spec для текущего surface shim лежит в [openapi/openapi.yaml](openapi/openapi.yaml)
-- в spec операции помечены через `x-shim-status: implemented|partial|proxy`, чтобы было видно, где контрактом владеет сам shim, а где он только проксирует upstream
+- версия спецификации `OpenAPI` для текущей поверхности сервиса лежит в
+  [openapi/openapi.yaml](openapi/openapi.yaml)
+- в спецификации операции помечены через
+  `x-shim-status: implemented|partial|proxy`, чтобы было видно, где контрактом
+  владеет сам сервис, а где он только пересылает запрос во внешний сервер
 - `previous_response_id` и `conversation` взаимоисключающие
-- все API-ошибки возвращаются в JSON
+- все ошибки `API` возвращаются в `JSON`
 - `output_text` всегда присутствует в успешных ответах
-- при создании conversation текстовый контент нормализуется в канонические `input_text` items
+- при создании conversation текст нормализуется в канонические элементы
+  `input_text`
 
 ## Тесты
 
@@ -292,13 +333,13 @@ go test ./...
 
 Интеграционные тесты используют:
 
-- временную SQLite-базу
-- фейковый `llama.cpp` сервер на `httptest.Server`
+- временную базу `SQLite`
+- поддельный `llama.cpp` сервер на `httptest.Server`
 
-Покрытые acceptance-сценарии:
+Покрытые сценарии:
 
-- store + GET
+- хранение + получение через `GET`
 - восстановление цепочки `previous_response_id`
 - восстановление состояния через `conversation`
-- 404 для отсутствующих response и conversation
-- 4xx-валидация для взаимоисключающих state fields
+- `404` для отсутствующих response и conversation
+- валидацию `4xx` для взаимоисключающих полей состояния
