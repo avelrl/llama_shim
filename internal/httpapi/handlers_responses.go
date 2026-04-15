@@ -124,18 +124,6 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 	))
 	generationOptions := buildGenerationOptions(rawFields)
 	if request.Stream != nil && *request.Stream {
-		if hasLocalContextManagementRequest(rawFields) {
-			if h.responsesMode == config.ResponsesModeLocalOnly {
-				h.writeError(w, r, domain.NewValidationError("context_management", "shim-local automatic context_management compaction is not yet supported for stream=true"))
-				return
-			}
-			if hasLocalState {
-				h.createStreamViaUpstream(w, r, request, requestJSON, rawFields, streamOptions)
-				return
-			}
-			h.proxyCreateStream(w, r, request, requestJSON, rawFields, streamOptions)
-			return
-		}
 		switch createRoute {
 		case responsesCreateRouteProxy:
 			h.proxyCreateStream(w, r, request, requestJSON, rawFields, streamOptions)
@@ -887,9 +875,10 @@ func finalizeUpstreamResponse(rawResponse []byte, plan customToolTransportPlan, 
 
 func (h *responseHandler) createStream(w http.ResponseWriter, r *http.Request, request CreateResponseRequest, requestJSON string, generationOptions map[string]json.RawMessage, streamOptions responseStreamOptions) error {
 	var (
-		emitter    *responseStreamEmitter
-		responseID string
-		itemID     string
+		emitter            *responseStreamEmitter
+		responseID         string
+		itemID             string
+		messageOutputIndex int
 	)
 
 	response, err := h.service.CreateStream(r.Context(), service.CreateResponseInput{
@@ -907,13 +896,17 @@ func (h *responseHandler) createStream(w http.ResponseWriter, r *http.Request, r
 		RequestJSON:        requestJSON,
 		GenerationOptions:  generationOptions,
 	}, service.StreamHooks{
-		OnCreated: func(response domain.Response) error {
+		OnCreated: func(response domain.Response, outputPrefix []domain.Item) error {
 			var err error
 			emitter, err = newResponseStreamEmitter(w, streamOptions.IncludeObfuscation)
 			if err != nil {
 				return err
 			}
 			responseID = response.ID
+			outputPrefix, err = domain.EnsureItemIDs(outputPrefix)
+			if err != nil {
+				return err
+			}
 			itemID, err = domain.NewPrefixedID("msg")
 			if err != nil {
 				return err
@@ -924,13 +917,19 @@ func (h *responseHandler) createStream(w http.ResponseWriter, r *http.Request, r
 			if err := emitter.responseInProgress(response); err != nil {
 				return err
 			}
-			if err := emitter.outputItemAdded(itemID); err != nil {
+			for idx, item := range outputPrefix {
+				if err := emitResponseStreamPrefixItem(emitter, idx, item); err != nil {
+					return err
+				}
+			}
+			messageOutputIndex = len(outputPrefix)
+			if err := emitter.outputItemAddedMessage(itemID, messageOutputIndex); err != nil {
 				return err
 			}
-			return emitter.contentPartAdded(itemID)
+			return emitter.contentPartAddedAt(itemID, messageOutputIndex)
 		},
 		OnDelta: func(delta string) error {
-			return emitter.outputTextDelta(responseID, itemID, delta)
+			return emitter.outputTextDeltaAt(responseID, itemID, messageOutputIndex, delta)
 		},
 	})
 	if err != nil {
@@ -945,23 +944,42 @@ func (h *responseHandler) createStream(w http.ResponseWriter, r *http.Request, r
 		return nil
 	}
 
-	response, err = normalizeResponseForStreaming(response, map[int]string{0: itemID})
+	response, err = normalizeResponseForStreaming(response, map[int]string{messageOutputIndex: itemID})
 	if err != nil {
 		return err
 	}
-	if err := emitter.outputTextDone(responseID, itemID, response.OutputText); err != nil {
+	if len(response.Output) <= messageOutputIndex {
+		return errors.New("local stream completed without message output item")
+	}
+	outputText := response.OutputText
+	if strings.TrimSpace(outputText) == "" {
+		outputText = domain.MessageText(response.Output[messageOutputIndex])
+	}
+	if err := emitter.outputTextDoneAt(responseID, itemID, messageOutputIndex, outputText); err != nil {
 		return nil
 	}
-	if err := emitter.contentPartDone(itemID, response.OutputText); err != nil {
+	if err := emitter.contentPartDoneAt(itemID, messageOutputIndex, outputText); err != nil {
 		return nil
 	}
-	if err := emitter.outputItemDone(itemID, response.Output[0]); err != nil {
+	if err := emitter.outputItemDoneAt(itemID, response.Output[messageOutputIndex], messageOutputIndex); err != nil {
 		return nil
 	}
 	if err := emitter.responseCompleted(response); err != nil {
 		return nil
 	}
 	return emitter.done()
+}
+
+func emitResponseStreamPrefixItem(emitter *responseStreamEmitter, outputIndex int, item domain.Item) error {
+	itemID := strings.TrimSpace(item.ID())
+	payload := item.Map()
+	if itemID != "" {
+		payload["id"] = itemID
+	}
+	if err := emitter.outputItemAddedAt(outputIndex, payload); err != nil {
+		return err
+	}
+	return emitter.outputItemDoneAt(itemID, item, outputIndex)
 }
 
 func (h *responseHandler) get(w http.ResponseWriter, r *http.Request) {

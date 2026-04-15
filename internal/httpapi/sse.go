@@ -55,26 +55,38 @@ func (e *responseStreamEmitter) responseInProgress(response domain.Response) err
 }
 
 func (e *responseStreamEmitter) outputItemAdded(itemID string) error {
+	return e.outputItemAddedMessage(itemID, 0)
+}
+
+func (e *responseStreamEmitter) outputItemAddedMessage(itemID string, outputIndex int) error {
+	return e.outputItemAddedAt(outputIndex, map[string]any{
+		"id":      itemID,
+		"type":    "message",
+		"status":  "in_progress",
+		"role":    "assistant",
+		"content": []any{},
+	})
+}
+
+func (e *responseStreamEmitter) outputItemAddedAt(outputIndex int, item map[string]any) error {
 	return e.write("response.output_item.added", map[string]any{
 		"type":            "response.output_item.added",
 		"sequence_number": e.nextSequence(),
-		"output_index":    0,
-		"item": map[string]any{
-			"id":      itemID,
-			"type":    "message",
-			"status":  "in_progress",
-			"role":    "assistant",
-			"content": []any{},
-		},
+		"output_index":    outputIndex,
+		"item":            item,
 	})
 }
 
 func (e *responseStreamEmitter) contentPartAdded(itemID string) error {
+	return e.contentPartAddedAt(itemID, 0)
+}
+
+func (e *responseStreamEmitter) contentPartAddedAt(itemID string, outputIndex int) error {
 	return e.write("response.content_part.added", map[string]any{
 		"type":            "response.content_part.added",
 		"sequence_number": e.nextSequence(),
 		"item_id":         itemID,
-		"output_index":    0,
+		"output_index":    outputIndex,
 		"content_index":   0,
 		"part": map[string]any{
 			"type":        "output_text",
@@ -85,12 +97,16 @@ func (e *responseStreamEmitter) contentPartAdded(itemID string) error {
 }
 
 func (e *responseStreamEmitter) outputTextDelta(responseID, itemID, delta string) error {
+	return e.outputTextDeltaAt(responseID, itemID, 0, delta)
+}
+
+func (e *responseStreamEmitter) outputTextDeltaAt(responseID, itemID string, outputIndex int, delta string) error {
 	payload := map[string]any{
 		"type":            "response.output_text.delta",
 		"sequence_number": e.nextSequence(),
 		"response_id":     responseID,
 		"item_id":         itemID,
-		"output_index":    0,
+		"output_index":    outputIndex,
 		"content_index":   0,
 		"delta":           delta,
 	}
@@ -101,23 +117,31 @@ func (e *responseStreamEmitter) outputTextDelta(responseID, itemID, delta string
 }
 
 func (e *responseStreamEmitter) outputTextDone(responseID, itemID, text string) error {
+	return e.outputTextDoneAt(responseID, itemID, 0, text)
+}
+
+func (e *responseStreamEmitter) outputTextDoneAt(responseID, itemID string, outputIndex int, text string) error {
 	return e.write("response.output_text.done", map[string]any{
 		"type":            "response.output_text.done",
 		"sequence_number": e.nextSequence(),
 		"response_id":     responseID,
 		"item_id":         itemID,
-		"output_index":    0,
+		"output_index":    outputIndex,
 		"content_index":   0,
 		"text":            text,
 	})
 }
 
 func (e *responseStreamEmitter) contentPartDone(itemID, text string) error {
+	return e.contentPartDoneAt(itemID, 0, text)
+}
+
+func (e *responseStreamEmitter) contentPartDoneAt(itemID string, outputIndex int, text string) error {
 	return e.write("response.content_part.done", map[string]any{
 		"type":            "response.content_part.done",
 		"sequence_number": e.nextSequence(),
 		"item_id":         itemID,
-		"output_index":    0,
+		"output_index":    outputIndex,
 		"content_index":   0,
 		"part": map[string]any{
 			"type":        "output_text",
@@ -128,12 +152,16 @@ func (e *responseStreamEmitter) contentPartDone(itemID, text string) error {
 }
 
 func (e *responseStreamEmitter) outputItemDone(itemID string, item domain.Item) error {
+	return e.outputItemDoneAt(itemID, item, 0)
+}
+
+func (e *responseStreamEmitter) outputItemDoneAt(itemID string, item domain.Item, outputIndex int) error {
 	payload := item.Map()
 	payload["id"] = itemID
 	return e.write("response.output_item.done", map[string]any{
 		"type":            "response.output_item.done",
 		"sequence_number": e.nextSequence(),
-		"output_index":    0,
+		"output_index":    outputIndex,
 		"item":            payload,
 	})
 }

@@ -4705,13 +4705,22 @@ func TestResponsesLocalOnlyAutomaticCompactionPrependsCompactionItem(t *testing.
 	require.Equal(t, "message", asStringAny(messageItem["type"]))
 }
 
-func TestResponsesLocalOnlyRejectsContextManagementStreamingUntilStreamSupportShips(t *testing.T) {
+func TestResponsesLocalOnlyAutomaticCompactionStreamingPrependsCompactionItemAndReplayMatches(t *testing.T) {
 	app := testutil.NewTestAppWithResponsesMode(t, config.ResponsesModeLocalOnly)
 
-	status, payload := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
-		"model":  "test-model",
-		"input":  "hello",
-		"stream": true,
+	firstStatus, firstPayload := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model": "test-model",
+		"input": "Remember launch code 1234.",
+	})
+	require.Equal(t, http.StatusOK, firstStatus)
+	previousResponseID := asStringAny(firstPayload["id"])
+	require.NotEmpty(t, previousResponseID)
+
+	reqBody, err := json.Marshal(map[string]any{
+		"model":                "test-model",
+		"previous_response_id": previousResponseID,
+		"input":                "What is the launch code?",
+		"stream":               true,
 		"context_management": []map[string]any{
 			{
 				"type":              "compaction",
@@ -4719,13 +4728,178 @@ func TestResponsesLocalOnlyRejectsContextManagementStreamingUntilStreamSupportSh
 			},
 		},
 	})
+	require.NoError(t, err)
 
-	require.Equal(t, http.StatusBadRequest, status)
-	errorPayload, ok := payload["error"].(map[string]any)
+	req, err := http.NewRequest(http.MethodPost, app.Server.URL+"/v1/responses", bytes.NewReader(reqBody))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Contains(t, resp.Header.Get("Content-Type"), "text/event-stream")
+
+	events := readSSEEvents(t, resp.Body)
+	require.Contains(t, eventTypes(events), "response.completed")
+	require.Greater(t, eventIndex(t, events, "response.output_item.added"), eventIndex(t, events, "response.in_progress"))
+	require.Greater(t, eventIndex(t, events, "response.output_text.delta"), eventIndex(t, events, "response.output_item.done"))
+
+	addedEvents := findEvents(events, "response.output_item.added")
+	require.Len(t, addedEvents, 2)
+	firstAddedItem, ok := addedEvents[0].Data["item"].(map[string]any)
 	require.True(t, ok)
-	require.Equal(t, "invalid_request_error", asStringAny(errorPayload["type"]))
-	require.Contains(t, asStringAny(errorPayload["message"]), "context_management")
-	require.Contains(t, asStringAny(errorPayload["message"]), "stream=true")
+	require.EqualValues(t, 0, addedEvents[0].Data["output_index"])
+	require.Equal(t, "compaction", asStringAny(firstAddedItem["type"]))
+	secondAddedItem, ok := addedEvents[1].Data["item"].(map[string]any)
+	require.True(t, ok)
+	require.EqualValues(t, 1, addedEvents[1].Data["output_index"])
+	require.Equal(t, "message", asStringAny(secondAddedItem["type"]))
+
+	doneEvents := findEvents(events, "response.output_item.done")
+	require.Len(t, doneEvents, 2)
+	firstDoneItem, ok := doneEvents[0].Data["item"].(map[string]any)
+	require.True(t, ok)
+	require.EqualValues(t, 0, doneEvents[0].Data["output_index"])
+	require.Equal(t, "compaction", asStringAny(firstDoneItem["type"]))
+	secondDoneItem, ok := doneEvents[1].Data["item"].(map[string]any)
+	require.True(t, ok)
+	require.EqualValues(t, 1, doneEvents[1].Data["output_index"])
+	require.Equal(t, "message", asStringAny(secondDoneItem["type"]))
+
+	completed := findEvent(t, events, "response.completed").Data
+	responsePayload, ok := completed["response"].(map[string]any)
+	require.True(t, ok)
+	responseID := asStringAny(responsePayload["id"])
+	require.NotEmpty(t, responseID)
+	output, ok := responsePayload["output"].([]any)
+	require.True(t, ok)
+	require.Len(t, output, 2)
+	compactionItem, ok := output[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "compaction", asStringAny(compactionItem["type"]))
+	messageItem, ok := output[1].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "message", asStringAny(messageItem["type"]))
+
+	retrieveReq, err := http.NewRequest(http.MethodGet, app.Server.URL+"/v1/responses/"+responseID+"?stream=true", nil)
+	require.NoError(t, err)
+	retrieveResp, err := app.Client().Do(retrieveReq)
+	require.NoError(t, err)
+	defer retrieveResp.Body.Close()
+	require.Equal(t, http.StatusOK, retrieveResp.StatusCode)
+
+	replayEvents := readSSEEvents(t, retrieveResp.Body)
+	require.Contains(t, eventTypes(replayEvents), "response.completed")
+	replayAdded := findEvents(replayEvents, "response.output_item.added")
+	require.Len(t, replayAdded, 2)
+	replayFirstAddedItem, ok := replayAdded[0].Data["item"].(map[string]any)
+	require.True(t, ok)
+	require.EqualValues(t, 0, replayAdded[0].Data["output_index"])
+	require.Equal(t, "compaction", asStringAny(replayFirstAddedItem["type"]))
+	replaySecondAddedItem, ok := replayAdded[1].Data["item"].(map[string]any)
+	require.True(t, ok)
+	require.EqualValues(t, 1, replayAdded[1].Data["output_index"])
+	require.Equal(t, "message", asStringAny(replaySecondAddedItem["type"]))
+
+	replayDone := findEvents(replayEvents, "response.output_item.done")
+	require.Len(t, replayDone, 2)
+	replayFirstDoneItem, ok := replayDone[0].Data["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "compaction", asStringAny(replayFirstDoneItem["type"]))
+	replaySecondDoneItem, ok := replayDone[1].Data["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "message", asStringAny(replaySecondDoneItem["type"]))
+}
+
+func TestResponsesPreferUpstreamAutomaticCompactionStaysProxyFirstButUsesLocalStateForFollowUp(t *testing.T) {
+	app := testutil.NewTestAppWithResponsesMode(t, config.ResponsesModePreferUpstream)
+
+	first := postResponse(t, app, map[string]any{
+		"model": "test-model",
+		"store": true,
+		"input": "My code = 123. Say OK.",
+		"context_management": []map[string]any{
+			{
+				"type":              "compaction",
+				"compact_threshold": 1,
+			},
+		},
+	})
+	require.Equal(t, "upstream_resp_1", first.ID)
+	require.Equal(t, "OK", first.OutputText)
+
+	second := postResponse(t, app, map[string]any{
+		"model":                "test-model",
+		"store":                true,
+		"previous_response_id": first.ID,
+		"input":                "What was my code?",
+		"context_management": []map[string]any{
+			{
+				"type":              "compaction",
+				"compact_threshold": 1,
+			},
+		},
+	})
+	require.NotEqual(t, "upstream_resp_2", second.ID)
+	require.Equal(t, first.ID, second.PreviousResponseID)
+	require.Equal(t, "123", second.OutputText)
+	require.Len(t, second.Output, 2)
+	require.Equal(t, "compaction", second.Output[0].Type)
+	require.Equal(t, "message", second.Output[1].Type)
+}
+
+func TestResponsesLocalOnlyAutomaticCompactionConversationFollowUpKeepsCompactedInputSnapshot(t *testing.T) {
+	app := testutil.NewTestAppWithResponsesMode(t, config.ResponsesModeLocalOnly)
+
+	conversation := postConversation(t, app, map[string]any{
+		"items": []map[string]any{
+			{"type": "message", "role": "system", "content": "You are a test assistant."},
+			{"type": "message", "role": "user", "content": "Remember: code=777. Reply OK."},
+		},
+	})
+
+	first := postResponse(t, app, map[string]any{
+		"model":        "test-model",
+		"conversation": conversation.ID,
+		"input":        "What is the code?",
+		"context_management": []map[string]any{
+			{
+				"type":              "compaction",
+				"compact_threshold": 1,
+			},
+		},
+	})
+	require.Equal(t, conversation.ID, responseConversationID(first))
+	require.Equal(t, "777", first.OutputText)
+	require.Len(t, first.Output, 2)
+	require.Equal(t, "compaction", first.Output[0].Type)
+	require.Equal(t, "message", first.Output[1].Type)
+
+	second := postResponse(t, app, map[string]any{
+		"model":        "test-model",
+		"conversation": conversation.ID,
+		"input":        "What is the code?",
+		"context_management": []map[string]any{
+			{
+				"type":              "compaction",
+				"compact_threshold": 1,
+			},
+		},
+	})
+	require.Equal(t, conversation.ID, responseConversationID(second))
+	require.Equal(t, "777", second.OutputText)
+	require.Len(t, second.Output, 2)
+	require.Equal(t, "compaction", second.Output[0].Type)
+	require.Equal(t, "message", second.Output[1].Type)
+
+	inputItems := getResponseInputItems(t, app, second.ID)
+	require.Len(t, inputItems.Data, 2)
+	require.Equal(t, []string{"message", "compaction"}, conversationItemTypes(inputItems))
+	require.Equal(t, "user", asStringAny(inputItems.Data[0]["role"]))
+	require.Equal(t, "What is the code?", messageTextFromPayload(inputItems.Data[0]))
+	require.Equal(t, "compaction", asStringAny(inputItems.Data[1]["type"]))
+	require.NotEmpty(t, asStringAny(inputItems.Data[1]["encrypted_content"]))
 }
 
 func TestResponsesLocalWebSearchUsesProviderAndAnnotatesSources(t *testing.T) {

@@ -183,6 +183,59 @@ func TestPrepareCreateContextTrimsConversationHistoryBeforeLatestCompaction(t *t
 	require.NotContains(t, domain.MessageText(prepared.ContextItems[0]), "Very old conversation detail.")
 }
 
+func TestCreateResponseStreamAutomaticCompactionEmitsCompactionPrefix(t *testing.T) {
+	t.Parallel()
+
+	responseStore := &recordingResponseStore{
+		lineages: map[string][]domain.StoredResponse{
+			"resp_prev": {
+				{
+					ID:                   "resp_prev",
+					Model:                "test-model",
+					RequestJSON:          `{"model":"test-model","input":"Remember launch code 1234"}`,
+					NormalizedInputItems: []domain.Item{domain.NewInputTextMessage("user", "Remember launch code 1234.")},
+					EffectiveInputItems:  []domain.Item{domain.NewInputTextMessage("user", "Remember launch code 1234.")},
+					Output:               []domain.Item{domain.NewOutputTextMessage("Stored.")},
+					OutputText:           "Stored.",
+					Store:                true,
+				},
+			},
+		},
+	}
+	generator := &recordingGenerator{streamOutput: "OK"}
+	svc := service.NewResponseService(responseStore, noopConversationStore{}, generator)
+
+	var createdPrefix []domain.Item
+	response, err := svc.CreateStream(context.Background(), service.CreateResponseInput{
+		Model:              "test-model",
+		Input:              json.RawMessage(`"What is the launch code?"`),
+		PreviousResponseID: "resp_prev",
+		ContextManagement:  json.RawMessage(`[{"type":"compaction","compact_threshold":1}]`),
+		RequestJSON:        `{"model":"test-model","previous_response_id":"resp_prev","input":"What is the launch code?","context_management":[{"type":"compaction","compact_threshold":1}],"stream":true}`,
+	}, service.StreamHooks{
+		OnCreated: func(_ domain.Response, outputPrefix []domain.Item) error {
+			createdPrefix = append([]domain.Item(nil), outputPrefix...)
+			return nil
+		},
+	})
+	require.NoError(t, err)
+
+	require.Len(t, generator.contexts, 1)
+	require.Len(t, generator.contexts[0], 2)
+	require.Equal(t, "system", generator.contexts[0][0].Role)
+	require.Contains(t, domain.MessageText(generator.contexts[0][0]), "Compacted prior context summary")
+	require.Contains(t, domain.MessageText(generator.contexts[0][0]), "launch code 1234")
+	require.Equal(t, "user", generator.contexts[0][1].Role)
+	require.Equal(t, "What is the launch code?", domain.MessageText(generator.contexts[0][1]))
+
+	require.Len(t, createdPrefix, 1)
+	require.Equal(t, "compaction", createdPrefix[0].Type)
+
+	require.Len(t, response.Output, 2)
+	require.Equal(t, "compaction", response.Output[0].Type)
+	require.Equal(t, "message", response.Output[1].Type)
+}
+
 type noopGenerator struct{}
 
 func (noopGenerator) Generate(context.Context, string, []domain.Item, map[string]json.RawMessage) (string, error) {
@@ -194,7 +247,8 @@ func (noopGenerator) GenerateStream(context.Context, string, []domain.Item, map[
 }
 
 type recordingGenerator struct {
-	contexts [][]domain.Item
+	contexts     [][]domain.Item
+	streamOutput string
 }
 
 func (g *recordingGenerator) Generate(_ context.Context, _ string, items []domain.Item, _ map[string]json.RawMessage) (string, error) {
@@ -203,7 +257,16 @@ func (g *recordingGenerator) Generate(_ context.Context, _ string, items []domai
 	return "OK", nil
 }
 
-func (g *recordingGenerator) GenerateStream(context.Context, string, []domain.Item, map[string]json.RawMessage, func(string) error) error {
+func (g *recordingGenerator) GenerateStream(_ context.Context, _ string, items []domain.Item, _ map[string]json.RawMessage, onDelta func(string) error) error {
+	copied := append([]domain.Item(nil), items...)
+	g.contexts = append(g.contexts, copied)
+	output := g.streamOutput
+	if output == "" {
+		output = "OK"
+	}
+	if onDelta != nil {
+		return onDelta(output)
+	}
 	return nil
 }
 

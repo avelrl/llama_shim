@@ -53,18 +53,18 @@ The intended V2 framing is conservative:
   Persist enough derived state so `previous_response_id` and `conversation`
   follow-up turns continue from the compacted context rather than the pre-cut
   window.
-- [ ] Create-stream behavior
+- [x] Create-stream behavior
   Emit a generic compaction output item before the final assistant output and
   keep the choreography honest as a shim-local subset.
-- [ ] Retrieve-stream replay
+- [x] Retrieve-stream replay
   Replay the stored compaction item and final assistant output consistently.
-- [ ] Mode behavior
+- [x] Mode behavior
   Re-check `prefer_local`, `prefer_upstream`, and `local_only` behavior so the
   automatic path does not silently change routing promises.
-- [ ] Integration coverage
+- [x] Integration coverage
   Cover non-stream happy path, stream happy path, `previous_response_id`
   follow-up, conversation follow-up, and main mode/validation edges.
-- [ ] Docs and matrix update
+- [x] Docs and matrix update
   Update the compatibility matrix, practical docs, release notes, and OpenAPI
   wording only after the implementation and tests are aligned.
 
@@ -73,5 +73,5 @@ The intended V2 framing is conservative:
 - exact hosted encrypted compaction payload format is not required for this
   candidate
 - exact hosted SSE event choreography is not required unless fixture-backed
-- the compatibility matrix should keep this surface as not shipped until code,
-  OpenAPI, tests, and docs all line up
+- the compatibility matrix should describe only the shipped core local
+  text/stateful subset and keep exact hosted choreography out of scope

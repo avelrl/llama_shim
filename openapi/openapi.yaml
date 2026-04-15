@@ -2315,11 +2315,12 @@ components:
         - `text.format.type=json_schema` with a limited schema subset
         - `metadata` follows the documented OpenAI string key/value limits
         - `context_management=[{"type":"compaction","compact_threshold":N}]`
-          enables a shim-local non-stream automatic compaction subset for the
-          core text/stateful local path: the shim can compact prior local
-          history before generation, prepend a `compaction` item to the final
-          output, and trim future local follow-up history from the latest
-          compaction item
+          enables a shim-local automatic compaction subset for the core
+          text/stateful local path: the shim can compact prior local history
+          before generation, prepend a `compaction` item to the final output,
+          trim future local follow-up history from the latest compaction item,
+          and for `stream=true` emit a generic `response.output_item.*`
+          lifecycle for the compaction item and final assistant output
         - `stream_options.include_obfuscation` for shim-owned SSE and replay
         - pragmatic local `file_search` execution with:
           one `tools[]` entry of `type=file_search`, local `vector_store_ids`,
@@ -2438,17 +2439,20 @@ components:
         policy subset:
         - `[{ "type": "compaction", "compact_threshold": <positive integer> }]`
 
-        Current shim-local execution supports a conservative non-stream subset
-        on the core local text/stateful path:
+        Current shim-local execution supports a conservative core
+        text/stateful subset:
         - compact prior local history before generation when the estimated
           rendered context exceeds the threshold
         - prepend the resulting `compaction` item to the final response output
         - trim future local follow-up history from the latest compaction item
+        - for `stream=true`, emit a generic `response.output_item.*` lifecycle
+          for the compaction item and final assistant output, and replay that
+          stored order through `GET /v1/responses/{id}?stream=true`
 
-        Streamed create and exact hosted SSE choreography for automatic
-        compaction remain out of scope for this subset. Requests that do not
-        fit the local subset can still proxy upstream according to
-        `responses.mode`.
+        Exact hosted encrypted payload parity and exact hosted SSE choreography
+        for automatic compaction remain out of scope for this subset.
+        Requests that do not fit the local subset can still proxy upstream
+        according to `responses.mode`.
       items:
         $ref: "#/components/schemas/ResponseContextManagementCompactionPolicy"
     ResponseContextManagementCompactionPolicy:

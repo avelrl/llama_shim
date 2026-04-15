@@ -58,7 +58,7 @@ type PreparedResponseContext struct {
 }
 
 type StreamHooks struct {
-	OnCreated func(response domain.Response) error
+	OnCreated func(response domain.Response, outputPrefix []domain.Item) error
 	OnDelta   func(delta string) error
 }
 
@@ -359,6 +359,10 @@ func (s *ResponseService) CreateStream(ctx context.Context, input CreateResponse
 	if err != nil {
 		return domain.Response{}, err
 	}
+	prepared, err = s.applyAutomaticCompaction(input, prepared)
+	if err != nil {
+		return domain.Response{}, err
+	}
 	generationContext, err := domain.ProjectLocalTextGenerationContext(prepared.ContextItems)
 	if err != nil {
 		return domain.Response{}, err
@@ -389,7 +393,8 @@ func (s *ResponseService) CreateStream(ctx context.Context, input CreateResponse
 	}
 	created = domain.HydrateResponseRequestSurface(created, input.RequestJSON)
 	if hooks.OnCreated != nil {
-		if err := hooks.OnCreated(created); err != nil {
+		outputPrefix := append([]domain.Item(nil), prepared.OutputPrefix...)
+		if err := hooks.OnCreated(created, outputPrefix); err != nil {
 			return domain.Response{}, err
 		}
 	}
