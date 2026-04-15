@@ -92,6 +92,20 @@ When updating [`docs/v2-scope.md`](docs/v2-scope.md):
   silently widening the V2 claim.
 - Use exact dates when re-validating the scope wording against docs.
 
+## Scope triage rules
+
+- Do not move work out of V2 merely because exact hosted parity is unavailable.
+  If public docs define a core behavior for a surface already claimed by V2,
+  and the missing behavior materially affects practical functionality, keep it
+  in V2 as a conservative shim-local subset.
+- Use [`docs/compatibility-matrix.md`](docs/compatibility-matrix.md) as the
+  live source of truth for status labels such as `Implemented`, `Broad subset`,
+  `Shim-owned`, and `V3`.
+- Use [`docs/v3-scope.md`](docs/v3-scope.md) for parity-expansion or backend-
+  expansion work that is useful but not required for the current V2 contract.
+- Use [`docs/v4-scope.md`](docs/v4-scope.md) for shim-owned extensions and
+  plugin/backend architecture that should not be framed as OpenAI API parity.
+
 ## Implementation rules for this repo
 
 - For Responses and Conversations work, check both guide pages and API reference pages.
@@ -106,6 +120,20 @@ When updating [`docs/v2-scope.md`](docs/v2-scope.md):
   repair/validation compatibility layer,
   and true constrained decoding/runtime parity.
 - For `responses.mode`, verify behavior in `prefer_local`, `prefer_upstream`, and `local_only` when the task changes fallback behavior.
+- For compaction or other cross-turn state-carrying features, verify all of:
+  non-stream create, create-stream, retrieve-stream, `previous_response_id`,
+  `conversation`, `/v1/responses/{id}/input_items`, and `responses.mode`.
+- For tool-routing work, distinguish between:
+  shim-local subset,
+  proxy-only compatibility bridge,
+  and exact hosted parity.
+  In particular, keep `mcp.server_url` separate from `mcp.connector_id`, and
+  keep hosted/server `tool_search` separate from client-executed
+  `tool_search_output` flows.
+- For stored Chat Completions work, treat these as separate scopes:
+  local shadow-store ownership,
+  streamed shadow-store reconstruction,
+  and optional upstream history merge/bridge behavior.
 
 ## Before calling a task done
 
