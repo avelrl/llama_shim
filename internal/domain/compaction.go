@@ -101,6 +101,23 @@ func ExpandSyntheticCompactionItems(items []Item) ([]Item, error) {
 	return out, nil
 }
 
+func TrimItemsBeforeLatestCompaction(items []Item) []Item {
+	if len(items) == 0 {
+		return nil
+	}
+
+	lastCompaction := -1
+	for idx, item := range items {
+		if item.Type == "compaction" {
+			lastCompaction = idx
+		}
+	}
+	if lastCompaction <= 0 {
+		return append([]Item(nil), items...)
+	}
+	return append([]Item(nil), items[lastCompaction:]...)
+}
+
 func BuildSyntheticCompactionSummary(items []Item) string {
 	const (
 		maxLines       = 16

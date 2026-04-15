@@ -123,31 +123,32 @@ func buildResponsesCreateRouteInputs(
 	localCodeInterpreter LocalCodeInterpreterRuntimeConfig,
 	hasLocalMCPState bool,
 ) responsesCreateRouteInputs {
+	localContextManagement := hasLocalContextManagementRequest(rawFields)
 	localMCPSupported := supportsLocalMCP(rawFields)
 	localMCPConnector := hasConnectorMCPTools(rawFields)
 	localMCPUnsupported := hasUnsupportedLocalMCPTools(rawFields)
 
 	return responsesCreateRouteInputs{
 		HasLocalState:                      hasLocalState,
-		LocalToolLoop:                      supportsLocalToolLoop(rawFields),
-		LocalToolSearchRequested:           hasLocalToolSearchRequest(rawFields),
-		LocalToolSearch:                    supportsLocalToolSearch(rawFields),
-		LocalFileSearchRequested:           isLocalFileSearchToolRequest(rawFields),
-		LocalFileSearch:                    supportsLocalFileSearch(rawFields),
-		LocalWebSearchRequested:            isLocalWebSearchToolRequest(rawFields),
+		LocalToolLoop:                      !localContextManagement && supportsLocalToolLoop(rawFields),
+		LocalToolSearchRequested:           !localContextManagement && hasLocalToolSearchRequest(rawFields),
+		LocalToolSearch:                    !localContextManagement && supportsLocalToolSearch(rawFields),
+		LocalFileSearchRequested:           !localContextManagement && isLocalFileSearchToolRequest(rawFields),
+		LocalFileSearch:                    !localContextManagement && supportsLocalFileSearch(rawFields),
+		LocalWebSearchRequested:            !localContextManagement && isLocalWebSearchToolRequest(rawFields),
 		LocalWebSearchRuntimeEnabled:       webSearchProvider != nil,
-		LocalWebSearch:                     supportsLocalWebSearch(rawFields, webSearchProvider),
-		LocalImageGenerationRequested:      isLocalImageGenerationToolRequest(rawFields),
+		LocalWebSearch:                     !localContextManagement && supportsLocalWebSearch(rawFields, webSearchProvider),
+		LocalImageGenerationRequested:      !localContextManagement && isLocalImageGenerationToolRequest(rawFields),
 		LocalImageGenerationRuntimeEnabled: imageGenerationProvider != nil,
-		LocalImageGeneration:               supportsLocalImageGeneration(rawFields, imageGenerationProvider),
-		LocalComputerRequested:             isLocalComputerToolRequest(rawFields),
+		LocalImageGeneration:               !localContextManagement && supportsLocalImageGeneration(rawFields, imageGenerationProvider),
+		LocalComputerRequested:             !localContextManagement && isLocalComputerToolRequest(rawFields),
 		LocalComputerRuntimeEnabled:        localComputer.Enabled(),
-		LocalComputer:                      supportsLocalComputer(rawFields, localComputer),
-		LocalMCPRequested:                  hasDeclaredMCPTools(rawFields),
-		LocalMCP:                           localMCPSupported || localMCPUnsupported || hasLocalMCPApprovalResponse(rawFields) || (hasLocalMCPState && !localMCPConnector),
-		LocalCodeInterpreterRequested:      isLocalCodeInterpreterToolRequest(rawFields),
+		LocalComputer:                      !localContextManagement && supportsLocalComputer(rawFields, localComputer),
+		LocalMCPRequested:                  !localContextManagement && hasDeclaredMCPTools(rawFields),
+		LocalMCP:                           !localContextManagement && (localMCPSupported || localMCPUnsupported || hasLocalMCPApprovalResponse(rawFields) || (hasLocalMCPState && !localMCPConnector)),
+		LocalCodeInterpreterRequested:      !localContextManagement && isLocalCodeInterpreterToolRequest(rawFields),
 		LocalCodeInterpreterRuntimeEnabled: localCodeInterpreter.Enabled(),
-		LocalCodeInterpreter:               supportsLocalCodeInterpreter(rawFields, localCodeInterpreter),
+		LocalCodeInterpreter:               !localContextManagement && supportsLocalCodeInterpreter(rawFields, localCodeInterpreter),
 		LocalSupported:                     supportsLocalShimState(rawFields),
 	}
 }

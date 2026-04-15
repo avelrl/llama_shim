@@ -43,13 +43,13 @@ The intended V2 framing is conservative:
 - [x] Request contract and OpenAPI
   Accept `context_management.compact_threshold` on `POST /v1/responses`,
   validate the supported local subset, and keep unsupported fields explicit.
-- [ ] Local threshold decision
+- [x] Local threshold decision
   Evaluate the effective local context before generation and trigger automatic
   compaction when the threshold is crossed.
-- [ ] Non-stream create path
+- [x] Non-stream create path
   Run automatic compaction before local generation, rebuild the effective
   context, and produce the final assistant output from the compacted state.
-- [ ] Stateful follow-up behavior
+- [x] Stateful follow-up behavior
   Persist enough derived state so `previous_response_id` and `conversation`
   follow-up turns continue from the compacted context rather than the pre-cut
   window.

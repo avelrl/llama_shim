@@ -2315,9 +2315,11 @@ components:
         - `text.format.type=json_schema` with a limited schema subset
         - `metadata` follows the documented OpenAI string key/value limits
         - `context_management=[{"type":"compaction","compact_threshold":N}]`
-          is accepted as a docs-aligned request contract and can still proxy
-          upstream, but shim-local automatic server-side compaction is not yet
-          executed in the local runtime
+          enables a shim-local non-stream automatic compaction subset for the
+          core text/stateful local path: the shim can compact prior local
+          history before generation, prepend a `compaction` item to the final
+          output, and trim future local follow-up history from the latest
+          compaction item
         - `stream_options.include_obfuscation` for shim-owned SSE and replay
         - pragmatic local `file_search` execution with:
           one `tools[]` entry of `type=file_search`, local `vector_store_ids`,
@@ -2436,9 +2438,17 @@ components:
         policy subset:
         - `[{ "type": "compaction", "compact_threshold": <positive integer> }]`
 
-        The shim does not yet execute automatic server-side compaction in the
-        local runtime. Requests using this field can still proxy upstream
-        according to `responses.mode`.
+        Current shim-local execution supports a conservative non-stream subset
+        on the core local text/stateful path:
+        - compact prior local history before generation when the estimated
+          rendered context exceeds the threshold
+        - prepend the resulting `compaction` item to the final response output
+        - trim future local follow-up history from the latest compaction item
+
+        Streamed create and exact hosted SSE choreography for automatic
+        compaction remain out of scope for this subset. Requests that do not
+        fit the local subset can still proxy upstream according to
+        `responses.mode`.
       items:
         $ref: "#/components/schemas/ResponseContextManagementCompactionPolicy"
     ResponseContextManagementCompactionPolicy:

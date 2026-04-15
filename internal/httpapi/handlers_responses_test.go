@@ -317,15 +317,35 @@ func TestSelectResponsesCreateRoute(t *testing.T) {
 	}
 }
 
-func TestSupportsLocalShimStateRejectsContextManagementUntilAutomaticCompactionShips(t *testing.T) {
+func TestSupportsLocalShimStateAcceptsContextManagementCompactionPolicy(t *testing.T) {
 	rawFields := map[string]json.RawMessage{
 		"model":              json.RawMessage(`"test-model"`),
 		"input":              json.RawMessage(`"hello"`),
 		"context_management": json.RawMessage(`[{"type":"compaction","compact_threshold":200000}]`),
 	}
 
-	require.False(t, supportsLocalShimState(rawFields))
-	require.Equal(t, []string{"context_management"}, unsupportedLocalShimFields(rawFields))
+	require.True(t, supportsLocalShimState(rawFields))
+}
+
+func TestBuildResponsesCreateRouteInputsSuppressesLocalToolRoutesWhenContextManagementRequested(t *testing.T) {
+	inputs := buildResponsesCreateRouteInputs(
+		false,
+		map[string]json.RawMessage{
+			"model":              json.RawMessage(`"test-model"`),
+			"input":              json.RawMessage(`"hello"`),
+			"context_management": json.RawMessage(`[{"type":"compaction","compact_threshold":200000}]`),
+			"tools":              json.RawMessage(`[{"type":"web_search"}]`),
+		},
+		nil,
+		nil,
+		LocalComputerRuntimeConfig{},
+		LocalCodeInterpreterRuntimeConfig{},
+		false,
+	)
+
+	require.False(t, inputs.LocalWebSearchRequested)
+	require.False(t, inputs.LocalWebSearch)
+	require.False(t, inputs.LocalSupported)
 }
 
 func TestShouldRetryLocalStateWithDirectProxyBody(t *testing.T) {

@@ -4668,16 +4668,54 @@ func TestResponsesLocalOnlyWebSearchPreviewRejectsFiltersWhenBackendExists(t *te
 	require.NotContains(t, asStringAny(errorPayload["message"]), "responses.web_search.backend")
 }
 
-func TestResponsesLocalOnlyRejectsContextManagementUntilAutomaticCompactionShips(t *testing.T) {
+func TestResponsesLocalOnlyAutomaticCompactionPrependsCompactionItem(t *testing.T) {
 	app := testutil.NewTestAppWithResponsesMode(t, config.ResponsesModeLocalOnly)
 
-	status, payload := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+	firstStatus, firstPayload := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
 		"model": "test-model",
-		"input": "hello",
+		"input": "Remember launch code 1234.",
+	})
+	require.Equal(t, http.StatusOK, firstStatus)
+	previousResponseID := asStringAny(firstPayload["id"])
+	require.NotEmpty(t, previousResponseID)
+
+	status, payload := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model":                "test-model",
+		"previous_response_id": previousResponseID,
+		"input":                "What is the launch code?",
 		"context_management": []map[string]any{
 			{
 				"type":              "compaction",
-				"compact_threshold": 200000,
+				"compact_threshold": 1,
+			},
+		},
+	})
+
+	require.Equal(t, http.StatusOK, status)
+	output, ok := payload["output"].([]any)
+	require.True(t, ok)
+	require.Len(t, output, 2)
+
+	compactionItem, ok := output[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "compaction", asStringAny(compactionItem["type"]))
+
+	messageItem, ok := output[1].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "message", asStringAny(messageItem["type"]))
+}
+
+func TestResponsesLocalOnlyRejectsContextManagementStreamingUntilStreamSupportShips(t *testing.T) {
+	app := testutil.NewTestAppWithResponsesMode(t, config.ResponsesModeLocalOnly)
+
+	status, payload := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model":  "test-model",
+		"input":  "hello",
+		"stream": true,
+		"context_management": []map[string]any{
+			{
+				"type":              "compaction",
+				"compact_threshold": 1,
 			},
 		},
 	})
@@ -4687,7 +4725,7 @@ func TestResponsesLocalOnlyRejectsContextManagementUntilAutomaticCompactionShips
 	require.True(t, ok)
 	require.Equal(t, "invalid_request_error", asStringAny(errorPayload["type"]))
 	require.Contains(t, asStringAny(errorPayload["message"]), "context_management")
-	require.Contains(t, asStringAny(errorPayload["message"]), "responses.mode=local_only")
+	require.Contains(t, asStringAny(errorPayload["message"]), "stream=true")
 }
 
 func TestResponsesLocalWebSearchUsesProviderAndAnnotatesSources(t *testing.T) {

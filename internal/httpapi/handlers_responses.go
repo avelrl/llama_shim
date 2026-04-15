@@ -124,6 +124,18 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 	))
 	generationOptions := buildGenerationOptions(rawFields)
 	if request.Stream != nil && *request.Stream {
+		if hasLocalContextManagementRequest(rawFields) {
+			if h.responsesMode == config.ResponsesModeLocalOnly {
+				h.writeError(w, r, domain.NewValidationError("context_management", "shim-local automatic context_management compaction is not yet supported for stream=true"))
+				return
+			}
+			if hasLocalState {
+				h.createStreamViaUpstream(w, r, request, requestJSON, rawFields, streamOptions)
+				return
+			}
+			h.proxyCreateStream(w, r, request, requestJSON, rawFields, streamOptions)
+			return
+		}
 		switch createRoute {
 		case responsesCreateRouteProxy:
 			h.proxyCreateStream(w, r, request, requestJSON, rawFields, streamOptions)
@@ -437,6 +449,7 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 			Input:              request.Input,
 			TextConfig:         request.Text,
 			Metadata:           request.Metadata,
+			ContextManagement:  request.ContextManagement,
 			Store:              request.Store,
 			Stream:             request.Stream,
 			Background:         request.Background,
@@ -608,6 +621,7 @@ func (h *responseHandler) createLocalStateViaUpstream(ctx context.Context, reque
 		Input:              request.Input,
 		TextConfig:         request.Text,
 		Metadata:           request.Metadata,
+		ContextManagement:  request.ContextManagement,
 		Store:              request.Store,
 		Stream:             request.Stream,
 		Background:         request.Background,
@@ -883,6 +897,7 @@ func (h *responseHandler) createStream(w http.ResponseWriter, r *http.Request, r
 		Input:              request.Input,
 		TextConfig:         request.Text,
 		Metadata:           request.Metadata,
+		ContextManagement:  request.ContextManagement,
 		Store:              request.Store,
 		Stream:             request.Stream,
 		Background:         request.Background,
@@ -1297,6 +1312,7 @@ var shimLocalStateBaseFields = map[string]struct{}{
 	"input":                {},
 	"text":                 {},
 	"metadata":             {},
+	"context_management":   {},
 	"store":                {},
 	"stream":               {},
 	"stream_options":       {},
@@ -1354,6 +1370,15 @@ func supportsLocalDerivedResponsesState(rawFields map[string]json.RawMessage) bo
 		return false
 	}
 	return true
+}
+
+func hasLocalContextManagementRequest(rawFields map[string]json.RawMessage) bool {
+	raw, ok := rawFields["context_management"]
+	if !ok {
+		return false
+	}
+	trimmed := bytes.TrimSpace(raw)
+	return len(trimmed) > 0 && !bytes.Equal(trimmed, []byte("null"))
 }
 
 func unsupportedLocalShimFields(rawFields map[string]json.RawMessage) []string {
@@ -1663,6 +1688,7 @@ func prepareShadowStore(ctx context.Context, prepare func(context.Context, servi
 		Input:              request.Input,
 		TextConfig:         request.Text,
 		Metadata:           request.Metadata,
+		ContextManagement:  request.ContextManagement,
 		Store:              request.Store,
 		Stream:             request.Stream,
 		Background:         request.Background,

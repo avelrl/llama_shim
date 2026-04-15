@@ -49,7 +49,7 @@ Practical usage guides live in [guides/README.md](guides/README.md).
 | `GET/POST/DELETE /v1/conversations/{id}/items*` | Implemented | Keep canonical append/delete flow centralized | |
 | `/v1/responses/input_tokens` | Broad subset | Keep “local deterministic estimate” wording explicit | V2 does not require exact upstream tokenization parity |
 | `/v1/responses/compact` | Broad subset | Keep standalone compaction subset explicit | Exact hosted encrypted compaction state is not a V2 requirement |
-| server-side compaction via `context_management.compact_threshold` | Not supported in V2 | Keep the non-goal explicit until implementation lands | The documented request policy shape is now accepted and validated, but shim-local automatic compaction is still tracked in [v2-followups.md](v2-followups.md) and is not a compatibility claim yet |
+| server-side compaction via `context_management.compact_threshold` | Not supported in V2 | Keep the non-goal explicit until implementation lands | The shim now accepts the documented request policy shape and executes a conservative non-stream local subset for the core text/stateful path; streamed create/retrieve choreography and broader parity are still tracked in [v2-followups.md](v2-followups.md) and are not a compatibility claim yet |
 
 ## Chat Completions
 

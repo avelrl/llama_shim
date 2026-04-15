@@ -38,6 +38,7 @@ type CreateResponseInput struct {
 	Input              json.RawMessage
 	TextConfig         json.RawMessage
 	Metadata           json.RawMessage
+	ContextManagement  json.RawMessage
 	Store              *bool
 	Stream             *bool
 	Background         *bool
@@ -77,6 +78,10 @@ func NewResponseService(responses ResponseStore, conversations ConversationStore
 
 func (s *ResponseService) Create(ctx context.Context, input CreateResponseInput) (domain.Response, error) {
 	prepared, err := s.prepareCreate(ctx, input)
+	if err != nil {
+		return domain.Response{}, err
+	}
+	prepared, err = s.applyAutomaticCompaction(input, prepared)
 	if err != nil {
 		return domain.Response{}, err
 	}
@@ -202,6 +207,7 @@ func (s *ResponseService) prepareResponseContext(ctx context.Context, input Crea
 	default:
 		baseItems = nil
 	}
+	baseItems = domain.TrimItemsBeforeLatestCompaction(baseItems)
 	baseItems, err = domain.ExpandSyntheticCompactionItems(baseItems)
 	if err != nil {
 		return PreparedResponseContext{}, err
@@ -455,6 +461,9 @@ func (s *ResponseService) completeCreate(ctx context.Context, prepared preparedR
 	if err != nil {
 		return domain.Response{}, err
 	}
+	if len(prepared.OutputPrefix) > 0 {
+		response.Output = append(append([]domain.Item(nil), prepared.OutputPrefix...), response.Output...)
+	}
 	response.Output, err = domain.EnsureItemIDs(response.Output)
 	if err != nil {
 		return domain.Response{}, err
@@ -499,8 +508,92 @@ type preparedResponse struct {
 	NormalizedInput []domain.Item
 	EffectiveInput  []domain.Item
 	ContextItems    []domain.Item
+	OutputPrefix    []domain.Item
 	Conversation    domain.Conversation
 	CreatedAt       time.Time
+}
+
+func (s *ResponseService) applyAutomaticCompaction(input CreateResponseInput, prepared preparedResponse) (preparedResponse, error) {
+	threshold, ok, err := parseCompactionThreshold(input.ContextManagement)
+	if err != nil || !ok {
+		return prepared, err
+	}
+
+	inputTokens, err := domain.EstimateSyntheticTokenCount(prepared.ContextItems)
+	if err != nil {
+		return prepared, err
+	}
+	if inputTokens <= threshold {
+		return prepared, nil
+	}
+
+	baseItems := priorEffectiveItems(prepared.EffectiveInput, prepared.NormalizedInput)
+	if len(baseItems) == 0 {
+		return prepared, nil
+	}
+
+	compactionItem, expandedCompaction, err := buildAutomaticCompactionItems(baseItems)
+	if err != nil {
+		return prepared, err
+	}
+
+	prepared.EffectiveInput = make([]domain.Item, 0, 1+len(prepared.NormalizedInput))
+	prepared.EffectiveInput = append(prepared.EffectiveInput, compactionItem)
+	prepared.EffectiveInput = append(prepared.EffectiveInput, prepared.NormalizedInput...)
+	prepared.ContextItems = domain.AppendCurrentRequestContext(expandedCompaction, input.Instructions, prepared.NormalizedInput)
+	prepared.OutputPrefix = append(prepared.OutputPrefix, compactionItem)
+	return prepared, nil
+}
+
+func parseCompactionThreshold(raw json.RawMessage) (int, bool, error) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return 0, false, nil
+	}
+
+	var entries []struct {
+		Type             string `json:"type"`
+		CompactThreshold int    `json:"compact_threshold"`
+	}
+	if err := json.Unmarshal(trimmed, &entries); err != nil {
+		return 0, false, domain.NewValidationError("context_management", "context_management must be an array")
+	}
+	for _, entry := range entries {
+		if strings.TrimSpace(entry.Type) != "compaction" {
+			continue
+		}
+		if entry.CompactThreshold <= 0 {
+			return 0, false, domain.NewValidationError("context_management", "context_management compaction policy requires compact_threshold > 0")
+		}
+		return entry.CompactThreshold, true, nil
+	}
+	return 0, false, nil
+}
+
+func priorEffectiveItems(effectiveInput, normalizedInput []domain.Item) []domain.Item {
+	if len(effectiveInput) == 0 {
+		return nil
+	}
+	if len(normalizedInput) == 0 {
+		return append([]domain.Item(nil), effectiveInput...)
+	}
+	if len(effectiveInput) <= len(normalizedInput) {
+		return nil
+	}
+	return append([]domain.Item(nil), effectiveInput[:len(effectiveInput)-len(normalizedInput)]...)
+}
+
+func buildAutomaticCompactionItems(baseItems []domain.Item) (domain.Item, []domain.Item, error) {
+	summary := domain.BuildSyntheticCompactionSummary(baseItems)
+	compactionItem, err := domain.NewSyntheticCompactionItem(summary, len(baseItems))
+	if err != nil {
+		return domain.Item{}, nil, err
+	}
+	expanded, err := domain.ExpandSyntheticCompactionItems([]domain.Item{compactionItem})
+	if err != nil {
+		return domain.Item{}, nil, err
+	}
+	return compactionItem, expanded, nil
 }
 
 func (s *ResponseService) Get(ctx context.Context, id string) (domain.Response, error) {

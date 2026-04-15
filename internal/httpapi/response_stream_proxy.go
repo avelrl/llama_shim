@@ -156,6 +156,7 @@ func (h *responseHandler) createStreamViaUpstream(w http.ResponseWriter, r *http
 		Input:              request.Input,
 		TextConfig:         request.Text,
 		Metadata:           request.Metadata,
+		ContextManagement:  request.ContextManagement,
 		Store:              request.Store,
 		Stream:             request.Stream,
 		Background:         request.Background,
