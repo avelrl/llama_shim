@@ -29,6 +29,8 @@ v1 supports:
 - per-surface status: [docs/compatibility-matrix.md](docs/compatibility-matrix.md)
 - frozen V2 release ledger: [docs/v2-scope.md](docs/v2-scope.md)
 - post-V2 capability expansion parking lot: [docs/v3-scope.md](docs/v3-scope.md)
+- extension and plugin directions after the compatibility core:
+  [docs/v4-scope.md](docs/v4-scope.md)
 
 ## Documentation
 
@@ -36,6 +38,7 @@ v1 supports:
 - V2 release notes: [docs/release-notes-v2.md](docs/release-notes-v2.md)
 - API contract and boundaries: [docs/compatibility-matrix.md](docs/compatibility-matrix.md)
 - V2 release scope: [docs/v2-scope.md](docs/v2-scope.md)
+- V4 extensions and plugin model: [docs/v4-scope.md](docs/v4-scope.md)
 - OpenAPI spec: [openapi/openapi.yaml](openapi/openapi.yaml)
 
 ## Architecture

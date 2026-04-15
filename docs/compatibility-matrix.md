@@ -14,7 +14,6 @@ Status legend:
 
 - `Implemented`: shipped and not currently blocking V2
 - `Broad subset`: usable and documented, but intentionally not full hosted parity
-- `Not supported in V2`: explicit non-goal for this release
 - `Shim-owned`: useful local surface, but not an OpenAI compatibility claim
 - `V3`: intentionally moved out of the V2 ship bar
 

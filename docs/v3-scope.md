@@ -9,6 +9,9 @@ V2 is the broad compatibility facade release. V3 is where the project can
 expand capabilities, add more backend diversity, and take on more expensive
 runtime work without muddying the V2 release contract.
 
+For work that goes beyond compatibility and into opinionated memory or plugin
+architecture, see [v4-scope.md](v4-scope.md).
+
 ## V3 Entry Criteria
 
 V3 starts from a frozen V2 release ledger and a current compatibility matrix:
@@ -30,7 +33,9 @@ These items are useful, but they are no longer part of the V2 ship bar:
   docs-backed and trace-backed core shim families
 - exact hosted/native tool choreography and failure/status fidelity where docs
   alone do not pin the wire behavior down
-- server-side compaction via `context_management.compact_threshold`
+- exact hosted parity for server-side compaction via
+  `context_management.compact_threshold`, including encrypted payload fidelity
+  and hosted stream choreography
 - true constrained decoder/runtime for `grammar` / `regex` custom tools
 - multi-tenant authz / tenanting / shared rate limiting
 - richer exporters, dashboards, admin tooling, and governance-heavy storage work

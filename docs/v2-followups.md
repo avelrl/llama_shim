@@ -2,9 +2,10 @@
 
 Last updated: April 15, 2026.
 
-This document tracks narrowly scoped follow-up work that may still land under
-the V2 umbrella without rewriting the frozen V2 release ledger in
-[v2-scope.md](v2-scope.md).
+This document records narrowly scoped V2 follow-up work that landed after the
+frozen release ledger in [v2-scope.md](v2-scope.md) was split out.
+
+It is now a closed implementation ledger, not an open blocker list.
 
 The source of truth for the current shipped status remains
 [compatibility-matrix.md](compatibility-matrix.md). A checkbox in this file is
@@ -20,7 +21,7 @@ The items in this document were re-checked on April 15, 2026 against:
 - official API reference for `/v1/responses`
 - official API reference for `/v1/responses/compact`
 
-## Candidate: Automatic Server-Side Compaction
+## Completed V2 Follow-Up: Automatic Server-Side Compaction
 
 Goal: add a docs-aligned local subset of automatic server-side compaction for
 `POST /v1/responses` via `context_management.compact_threshold`.
@@ -68,10 +69,14 @@ The intended V2 framing is conservative:
   Update the compatibility matrix, practical docs, release notes, and OpenAPI
   wording only after the implementation and tests are aligned.
 
-### Conscious Boundaries While This Is In Flight
+### Conscious Boundaries That Still Remain
 
 - exact hosted encrypted compaction payload format is not required for this
-  candidate
+  shipped subset
 - exact hosted SSE event choreography is not required unless fixture-backed
 - the compatibility matrix should describe only the shipped core local
   text/stateful subset and keep exact hosted choreography out of scope
+
+This item is complete for the currently claimed V2 subset. Any future work on
+exact hosted parity belongs in [compatibility-matrix.md](compatibility-matrix.md)
+and [v3-scope.md](v3-scope.md), not in a reopened V2 blocker list.
