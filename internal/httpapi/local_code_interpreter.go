@@ -720,11 +720,10 @@ func (h *responseHandler) executeLocalCodeInterpreter(ctx context.Context, prepa
 			return localCodeInterpreterExecutionResult{}, newLocalCodeInterpreterExecutionFailure(session.ID, result.Logs, execErr)
 		}
 		var validationErr *domain.ValidationError
-		if errors.As(err, &validationErr) {
-			canReuse = false
-		} else if errors.Is(err, sandbox.ErrDisabled) {
-			return localCodeInterpreterExecutionResult{}, localCodeInterpreterDisabledError()
-		} else {
+		if !errors.As(err, &validationErr) {
+			if errors.Is(err, sandbox.ErrDisabled) {
+				return localCodeInterpreterExecutionResult{}, localCodeInterpreterDisabledError()
+			}
 			return localCodeInterpreterExecutionResult{}, newLocalCodeInterpreterExecutionFailure(sessionID, "", err)
 		}
 	}

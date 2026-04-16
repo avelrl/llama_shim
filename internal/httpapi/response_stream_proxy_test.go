@@ -1113,9 +1113,9 @@ func TestNormalizeCompletedToolCallEventSynthesizesToolSearchGenericReplay(t *te
 					"status":    "completed",
 					"tools": []any{
 						map[string]any{
-							"type":         "function",
-							"name":         "get_shipping_eta",
-							"description":  "Look up shipping ETA details for an order.",
+							"type":          "function",
+							"name":          "get_shipping_eta",
+							"description":   "Look up shipping ETA details for an order.",
 							"defer_loading": true,
 						},
 					},

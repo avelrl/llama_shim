@@ -8,14 +8,14 @@ import (
 )
 
 var supportedConnectorIDs = map[string]struct{}{
-	"connector_dropbox":        {},
-	"connector_gmail":          {},
-	"connector_googlecalendar": {},
-	"connector_googledrive":    {},
-	"connector_microsoftteams": {},
+	"connector_dropbox":         {},
+	"connector_gmail":           {},
+	"connector_googlecalendar":  {},
+	"connector_googledrive":     {},
+	"connector_microsoftteams":  {},
 	"connector_outlookcalendar": {},
-	"connector_outlookemail":   {},
-	"connector_sharepoint":     {},
+	"connector_outlookemail":    {},
+	"connector_sharepoint":      {},
 }
 
 func hasMCPToolDefinitions(rawFields map[string]json.RawMessage) bool {

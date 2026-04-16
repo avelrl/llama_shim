@@ -27,9 +27,9 @@ const (
 )
 
 type Config struct {
-	Backend   string
-	BaseURL   string
-	Timeout   time.Duration
+	Backend    string
+	BaseURL    string
+	Timeout    time.Duration
 	MaxResults int
 }
 
@@ -120,7 +120,7 @@ func newSearXNGProvider(cfg Config) *searXNGProvider {
 		client: &http.Client{
 			Timeout: cfg.Timeout,
 		},
-		resolveIP: net.DefaultResolver.LookupIPAddr,
+		resolveIP:  net.DefaultResolver.LookupIPAddr,
 		maxResults: cfg.MaxResults,
 	}
 	p.fetchClient = &http.Client{

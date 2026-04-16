@@ -1,15 +1,22 @@
-.PHONY: run build test maint-cleanup maint-optimize maint-vacuum maint-backup docker-build compose-up compose-down devstack-up devstack-down devstack-smoke
+.PHONY: run build lint test vet maint-cleanup maint-optimize maint-vacuum maint-backup docker-build compose-up compose-down devstack-up devstack-down devstack-smoke
 
 CONFIG ?= config.yaml
 BACKUP ?= ./.data/shim-backup.db
 IMAGE ?= llama-shim:local
 DEVSTACK_COMPOSE ?= docker-compose.devstack.yml
+GOLANGCI_LINT ?= golangci-lint
 
 run:
 	go run ./cmd/shim -config $(CONFIG)
 
 build:
 	go build ./cmd/shim ./cmd/shimctl ./cmd/upstream-sse-capture ./cmd/devstack-fixture
+
+lint:
+	$(GOLANGCI_LINT) run
+
+vet:
+	go vet ./...
 
 test:
 	go test ./...
