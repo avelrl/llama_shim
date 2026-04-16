@@ -99,10 +99,10 @@ func TestBuildLocalComputerRuntimeConfigDisabled(t *testing.T) {
 	require.Equal(t, "", runtime.Backend)
 }
 
-func TestBuildLocalCodeInterpreterRuntimeConfigUnsafeHost(t *testing.T) {
+func TestBuildLocalCodeInterpreterRuntimeConfigRejectsUnsafeHost(t *testing.T) {
 	t.Parallel()
 
-	runtime, err := buildLocalCodeInterpreterRuntimeConfig(config.Config{
+	_, err := buildLocalCodeInterpreterRuntimeConfig(config.Config{
 		ResponsesCodeInterpreterBackend:                config.ResponsesCodeInterpreterBackendUnsafeHost,
 		ResponsesCodeInterpreterPythonBinary:           "/opt/homebrew/bin/python3",
 		ResponsesCodeInterpreterTimeout:                12 * time.Second,
@@ -113,16 +113,6 @@ func TestBuildLocalCodeInterpreterRuntimeConfigUnsafeHost(t *testing.T) {
 		ResponsesCodeInterpreterGeneratedTotalBytes:    10 << 20,
 		ResponsesCodeInterpreterRemoteInputFileBytes:   25 << 20,
 	})
-	require.NoError(t, err)
-
-	backend, ok := runtime.Backend.(sandbox.UnsafeHostBackend)
-	require.True(t, ok)
-	require.Equal(t, "/opt/homebrew/bin/python3", backend.PythonBinary)
-	require.Equal(t, 12*time.Second, backend.Timeout)
-	require.Equal(t, config.ResponsesCodeInterpreterInputFileURLPolicyUnsafeAllowHTTPHTTPS, runtime.InputFileURLPolicy)
-	require.Equal(t, []string{"files.example.com"}, runtime.InputFileURLAllowHosts)
-	require.Equal(t, 5, runtime.Limits.GeneratedFiles)
-	require.Equal(t, 4<<20, runtime.Limits.GeneratedFileBytes)
-	require.Equal(t, 10<<20, runtime.Limits.GeneratedTotalBytes)
-	require.Equal(t, 25<<20, runtime.Limits.RemoteInputFileBytes)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unsupported code interpreter backend")
 }

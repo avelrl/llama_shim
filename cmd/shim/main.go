@@ -231,16 +231,6 @@ func buildLocalCodeInterpreterRuntimeConfig(cfg config.Config) (httpapi.LocalCod
 	switch cfg.ResponsesCodeInterpreterBackend {
 	case config.ResponsesCodeInterpreterBackendDisabled:
 		return httpapi.LocalCodeInterpreterRuntimeConfig{}, nil
-	case config.ResponsesCodeInterpreterBackendUnsafeHost:
-		return httpapi.LocalCodeInterpreterRuntimeConfig{
-			Backend: sandbox.UnsafeHostBackend{
-				PythonBinary: cfg.ResponsesCodeInterpreterPythonBinary,
-				Timeout:      cfg.ResponsesCodeInterpreterTimeout,
-			},
-			Limits:                 limits,
-			InputFileURLPolicy:     cfg.ResponsesCodeInterpreterInputFileURLPolicy,
-			InputFileURLAllowHosts: append([]string(nil), cfg.ResponsesCodeInterpreterInputFileURLAllowHosts...),
-		}, nil
 	case config.ResponsesCodeInterpreterBackendDocker:
 		return httpapi.LocalCodeInterpreterRuntimeConfig{
 			Backend: sandbox.DockerBackend{

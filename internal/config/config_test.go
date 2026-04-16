@@ -218,7 +218,7 @@ responses:
 	t.Setenv("RESPONSES_COMPUTER_BACKEND", "chat_completions")
 	t.Setenv("RESPONSES_CODEX_ENABLE_COMPATIBILITY", "true")
 	t.Setenv("RESPONSES_CODEX_FORCE_TOOL_CHOICE_REQUIRED", "true")
-	t.Setenv("RESPONSES_CODE_INTERPRETER_BACKEND", "unsafe_host")
+	t.Setenv("RESPONSES_CODE_INTERPRETER_BACKEND", "docker")
 	t.Setenv("RESPONSES_CODE_INTERPRETER_PYTHON_BINARY", "/usr/bin/python3")
 	t.Setenv("RESPONSES_CODE_INTERPRETER_DOCKER_BINARY", "/usr/bin/docker")
 	t.Setenv("RESPONSES_CODE_INTERPRETER_DOCKER_IMAGE", "python:3.12-alpine")
@@ -270,7 +270,7 @@ responses:
 	require.Equal(t, config.ResponsesComputerBackendChatCompletions, cfg.ResponsesComputerBackend)
 	require.True(t, cfg.ResponsesCodexEnableCompatibility)
 	require.True(t, cfg.ResponsesCodexForceToolChoiceRequired)
-	require.Equal(t, config.ResponsesCodeInterpreterBackendUnsafeHost, cfg.ResponsesCodeInterpreterBackend)
+	require.Equal(t, config.ResponsesCodeInterpreterBackendDocker, cfg.ResponsesCodeInterpreterBackend)
 	require.Equal(t, "/usr/bin/python3", cfg.ResponsesCodeInterpreterPythonBinary)
 	require.Equal(t, "/usr/bin/docker", cfg.ResponsesCodeInterpreterDockerBinary)
 	require.Equal(t, "python:3.12-alpine", cfg.ResponsesCodeInterpreterDockerImage)
@@ -342,7 +342,7 @@ func TestLoadUsesCodexSafeDefaults(t *testing.T) {
 	require.EqualValues(t, 50<<20, cfg.ResponsesCodeInterpreterRemoteInputFileBytes)
 }
 
-func TestLoadSupportsLegacyUnsafeHostAlias(t *testing.T) {
+func TestLoadRejectsLegacyUnsafeHostAlias(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
 	writeFile(t, configPath, `
 responses:
@@ -350,9 +350,22 @@ responses:
     enable_unsafe_host_executor: true
 `)
 
-	cfg, err := config.Load(configPath)
-	require.NoError(t, err)
-	require.Equal(t, config.ResponsesCodeInterpreterBackendUnsafeHost, cfg.ResponsesCodeInterpreterBackend)
+	_, err := config.Load(configPath)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "parse responses.code_interpreter.enable_unsafe_host_executor")
+}
+
+func TestLoadRejectsUnsafeHostCodeInterpreterBackend(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	writeFile(t, configPath, `
+responses:
+  code_interpreter:
+    backend: unsafe_host
+`)
+
+	_, err := config.Load(configPath)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "parse responses.code_interpreter.backend")
 }
 
 func TestLoadRejectsUnsupportedRetrievalBackend(t *testing.T) {

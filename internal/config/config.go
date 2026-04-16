@@ -140,7 +140,7 @@ func Load(configPath string) (Config, error) {
 	}
 	if cfg.ResponsesCodeInterpreterBackend == "" {
 		if v.GetBool("responses.code_interpreter.enable_unsafe_host_executor") {
-			cfg.ResponsesCodeInterpreterBackend = ResponsesCodeInterpreterBackendUnsafeHost
+			return Config{}, fmt.Errorf("parse responses.code_interpreter.enable_unsafe_host_executor: %w", strconv.ErrSyntax)
 		} else {
 			cfg.ResponsesCodeInterpreterBackend = ResponsesCodeInterpreterBackendDisabled
 		}
@@ -464,7 +464,7 @@ func parseShimAuthMode(value string) error {
 
 func parseCodeInterpreterBackend(value string) error {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case ResponsesCodeInterpreterBackendDisabled, ResponsesCodeInterpreterBackendUnsafeHost, ResponsesCodeInterpreterBackendDocker:
+	case ResponsesCodeInterpreterBackendDisabled, ResponsesCodeInterpreterBackendDocker:
 		return nil
 	default:
 		return strconv.ErrSyntax
