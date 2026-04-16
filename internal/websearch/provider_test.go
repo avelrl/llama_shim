@@ -79,3 +79,40 @@ func TestSearXNGProviderOpenPageAllowsResolvedPublicIP(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "https://example.com/path", parsed.String())
 }
+
+func TestSearXNGProviderOpenPageAllowsConfiguredBackendOrigin(t *testing.T) {
+	provider := newSearXNGProvider(Config{
+		BaseURL:    "http://fixture:8081",
+		Timeout:    defaultTimeout,
+		MaxResults: defaultMaxResults,
+	})
+	provider.resolveIP = func(context.Context, string) ([]net.IPAddr, error) {
+		return []net.IPAddr{{IP: net.ParseIP("172.18.0.2")}}, nil
+	}
+
+	parsed, err := provider.validateOpenPageURL(context.Background(), "http://fixture:8081/pages/web-search-guide")
+	require.NoError(t, err)
+	require.Equal(t, "http://fixture:8081/pages/web-search-guide", parsed.String())
+}
+
+func TestSearXNGProviderOpenPageStillRejectsOtherPrivateOrigins(t *testing.T) {
+	provider := newSearXNGProvider(Config{
+		BaseURL:    "http://fixture:8081",
+		Timeout:    defaultTimeout,
+		MaxResults: defaultMaxResults,
+	})
+	provider.resolveIP = func(_ context.Context, host string) ([]net.IPAddr, error) {
+		switch host {
+		case "fixture":
+			return []net.IPAddr{{IP: net.ParseIP("172.18.0.2")}}, nil
+		case "other":
+			return []net.IPAddr{{IP: net.ParseIP("172.18.0.3")}}, nil
+		default:
+			return nil, nil
+		}
+	}
+
+	_, err := provider.validateOpenPageURL(context.Background(), "http://other:8081/private")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "private IP")
+}

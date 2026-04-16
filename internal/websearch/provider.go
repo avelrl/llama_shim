@@ -309,6 +309,9 @@ func (p *searXNGProvider) validateOpenPageURL(ctx context.Context, rawURL string
 	if host == "" {
 		return nil, &llama.InvalidResponseError{Message: "web search result URL was missing a host"}
 	}
+	if p.isTrustedOpenPageURL(parsed) {
+		return parsed, nil
+	}
 	if host == "localhost" || strings.HasSuffix(host, ".local") {
 		return nil, &llama.InvalidResponseError{Message: "web search open_page rejected a local host"}
 	}
@@ -331,6 +334,36 @@ func (p *searXNGProvider) validateOpenPageURL(ctx context.Context, rawURL string
 		}
 	}
 	return parsed, nil
+}
+
+func (p *searXNGProvider) isTrustedOpenPageURL(candidate *neturl.URL) bool {
+	if candidate == nil {
+		return false
+	}
+	base, err := neturl.Parse(strings.TrimSpace(p.baseURL))
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(base.Scheme), strings.TrimSpace(candidate.Scheme)) &&
+		strings.EqualFold(strings.TrimSpace(base.Hostname()), strings.TrimSpace(candidate.Hostname())) &&
+		normalizedURLPort(base) == normalizedURLPort(candidate)
+}
+
+func normalizedURLPort(parsed *neturl.URL) string {
+	if parsed == nil {
+		return ""
+	}
+	if port := strings.TrimSpace(parsed.Port()); port != "" {
+		return port
+	}
+	switch strings.ToLower(strings.TrimSpace(parsed.Scheme)) {
+	case "http":
+		return "80"
+	case "https":
+		return "443"
+	default:
+		return ""
+	}
 }
 
 func isBlockedOpenPageIP(ip net.IP) bool {
