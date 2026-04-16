@@ -14,9 +14,13 @@ The dev stack consists of two processes:
 - `shim`: the normal `llama_shim` server
 - `devstack-fixture`: a deterministic helper backend that provides:
   - a `llama`-compatible text backend for local generation
+  - deterministic chat-completions planning for hosted/server `tool_search`
+    follow-up
   - a `searxng`-compatible search backend for local `web_search`
   - a deterministic OpenAI-compatible `/v1/responses` image backend for local
     `image_generation`
+  - a deterministic remote MCP server on `/mcp` and legacy `/sse` for
+    shim-local `mcp.server_url`
   - fixed HTML pages used by `open_page` and `find_in_page`
 
 The recommended path is Docker Compose, because the local `web_search`
@@ -69,6 +73,12 @@ The shim itself talks to the fixture backend over the Compose network as
 - local `file_search` over shim-owned `files` and `vector_stores`
 - local `web_search` with `search`, `open_page`, and `find_in_page`
 - local `image_generation` through the deterministic fixture backend
+- local remote `mcp` via `server_url`
+- cached remote `mcp` follow-up without repeating tools
+- streamed generic replay for remote `mcp`
+- hosted/server `tool_search` with namespace loading
+- stored `tool_search` follow-up through `function_call_output`
+- streamed generic replay for `tool_search`
 
 The goal is not to benchmark model quality. The goal is to prove that the
 stack is runnable, probeable, and reproducible.
@@ -79,6 +89,7 @@ stack is runnable, probeable, and reproducible.
 - [docker-compose.devstack.yml](../../docker-compose.devstack.yml): Compose wiring
 - [scripts/devstack-smoke.sh](../../scripts/devstack-smoke.sh): repo-owned smoke path
 - [cmd/devstack-fixture/main.go](../../cmd/devstack-fixture/main.go): deterministic fixture service
+- [internal/devstackfixture/mcp.go](../../internal/devstackfixture/mcp.go): deterministic MCP fixture transport
 
 ## Notes
 
@@ -87,3 +98,8 @@ stack is runnable, probeable, and reproducible.
 - The fixture backend is deterministic by design. If the smoke path fails, the
   failure should usually be actionable as a shim or environment issue rather
   than a model-quality fluctuation.
+- The remote MCP target for local smoke is `http://127.0.0.1:18081/mcp` on the
+  host and `http://fixture:8081/mcp` inside Compose.
+- The hosted/server `tool_search` smoke path uses a namespace-based deferred
+  tool example, matching the current OpenAI docs guidance to prefer
+  namespaces where practical.

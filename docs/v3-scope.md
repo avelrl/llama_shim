@@ -1,6 +1,6 @@
 # V3 Expansion Staging
 
-Last updated: April 15, 2026.
+Last updated: April 16, 2026.
 
 This document is the parking lot for work that did not make the V2 ship bar
 and should not be reintroduced into the frozen V2 scope.
@@ -9,9 +9,8 @@ V2 is the broad compatibility facade release. V3 is where the project can
 expand capabilities, add more backend diversity, and take on more expensive
 runtime work without muddying the V2 release contract.
 
-Before taking on new V3 backend or runtime tracks, use
-[v3-preflight.md](v3-preflight.md) for the shim-owned automation and dev-stack
-substrate that should land first.
+V3 now starts from the completed shim-owned automation and dev-stack substrate
+documented in [v3-preflight.md](v3-preflight.md).
 
 For work that goes beyond compatibility and into opinionated memory or plugin
 architecture, see [v4-scope.md](v4-scope.md).
@@ -47,8 +46,7 @@ These items are useful, but they are no longer part of the V2 ship bar:
 ## Candidate V3 Tracks
 
 The tracks below assume the small preflight substrate in
-[v3-preflight.md](v3-preflight.md) is in place or is being completed in
-parallel where it is the immediate blocker.
+[v3-preflight.md](v3-preflight.md) is already in place.
 
 ### 1. Alternative image backends
 

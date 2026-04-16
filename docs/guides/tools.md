@@ -83,8 +83,9 @@ curl http://127.0.0.1:8080/v1/responses \
         "type": "namespace",
         "name": "billing_tools",
         "description": "Billing and invoice tools.",
-        "functions": [
+        "tools": [
           {
+            "type": "function",
             "name": "get_invoice",
             "description": "Fetch one invoice.",
             "defer_loading": true,
@@ -105,6 +106,12 @@ curl http://127.0.0.1:8080/v1/responses \
 
 - The shim preserves typed output items and does not flatten everything into a
   generic text-only contract.
+- The repo dev stack exposes a deterministic remote MCP target at
+  `http://127.0.0.1:18081/mcp` on the host or `http://fixture:8081/mcp`
+  inside Compose, which is useful for smoke tests and CI.
+- The repo dev stack also smoke-tests hosted/server `tool_search` with a
+  namespace-based deferred tool example and a stored `function_call_output`
+  follow-up.
 - `connector_id` is not a local runtime in V2. It remains a proxy-only bridge.
 - Client `tool_search` is also proxy-only in V2; hosted/server `tool_search`
   is the local practical subset.

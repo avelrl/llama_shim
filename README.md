@@ -28,7 +28,7 @@ v1 supports:
   OpenAI surface already exposed by the shim
 - per-surface status: [docs/compatibility-matrix.md](docs/compatibility-matrix.md)
 - frozen V2 release ledger: [docs/v2-scope.md](docs/v2-scope.md)
-- V3 preflight substrate: [docs/v3-preflight.md](docs/v3-preflight.md)
+- completed V3 preflight substrate: [docs/v3-preflight.md](docs/v3-preflight.md)
 - post-V2 capability expansion parking lot: [docs/v3-scope.md](docs/v3-scope.md)
 - extension and plugin directions after the compatibility core:
   [docs/v4-scope.md](docs/v4-scope.md)
@@ -39,7 +39,7 @@ v1 supports:
 - V2 release notes: [docs/release-notes-v2.md](docs/release-notes-v2.md)
 - API contract and boundaries: [docs/compatibility-matrix.md](docs/compatibility-matrix.md)
 - V2 release scope: [docs/v2-scope.md](docs/v2-scope.md)
-- V3 preflight substrate: [docs/v3-preflight.md](docs/v3-preflight.md)
+- completed V3 preflight substrate: [docs/v3-preflight.md](docs/v3-preflight.md)
 - deterministic dev stack and smoke path: [docs/guides/devstack.md](docs/guides/devstack.md)
 - V3 expansion staging: [docs/v3-scope.md](docs/v3-scope.md)
 - V4 extensions and plugin model: [docs/v4-scope.md](docs/v4-scope.md)

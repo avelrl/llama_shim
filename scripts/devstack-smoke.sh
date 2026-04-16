@@ -13,6 +13,7 @@ usage() {
 Usage:
   SHIM_BASE_URL=http://127.0.0.1:18080 \
   FIXTURE_BASE_URL=http://127.0.0.1:18081 \
+  FIXTURE_INTERNAL_MCP_URL=http://fixture:8081/mcp \
   ./scripts/devstack-smoke.sh
 
 This smoke path checks:
@@ -23,6 +24,10 @@ This smoke path checks:
   5. local /v1/responses file_search
   6. local /v1/responses web_search
   7. local /v1/responses image_generation
+  8. local /v1/responses remote MCP via server_url
+  9. local /v1/responses hosted/server tool_search with namespace follow-up
+  10. local /v1/responses stream replay for MCP
+  11. local /v1/responses generic stream replay for tool_search
 EOF
 }
 
@@ -38,6 +43,7 @@ require_cmd mktemp
 
 shim_base_url="${SHIM_BASE_URL:-http://127.0.0.1:18080}"
 fixture_base_url="${FIXTURE_BASE_URL:-http://127.0.0.1:18081}"
+fixture_internal_mcp_url="${FIXTURE_INTERNAL_MCP_URL:-http://fixture:8081/mcp}"
 
 tmp_dir="$(mktemp -d)"
 file_id=""
@@ -89,7 +95,9 @@ printf '%s\n' "${capabilities_json}" | jq '{
   responses_mode: .runtime.responses_mode,
   tools: {
     web_search: .tools.web_search.enabled,
-    image_generation: .tools.image_generation.enabled
+    image_generation: .tools.image_generation.enabled,
+    mcp_server_url: .tools.mcp_server_url.enabled,
+    tool_search_hosted: .tools.tool_search_hosted.enabled
   },
   probes: {
     web_search_backend: .probes.web_search_backend.ready,
@@ -102,6 +110,8 @@ printf '%s\n' "${capabilities_json}" | jq -e '
   .runtime.responses_mode == "prefer_local" and
   .tools.web_search.enabled == true and
   .tools.image_generation.enabled == true and
+  .tools.mcp_server_url.enabled == true and
+  .tools.tool_search_hosted.enabled == true and
   .probes.web_search_backend.ready == true and
   .probes.image_generation_backend.ready == true
 ' >/dev/null
@@ -240,6 +250,295 @@ printf '%s\n' "${image_generation_json}" | jq -e '
   .output[0].status == "completed" and
   (.output[0].revised_prompt | type == "string" and length > 0) and
   (.output[0].result | type == "string" and length > 0)
+' >/dev/null
+
+echo "==> checking local remote MCP flow"
+mcp_json="$(curl -fsS "${shim_base_url}/v1/responses" \
+  -H 'Content-Type: application/json' \
+  -d "$(jq -nc --arg fixture_mcp_url "${fixture_internal_mcp_url}" '{
+    model: "devstack-model",
+    store: true,
+    input: "Roll 2d4+1 and return only the numeric result.",
+    tools: [
+      {
+        type: "mcp",
+        server_label: "dmcp",
+        server_url: $fixture_mcp_url,
+        require_approval: "never"
+      }
+    ],
+    tool_choice: "required"
+  }')")"
+mcp_response_id="$(printf '%s' "${mcp_json}" | jq -r '.id')"
+response_ids+=("${mcp_response_id}")
+printf '%s\n' "${mcp_json}" | jq '{
+  id,
+  status,
+  output_text,
+  output_types: [.output[].type],
+  tool_name: .output[1].name
+}'
+printf '%s\n' "${mcp_json}" | jq -e '
+  .status == "completed" and
+  .output_text == "4" and
+  .output[0].type == "mcp_list_tools" and
+  .output[1].type == "mcp_call" and
+  .output[1].name == "roll" and
+  .output[1].output == "4"
+' >/dev/null
+
+echo "==> checking cached MCP follow-up flow"
+mcp_follow_up_json="$(curl -fsS "${shim_base_url}/v1/responses" \
+  -H 'Content-Type: application/json' \
+  -d "$(jq -nc --arg previous_response_id "${mcp_response_id}" '{
+    model: "devstack-model",
+    store: true,
+    previous_response_id: $previous_response_id,
+    input: "Roll again and return only the numeric result."
+  }')")"
+mcp_follow_up_response_id="$(printf '%s' "${mcp_follow_up_json}" | jq -r '.id')"
+response_ids+=("${mcp_follow_up_response_id}")
+printf '%s\n' "${mcp_follow_up_json}" | jq '{
+  id,
+  status,
+  output_text,
+  first_output_type: .output[0].type
+}'
+printf '%s\n' "${mcp_follow_up_json}" | jq -e '
+  .status == "completed" and
+  .output_text == "4" and
+  .output[0].type == "mcp_call" and
+  .output[0].name == "roll"
+' >/dev/null
+
+echo "==> checking streamed MCP replay"
+mcp_stream_path="${tmp_dir}/mcp-stream.sse"
+curl -fsS -N "${shim_base_url}/v1/responses" \
+  -H 'Content-Type: application/json' \
+  -d "$(jq -nc --arg fixture_mcp_url "${fixture_internal_mcp_url}" '{
+    model: "devstack-model",
+    stream: true,
+    store: true,
+    input: "Roll 2d4+1 and return only the numeric result.",
+    tools: [
+      {
+        type: "mcp",
+        server_label: "dmcp",
+        server_url: $fixture_mcp_url,
+        require_approval: "never"
+      }
+    ],
+    tool_choice: "required"
+  }')" > "${mcp_stream_path}"
+grep -q '^event: response.mcp_call_arguments.done$' "${mcp_stream_path}"
+grep -q '^event: response.mcp_call.in_progress$' "${mcp_stream_path}"
+grep -q '^event: response.completed$' "${mcp_stream_path}"
+mcp_completed_json="$(awk '
+  $0 == "event: response.completed" {
+    getline
+    if ($0 ~ /^data: /) {
+      sub(/^data: /, "", $0)
+      print
+      exit
+    }
+  }
+' "${mcp_stream_path}")"
+printf '%s\n' "${mcp_completed_json}" | jq '{
+  type,
+  output_text: .response.output_text,
+  output_types: [.response.output[].type]
+}'
+printf '%s\n' "${mcp_completed_json}" | jq -e '
+  .type == "response.completed" and
+  .response.output_text == "4" and
+  .response.output[0].type == "mcp_list_tools" and
+  .response.output[1].type == "mcp_call" and
+  .response.output[2].type == "message"
+' >/dev/null
+
+echo "==> checking hosted/server tool_search namespace flow"
+tool_search_json="$(curl -fsS "${shim_base_url}/v1/responses" \
+  -H 'Content-Type: application/json' \
+  -d "$(jq -nc '{
+    model: "devstack-model",
+    store: true,
+    input: "Find the shipping ETA namespace tool and use it for order_42.",
+    tools: [
+      {
+        type: "tool_search",
+        description: "Search deferred project tools."
+      },
+      {
+        type: "namespace",
+        name: "shipping_ops",
+        description: "Tools for shipping ETA and tracking lookups.",
+        tools: [
+          {
+            type: "function",
+            name: "get_shipping_eta",
+            description: "Look up shipping ETA details for an order.",
+            defer_loading: true,
+            parameters: {
+              type: "object",
+              properties: {
+                order_id: {
+                  type: "string"
+                }
+              },
+              required: ["order_id"],
+              additionalProperties: false
+            }
+          },
+          {
+            type: "function",
+            name: "get_tracking_events",
+            description: "List tracking events for an order.",
+            defer_loading: true,
+            parameters: {
+              type: "object",
+              properties: {
+                order_id: {
+                  type: "string"
+                }
+              },
+              required: ["order_id"],
+              additionalProperties: false
+            }
+          }
+        ]
+      }
+    ],
+    tool_choice: {
+      type: "tool_search"
+    }
+  }')")"
+tool_search_response_id="$(printf '%s' "${tool_search_json}" | jq -r '.id')"
+tool_search_call_id="$(printf '%s' "${tool_search_json}" | jq -r '.output[2].call_id')"
+response_ids+=("${tool_search_response_id}")
+printf '%s\n' "${tool_search_json}" | jq '{
+  id,
+  status,
+  output_types: [.output[].type],
+  selected_namespace: .output[1].tools[0].name,
+  planned_function: .output[2].name
+}'
+printf '%s\n' "${tool_search_json}" | jq -e '
+  .status == "completed" and
+  .output_text == "" and
+  .output[0].type == "tool_search_call" and
+  .output[0].execution == "server" and
+  .output[0].call_id == null and
+  .output[1].type == "tool_search_output" and
+  .output[1].execution == "server" and
+  .output[1].tools[0].type == "namespace" and
+  .output[1].tools[0].name == "shipping_ops" and
+  .output[1].tools[0].tools[0].name == "get_shipping_eta" and
+  .output[2].type == "function_call" and
+  .output[2].name == "get_shipping_eta" and
+  .output[2].namespace == "shipping_ops" and
+  .output[2].arguments == "{\"order_id\":\"order_42\"}"
+' >/dev/null
+
+echo "==> checking tool_search follow-up completion"
+tool_search_follow_up_json="$(curl -fsS "${shim_base_url}/v1/responses" \
+  -H 'Content-Type: application/json' \
+  -d "$(jq -nc --arg previous_response_id "${tool_search_response_id}" --arg call_id "${tool_search_call_id}" '{
+    model: "devstack-model",
+    store: true,
+    previous_response_id: $previous_response_id,
+    input: [
+      {
+        type: "function_call_output",
+        call_id: $call_id,
+        output: "ETA for order_42 is 2026-04-20."
+      }
+    ]
+  }')")"
+tool_search_follow_up_response_id="$(printf '%s' "${tool_search_follow_up_json}" | jq -r '.id')"
+response_ids+=("${tool_search_follow_up_response_id}")
+printf '%s\n' "${tool_search_follow_up_json}" | jq '{
+  id,
+  status,
+  output_text,
+  first_output_type: .output[0].type
+}'
+printf '%s\n' "${tool_search_follow_up_json}" | jq -e '
+  .status == "completed" and
+  .output_text == "ETA for order_42 is 2026-04-20." and
+  .output[0].type == "message"
+' >/dev/null
+
+echo "==> checking streamed tool_search replay"
+tool_search_stream_path="${tmp_dir}/tool-search-stream.sse"
+curl -fsS -N "${shim_base_url}/v1/responses" \
+  -H 'Content-Type: application/json' \
+  -d "$(jq -nc '{
+    model: "devstack-model",
+    stream: true,
+    store: true,
+    input: "Find the shipping ETA namespace tool and use it for order_42.",
+    tools: [
+      {
+        type: "tool_search",
+        description: "Search deferred project tools."
+      },
+      {
+        type: "namespace",
+        name: "shipping_ops",
+        description: "Tools for shipping ETA and tracking lookups.",
+        tools: [
+          {
+            type: "function",
+            name: "get_shipping_eta",
+            description: "Look up shipping ETA details for an order.",
+            defer_loading: true,
+            parameters: {
+              type: "object",
+              properties: {
+                order_id: {
+                  type: "string"
+                }
+              },
+              required: ["order_id"],
+              additionalProperties: false
+            }
+          }
+        ]
+      }
+    ],
+    tool_choice: {
+      type: "tool_search"
+    }
+  }')" > "${tool_search_stream_path}"
+grep -q '^event: response.output_item.added$' "${tool_search_stream_path}"
+grep -q '^event: response.output_item.done$' "${tool_search_stream_path}"
+grep -q '^event: response.function_call_arguments.done$' "${tool_search_stream_path}"
+grep -q '^event: response.completed$' "${tool_search_stream_path}"
+if grep -q '^event: response.tool_search' "${tool_search_stream_path}"; then
+  echo "unexpected exact tool_search SSE family in generic replay" >&2
+  exit 1
+fi
+tool_search_completed_json="$(awk '
+  $0 == "event: response.completed" {
+    getline
+    if ($0 ~ /^data: /) {
+      sub(/^data: /, "", $0)
+      print
+      exit
+    }
+  }
+' "${tool_search_stream_path}")"
+printf '%s\n' "${tool_search_completed_json}" | jq '{
+  type,
+  output_text: .response.output_text,
+  output_types: [.response.output[].type]
+}'
+printf '%s\n' "${tool_search_completed_json}" | jq -e '
+  .type == "response.completed" and
+  .response.output_text == "" and
+  .response.output[0].type == "tool_search_call" and
+  .response.output[1].type == "tool_search_output" and
+  .response.output[2].type == "function_call"
 ' >/dev/null
 
 echo "devstack smoke passed"

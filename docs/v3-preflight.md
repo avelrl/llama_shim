@@ -1,6 +1,6 @@
 # V3 Preflight
 
-Last updated: April 15, 2026.
+Last updated: April 16, 2026.
 
 This document fixes the next logical step after the V2 freeze and before the
 project takes on new V3 backends or richer local-only runtime work.
@@ -115,9 +115,12 @@ This now ships as a runnable repo-owned fixture service:
 The current fixture bundle covers the deterministic preflight path for:
 
 - shim-local text generation through a `llama`-compatible surface
+- shim-local hosted/server `tool_search` planning and stored
+  `function_call_output` follow-up through deterministic chat-completions rules
 - shim-local `web_search` through a `searxng`-compatible surface
 - shim-local `image_generation` through an OpenAI-compatible
   `/v1/responses` surface
+- shim-local remote `mcp` through deterministic `server_url` fixture transports
 - fixed HTML pages for `open_page` and `find_in_page`
 
 ### 3. Reproducible local dev stack
@@ -181,6 +184,12 @@ The current smoke path verifies:
 - local `file_search`
 - local `web_search`
 - local `image_generation`
+- local remote `mcp` via `server_url`
+- cached remote `mcp` follow-up without repeating tools
+- streamed generic replay for remote `mcp`
+- hosted/server `tool_search` with namespace loading
+- stored `tool_search` follow-up through `function_call_output`
+- streamed generic replay for `tool_search`
 
 ## Non-Goals
 
@@ -223,6 +232,8 @@ Treat V3 preflight as complete when all of the following are true:
   relying on guesswork
 - new V3 backend or runtime work no longer has to invent ad hoc setup every
   time
+
+As of April 16, 2026, the repository satisfies that preflight bar.
 
 ## Working Rule
 

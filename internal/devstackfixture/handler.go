@@ -13,12 +13,16 @@ const DefaultModel = "devstack-model"
 const fixtureImageBase64 = "ZmFrZS1pbWFnZQ=="
 
 func NewHandler() http.Handler {
+	server := newFixtureServer()
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", handleRoot)
 	mux.HandleFunc("/healthz", handleHealthz)
 	mux.HandleFunc("/v1/models", handleModels)
 	mux.HandleFunc("/v1/chat/completions", handleChatCompletions)
 	mux.HandleFunc("/v1/responses", handleResponses)
+	mux.HandleFunc("/mcp", server.handleMCP)
+	mux.HandleFunc("/sse", server.handleLegacyMCPSSE)
+	mux.HandleFunc("/message", server.handleLegacyMCPMessage)
 	mux.HandleFunc("/search", handleSearch)
 	mux.HandleFunc("/pages/web-search-guide", handleWebSearchGuidePage)
 	mux.HandleFunc("/pages/project-sunbeam", handleProjectSunbeamPage)
@@ -28,11 +32,23 @@ func NewHandler() http.Handler {
 type chatCompletionRequest struct {
 	Model    string        `json:"model"`
 	Messages []chatMessage `json:"messages"`
+	Tools    []chatTool    `json:"tools"`
 }
 
 type chatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role       string `json:"role"`
+	Content    string `json:"content"`
+	ToolCallID string `json:"tool_call_id,omitempty"`
+}
+
+type chatTool struct {
+	Type     string           `json:"type"`
+	Function chatToolFunction `json:"function"`
+}
+
+type chatToolFunction struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
 }
 
 func handleRoot(w http.ResponseWriter, r *http.Request) {
@@ -99,7 +115,19 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	if model == "" {
 		model = DefaultModel
 	}
-	content := assistantTextForMessages(request.Messages)
+	content, toolCalls, finishReason := chatCompletionReply(request)
+	message := map[string]any{
+		"role":    "assistant",
+		"content": content,
+	}
+	if len(toolCalls) > 0 {
+		message["content"] = nil
+		message["tool_calls"] = toolCalls
+	}
+	completionTokens := max(1, len(strings.Fields(content)))
+	if len(toolCalls) > 0 {
+		completionTokens = max(1, len(toolCalls))
+	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"id":      "chatcmpl_devstack_1",
@@ -108,18 +136,15 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		"model":   model,
 		"choices": []map[string]any{
 			{
-				"index": 0,
-				"message": map[string]any{
-					"role":    "assistant",
-					"content": content,
-				},
-				"finish_reason": "stop",
+				"index":         0,
+				"message":       message,
+				"finish_reason": finishReason,
 			},
 		},
 		"usage": map[string]any{
 			"prompt_tokens":     max(1, len(request.Messages)),
-			"completion_tokens": max(1, len(strings.Fields(content))),
-			"total_tokens":      max(2, len(request.Messages)+len(strings.Fields(content))),
+			"completion_tokens": completionTokens,
+			"total_tokens":      max(2, len(request.Messages)+completionTokens),
 		},
 	})
 }
@@ -314,6 +339,132 @@ func assistantTextForMessages(messages []chatMessage) string {
 	default:
 		return "OK"
 	}
+}
+
+func chatCompletionReply(request chatCompletionRequest) (string, []map[string]any, string) {
+	if output, ok := fixtureToolSearchFinalOutput(request); ok {
+		return output, nil, "stop"
+	}
+	if output, ok := fixtureMCPFinalOutput(request); ok {
+		return output, nil, "stop"
+	}
+	if name, arguments, ok := fixtureToolSearchPlannedToolCall(request); ok {
+		return "", []map[string]any{
+			{
+				"id":   "call_devstack_tool_search_1",
+				"type": "function",
+				"function": map[string]any{
+					"name":      name,
+					"arguments": arguments,
+				},
+			},
+		}, "tool_calls"
+	}
+	if name, arguments, ok := fixtureMCPPlannedToolCall(request); ok {
+		return "", []map[string]any{
+			{
+				"id":   "call_devstack_mcp_1",
+				"type": "function",
+				"function": map[string]any{
+					"name":      name,
+					"arguments": arguments,
+				},
+			},
+		}, "tool_calls"
+	}
+	return assistantTextForMessages(request.Messages), nil, "stop"
+}
+
+func fixtureToolSearchFinalOutput(request chatCompletionRequest) (string, bool) {
+	if !isFixtureToolSearchConversation(request.Messages) {
+		return "", false
+	}
+	message, ok := lastNonEmptyMessage(request.Messages)
+	if !ok || !strings.EqualFold(strings.TrimSpace(message.Role), "tool") {
+		return "", false
+	}
+	return strings.TrimSpace(message.Content), true
+}
+
+func fixtureToolSearchPlannedToolCall(request chatCompletionRequest) (string, string, bool) {
+	name := fixtureShippingToolName(request.Tools)
+	if name == "" {
+		return "", "", false
+	}
+	if !isFixtureToolSearchConversation(request.Messages) {
+		return "", "", false
+	}
+	return name, `{"order_id":"order_42"}`, true
+}
+
+func fixtureMCPFinalOutput(request chatCompletionRequest) (string, bool) {
+	if fixtureMCPRollToolName(request.Tools) == "" {
+		return "", false
+	}
+	message, ok := lastNonEmptyMessage(request.Messages)
+	if !ok || !strings.EqualFold(strings.TrimSpace(message.Role), "tool") {
+		return "", false
+	}
+	return strings.TrimSpace(message.Content), true
+}
+
+func fixtureMCPPlannedToolCall(request chatCompletionRequest) (string, string, bool) {
+	name := fixtureMCPRollToolName(request.Tools)
+	if name == "" {
+		return "", "", false
+	}
+	lastUser := strings.ToLower(strings.TrimSpace(lastUserContent(request.Messages)))
+	joined := strings.ToLower(strings.TrimSpace(joinMessageContent(request.Messages)))
+	if !containsAny(lastUser, "roll", "2d4") && !containsAny(joined, "roll 2d4+1", "roll again", "dice expression") {
+		return "", "", false
+	}
+	return name, `{"diceRollExpression":"2d4 + 1"}`, true
+}
+
+func fixtureMCPRollToolName(tools []chatTool) string {
+	for _, tool := range tools {
+		if !strings.EqualFold(strings.TrimSpace(tool.Type), "function") {
+			continue
+		}
+		name := strings.TrimSpace(tool.Function.Name)
+		switch {
+		case name == "roll":
+			return name
+		case strings.Contains(name, "mcp__") && strings.Contains(strings.ToLower(name), "roll"):
+			return name
+		}
+	}
+	return ""
+}
+
+func fixtureShippingToolName(tools []chatTool) string {
+	for _, tool := range tools {
+		if !strings.EqualFold(strings.TrimSpace(tool.Type), "function") {
+			continue
+		}
+		name := strings.TrimSpace(tool.Function.Name)
+		if name == "get_shipping_eta" {
+			return name
+		}
+	}
+	return ""
+}
+
+func isFixtureToolSearchConversation(messages []chatMessage) bool {
+	lastUser := strings.ToLower(strings.TrimSpace(lastUserContent(messages)))
+	joined := strings.ToLower(strings.TrimSpace(joinMessageContent(messages)))
+	return containsAny(lastUser, "shipping eta", "order_42") || containsAny(joined, "shipping eta", "order_42", "shipping_ops")
+}
+
+func lastNonEmptyMessage(messages []chatMessage) (chatMessage, bool) {
+	for i := len(messages) - 1; i >= 0; i-- {
+		message := messages[i]
+		if strings.TrimSpace(message.Content) == "" {
+			continue
+		}
+		return message, true
+	}
+	return chatMessage{}, false
 }
 
 func joinMessageContent(messages []chatMessage) string {
