@@ -408,6 +408,9 @@ func parseLocalMCPToolConfigs(rawFields map[string]json.RawMessage) ([]localMCPS
 		case connectorID != "":
 			return nil, domain.NewValidationError("tools", "shim-local remote MCP supports server_url tools; connectors remain upstream-only")
 		}
+		if _, err := validateLocalMCPServerURL(serverURL); err != nil {
+			return nil, domain.NewValidationError("tools", err.Error())
+		}
 
 		authorization := strings.TrimSpace(asString(tool["authorization"]))
 		if authorization != "" {
