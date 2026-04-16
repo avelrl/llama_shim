@@ -422,15 +422,7 @@ func (s *localMCPLegacySession) readEndpoint() (string, error) {
 		if endpoint == "" {
 			return "", fmt.Errorf("MCP SSE stream returned empty endpoint event")
 		}
-		base, err := url.Parse(s.streamURL)
-		if err != nil {
-			return "", fmt.Errorf("parse MCP server URL: %w", err)
-		}
-		resolved, err := base.Parse(endpoint)
-		if err != nil {
-			return "", fmt.Errorf("resolve MCP message endpoint: %w", err)
-		}
-		return resolved.String(), nil
+		return resolveLocalMCPLegacyEndpoint(s.streamURL, endpoint)
 	}
 }
 
