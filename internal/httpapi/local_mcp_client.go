@@ -472,12 +472,6 @@ func localMCPApplyRequestHeaders(req *http.Request, config localMCPServerConfig,
 		req.Header.Set("Content-Type", contentType)
 	}
 	req.Header.Set(localMCPProtocolVersionHeader, localMCPProtocolVersion)
-	for key, value := range config.Headers {
-		req.Header.Set(key, value)
-	}
-	if token := localMCPAuthorizationHeader(config.Authorization); token != "" {
-		req.Header.Set("Authorization", token)
-	}
 }
 
 func localMCPAuthorizationHeader(token string) string {

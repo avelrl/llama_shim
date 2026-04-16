@@ -409,17 +409,12 @@ func parseLocalMCPToolConfigs(rawFields map[string]json.RawMessage) ([]localMCPS
 			return nil, domain.NewValidationError("tools", "shim-local remote MCP supports server_url tools; connectors remain upstream-only")
 		}
 
-		headers, err := parseLocalMCPHeaders(tool["headers"])
-		if err != nil {
-			return nil, err
-		}
 		authorization := strings.TrimSpace(asString(tool["authorization"]))
 		if authorization != "" {
-			for key := range headers {
-				if strings.EqualFold(strings.TrimSpace(key), "Authorization") {
-					return nil, domain.NewValidationError("tools", "shim-local remote MCP does not allow both authorization and headers.Authorization")
-				}
-			}
+			return nil, domain.NewValidationError("tools", "shim-local remote MCP does not support mcp.authorization")
+		}
+		if rawHeaders, ok := tool["headers"]; ok && rawHeaders != nil {
+			return nil, domain.NewValidationError("tools", "shim-local remote MCP does not support mcp.headers")
 		}
 		allowedTools, err := parseLocalMCPAllowedTools(tool["allowed_tools"])
 		if err != nil {
@@ -434,8 +429,8 @@ func parseLocalMCPToolConfigs(rawFields map[string]json.RawMessage) ([]localMCPS
 			ServerLabel:       serverLabel,
 			ServerURL:         serverURL,
 			ConnectorID:       connectorID,
-			Authorization:     authorization,
-			Headers:           headers,
+			Authorization:     "",
+			Headers:           nil,
 			ServerDescription: strings.TrimSpace(asString(tool["server_description"])),
 			AllowedTools:      allowedTools,
 			ApprovalPolicy:    approvalPolicy,
