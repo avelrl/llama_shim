@@ -2,6 +2,7 @@ package websearch
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -47,4 +48,34 @@ func TestSearXNGProviderOpenPageRejectsRedirectToPrivateIP(t *testing.T) {
 	_, err := provider.OpenPage(context.Background(), remote.URL)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "private IP")
+}
+
+func TestSearXNGProviderOpenPageRejectsResolvedPrivateIP(t *testing.T) {
+	provider := newSearXNGProvider(Config{
+		BaseURL:    "https://example.test",
+		Timeout:    defaultTimeout,
+		MaxResults: defaultMaxResults,
+	})
+	provider.resolveIP = func(context.Context, string) ([]net.IPAddr, error) {
+		return []net.IPAddr{{IP: net.ParseIP("127.0.0.1")}}, nil
+	}
+
+	_, err := provider.validateOpenPageURL(context.Background(), "https://rebind.example/path")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "private IP")
+}
+
+func TestSearXNGProviderOpenPageAllowsResolvedPublicIP(t *testing.T) {
+	provider := newSearXNGProvider(Config{
+		BaseURL:    "https://example.test",
+		Timeout:    defaultTimeout,
+		MaxResults: defaultMaxResults,
+	})
+	provider.resolveIP = func(context.Context, string) ([]net.IPAddr, error) {
+		return []net.IPAddr{{IP: net.ParseIP("93.184.216.34")}}, nil
+	}
+
+	parsed, err := provider.validateOpenPageURL(context.Background(), "https://example.com/path")
+	require.NoError(t, err)
+	require.Equal(t, "https://example.com/path", parsed.String())
 }

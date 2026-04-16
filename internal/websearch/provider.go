@@ -111,25 +111,28 @@ type searXNGProvider struct {
 	client      *http.Client
 	fetchClient *http.Client
 	maxResults  int
+	resolveIP   func(ctx context.Context, host string) ([]net.IPAddr, error)
 }
 
 func newSearXNGProvider(cfg Config) *searXNGProvider {
-	return &searXNGProvider{
+	p := &searXNGProvider{
 		baseURL: cfg.BaseURL,
 		client: &http.Client{
 			Timeout: cfg.Timeout,
 		},
-		fetchClient: &http.Client{
-			Timeout: cfg.Timeout,
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				if _, err := validateOpenPageURL(req.URL.String()); err != nil {
-					return err
-				}
-				return nil
-			},
-		},
+		resolveIP: net.DefaultResolver.LookupIPAddr,
 		maxResults: cfg.MaxResults,
 	}
+	p.fetchClient = &http.Client{
+		Timeout: cfg.Timeout,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if _, err := p.validateOpenPageURL(req.Context(), req.URL.String()); err != nil {
+				return err
+			}
+			return nil
+		},
+	}
+	return p
 }
 
 func (p *searXNGProvider) CheckReady(ctx context.Context) error {
@@ -227,7 +230,7 @@ func (p *searXNGProvider) Search(ctx context.Context, request SearchRequest) (Se
 }
 
 func (p *searXNGProvider) OpenPage(ctx context.Context, rawURL string) (Page, error) {
-	parsed, err := validateOpenPageURL(rawURL)
+	parsed, err := p.validateOpenPageURL(ctx, rawURL)
 	if err != nil {
 		return Page{}, err
 	}
@@ -255,7 +258,7 @@ func (p *searXNGProvider) OpenPage(ctx context.Context, rawURL string) (Page, er
 
 	pageURL := rawURL
 	if resp.Request != nil && resp.Request.URL != nil {
-		if _, err := validateOpenPageURL(resp.Request.URL.String()); err != nil {
+		if _, err := p.validateOpenPageURL(ctx, resp.Request.URL.String()); err != nil {
 			return Page{}, err
 		}
 		pageURL = resp.Request.URL.String()
@@ -292,7 +295,7 @@ func mapHTTPError(err error) error {
 	}
 }
 
-func validateOpenPageURL(rawURL string) (*neturl.URL, error) {
+func (p *searXNGProvider) validateOpenPageURL(ctx context.Context, rawURL string) (*neturl.URL, error) {
 	parsed, err := neturl.Parse(strings.TrimSpace(rawURL))
 	if err != nil {
 		return nil, &llama.InvalidResponseError{Message: "web search result URL was invalid"}
@@ -310,11 +313,28 @@ func validateOpenPageURL(rawURL string) (*neturl.URL, error) {
 		return nil, &llama.InvalidResponseError{Message: "web search open_page rejected a local host"}
 	}
 	if ip := net.ParseIP(host); ip != nil {
-		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+		if isBlockedOpenPageIP(ip) {
+			return nil, &llama.InvalidResponseError{Message: "web search open_page rejected a private IP"}
+		}
+		return parsed, nil
+	}
+	resolved, err := p.resolveIP(ctx, host)
+	if err != nil {
+		return nil, &llama.InvalidResponseError{Message: "web search open_page could not resolve URL host"}
+	}
+	if len(resolved) == 0 {
+		return nil, &llama.InvalidResponseError{Message: "web search open_page could not resolve URL host"}
+	}
+	for _, addr := range resolved {
+		if isBlockedOpenPageIP(addr.IP) {
 			return nil, &llama.InvalidResponseError{Message: "web search open_page rejected a private IP"}
 		}
 	}
 	return parsed, nil
+}
+
+func isBlockedOpenPageIP(ip net.IP) bool {
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified()
 }
 
 var (
