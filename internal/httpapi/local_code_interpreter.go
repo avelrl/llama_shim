@@ -1507,5 +1507,5 @@ func cloneGenerationOptions(options map[string]json.RawMessage) map[string]json.
 }
 
 func localCodeInterpreterDisabledError() error {
-	return domain.NewValidationError("tools", "shim-local code_interpreter execution is disabled; set responses.code_interpreter.backend to unsafe_host or docker")
+	return domain.NewValidationError("tools", "shim-local code_interpreter execution is disabled; set responses.code_interpreter.backend to docker")
 }
