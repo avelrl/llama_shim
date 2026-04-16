@@ -8456,7 +8456,7 @@ func TestContainerFilesRejectEmptyFileID(t *testing.T) {
 	require.Equal(t, "file_id", asStringAny(errorPayload["param"]))
 }
 
-func TestResponsesCreateLocalCodeInterpreterUsesExplicitContainerAndRestoresPersistedFiles(t *testing.T) {
+func TestResponsesCreateLocalCodeInterpreterRejectsExplicitContainerIDs(t *testing.T) {
 	var (
 		mu             sync.Mutex
 		activeSessions = map[string]map[string][]byte{}
@@ -8495,8 +8495,9 @@ func TestResponsesCreateLocalCodeInterpreterUsesExplicitContainerAndRestoresPers
 			},
 		},
 	})
+	headers := map[string]string{"Authorization": "Bearer explicit-token"}
 
-	status, createdContainer := rawRequest(t, app, http.MethodPost, "/v1/containers", map[string]any{"name": "Explicit"})
+	status, _, createdContainer := rawRequestWithHeaders(t, app, http.MethodPost, "/v1/containers", map[string]any{"name": "Explicit"}, headers)
 	require.Equal(t, http.StatusOK, status)
 	containerID := asStringAny(createdContainer["id"])
 
@@ -8504,9 +8505,9 @@ func TestResponsesCreateLocalCodeInterpreterUsesExplicitContainerAndRestoresPers
 	require.Equal(t, http.StatusOK, status)
 	storedFileID := asStringAny(uploaded["id"])
 
-	status, attached := rawRequest(t, app, http.MethodPost, "/v1/containers/"+containerID+"/files", map[string]any{
+	status, _, attached := rawRequestWithHeaders(t, app, http.MethodPost, "/v1/containers/"+containerID+"/files", map[string]any{
 		"file_id": storedFileID,
-	})
+	}, headers)
 	require.Equal(t, http.StatusOK, status)
 	require.NotEmpty(t, asStringAny(attached["id"]))
 
@@ -8514,7 +8515,7 @@ func TestResponsesCreateLocalCodeInterpreterUsesExplicitContainerAndRestoresPers
 	delete(activeSessions, containerID)
 	mu.Unlock()
 
-	response := postResponse(t, app, map[string]any{
+	status, _, responsePayload := rawRequestWithHeaders(t, app, http.MethodPost, "/v1/responses", map[string]any{
 		"model": "test-model",
 		"store": true,
 		"input": "What is the code in the uploaded file? Return only the number.",
@@ -8525,11 +8526,40 @@ func TestResponsesCreateLocalCodeInterpreterUsesExplicitContainerAndRestoresPers
 			},
 		},
 		"tool_choice": "required",
+	}, headers)
+	require.Equal(t, http.StatusBadRequest, status)
+	errorPayload, ok := responsePayload["error"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "invalid_request_error", asStringAny(errorPayload["type"]))
+	require.Contains(t, asStringAny(errorPayload["message"]), "explicit code_interpreter.container ids are disabled")
+}
+
+func TestContainersAndExplicitCodeInterpreterEnforceContainerOwner(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		AuthMode:     config.ShimAuthModeStaticBearer,
+		BearerTokens: []string{"token-a", "token-b"},
+		CodeInterpreterBackend: testutil.FakeSandboxBackend{
+			KindValue: "docker",
+			ExecuteFunc: func(_ context.Context, _ sandbox.ExecuteRequest) (sandbox.ExecuteResult, error) {
+				return sandbox.ExecuteResult{Logs: "777"}, nil
+			},
+		},
 	})
 
-	require.Equal(t, "completed", response.Status)
-	require.Equal(t, "777", response.OutputText)
-	require.Equal(t, containerID, asStringAny(response.Output[0].Map()["container_id"]))
+	ownerAHeaders := map[string]string{"Authorization": "Bearer token-a"}
+	ownerBHeaders := map[string]string{"Authorization": "Bearer token-b"}
+
+	status, _, createdPayload := rawRequestWithHeaders(t, app, http.MethodPost, "/v1/containers", map[string]any{"name": "Owner A"}, ownerAHeaders)
+	require.Equal(t, http.StatusOK, status)
+	containerID := asStringAny(createdPayload["id"])
+	require.NotEmpty(t, containerID)
+	session, err := app.Store.GetCodeInterpreterSession(context.Background(), containerID)
+	require.NoError(t, err)
+	require.Equal(t, "token_a70bf50e", session.Owner)
+
+	status, _, _ = rawRequestWithHeaders(t, app, http.MethodGet, "/v1/containers/"+containerID, nil, ownerBHeaders)
+	require.Equal(t, http.StatusNotFound, status)
+
 }
 
 func TestResponsesCreateLocalComputerRequestsScreenshot(t *testing.T) {

@@ -153,6 +153,7 @@ type localCodeInterpreterContainerConfig struct {
 	MemoryLimit  string
 	Mode         string
 	SessionID    string
+	Owner        string
 }
 
 type localCodeInterpreterInputFile struct {
@@ -234,6 +235,7 @@ func (h *responseHandler) createLocalCodeInterpreterResponse(ctx context.Context
 	if err != nil {
 		return domain.Response{}, err
 	}
+	config.Container.Owner = strings.TrimSpace(AuthSubjectFromContext(ctx))
 
 	input := service.CreateResponseInput{
 		Model:              request.Model,
@@ -688,42 +690,21 @@ func (h *responseHandler) executeLocalCodeInterpreter(ctx context.Context, prepa
 	}
 
 	manager := h.localCodeInterpreterContainerManager()
+	owner := strings.TrimSpace(container.Owner)
 	switch container.Mode {
 	case "explicit":
-		session, err := manager.ensureContainerSession(ctx, container.SessionID)
-		if err != nil {
-			if errors.Is(err, sandbox.ErrDisabled) {
-				return localCodeInterpreterExecutionResult{}, localCodeInterpreterDisabledError()
-			}
-			var validationErr *domain.ValidationError
-			if errors.As(err, &validationErr) {
-				return localCodeInterpreterExecutionResult{}, err
-			}
-			return localCodeInterpreterExecutionResult{}, newLocalCodeInterpreterExecutionFailure(container.SessionID, "", err)
-		}
-		result, err := h.executeLocalCodeInterpreterSession(ctx, session.ID, inputFiles, code)
-		if err != nil {
-			if errors.Is(err, sandbox.ErrDisabled) {
-				return localCodeInterpreterExecutionResult{}, localCodeInterpreterDisabledError()
-			}
-			return localCodeInterpreterExecutionResult{}, newLocalCodeInterpreterExecutionFailure(session.ID, result.Logs, err)
-		}
-		if touchErr := h.localCodeInterpreterSessions.TouchCodeInterpreterSession(ctx, session.ID, domain.FormatTime(domain.NowUTC())); touchErr != nil {
-			return localCodeInterpreterExecutionResult{}, touchErr
-		}
-		result.ContainerID = session.ID
-		return result, nil
+		return localCodeInterpreterExecutionResult{}, domain.NewValidationError("tools", "explicit code_interpreter.container ids are disabled in shim-local mode")
 	case "auto":
 	default:
 		return localCodeInterpreterExecutionResult{}, domain.NewValidationError("tools", "unsupported code_interpreter.container mode in shim-local path")
 	}
 
-	sessionID, canReuse, err := h.findReusableLocalCodeInterpreterSessionID(ctx, prepared)
+	sessionID, canReuse, err := h.findReusableLocalCodeInterpreterSessionID(ctx, prepared, owner)
 	if err != nil {
 		return localCodeInterpreterExecutionResult{}, err
 	}
 	if canReuse {
-		session, err := manager.ensureContainerSession(ctx, sessionID)
+		session, err := manager.ensureContainerSession(ctx, sessionID, owner)
 		if err == nil {
 			result, execErr := h.executeLocalCodeInterpreterSession(ctx, session.ID, inputFiles, code)
 			if execErr == nil {
@@ -748,7 +729,7 @@ func (h *responseHandler) executeLocalCodeInterpreter(ctx context.Context, prepa
 		}
 	}
 
-	session, err := manager.createContainer(ctx, "Auto container", container.MemoryLimit, defaultLocalCodeInterpreterContainerExpiryMins)
+	session, err := manager.createContainer(ctx, owner, "Auto container", container.MemoryLimit, defaultLocalCodeInterpreterContainerExpiryMins)
 	if err != nil {
 		if errors.Is(err, sandbox.ErrDisabled) {
 			return localCodeInterpreterExecutionResult{}, localCodeInterpreterDisabledError()
@@ -757,7 +738,7 @@ func (h *responseHandler) executeLocalCodeInterpreter(ctx context.Context, prepa
 	}
 	result, err := h.executeLocalCodeInterpreterSession(ctx, session.ID, inputFiles, code)
 	if err != nil {
-		_ = manager.deleteContainer(ctx, session.ID)
+		_ = manager.deleteContainer(ctx, session.ID, owner)
 		if errors.Is(err, sandbox.ErrDisabled) {
 			return localCodeInterpreterExecutionResult{}, localCodeInterpreterDisabledError()
 		}
@@ -847,7 +828,7 @@ func (h *responseHandler) executeLocalCodeInterpreterSession(ctx context.Context
 	}, nil
 }
 
-func (h *responseHandler) findReusableLocalCodeInterpreterSessionID(ctx context.Context, prepared service.PreparedResponseContext) (string, bool, error) {
+func (h *responseHandler) findReusableLocalCodeInterpreterSessionID(ctx context.Context, prepared service.PreparedResponseContext, owner string) (string, bool, error) {
 	if h.localCodeInterpreterSessions == nil || h.localCodeInterpreter.Backend == nil {
 		return "", false, nil
 	}
@@ -869,6 +850,9 @@ func (h *responseHandler) findReusableLocalCodeInterpreterSessionID(ctx context.
 			return "", false, err
 		}
 		if strings.TrimSpace(session.Backend) != h.localCodeInterpreter.Backend.Kind() {
+			return "", false, nil
+		}
+		if owner != "" && strings.TrimSpace(session.Owner) != strings.TrimSpace(owner) {
 			return "", false, nil
 		}
 		if session.Status != "running" {
@@ -896,7 +880,7 @@ func (h *responseHandler) resolveLocalCodeInterpreterPlanningFiles(ctx context.C
 		containerID = strings.TrimSpace(container.SessionID)
 		canInspect = containerID != ""
 	case "auto":
-		containerID, canInspect, err = h.findReusableLocalCodeInterpreterSessionID(ctx, prepared)
+		containerID, canInspect, err = h.findReusableLocalCodeInterpreterSessionID(ctx, prepared, container.Owner)
 		if err != nil {
 			return nil, err
 		}
@@ -906,7 +890,7 @@ func (h *responseHandler) resolveLocalCodeInterpreterPlanningFiles(ctx context.C
 	}
 
 	manager := h.localCodeInterpreterContainerManager()
-	session, err := manager.getContainer(ctx, containerID, false)
+	session, err := manager.getContainer(ctx, containerID, false, strings.TrimSpace(container.Owner))
 	if err != nil {
 		if errors.Is(err, sqlite.ErrNotFound) {
 			return files, nil
