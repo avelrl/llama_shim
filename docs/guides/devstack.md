@@ -21,10 +21,8 @@ The dev stack consists of two processes:
     `image_generation`
   - a deterministic remote MCP server on `/mcp` and legacy `/sse` for
     shim-local `mcp.server_url`
-  - fixed HTML pages used by `open_page` and `find_in_page`
-
-The recommended path is Docker Compose, because the local `web_search`
-`open_page` flow needs a non-loopback hostname inside the shim runtime.
+  - fixed HTML pages linked from deterministic search results for targeted
+    debugging and explicit tests
 
 ## Quick Start
 
@@ -71,7 +69,7 @@ The shim itself talks to the fixture backend over the Compose network as
 - shim `GET /debug/capabilities`
 - stateful `POST /v1/responses` with `previous_response_id`
 - local `file_search` over shim-owned `files` and `vector_stores`
-- local `web_search` with `search`, `open_page`, and `find_in_page`
+- local `web_search` over the deterministic fixture backend
 - local `image_generation` through the deterministic fixture backend
 - local remote `mcp` via `server_url`
 - cached remote `mcp` follow-up without repeating tools

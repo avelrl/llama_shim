@@ -213,7 +213,7 @@ printf '%s\n' "${web_search_json}" | jq '{
 printf '%s\n' "${web_search_json}" | jq -e '
   .status == "completed" and
   (.output_text | startswith("SUPPORTED FIXTURE PHRASE")) and
-  ([.output[] | select(.type == "web_search_call")] | length) >= 3 and
+  ([.output[] | select(.type == "web_search_call" and .action.type == "search")] | length) >= 1 and
   (.output[0].action.sources[0].url | contains("/pages/web-search-guide"))
 ' >/dev/null
 

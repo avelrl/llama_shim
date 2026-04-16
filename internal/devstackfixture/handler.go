@@ -270,7 +270,7 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 				{
 					"url":         absoluteURL(r, "/pages/web-search-guide"),
 					"title":       "Fixture Web Search Guide",
-					"content":     "SUPPORTED FIXTURE PHRASE appears on the guide page for open_page and find_in_page smoke checks.",
+					"content":     "SUPPORTED FIXTURE PHRASE appears on the guide page for deterministic web search checks.",
 					"description": "Guide page with a deterministic support phrase.",
 				},
 			},
@@ -294,7 +294,7 @@ func handleWebSearchGuidePage(w http.ResponseWriter, r *http.Request) {
   <body>
     <h1>Fixture Web Search Guide</h1>
     <p>SUPPORTED FIXTURE PHRASE</p>
-    <p>This page exists so the shim-local web search flow can exercise search, open_page, and find_in_page deterministically.</p>
+    <p>This page exists so deterministic search results can point at a stable guide page during debugging and targeted tests.</p>
   </body>
 </html>`))
 }

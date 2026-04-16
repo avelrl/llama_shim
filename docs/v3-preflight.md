@@ -121,7 +121,8 @@ The current fixture bundle covers the deterministic preflight path for:
 - shim-local `image_generation` through an OpenAI-compatible
   `/v1/responses` surface
 - shim-local remote `mcp` through deterministic `server_url` fixture transports
-- fixed HTML pages for `open_page` and `find_in_page`
+- fixed HTML pages linked from deterministic search results for targeted tests
+  and debugging
 
 ### 3. Reproducible local dev stack
 
