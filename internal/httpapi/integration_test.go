@@ -10425,8 +10425,8 @@ func TestResponsesCreateLocalMCPImportsCallsAndAnswers(t *testing.T) {
 	require.Equal(t, "message", followUp.Output[1].Type)
 }
 
-func TestResponsesCreateLocalMCPStreamableHTTPWithAuthHeadersAndCachedReuse(t *testing.T) {
-	mcpServer := testutil.NewFakeMCPServerWithOptions(t, []testutil.FakeMCPTool{
+func TestResponsesCreateLocalMCPStreamableHTTPCachedReuse(t *testing.T) {
+	mcpServer := testutil.NewFakeMCPServer(t, []testutil.FakeMCPTool{
 		{
 			Name:        "roll",
 			Description: "Roll dice from a dice expression.",
@@ -10439,11 +10439,6 @@ func TestResponsesCreateLocalMCPStreamableHTTPWithAuthHeadersAndCachedReuse(t *t
 				"additionalProperties": false,
 			},
 			OutputText: "4",
-		},
-	}, testutil.FakeMCPServerOptions{
-		ExpectedAuthorization: "Bearer local-mcp-token",
-		ExpectedHeaders: map[string]string{
-			"X-MCP-Test": "shim",
 		},
 	})
 	defer mcpServer.Close()
@@ -10459,8 +10454,6 @@ func TestResponsesCreateLocalMCPStreamableHTTPWithAuthHeadersAndCachedReuse(t *t
 				"type":             "mcp",
 				"server_label":     "dmcp",
 				"server_url":       mcpServer.URL + "/mcp",
-				"authorization":    "local-mcp-token",
-				"headers":          map[string]any{"X-MCP-Test": "shim"},
 				"require_approval": "never",
 			},
 		},
@@ -10501,9 +10494,6 @@ func TestResponsesCreateLocalMCPRejectsAuthorizationAndHeadersAuthorization(t *t
 				"server_label":  "dmcp",
 				"server_url":    mcpServer.URL + "/mcp",
 				"authorization": "local-mcp-token",
-				"headers": map[string]any{
-					"Authorization": "Bearer other-token",
-				},
 			},
 		},
 	})
@@ -10511,7 +10501,26 @@ func TestResponsesCreateLocalMCPRejectsAuthorizationAndHeadersAuthorization(t *t
 	require.Equal(t, http.StatusBadRequest, status)
 	errorPayload, ok := body["error"].(map[string]any)
 	require.True(t, ok)
-	require.Contains(t, asStringAny(errorPayload["message"]), "headers.Authorization")
+	require.Contains(t, asStringAny(errorPayload["message"]), "does not support mcp.authorization")
+
+	status, body = rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model": "test-model",
+		"input": "Hello",
+		"tools": []map[string]any{
+			{
+				"type":         "mcp",
+				"server_label": "dmcp",
+				"server_url":   mcpServer.URL + "/mcp",
+				"headers": map[string]any{
+					"Authorization": "Bearer other-token",
+				},
+			},
+		},
+	})
+	require.Equal(t, http.StatusBadRequest, status)
+	errorPayload, ok = body["error"].(map[string]any)
+	require.True(t, ok)
+	require.Contains(t, asStringAny(errorPayload["message"]), "does not support mcp.headers")
 }
 
 func TestResponsesCreateConnectorMCPFallsBackToUpstreamEvenWithPreviousLocalMCPState(t *testing.T) {
@@ -10639,7 +10648,7 @@ func TestResponsesCreateConnectorMCPLocalOnlyRejectsProxyOnlyMode(t *testing.T) 
 }
 
 func TestResponsesMCPToolSurfaceSanitizesSensitiveRequestFields(t *testing.T) {
-	mcpServer := testutil.NewFakeMCPServerWithOptions(t, []testutil.FakeMCPTool{
+	mcpServer := testutil.NewFakeMCPServer(t, []testutil.FakeMCPTool{
 		{
 			Name:        "roll",
 			Description: "Roll dice from a dice expression.",
@@ -10652,11 +10661,6 @@ func TestResponsesMCPToolSurfaceSanitizesSensitiveRequestFields(t *testing.T) {
 				"additionalProperties": false,
 			},
 			OutputText: "4",
-		},
-	}, testutil.FakeMCPServerOptions{
-		ExpectedAuthorization: "Bearer local-mcp-token",
-		ExpectedHeaders: map[string]string{
-			"X-MCP-Test": "shim",
 		},
 	})
 	defer mcpServer.Close()
@@ -10673,8 +10677,6 @@ func TestResponsesMCPToolSurfaceSanitizesSensitiveRequestFields(t *testing.T) {
 				"type":             "mcp",
 				"server_label":     "dmcp",
 				"server_url":       mcpServer.URL + "/mcp",
-				"authorization":    "local-mcp-token",
-				"headers":          map[string]any{"X-MCP-Test": "shim"},
 				"require_approval": "never",
 			},
 		},
