@@ -81,6 +81,7 @@ func newContainerHandler(logger *slog.Logger, runtime LocalCodeInterpreterRuntim
 }
 
 func (h *containerHandler) createContainer(w http.ResponseWriter, r *http.Request) {
+	owner := containerOwnerFromContext(r)
 	rawBody, err := readJSONBody(w, r)
 	if err != nil {
 		return
@@ -120,7 +121,7 @@ func (h *containerHandler) createContainer(w http.ResponseWriter, r *http.Reques
 		h.writeError(w, r, err)
 		return
 	}
-	session, err := h.manager.createContainer(r.Context(), strings.TrimSpace(request.Name), request.MemoryLimit, expiresAfterMinutes)
+	session, err := h.manager.createContainer(r.Context(), owner, strings.TrimSpace(request.Name), request.MemoryLimit, expiresAfterMinutes)
 	if err != nil {
 		h.writeError(w, r, err)
 		return
@@ -132,7 +133,7 @@ func (h *containerHandler) createContainer(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		if _, err := h.manager.createStoredContainerFile(r.Context(), session.ID, fileID); err != nil {
-			_ = h.manager.deleteContainer(r.Context(), session.ID)
+			_ = h.manager.deleteContainer(r.Context(), session.ID, owner)
 			h.writeError(w, r, err)
 			return
 		}
@@ -141,12 +142,13 @@ func (h *containerHandler) createContainer(w http.ResponseWriter, r *http.Reques
 }
 
 func (h *containerHandler) listContainers(w http.ResponseWriter, r *http.Request) {
+	owner := containerOwnerFromContext(r)
 	query, err := parseListContainersQuery(r)
 	if err != nil {
 		h.writeError(w, r, err)
 		return
 	}
-	page, err := h.manager.listContainers(r.Context(), query)
+	page, err := h.manager.listContainers(r.Context(), query, owner)
 	if err != nil {
 		h.writeError(w, r, err)
 		return
@@ -165,7 +167,8 @@ func (h *containerHandler) listContainers(w http.ResponseWriter, r *http.Request
 }
 
 func (h *containerHandler) getContainer(w http.ResponseWriter, r *http.Request) {
-	session, err := h.manager.getContainer(r.Context(), r.PathValue("container_id"), true)
+	owner := containerOwnerFromContext(r)
+	session, err := h.manager.getContainer(r.Context(), r.PathValue("container_id"), true, owner)
 	if err != nil {
 		h.writeError(w, r, err)
 		return
@@ -174,8 +177,9 @@ func (h *containerHandler) getContainer(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *containerHandler) deleteContainer(w http.ResponseWriter, r *http.Request) {
+	owner := containerOwnerFromContext(r)
 	containerID := r.PathValue("container_id")
-	if err := h.manager.deleteContainer(r.Context(), containerID); err != nil {
+	if err := h.manager.deleteContainer(r.Context(), containerID, owner); err != nil {
 		h.writeError(w, r, err)
 		return
 	}
@@ -187,6 +191,7 @@ func (h *containerHandler) deleteContainer(w http.ResponseWriter, r *http.Reques
 }
 
 func (h *containerHandler) createContainerFile(w http.ResponseWriter, r *http.Request) {
+	owner := containerOwnerFromContext(r)
 	containerID := r.PathValue("container_id")
 	maxUploadBytes := h.serviceLimits.RetrievalFileUploadBytes
 	contentType := strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Type")))
@@ -209,6 +214,10 @@ func (h *containerHandler) createContainerFile(w http.ResponseWriter, r *http.Re
 		}
 		if int64(len(content)) > maxUploadBytes {
 			h.writeError(w, r, domain.NewValidationError("file", "file exceeds the configured shim-local upload limit"))
+			return
+		}
+		if _, err := h.manager.getContainer(r.Context(), containerID, false, owner); err != nil {
+			h.writeError(w, r, err)
 			return
 		}
 		containerFile, err := h.manager.createUploadedContainerFile(r.Context(), containerID, header.Filename, content)
@@ -248,6 +257,10 @@ func (h *containerHandler) createContainerFile(w http.ResponseWriter, r *http.Re
 			return
 		}
 	}
+	if _, err := h.manager.getContainer(r.Context(), containerID, false, owner); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
 	containerFile, err := h.manager.createStoredContainerFile(r.Context(), containerID, strings.TrimSpace(request.FileID))
 	if err != nil {
 		h.writeError(w, r, err)
@@ -257,13 +270,14 @@ func (h *containerHandler) createContainerFile(w http.ResponseWriter, r *http.Re
 }
 
 func (h *containerHandler) listContainerFiles(w http.ResponseWriter, r *http.Request) {
+	owner := containerOwnerFromContext(r)
 	query, err := parseListContainerFilesQuery(r)
 	if err != nil {
 		h.writeError(w, r, err)
 		return
 	}
 	query.ContainerID = r.PathValue("container_id")
-	page, err := h.manager.listContainerFiles(r.Context(), query.ContainerID, query)
+	page, err := h.manager.listContainerFiles(r.Context(), query.ContainerID, query, owner)
 	if err != nil {
 		h.writeError(w, r, err)
 		return
@@ -282,7 +296,8 @@ func (h *containerHandler) listContainerFiles(w http.ResponseWriter, r *http.Req
 }
 
 func (h *containerHandler) getContainerFile(w http.ResponseWriter, r *http.Request) {
-	containerFile, _, err := h.manager.getContainerFile(r.Context(), r.PathValue("container_id"), r.PathValue("file_id"))
+	owner := containerOwnerFromContext(r)
+	containerFile, _, err := h.manager.getContainerFile(r.Context(), r.PathValue("container_id"), r.PathValue("file_id"), owner)
 	if err != nil {
 		h.writeError(w, r, err)
 		return
@@ -291,7 +306,8 @@ func (h *containerHandler) getContainerFile(w http.ResponseWriter, r *http.Reque
 }
 
 func (h *containerHandler) getContainerFileContent(w http.ResponseWriter, r *http.Request) {
-	containerFile, backingFile, err := h.manager.getContainerFile(r.Context(), r.PathValue("container_id"), r.PathValue("file_id"))
+	owner := containerOwnerFromContext(r)
+	containerFile, backingFile, err := h.manager.getContainerFile(r.Context(), r.PathValue("container_id"), r.PathValue("file_id"), owner)
 	if err != nil {
 		h.writeError(w, r, err)
 		return
@@ -303,9 +319,10 @@ func (h *containerHandler) getContainerFileContent(w http.ResponseWriter, r *htt
 }
 
 func (h *containerHandler) deleteContainerFile(w http.ResponseWriter, r *http.Request) {
+	owner := containerOwnerFromContext(r)
 	containerID := r.PathValue("container_id")
 	fileID := r.PathValue("file_id")
-	if err := h.manager.deleteContainerFile(r.Context(), containerID, fileID); err != nil {
+	if err := h.manager.deleteContainerFile(r.Context(), containerID, fileID, owner); err != nil {
 		h.writeError(w, r, err)
 		return
 	}
@@ -314,6 +331,10 @@ func (h *containerHandler) deleteContainerFile(w http.ResponseWriter, r *http.Re
 		Object:  "container.file.deleted",
 		Deleted: true,
 	})
+}
+
+func containerOwnerFromContext(r *http.Request) string {
+	return strings.TrimSpace(AuthSubjectFromContext(r.Context()))
 }
 
 func (h *containerHandler) writeError(w http.ResponseWriter, r *http.Request, err error) {

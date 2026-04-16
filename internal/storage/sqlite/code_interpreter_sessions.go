@@ -13,10 +13,11 @@ import (
 func (s *Store) SaveCodeInterpreterSession(ctx context.Context, session domain.CodeInterpreterSession) error {
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO code_interpreter_sessions (
-			id, backend, status, name, memory_limit, expires_after_minutes, created_at, last_active_at
+			id, owner, backend, status, name, memory_limit, expires_after_minutes, created_at, last_active_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
+			owner = excluded.owner,
 			backend = excluded.backend,
 			status = excluded.status,
 			name = excluded.name,
@@ -26,6 +27,7 @@ func (s *Store) SaveCodeInterpreterSession(ctx context.Context, session domain.C
 			last_active_at = excluded.last_active_at
 	`,
 		session.ID,
+		session.Owner,
 		session.Backend,
 		session.Status,
 		session.Name,
@@ -42,7 +44,7 @@ func (s *Store) SaveCodeInterpreterSession(ctx context.Context, session domain.C
 
 func (s *Store) GetCodeInterpreterSession(ctx context.Context, id string) (domain.CodeInterpreterSession, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, backend, status, name, memory_limit, expires_after_minutes, created_at, last_active_at
+		SELECT id, owner, backend, status, name, memory_limit, expires_after_minutes, created_at, last_active_at
 		FROM code_interpreter_sessions
 		WHERE id = ?
 	`, id)
@@ -50,6 +52,7 @@ func (s *Store) GetCodeInterpreterSession(ctx context.Context, id string) (domai
 	var session domain.CodeInterpreterSession
 	if err := row.Scan(
 		&session.ID,
+		&session.Owner,
 		&session.Backend,
 		&session.Status,
 		&session.Name,
@@ -73,7 +76,7 @@ func (s *Store) ListCodeInterpreterSessions(ctx context.Context, query domain.Li
 	}
 
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, backend, status, name, memory_limit, expires_after_minutes, created_at, last_active_at
+		SELECT id, owner, backend, status, name, memory_limit, expires_after_minutes, created_at, last_active_at
 		FROM code_interpreter_sessions
 		ORDER BY created_at `+orderDir+`, id `+orderDir)
 	if err != nil {
@@ -86,6 +89,7 @@ func (s *Store) ListCodeInterpreterSessions(ctx context.Context, query domain.Li
 		var session domain.CodeInterpreterSession
 		if err := rows.Scan(
 			&session.ID,
+			&session.Owner,
 			&session.Backend,
 			&session.Status,
 			&session.Name,

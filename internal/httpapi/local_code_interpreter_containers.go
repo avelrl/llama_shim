@@ -49,7 +49,7 @@ func (m localCodeInterpreterContainerManager) enabled() bool {
 	return m.runtime.Enabled() && m.files != nil && m.sessions != nil
 }
 
-func (m localCodeInterpreterContainerManager) createContainer(ctx context.Context, name string, memoryLimit string, expiresAfterMinutes int) (domain.CodeInterpreterSession, error) {
+func (m localCodeInterpreterContainerManager) createContainer(ctx context.Context, owner string, name string, memoryLimit string, expiresAfterMinutes int) (domain.CodeInterpreterSession, error) {
 	if !m.enabled() {
 		return domain.CodeInterpreterSession{}, localCodeInterpreterDisabledError()
 	}
@@ -81,6 +81,7 @@ func (m localCodeInterpreterContainerManager) createContainer(ctx context.Contex
 
 	session := domain.CodeInterpreterSession{
 		ID:                  sessionID,
+		Owner:               strings.TrimSpace(owner),
 		Backend:             m.runtime.Backend.Kind(),
 		Status:              "running",
 		Name:                strings.TrimSpace(name),
@@ -96,10 +97,21 @@ func (m localCodeInterpreterContainerManager) createContainer(ctx context.Contex
 	return session, nil
 }
 
-func (m localCodeInterpreterContainerManager) listContainers(ctx context.Context, query domain.ListCodeInterpreterSessionsQuery) (domain.CodeInterpreterSessionPage, error) {
+func (m localCodeInterpreterContainerManager) listContainers(ctx context.Context, query domain.ListCodeInterpreterSessionsQuery, owner string) (domain.CodeInterpreterSessionPage, error) {
 	page, err := m.sessions.ListCodeInterpreterSessions(ctx, query)
 	if err != nil {
 		return domain.CodeInterpreterSessionPage{}, err
+	}
+	owner = strings.TrimSpace(owner)
+	if owner != "" {
+		filtered := make([]domain.CodeInterpreterSession, 0, len(page.Sessions))
+		for _, session := range page.Sessions {
+			if session.Owner == owner {
+				filtered = append(filtered, session)
+			}
+		}
+		page.Sessions = filtered
+		page.HasMore = false
 	}
 	for i := range page.Sessions {
 		session, expireErr := m.expireIfNeeded(ctx, page.Sessions[i])
@@ -111,10 +123,14 @@ func (m localCodeInterpreterContainerManager) listContainers(ctx context.Context
 	return page, nil
 }
 
-func (m localCodeInterpreterContainerManager) getContainer(ctx context.Context, id string, touch bool) (domain.CodeInterpreterSession, error) {
+func (m localCodeInterpreterContainerManager) getContainer(ctx context.Context, id string, touch bool, owner string) (domain.CodeInterpreterSession, error) {
 	session, err := m.sessions.GetCodeInterpreterSession(ctx, id)
 	if err != nil {
 		return domain.CodeInterpreterSession{}, err
+	}
+	owner = strings.TrimSpace(owner)
+	if owner != "" && session.Owner != owner {
+		return domain.CodeInterpreterSession{}, sqlite.ErrNotFound
 	}
 	session, err = m.expireIfNeeded(ctx, session)
 	if err != nil {
@@ -130,8 +146,8 @@ func (m localCodeInterpreterContainerManager) getContainer(ctx context.Context, 
 	return session, nil
 }
 
-func (m localCodeInterpreterContainerManager) ensureContainerSession(ctx context.Context, id string) (domain.CodeInterpreterSession, error) {
-	session, err := m.getContainer(ctx, id, false)
+func (m localCodeInterpreterContainerManager) ensureContainerSession(ctx context.Context, id string, owner string) (domain.CodeInterpreterSession, error) {
+	session, err := m.getContainer(ctx, id, false, owner)
 	if err != nil {
 		return domain.CodeInterpreterSession{}, err
 	}
@@ -153,8 +169,8 @@ func (m localCodeInterpreterContainerManager) ensureContainerSession(ctx context
 	return session, nil
 }
 
-func (m localCodeInterpreterContainerManager) deleteContainer(ctx context.Context, id string) error {
-	session, err := m.sessions.GetCodeInterpreterSession(ctx, id)
+func (m localCodeInterpreterContainerManager) deleteContainer(ctx context.Context, id string, owner string) error {
+	session, err := m.getContainer(ctx, id, false, owner)
 	if err != nil {
 		return err
 	}
@@ -220,7 +236,7 @@ func (m localCodeInterpreterContainerManager) stageInputFiles(ctx context.Contex
 }
 
 func (m localCodeInterpreterContainerManager) addStoredFileToContainer(ctx context.Context, containerID string, storedFile domain.StoredFile, workspaceName string, source string, deleteBackingFile bool) (domain.CodeInterpreterContainerFile, error) {
-	if _, err := m.ensureContainerSession(ctx, containerID); err != nil {
+	if _, err := m.ensureContainerSession(ctx, containerID, ""); err != nil {
 		return domain.CodeInterpreterContainerFile{}, err
 	}
 	containerFile, err := m.saveContainerFileMetadata(ctx, containerID, storedFile.ID, workspaceName, source, storedFile.Bytes, deleteBackingFile)
@@ -384,8 +400,8 @@ func (m localCodeInterpreterContainerManager) persistGeneratedFiles(ctx context.
 	return saved, nil
 }
 
-func (m localCodeInterpreterContainerManager) listContainerFiles(ctx context.Context, containerID string, query domain.ListCodeInterpreterContainerFilesQuery) (domain.CodeInterpreterContainerFilePage, error) {
-	session, err := m.getContainer(ctx, containerID, false)
+func (m localCodeInterpreterContainerManager) listContainerFiles(ctx context.Context, containerID string, query domain.ListCodeInterpreterContainerFilesQuery, owner string) (domain.CodeInterpreterContainerFilePage, error) {
+	session, err := m.getContainer(ctx, containerID, false, owner)
 	if err != nil {
 		return domain.CodeInterpreterContainerFilePage{}, err
 	}
@@ -398,8 +414,8 @@ func (m localCodeInterpreterContainerManager) listContainerFiles(ctx context.Con
 	return m.sessions.ListCodeInterpreterContainerFiles(ctx, query)
 }
 
-func (m localCodeInterpreterContainerManager) getContainerFile(ctx context.Context, containerID string, fileID string) (domain.CodeInterpreterContainerFile, domain.StoredFile, error) {
-	session, err := m.getContainer(ctx, containerID, false)
+func (m localCodeInterpreterContainerManager) getContainerFile(ctx context.Context, containerID string, fileID string, owner string) (domain.CodeInterpreterContainerFile, domain.StoredFile, error) {
+	session, err := m.getContainer(ctx, containerID, false, owner)
 	if err != nil {
 		return domain.CodeInterpreterContainerFile{}, domain.StoredFile{}, err
 	}
@@ -420,8 +436,8 @@ func (m localCodeInterpreterContainerManager) getContainerFile(ctx context.Conte
 	return containerFile, backingFile, nil
 }
 
-func (m localCodeInterpreterContainerManager) deleteContainerFile(ctx context.Context, containerID string, fileID string) error {
-	containerFile, _, err := m.getContainerFile(ctx, containerID, fileID)
+func (m localCodeInterpreterContainerManager) deleteContainerFile(ctx context.Context, containerID string, fileID string, owner string) error {
+	containerFile, _, err := m.getContainerFile(ctx, containerID, fileID, owner)
 	if err != nil {
 		return err
 	}

@@ -68,6 +68,7 @@ type ResponseReplayArtifact struct {
 
 type CodeInterpreterSession struct {
 	ID                  string
+	Owner               string
 	Backend             string
 	Status              string
 	Name                string
