@@ -760,6 +760,73 @@ func TestStoreSaveCodeInterpreterSessionRoundTripAndTouch(t *testing.T) {
 	require.ErrorIs(t, err, sqlite.ErrNotFound)
 }
 
+func TestStoreListCodeInterpreterSessionsOwnerScopePaginatesFilteredSet(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store := openTestStore(t, ctx)
+
+	sessions := []domain.CodeInterpreterSession{
+		{
+			ID:                  "cntr_other",
+			Owner:               "owner-b",
+			Backend:             "docker",
+			Status:              "running",
+			Name:                "Other",
+			MemoryLimit:         "1g",
+			ExpiresAfterMinutes: 20,
+			CreatedAt:           "2026-04-12T10:00:00Z",
+			LastActiveAt:        "2026-04-12T10:00:00Z",
+		},
+		{
+			ID:                  "cntr_a1",
+			Owner:               "owner-a",
+			Backend:             "docker",
+			Status:              "running",
+			Name:                "A1",
+			MemoryLimit:         "1g",
+			ExpiresAfterMinutes: 20,
+			CreatedAt:           "2026-04-12T10:01:00Z",
+			LastActiveAt:        "2026-04-12T10:01:00Z",
+		},
+		{
+			ID:                  "cntr_a2",
+			Owner:               "owner-a",
+			Backend:             "docker",
+			Status:              "running",
+			Name:                "A2",
+			MemoryLimit:         "1g",
+			ExpiresAfterMinutes: 20,
+			CreatedAt:           "2026-04-12T10:02:00Z",
+			LastActiveAt:        "2026-04-12T10:02:00Z",
+		},
+	}
+	for _, session := range sessions {
+		require.NoError(t, store.SaveCodeInterpreterSession(ctx, session))
+	}
+
+	firstPage, err := store.ListCodeInterpreterSessions(ctx, domain.ListCodeInterpreterSessionsQuery{
+		Limit: 1,
+		Order: domain.ListOrderAsc,
+		Owner: "owner-a",
+	})
+	require.NoError(t, err)
+	require.Len(t, firstPage.Sessions, 1)
+	require.Equal(t, "cntr_a1", firstPage.Sessions[0].ID)
+	require.True(t, firstPage.HasMore)
+
+	secondPage, err := store.ListCodeInterpreterSessions(ctx, domain.ListCodeInterpreterSessionsQuery{
+		After: "cntr_a1",
+		Limit: 1,
+		Order: domain.ListOrderAsc,
+		Owner: "owner-a",
+	})
+	require.NoError(t, err)
+	require.Len(t, secondPage.Sessions, 1)
+	require.Equal(t, "cntr_a2", secondPage.Sessions[0].ID)
+	require.False(t, secondPage.HasMore)
+}
+
 func TestStoreSaveCodeInterpreterContainerFileRoundTrip(t *testing.T) {
 	t.Parallel()
 

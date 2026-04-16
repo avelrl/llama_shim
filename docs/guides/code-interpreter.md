@@ -43,10 +43,12 @@ curl http://127.0.0.1:8080/v1/responses \
 
 ## Shim-Specific Notes
 
-- Enable the local runtime with `responses.code_interpreter.backend=docker` or
-  `unsafe_host`. `docker` is the intended boundary.
+- Enable the local runtime with `responses.code_interpreter.backend=docker`.
 - The shim reuses `container_id` across local `previous_response_id` lineage
   when possible.
+- Shim-local `/v1/responses` accepts only `container: {"type":"auto"}`.
+  Explicit `code_interpreter.container="cntr_*"` ids are rejected in local
+  mode even though the upstream API supports explicit container mode.
 - `include=["code_interpreter_call.outputs"]` is a logs-only practical subset.
 - Remote `input_file.file_url` is disabled by default and must be explicitly
   allowlisted or unsafe-enabled.
@@ -56,8 +58,9 @@ curl http://127.0.0.1:8080/v1/responses \
 ## Gotchas
 
 - This is a useful local subset, not hosted-equivalent Code Interpreter.
-- `unsafe_host` is a development fallback, not a production-grade isolation
-  story.
+- Local `/v1/containers` resources exist for shim-managed container state and
+  files, but the shim-local `code_interpreter` execution path itself stays on
+  auto-managed containers only.
 - Exact hosted artifact placement and richer hosted failure/status fidelity are
   out of scope for V2.
 

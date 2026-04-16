@@ -328,12 +328,12 @@ paths:
 
         Notes for the local `code_interpreter` subset:
         - the shim executes one `code_interpreter` tool locally only when
-          `responses.code_interpreter.backend` is set to `docker` or
-          `unsafe_host`
-        - the supported local subset accepts either `container.type=auto` or
-          explicit shim-managed `tools[].container = "cntr_*"` values,
-          supports OpenAI-shaped local `/v1/containers` and
-          `/v1/containers/{container_id}/files` resources,
+          `responses.code_interpreter.backend` is set to `docker`
+        - the supported local subset accepts `container.type=auto`, supports
+          OpenAI-shaped local `/v1/containers` and
+          `/v1/containers/{container_id}/files` resources for shim-managed
+          container state, and rejects explicit
+          `tools[].container = "cntr_*"` values in shim-local execution,
           optionally accepts shim-owned `container.file_ids`,
           accepts `tool_choice=auto|required`,
           accepts `include=["code_interpreter_call.outputs"]`,
@@ -345,10 +345,10 @@ paths:
         - supported `container.file_ids` values are staged from local
           `/v1/files` into the current sandbox workspace under sanitized
           filenames before execution
-        - explicit containers and persisted auto containers restore their
-          shim-owned container files into the hardened Docker workspace if the
-          local runtime disappears, so `cntr_*` reuse remains stable across
-          transient runtime loss
+        - persisted auto containers restore their shim-owned container files
+          into the hardened Docker workspace if the local runtime disappears,
+          so auto-managed `cntr_*` reuse remains stable across transient
+          runtime loss
         - generated files from the local sandbox are captured in a bounded
           shim-owned subset: small new/changed workspace files are saved into
           local `/v1/files`, mirrored into local container files, exposed
@@ -361,9 +361,8 @@ paths:
           container file identifiers; for unmentioned files, the shim appends
           a fallback `Generated files:` appendix and annotates those
           filenames there
-        - `backend=docker` uses a hardened reusable session-container boundary;
-          `backend=unsafe_host` remains a development fallback and legacy
-          compatibility path
+        - `backend=docker` uses a hardened reusable session-container
+          boundary
         - current-turn `input_file` model content parts are auto-staged into
           the local sandbox workspace for `input_file.file_id`,
           `input_file.file_data`, and HTTP(S) `input_file.file_url`;
@@ -390,12 +389,13 @@ paths:
           `mcp_list_tools`, cached across `previous_response_id`, approvals
           flow through `mcp_approval_request` /
           `mcp_approval_response`, successful execution emits real `mcp_call`,
-          and the shim-local client now supports `authorization`, custom
-          `headers`, and both legacy HTTP/SSE and basic streamable HTTP MCP
-          transports; connectors remain an upstream-only compatibility bridge
-          for execution, but connector-aware MCP validation and visible
-          request-surface sanitization are now part of the shim-owned subset,
-          and `responses.mode=local_only` rejects `connector_id` requests
+          and the shim-local client supports both legacy HTTP/SSE and basic
+          streamable HTTP MCP transports while rejecting request-supplied
+          `authorization` and `headers`; connectors remain an upstream-only
+          compatibility bridge for execution, but connector-aware MCP
+          validation and visible request-surface sanitization are now part of
+          the shim-owned subset, and `responses.mode=local_only` rejects
+          `connector_id` requests
           with the MCP-specific local validation error instead of a generic
           mode failure
         - live upstream traces now confirm that ordinary Python/tool errors in
@@ -1696,6 +1696,8 @@ paths:
 
         Current local subset:
         - shim-owned containers only
+        - when shim auth is enabled, listing is scoped to caller-owned
+          containers only
         - `limit`, `order`, `after`, `name`
         - `status` currently reflects shim-local lifecycle (`running`,
           `expired`)
@@ -1754,6 +1756,7 @@ paths:
         - `expires_after.minutes`
         - optional `file_ids` to stage shim-owned `/v1/files` into the new
           container
+        - when shim auth is enabled, new containers are bound to the caller
       requestBody:
         required: true
         content:
@@ -2619,7 +2622,7 @@ components:
           `include=["file_search_call.results"]`
         - pragmatic dev-only local `code_interpreter` execution with:
           one `tools[]` entry of `type=code_interpreter`,
-          `container.type=auto` or explicit `tools[].container="cntr_*"`,
+          `container.type=auto`,
           optional shim-owned `container.file_ids`,
           `tool_choice=auto|required`,
           `parallel_tool_calls`, and
@@ -2656,8 +2659,10 @@ components:
         `responses.code_interpreter.backend`. `backend=docker` uses a hardened
         reusable container with no network, read-only rootfs, tmpfs workspace,
         non-root user, dropped capabilities, and memory/cpu/pids limits.
-        `backend=unsafe_host` remains an explicitly unsafe fallback. Supported
-        local `container.file_ids` values are staged from shim-owned
+        Shim-local `/v1/responses` accepts only `container.type=auto` for
+        execution; explicit `code_interpreter.container="cntr_*"` ids are
+        rejected in local mode. Supported local `container.file_ids` values
+        are staged from shim-owned
         `/v1/files` into the current sandbox workspace under sanitized
         filenames, and current-turn `input_file.file_id` /
         `input_file.file_data` / HTTP(S) `input_file.file_url` message content

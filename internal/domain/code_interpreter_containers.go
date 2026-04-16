@@ -10,6 +10,7 @@ type ListCodeInterpreterSessionsQuery struct {
 	Limit int
 	Order string
 	Name  string
+	Owner string
 }
 
 type CodeInterpreterSessionPage struct {

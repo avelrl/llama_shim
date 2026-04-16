@@ -74,6 +74,8 @@ func (s *Store) ListCodeInterpreterSessions(ctx context.Context, query domain.Li
 	if query.Order == domain.ListOrderAsc {
 		orderDir = "ASC"
 	}
+	nameFilter := strings.TrimSpace(query.Name)
+	ownerFilter := strings.TrimSpace(query.Owner)
 
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, owner, backend, status, name, memory_limit, expires_after_minutes, created_at, last_active_at
@@ -100,7 +102,10 @@ func (s *Store) ListCodeInterpreterSessions(ctx context.Context, query domain.Li
 		); err != nil {
 			return domain.CodeInterpreterSessionPage{}, fmt.Errorf("scan code interpreter session: %w", err)
 		}
-		if nameFilter := strings.TrimSpace(query.Name); nameFilter != "" && !strings.EqualFold(strings.TrimSpace(session.Name), nameFilter) {
+		if ownerFilter != "" && session.Owner != ownerFilter {
+			continue
+		}
+		if nameFilter != "" && !strings.EqualFold(strings.TrimSpace(session.Name), nameFilter) {
 			continue
 		}
 		sessions = append(sessions, session)

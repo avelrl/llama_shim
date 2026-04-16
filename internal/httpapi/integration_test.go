@@ -8725,6 +8725,69 @@ func TestContainersAndExplicitCodeInterpreterEnforceContainerOwner(t *testing.T)
 
 }
 
+func TestContainersListPaginatesWithinOwnerScope(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		AuthMode:     config.ShimAuthModeStaticBearer,
+		BearerTokens: []string{"token-a", "token-b"},
+		CodeInterpreterBackend: testutil.FakeSandboxBackend{
+			KindValue: "docker",
+			CreateSessionFunc: func(_ context.Context, _ sandbox.CreateSessionRequest) error {
+				return nil
+			},
+		},
+	})
+
+	ownerAHeaders := map[string]string{"Authorization": "Bearer token-a"}
+	ownerBHeaders := map[string]string{"Authorization": "Bearer token-b"}
+
+	status, _, ownerBPayload := rawRequestWithHeaders(t, app, http.MethodPost, "/v1/containers", map[string]any{"name": "Owner B"}, ownerBHeaders)
+	require.Equal(t, http.StatusOK, status)
+	ownerBID := asStringAny(ownerBPayload["id"])
+	ownerBSession, err := app.Store.GetCodeInterpreterSession(context.Background(), ownerBID)
+	require.NoError(t, err)
+	ownerBSession.CreatedAt = "2026-04-12T10:00:00Z"
+	ownerBSession.LastActiveAt = ownerBSession.CreatedAt
+	require.NoError(t, app.Store.SaveCodeInterpreterSession(context.Background(), ownerBSession))
+
+	status, _, ownerAFirstPayload := rawRequestWithHeaders(t, app, http.MethodPost, "/v1/containers", map[string]any{"name": "Owner A1"}, ownerAHeaders)
+	require.Equal(t, http.StatusOK, status)
+	ownerAFirstID := asStringAny(ownerAFirstPayload["id"])
+	ownerAFirstSession, err := app.Store.GetCodeInterpreterSession(context.Background(), ownerAFirstID)
+	require.NoError(t, err)
+	ownerAFirstSession.CreatedAt = "2026-04-12T10:01:00Z"
+	ownerAFirstSession.LastActiveAt = ownerAFirstSession.CreatedAt
+	require.NoError(t, app.Store.SaveCodeInterpreterSession(context.Background(), ownerAFirstSession))
+
+	status, _, ownerASecondPayload := rawRequestWithHeaders(t, app, http.MethodPost, "/v1/containers", map[string]any{"name": "Owner A2"}, ownerAHeaders)
+	require.Equal(t, http.StatusOK, status)
+	ownerASecondID := asStringAny(ownerASecondPayload["id"])
+	ownerASecondSession, err := app.Store.GetCodeInterpreterSession(context.Background(), ownerASecondID)
+	require.NoError(t, err)
+	ownerASecondSession.CreatedAt = "2026-04-12T10:02:00Z"
+	ownerASecondSession.LastActiveAt = ownerASecondSession.CreatedAt
+	require.NoError(t, app.Store.SaveCodeInterpreterSession(context.Background(), ownerASecondSession))
+
+	status, _, firstPage := rawRequestWithHeaders(t, app, http.MethodGet, "/v1/containers?limit=1&order=asc", nil, ownerAHeaders)
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, ownerAFirstID, asStringAny(firstPage["first_id"]))
+	require.Equal(t, ownerAFirstID, asStringAny(firstPage["last_id"]))
+	require.Equal(t, true, firstPage["has_more"])
+	firstData, ok := firstPage["data"].([]any)
+	require.True(t, ok)
+	require.Len(t, firstData, 1)
+	require.Equal(t, ownerAFirstID, asStringAny(firstData[0].(map[string]any)["id"]))
+
+	status, _, secondPage := rawRequestWithHeaders(t, app, http.MethodGet, "/v1/containers?limit=1&order=asc&after="+ownerAFirstID, nil, ownerAHeaders)
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, ownerASecondID, asStringAny(secondPage["first_id"]))
+	require.Equal(t, ownerASecondID, asStringAny(secondPage["last_id"]))
+	require.Equal(t, false, secondPage["has_more"])
+	secondData, ok := secondPage["data"].([]any)
+	require.True(t, ok)
+	require.Len(t, secondData, 1)
+	require.Equal(t, ownerASecondID, asStringAny(secondData[0].(map[string]any)["id"]))
+}
+
 func TestResponsesCreateLocalComputerRequestsScreenshot(t *testing.T) {
 	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
 		ComputerBackend: httpapi.LocalComputerBackendChatCompletions,

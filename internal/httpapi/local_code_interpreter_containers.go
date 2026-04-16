@@ -98,20 +98,10 @@ func (m localCodeInterpreterContainerManager) createContainer(ctx context.Contex
 }
 
 func (m localCodeInterpreterContainerManager) listContainers(ctx context.Context, query domain.ListCodeInterpreterSessionsQuery, owner string) (domain.CodeInterpreterSessionPage, error) {
+	query.Owner = strings.TrimSpace(owner)
 	page, err := m.sessions.ListCodeInterpreterSessions(ctx, query)
 	if err != nil {
 		return domain.CodeInterpreterSessionPage{}, err
-	}
-	owner = strings.TrimSpace(owner)
-	if owner != "" {
-		filtered := make([]domain.CodeInterpreterSession, 0, len(page.Sessions))
-		for _, session := range page.Sessions {
-			if session.Owner == owner {
-				filtered = append(filtered, session)
-			}
-		}
-		page.Sessions = filtered
-		page.HasMore = false
 	}
 	for i := range page.Sessions {
 		session, expireErr := m.expireIfNeeded(ctx, page.Sessions[i])

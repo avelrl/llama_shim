@@ -245,7 +245,7 @@ Supported environment overrides:
   Use `auto` for the default path: it keeps bridge behavior for plain-text custom tools, routes supported `grammar` / `regex` custom tools into the shim-local constrained path, uses backend-native structured generation of raw `input` for named constrained custom tools and `tool_choice: "required"` with a single constrained tool, and in broader auto/mixed cases runs a shim-local tool selector before backend-native constrained generation for the selected custom tool. Shim-local `tool_choice.type=allowed_tools` is supported for function/custom subsets. The old validation/repair loop remains only as an error fallback, not the happy path.
 - `RESPONSES_CODEX_ENABLE_COMPATIBILITY` overrides `responses.codex.enable_compatibility`; when disabled, the shim stops injecting Codex-specific instructions/context and skips Codex-specific response normalization
 - `RESPONSES_CODEX_FORCE_TOOL_CHOICE_REQUIRED` overrides `responses.codex.force_tool_choice_required`; when enabled, Codex-like requests with `tool_choice: "auto"` are rewritten to `required`
-- `RESPONSES_CODE_INTERPRETER_BACKEND` overrides `responses.code_interpreter.backend`; supported values: `disabled`, `unsafe_host`, `docker`
+- `RESPONSES_CODE_INTERPRETER_BACKEND` overrides `responses.code_interpreter.backend`; supported values: `disabled`, `docker`
 - `RESPONSES_CODE_INTERPRETER_PYTHON_BINARY` overrides `responses.code_interpreter.python_binary`
 - `RESPONSES_CODE_INTERPRETER_DOCKER_BINARY` overrides `responses.code_interpreter.docker.binary`
 - `RESPONSES_CODE_INTERPRETER_DOCKER_IMAGE` overrides `responses.code_interpreter.docker.image`
@@ -482,7 +482,6 @@ The shim now supports a pragmatic local-first remote MCP subset inside
 - approvals via `mcp_approval_request` and follow-up
   `mcp_approval_response`
 - real `mcp_call` execution and same-turn assistant completion
-- `authorization` + `headers` for remote `server_url` tools
 - both legacy HTTP/SSE MCP endpoints such as `https://.../sse` and basic
   streamable HTTP MCP endpoints such as `https://.../mcp`
 - generic create/retrieve replay for `mcp_list_tools` /
@@ -490,6 +489,8 @@ The shim now supports a pragmatic local-first remote MCP subset inside
 
 Boundaries of the current local subset:
 
+- shim-local remote `mcp` rejects request-supplied `authorization` and
+  `headers`; upstream or a trusted proxy must own outbound credentials
 - connectors (`connector_id`) remain an upstream-only compatibility bridge,
   not a shim-local runtime; the shim now validates connector-aware MCP tool
   definitions and sanitizes `authorization`, `headers`, and `server_url`
