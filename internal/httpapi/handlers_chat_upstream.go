@@ -54,7 +54,7 @@ func (h *proxyHandler) buildMergedStoredChatCompletionsPage(ctx context.Context,
 			Model:    query.Model,
 			Metadata: query.Metadata,
 			After:    after,
-			Limit:    storedChatCompletionsSourcePageLimit(query.Limit),
+			Limit:    storedChatCompletionsSourcePageLimit(query.Limit + 1),
 			Order:    query.Order,
 		})
 		if err != nil {
@@ -77,7 +77,7 @@ func (h *proxyHandler) buildMergedStoredChatCompletionsPage(ctx context.Context,
 	var upstream *storedChatCompletionSource
 	if h.client != nil {
 		upstream = newStoredChatCompletionSource(func(fetchCtx context.Context, after string) (storedChatCompletionSourcePage, *storedChatCompletionForwardResponse, bool, error) {
-			page, statusCode, headers, body, unsupported, err := h.fetchUpstreamStoredChatCompletionsPage(fetchCtx, incoming, query, after, storedChatCompletionsSourcePageLimit(query.Limit))
+			page, statusCode, headers, body, unsupported, err := h.fetchUpstreamStoredChatCompletionsPage(fetchCtx, incoming, query, after, storedChatCompletionsSourcePageLimit(query.Limit+1))
 			if err != nil {
 				return storedChatCompletionSourcePage{}, nil, false, err
 			}
@@ -109,7 +109,7 @@ func (h *proxyHandler) buildMergedStoredChatCompletionsPage(ctx context.Context,
 	after := strings.TrimSpace(query.After)
 	seenAfter := after == ""
 	data := make([]json.RawMessage, 0, storedChatCompletionsSourcePageLimit(query.Limit))
-	for len(data) <= query.Limit {
+	for len(data) < query.Limit+1 {
 		entry, forward, err := nextMergedStoredChatCompletion(ctx, local, upstream, query.Order)
 		if err != nil {
 			return storedChatCompletionsMergedPage{}, nil, err

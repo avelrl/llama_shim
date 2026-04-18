@@ -64,7 +64,6 @@ func (s *Store) ListChatCompletions(ctx context.Context, query domain.ListStored
 	if query.Limit < 1 {
 		query.Limit = 20
 	}
-
 	orderDir := "ASC"
 	if query.Order == domain.ChatCompletionOrderDesc {
 		orderDir = "DESC"
