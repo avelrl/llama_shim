@@ -17,6 +17,8 @@ import (
 	"llama_shim/internal/storage/sqlite"
 )
 
+const maxBufferedChatCompletionResponseBytes int64 = 64 << 20
+
 func (h *proxyHandler) forwardChatCompletions(w http.ResponseWriter, r *http.Request) {
 	rawBody, err := readJSONBody(w, r)
 	if err != nil {
@@ -49,8 +51,12 @@ func (h *proxyHandler) forwardChatCompletions(w http.ResponseWriter, r *http.Req
 
 	isSSE := strings.Contains(strings.ToLower(response.Header.Get("Content-Type")), "text/event-stream")
 	if !isSSE {
-		body, err := io.ReadAll(response.Body)
+		body, err := readBufferedChatCompletionResponse(response.Body)
 		if err != nil {
+			if errors.Is(err, errChatCompletionResponseTooLarge) {
+				WriteError(w, http.StatusBadGateway, "upstream_error", "upstream response too large", "")
+				return
+			}
 			WriteError(w, http.StatusBadGateway, "upstream_error", "failed to read upstream response", "")
 			return
 		}
@@ -128,6 +134,19 @@ func (h *proxyHandler) forwardChatCompletions(w http.ResponseWriter, r *http.Req
 			)
 		}
 	}
+}
+
+var errChatCompletionResponseTooLarge = errors.New("upstream chat completion response exceeds buffered limit")
+
+func readBufferedChatCompletionResponse(body io.Reader) ([]byte, error) {
+	content, err := io.ReadAll(io.LimitReader(body, maxBufferedChatCompletionResponseBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(content)) > maxBufferedChatCompletionResponseBytes {
+		return nil, errChatCompletionResponseTooLarge
+	}
+	return content, nil
 }
 
 type chatCompletionsListResponse struct {

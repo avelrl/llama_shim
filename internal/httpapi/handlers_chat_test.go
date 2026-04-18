@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -45,4 +46,16 @@ func TestSanitizeChatCompletionSSELineStripsNonOpenAIFields(t *testing.T) {
 	sanitized, err := sanitizeChatCompletionSSELine(line)
 	require.NoError(t, err)
 	require.Equal(t, "data: {\"choices\":[{\"delta\":{\"content\":\"OK\"}}]}\n", sanitized)
+}
+
+func TestReadBufferedChatCompletionResponseWithinLimit(t *testing.T) {
+	body, err := readBufferedChatCompletionResponse(bytes.NewReader([]byte(`{"id":"chatcmpl_ok"}`)))
+	require.NoError(t, err)
+	require.JSONEq(t, `{"id":"chatcmpl_ok"}`, string(body))
+}
+
+func TestReadBufferedChatCompletionResponseOverLimit(t *testing.T) {
+	tooLarge := bytes.Repeat([]byte("a"), int(maxBufferedChatCompletionResponseBytes)+1)
+	_, err := readBufferedChatCompletionResponse(bytes.NewReader(tooLarge))
+	require.ErrorIs(t, err, errChatCompletionResponseTooLarge)
 }
