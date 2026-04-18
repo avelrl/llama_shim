@@ -69,7 +69,7 @@ func (s *Store) ListFiles(ctx context.Context, query domain.ListFilesQuery) (dom
 	}
 
 	statement := `
-		SELECT id, purpose, filename, bytes, created_at, expires_at, status, status_details, content
+		SELECT id, purpose, filename, bytes, created_at, expires_at, status, status_details
 		FROM files
 	`
 	args := make([]any, 0, 1)
@@ -87,7 +87,7 @@ func (s *Store) ListFiles(ctx context.Context, query domain.ListFilesQuery) (dom
 
 	files := make([]domain.StoredFile, 0, query.Limit+1)
 	for rows.Next() {
-		file, err := scanStoredFile(rows)
+		file, err := scanStoredFileMetadata(rows)
 		if err != nil {
 			return domain.StoredFilePage{}, err
 		}
@@ -690,6 +690,37 @@ func scanStoredFile(row interface{ Scan(...any) error }) (domain.StoredFile, err
 		&status,
 		&statusDetails,
 		&file.Content,
+	); err != nil {
+		return domain.StoredFile{}, err
+	}
+	if expiresAt.Valid {
+		file.ExpiresAt = &expiresAt.Int64
+	}
+	if status.Valid {
+		file.Status = status.String
+	}
+	if statusDetails.Valid {
+		file.StatusDetails = &statusDetails.String
+	}
+	return file, nil
+}
+
+func scanStoredFileMetadata(row interface{ Scan(...any) error }) (domain.StoredFile, error) {
+	var (
+		file          domain.StoredFile
+		expiresAt     sql.NullInt64
+		status        sql.NullString
+		statusDetails sql.NullString
+	)
+	if err := row.Scan(
+		&file.ID,
+		&file.Purpose,
+		&file.Filename,
+		&file.Bytes,
+		&file.CreatedAt,
+		&expiresAt,
+		&status,
+		&statusDetails,
 	); err != nil {
 		return domain.StoredFile{}, err
 	}

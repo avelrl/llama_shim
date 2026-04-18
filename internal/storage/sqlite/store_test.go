@@ -1141,6 +1141,7 @@ func TestStoreSaveFileAttachVectorStoreAndSearch(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, filePage.Files, 1)
 	require.Equal(t, file.ID, filePage.Files[0].ID)
+	require.Empty(t, filePage.Files[0].Content)
 
 	vectorStore := domain.StoredVectorStore{
 		ID:           "vs_alpha",
