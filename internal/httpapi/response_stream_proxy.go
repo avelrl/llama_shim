@@ -17,6 +17,12 @@ import (
 	"llama_shim/internal/service"
 )
 
+const (
+	responseReplayArtifactMaxCount             = 64
+	responseReplayArtifactMaxPayloadBytes      = 1 << 20 // 1 MiB
+	responseReplayArtifactMaxTotalPayloadBytes = 8 << 20 // 8 MiB
+)
+
 func (h *responseHandler) proxyCreateStream(w http.ResponseWriter, r *http.Request, request CreateResponseRequest, requestJSON string, rawFields map[string]json.RawMessage, streamOptions responseStreamOptions) {
 	upstreamBody, plan, err := remapCustomToolsPayload(rawFields, h.customToolsMode, h.codexCompatibilityEnabled, h.forceCodexToolChoiceRequired)
 	if err != nil {
@@ -464,6 +470,7 @@ type responseStreamEventProxy struct {
 	outputAnnotations            []any
 	outputText                   strings.Builder
 	replayArtifacts              []domain.ResponseReplayArtifact
+	replayArtifactBytes          int
 }
 
 func newResponseStreamEventProxy(ctx context.Context, logger *slog.Logger, plan customToolTransportPlan, onCompleted func([]byte, []domain.ResponseReplayArtifact) error) *responseStreamEventProxy {
@@ -1196,9 +1203,23 @@ func (p *responseStreamEventProxy) noteEvent(eventType string, payload map[strin
 		p.errorType = fallbackString(strings.TrimSpace(asString(errPayload["type"])), p.errorType)
 		p.errorMessage = fallbackString(strings.TrimSpace(asString(errPayload["message"])), p.errorMessage)
 	}
-	if artifact, ok := responseReplayArtifactFromStreamEvent(eventType, payload); ok {
+	if artifact, payloadBytes, ok := responseReplayArtifactFromStreamEvent(eventType, payload); ok && p.allowReplayArtifact(payloadBytes) {
+		p.replayArtifactBytes += payloadBytes
 		p.replayArtifacts = append(p.replayArtifacts, artifact)
 	}
+}
+
+func (p *responseStreamEventProxy) allowReplayArtifact(payloadBytes int) bool {
+	if payloadBytes <= 0 {
+		return false
+	}
+	if len(p.replayArtifacts) >= responseReplayArtifactMaxCount {
+		return false
+	}
+	if p.replayArtifactBytes+payloadBytes > responseReplayArtifactMaxTotalPayloadBytes {
+		return false
+	}
+	return true
 }
 
 func (p *responseStreamEventProxy) logEventSummary(eventType string, payload map[string]any) {
@@ -1352,28 +1373,31 @@ func (p *responseStreamEventProxy) logEventSummary(eventType string, payload map
 	p.logger.DebugContext(p.ctx, "responses stream event", attrs...)
 }
 
-func responseReplayArtifactFromStreamEvent(eventType string, payload map[string]any) (domain.ResponseReplayArtifact, bool) {
+func responseReplayArtifactFromStreamEvent(eventType string, payload map[string]any) (domain.ResponseReplayArtifact, int, bool) {
 	if !shouldPersistResponseReplayArtifact(eventType) || payload == nil {
-		return domain.ResponseReplayArtifact{}, false
+		return domain.ResponseReplayArtifact{}, 0, false
 	}
 
 	sequence, ok := intAttr(payload["sequence_number"])
 	if !ok || sequence <= 0 {
-		return domain.ResponseReplayArtifact{}, false
+		return domain.ResponseReplayArtifact{}, 0, false
 	}
 
 	cloned := cloneAnyMap(payload)
 	delete(cloned, "sequence_number")
 	body, err := json.Marshal(cloned)
 	if err != nil {
-		return domain.ResponseReplayArtifact{}, false
+		return domain.ResponseReplayArtifact{}, 0, false
+	}
+	if len(body) > responseReplayArtifactMaxPayloadBytes {
+		return domain.ResponseReplayArtifact{}, 0, false
 	}
 
 	return domain.ResponseReplayArtifact{
 		Sequence:    sequence,
 		EventType:   strings.TrimSpace(eventType),
 		PayloadJSON: string(body),
-	}, true
+	}, len(body), true
 }
 
 func shouldPersistResponseReplayArtifact(eventType string) bool {

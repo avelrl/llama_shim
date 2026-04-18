@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -218,6 +219,55 @@ func TestStoreSaveResponseReplayArtifactsRoundTripAndCascade(t *testing.T) {
 	got, err = store.GetResponseReplayArtifacts(ctx, response.ID)
 	require.NoError(t, err)
 	require.Empty(t, got)
+}
+
+func TestStoreSaveResponseReplayArtifactsAppliesLimits(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store := openTestStore(t, ctx)
+
+	response := domain.StoredResponse{
+		ID:                   "resp_artifacts_limits",
+		Model:                "test-model",
+		RequestJSON:          `{"input":"draw a cat"}`,
+		ResponseJSON:         `{"id":"resp_artifacts_limits","object":"response","created_at":1712059200,"status":"completed","completed_at":1712059201,"error":null,"incomplete_details":null,"model":"test-model","output":[{"id":"ig_test","type":"image_generation_call","status":"completed","result":"final"}],"store":true,"background":false,"text":{"format":{"type":"text"}},"usage":null,"metadata":{},"output_text":""}`,
+		NormalizedInputItems: []domain.Item{domain.NewInputTextMessage("user", "draw a cat")},
+		EffectiveInputItems:  []domain.Item{domain.NewInputTextMessage("user", "draw a cat")},
+		Output:               []domain.Item{},
+		OutputText:           "",
+		Store:                true,
+		CreatedAt:            "2026-04-14T10:00:00Z",
+		CompletedAt:          "2026-04-14T10:00:01Z",
+	}
+	require.NoError(t, store.SaveResponse(ctx, response))
+
+	const (
+		maxCount       = 64
+		maxPayloadSize = 1 << 20
+	)
+	artifacts := make([]domain.ResponseReplayArtifact, 0, maxCount+2)
+	for i := 1; i <= maxCount+1; i++ {
+		artifacts = append(artifacts, domain.ResponseReplayArtifact{
+			ResponseID:  response.ID,
+			Sequence:    i,
+			EventType:   "response.image_generation_call.partial_image",
+			PayloadJSON: fmt.Sprintf(`{"type":"response.image_generation_call.partial_image","item_id":"ig_test","partial_image_b64":"%d"}`, i),
+		})
+	}
+	artifacts = append(artifacts, domain.ResponseReplayArtifact{
+		ResponseID:  response.ID,
+		Sequence:    maxCount + 2,
+		EventType:   "response.image_generation_call.partial_image",
+		PayloadJSON: strings.Repeat("a", maxPayloadSize+1),
+	})
+
+	require.NoError(t, store.SaveResponseReplayArtifacts(ctx, response.ID, artifacts))
+
+	got, err := store.GetResponseReplayArtifacts(ctx, response.ID)
+	require.NoError(t, err)
+	require.Len(t, got, maxCount)
+	require.Equal(t, maxCount, got[len(got)-1].Sequence)
 }
 
 func TestOpenWithOptionsRejectsUnsupportedRetrievalBackend(t *testing.T) {

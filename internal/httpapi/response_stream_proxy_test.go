@@ -959,6 +959,37 @@ func TestResponseStreamEventProxyCapturesImageGenerationPartialImageReplayArtifa
 	require.Contains(t, artifacts[0].PayloadJSON, `"partial_image_b64":"cGFydGlhbA=="`)
 }
 
+func TestResponseStreamEventProxyDropsOversizedReplayArtifactPayload(t *testing.T) {
+	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, nil)
+
+	payload := map[string]any{
+		"type":              "response.image_generation_call.partial_image",
+		"item_id":           "ig_test",
+		"partial_image_b64": strings.Repeat("a", responseReplayArtifactMaxPayloadBytes),
+		"sequence_number":   1,
+	}
+
+	proxy.noteEvent("response.image_generation_call.partial_image", payload)
+	require.Empty(t, proxy.responseReplayArtifacts())
+}
+
+func TestResponseStreamEventProxyCapsReplayArtifactsByCount(t *testing.T) {
+	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, nil)
+
+	for i := 1; i <= responseReplayArtifactMaxCount+5; i++ {
+		proxy.noteEvent("response.image_generation_call.partial_image", map[string]any{
+			"type":              "response.image_generation_call.partial_image",
+			"item_id":           "ig_test",
+			"partial_image_b64": "cA==",
+			"sequence_number":   i,
+		})
+	}
+
+	artifacts := proxy.responseReplayArtifacts()
+	require.Len(t, artifacts, responseReplayArtifactMaxCount)
+	require.Equal(t, responseReplayArtifactMaxCount, artifacts[len(artifacts)-1].Sequence)
+}
+
 func TestNormalizeCompletedToolCallEventSynthesizesMCPApprovalRequestGenericReplay(t *testing.T) {
 	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, nil)
 
@@ -1113,9 +1144,9 @@ func TestNormalizeCompletedToolCallEventSynthesizesToolSearchGenericReplay(t *te
 					"status":    "completed",
 					"tools": []any{
 						map[string]any{
-							"type":         "function",
-							"name":         "get_shipping_eta",
-							"description":  "Look up shipping ETA details for an order.",
+							"type":          "function",
+							"name":          "get_shipping_eta",
+							"description":   "Look up shipping ETA details for an order.",
 							"defer_loading": true,
 						},
 					},

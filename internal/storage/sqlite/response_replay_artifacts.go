@@ -10,6 +10,12 @@ import (
 	"llama_shim/internal/domain"
 )
 
+const (
+	responseReplayArtifactsMaxCount             = 64
+	responseReplayArtifactsMaxPayloadBytes      = 1 << 20 // 1 MiB
+	responseReplayArtifactsMaxTotalPayloadBytes = 8 << 20 // 8 MiB
+)
+
 func (s *Store) SaveResponseReplayArtifacts(ctx context.Context, responseID string, artifacts []domain.ResponseReplayArtifact) error {
 	responseID = strings.TrimSpace(responseID)
 	if responseID == "" {
@@ -52,7 +58,19 @@ func (s *Store) SaveResponseReplayArtifacts(ctx context.Context, responseID stri
 	}()
 
 	nextSequence := 1
+	totalPayloadBytes := 0
+	writtenCount := 0
 	for _, artifact := range normalized {
+		payload := artifact.PayloadJSON
+		if payload == "" || len(payload) > responseReplayArtifactsMaxPayloadBytes {
+			continue
+		}
+		if writtenCount >= responseReplayArtifactsMaxCount {
+			break
+		}
+		if totalPayloadBytes+len(payload) > responseReplayArtifactsMaxTotalPayloadBytes {
+			break
+		}
 		sequence := artifact.Sequence
 		if sequence <= 0 {
 			sequence = nextSequence
@@ -62,10 +80,12 @@ func (s *Store) SaveResponseReplayArtifacts(ctx context.Context, responseID stri
 			responseID,
 			sequence,
 			strings.TrimSpace(artifact.EventType),
-			artifact.PayloadJSON,
+			payload,
 		); err != nil {
 			return fmt.Errorf("insert response replay artifact: %w", err)
 		}
+		totalPayloadBytes += len(payload)
+		writtenCount++
 		nextSequence = sequence + 1
 	}
 
