@@ -22,14 +22,23 @@ type OpenOptions struct {
 }
 
 type indexVectorStoreFileParams struct {
-	VectorStoreID string
-	FileID        string
-	CreatedAt     int64
+	VectorStoreID    string
+	FileID           string
+	CreatedAt        int64
+	ReplacedChunkIDs []int64
+}
+
+type deleteVectorStoreFileParams struct {
+	VectorStoreID   string
+	FileID          string
+	CreatedAt       int64
+	RemovedChunkIDs []int64
 }
 
 type retrievalBackend interface {
 	Name() string
 	IndexVectorStoreFile(ctx context.Context, tx *sql.Tx, params indexVectorStoreFileParams) error
+	DeleteVectorStoreFile(ctx context.Context, tx *sql.Tx, params deleteVectorStoreFileParams) error
 	RefreshVectorStore(ctx context.Context, tx *sql.Tx, vectorStoreID string, createdAt int64) error
 	DeleteVectorStore(ctx context.Context, tx *sql.Tx, vectorStoreID string) error
 	SearchVectorStore(ctx context.Context, store *Store, query domain.VectorStoreSearchQuery) (domain.VectorStoreSearchPage, error)
@@ -95,6 +104,10 @@ func (lexicalRetrievalBackend) Name() string {
 }
 
 func (lexicalRetrievalBackend) IndexVectorStoreFile(context.Context, *sql.Tx, indexVectorStoreFileParams) error {
+	return nil
+}
+
+func (lexicalRetrievalBackend) DeleteVectorStoreFile(context.Context, *sql.Tx, deleteVectorStoreFileParams) error {
 	return nil
 }
 
@@ -230,17 +243,21 @@ func (b sqliteVecRetrievalBackend) IndexVectorStoreFile(ctx context.Context, tx 
 		return fmt.Errorf("iterate vector store chunks for embeddings: %w", err)
 	}
 	if len(chunks) == 0 {
-		return b.RefreshVectorStore(ctx, tx, params.VectorStoreID, params.CreatedAt)
+		return b.syncVectorStoreFileIndex(ctx, tx, params.VectorStoreID, params.FileID, params.ReplacedChunkIDs, params.CreatedAt)
 	}
 
 	if _, err := b.upsertChunkEmbeddings(ctx, tx, chunks, params.CreatedAt); err != nil {
 		return err
 	}
-	return b.RefreshVectorStore(ctx, tx, params.VectorStoreID, params.CreatedAt)
+	return b.syncVectorStoreFileIndex(ctx, tx, params.VectorStoreID, params.FileID, params.ReplacedChunkIDs, params.CreatedAt)
 }
 
 func (b sqliteVecRetrievalBackend) RefreshVectorStore(ctx context.Context, tx *sql.Tx, vectorStoreID string, createdAt int64) error {
 	return b.refreshVectorStoreVec0Index(ctx, tx, vectorStoreID, b.model, 0, createdAt)
+}
+
+func (b sqliteVecRetrievalBackend) DeleteVectorStoreFile(ctx context.Context, tx *sql.Tx, params deleteVectorStoreFileParams) error {
+	return b.syncVectorStoreFileIndex(ctx, tx, params.VectorStoreID, params.FileID, params.RemovedChunkIDs, params.CreatedAt)
 }
 
 func (b sqliteVecRetrievalBackend) DeleteVectorStore(ctx context.Context, tx *sql.Tx, vectorStoreID string) error {
@@ -493,40 +510,6 @@ func (b sqliteVecRetrievalBackend) upsertChunkEmbeddings(ctx context.Context, ex
 }
 
 func (b sqliteVecRetrievalBackend) ensureCurrentVectorStoreEmbeddings(ctx context.Context, store *Store, vectorStoreID string, expectedDims int) error {
-	rows, err := store.db.QueryContext(ctx, `
-		SELECT c.id, c.content, e.embedding_model, e.embedding_dimensions
-		FROM vector_store_chunks c
-		JOIN vector_store_files v ON v.vector_store_id = c.vector_store_id AND v.file_id = c.file_id
-		LEFT JOIN vector_store_chunk_embeddings e ON e.chunk_id = c.id
-		WHERE c.vector_store_id = ? AND v.status = 'completed'
-		ORDER BY c.chunk_index ASC, c.id ASC
-	`, vectorStoreID)
-	if err != nil {
-		return fmt.Errorf("query current vector store embeddings: %w", err)
-	}
-	defer rows.Close()
-
-	stale := make([]vectorStoreChunk, 0, 8)
-	for rows.Next() {
-		var (
-			chunk          vectorStoreChunk
-			embeddingModel sql.NullString
-			embeddingDims  sql.NullInt64
-		)
-		if err := rows.Scan(&chunk.ID, &chunk.Content, &embeddingModel, &embeddingDims); err != nil {
-			return fmt.Errorf("scan current vector store embedding row: %w", err)
-		}
-		if !embeddingModel.Valid || !embeddingDims.Valid || embeddingModel.String != b.model || int(embeddingDims.Int64) != expectedDims {
-			stale = append(stale, chunk)
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("iterate current vector store embeddings: %w", err)
-	}
-	if len(stale) == 0 {
-		return nil
-	}
-
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin vector store embedding refresh tx: %w", err)
@@ -535,17 +518,73 @@ func (b sqliteVecRetrievalBackend) ensureCurrentVectorStoreEmbeddings(ctx contex
 		_ = tx.Rollback()
 	}()
 
-	actualDims, err := b.upsertChunkEmbeddings(ctx, tx, stale, domain.NowUTC().Unix())
+	actualDims, err := b.ensureCurrentVectorStoreEmbeddingsTx(ctx, tx, vectorStoreID, expectedDims)
 	if err != nil {
 		return err
 	}
-	if actualDims != expectedDims {
+	if expectedDims != 0 && actualDims != expectedDims {
 		return fmt.Errorf("reindexed vector store chunks with dimensions %d, expected %d", actualDims, expectedDims)
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit vector store embedding refresh tx: %w", err)
 	}
 	return nil
+}
+
+func (b sqliteVecRetrievalBackend) ensureCurrentVectorStoreEmbeddingsTx(ctx context.Context, tx *sql.Tx, vectorStoreID string, expectedDims int) (int, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT c.id, c.content, e.embedding_model, e.embedding_dimensions
+		FROM vector_store_chunks c
+		JOIN vector_store_files v ON v.vector_store_id = c.vector_store_id AND v.file_id = c.file_id
+		LEFT JOIN vector_store_chunk_embeddings e ON e.chunk_id = c.id
+		WHERE c.vector_store_id = ? AND v.status = 'completed'
+		ORDER BY c.chunk_index ASC, c.id ASC
+	`, vectorStoreID)
+	if err != nil {
+		return 0, fmt.Errorf("query current vector store embeddings: %w", err)
+	}
+	defer rows.Close()
+
+	dims := expectedDims
+	stale := make([]vectorStoreChunk, 0, 8)
+	for rows.Next() {
+		var (
+			chunk          vectorStoreChunk
+			embeddingModel sql.NullString
+			embeddingDims  sql.NullInt64
+		)
+		if err := rows.Scan(&chunk.ID, &chunk.Content, &embeddingModel, &embeddingDims); err != nil {
+			return 0, fmt.Errorf("scan current vector store embedding row: %w", err)
+		}
+		if embeddingModel.Valid && embeddingDims.Valid && embeddingModel.String == b.model {
+			rowDims := int(embeddingDims.Int64)
+			if dims == 0 {
+				dims = rowDims
+			}
+			if rowDims == dims {
+				continue
+			}
+		}
+		stale = append(stale, chunk)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("iterate current vector store embeddings: %w", err)
+	}
+	if len(stale) == 0 {
+		return dims, nil
+	}
+
+	actualDims, err := b.upsertChunkEmbeddings(ctx, tx, stale, domain.NowUTC().Unix())
+	if err != nil {
+		return 0, err
+	}
+	if dims == 0 {
+		dims = actualDims
+	}
+	if actualDims != dims {
+		return 0, fmt.Errorf("reindexed vector store chunks with dimensions %d, expected %d", actualDims, dims)
+	}
+	return dims, nil
 }
 
 func (b sqliteVecRetrievalBackend) ensureCurrentVectorStoreVec0Index(ctx context.Context, store *Store, vectorStoreID string, expectedDims int) (int, error) {
@@ -602,10 +641,77 @@ func (b sqliteVecRetrievalBackend) refreshVectorStoreVec0Index(ctx context.Conte
 	return nil
 }
 
+func (b sqliteVecRetrievalBackend) syncVectorStoreFileIndex(ctx context.Context, tx *sql.Tx, vectorStoreID, fileID string, removedChunkIDs []int64, createdAt int64) error {
+	tableName := semanticIndexTableName(vectorStoreID)
+
+	metaModel, metaDims, _, metaExists, err := readSemanticIndexMetadata(ctx, tx, vectorStoreID)
+	if err != nil {
+		return err
+	}
+	tableExists, err := sqliteTableExistsTx(ctx, tx, tableName)
+	if err != nil {
+		return err
+	}
+
+	totalChunkCount, totalDims, err := b.currentVectorStoreVec0SourceStats(ctx, tx, vectorStoreID)
+	if err != nil {
+		return err
+	}
+	if metaExists && tableExists && metaModel == b.model && metaDims == totalDims {
+		if totalChunkCount == 0 {
+			if err := dropSemanticVec0Table(ctx, tx, tableName); err != nil {
+				return err
+			}
+			return deleteSemanticIndexMetadata(ctx, tx, vectorStoreID)
+		}
+		fileRows, err := b.currentVectorStoreFileVec0Rows(ctx, tx, vectorStoreID, fileID)
+		if err != nil {
+			return err
+		}
+		if err := deleteSemanticVec0Rows(ctx, tx, tableName, removedChunkIDs); err != nil {
+			return err
+		}
+		if err := insertSemanticVec0Rows(ctx, tx, tableName, fileRows); err != nil {
+			return err
+		}
+		return upsertSemanticIndexMetadata(ctx, tx, vectorStoreID, b.model, totalDims, totalChunkCount, createdAt)
+	}
+
+	if _, err := b.ensureCurrentVectorStoreEmbeddingsTx(ctx, tx, vectorStoreID, 0); err != nil {
+		return err
+	}
+	totalChunkCount, totalDims, err = b.currentVectorStoreVec0SourceStats(ctx, tx, vectorStoreID)
+	if err != nil {
+		return err
+	}
+	if totalChunkCount == 0 {
+		if err := dropSemanticVec0Table(ctx, tx, tableName); err != nil {
+			return err
+		}
+		return deleteSemanticIndexMetadata(ctx, tx, vectorStoreID)
+	}
+
+	fileRows, err := b.currentVectorStoreFileVec0Rows(ctx, tx, vectorStoreID, fileID)
+	if err != nil {
+		return err
+	}
+	if len(fileRows) == totalChunkCount && !tableExists {
+		if err := createSemanticVec0Table(ctx, tx, tableName, totalDims); err != nil {
+			return err
+		}
+		if err := insertSemanticVec0Rows(ctx, tx, tableName, fileRows); err != nil {
+			return err
+		}
+		return upsertSemanticIndexMetadata(ctx, tx, vectorStoreID, b.model, totalDims, totalChunkCount, createdAt)
+	}
+
+	return b.refreshVectorStoreVec0Index(ctx, tx, vectorStoreID, b.model, totalDims, createdAt)
+}
+
 func (b sqliteVecRetrievalBackend) refreshVectorStoreVec0IndexCount(ctx context.Context, tx *sql.Tx, vectorStoreID, model string, expectedDims int, createdAt int64) (int, error) {
 	tableName := semanticIndexTableName(vectorStoreID)
-	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`DROP TABLE IF EXISTS "%s"`, tableName)); err != nil {
-		return 0, fmt.Errorf("drop semantic vec0 table: %w", err)
+	if err := dropSemanticVec0Table(ctx, tx, tableName); err != nil {
+		return 0, err
 	}
 
 	rows, err := tx.QueryContext(ctx, `
@@ -665,15 +771,183 @@ func (b sqliteVecRetrievalBackend) refreshVectorStoreVec0IndexCount(ctx context.
 	}
 
 	if chunkCount == 0 {
-		if _, err := tx.ExecContext(ctx, `
-			DELETE FROM vector_store_semantic_index_meta
-			WHERE vector_store_id = ?
-		`, vectorStoreID); err != nil {
-			return 0, fmt.Errorf("delete empty semantic index metadata: %w", err)
+		if err := deleteSemanticIndexMetadata(ctx, tx, vectorStoreID); err != nil {
+			return 0, err
 		}
 		return 0, nil
 	}
 
+	if err := upsertSemanticIndexMetadata(ctx, tx, vectorStoreID, model, dims, chunkCount, createdAt); err != nil {
+		return 0, err
+	}
+
+	return chunkCount, nil
+}
+
+type semanticIndexRow struct {
+	ChunkID int64
+	Blob    []byte
+	Dims    int
+}
+
+func (b sqliteVecRetrievalBackend) currentVectorStoreFileVec0Rows(ctx context.Context, tx *sql.Tx, vectorStoreID, fileID string) ([]semanticIndexRow, error) {
+	if strings.TrimSpace(fileID) == "" {
+		return nil, nil
+	}
+	rows, err := tx.QueryContext(ctx, `
+		SELECT c.id, CAST(e.embedding AS BLOB), e.embedding_dimensions
+		FROM vector_store_chunk_embeddings e
+		JOIN vector_store_chunks c ON c.id = e.chunk_id
+		JOIN vector_store_files v ON v.vector_store_id = c.vector_store_id AND v.file_id = c.file_id
+		WHERE c.vector_store_id = ? AND c.file_id = ? AND v.status = 'completed' AND e.embedding_model = ?
+		ORDER BY c.chunk_index ASC, c.id ASC
+	`, vectorStoreID, fileID, b.model)
+	if err != nil {
+		return nil, fmt.Errorf("query semantic vec0 file rows: %w", err)
+	}
+	defer rows.Close()
+
+	indexRows := make([]semanticIndexRow, 0, 16)
+	for rows.Next() {
+		var item semanticIndexRow
+		if err := rows.Scan(&item.ChunkID, &item.Blob, &item.Dims); err != nil {
+			return nil, fmt.Errorf("scan semantic vec0 file row: %w", err)
+		}
+		indexRows = append(indexRows, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate semantic vec0 file rows: %w", err)
+	}
+	return indexRows, nil
+}
+
+func (b sqliteVecRetrievalBackend) currentVectorStoreVec0SourceStats(ctx context.Context, tx *sql.Tx, vectorStoreID string) (int, int, error) {
+	row := tx.QueryRowContext(ctx, `
+		SELECT
+			COUNT(*),
+			COALESCE(MIN(e.embedding_dimensions), 0),
+			COALESCE(MAX(e.embedding_dimensions), 0)
+		FROM vector_store_chunk_embeddings e
+		JOIN vector_store_chunks c ON c.id = e.chunk_id
+		JOIN vector_store_files v ON v.vector_store_id = c.vector_store_id AND v.file_id = c.file_id
+		WHERE c.vector_store_id = ? AND v.status = 'completed' AND e.embedding_model = ?
+	`, vectorStoreID, b.model)
+
+	var (
+		count   int
+		minDims int
+		maxDims int
+	)
+	if err := row.Scan(&count, &minDims, &maxDims); err != nil {
+		return 0, 0, fmt.Errorf("query semantic vec0 source stats: %w", err)
+	}
+	if count == 0 {
+		return 0, 0, nil
+	}
+	if minDims != maxDims {
+		return 0, 0, fmt.Errorf("semantic vec0 source dimensions mismatch: min %d, max %d", minDims, maxDims)
+	}
+	return count, minDims, nil
+}
+
+func sqliteTableExistsTx(ctx context.Context, tx *sql.Tx, name string) (bool, error) {
+	var count int
+	if err := tx.QueryRowContext(ctx, `
+		SELECT COUNT(1)
+		FROM sqlite_master
+		WHERE type IN ('table', 'view') AND name = ?
+	`, name).Scan(&count); err != nil {
+		return false, fmt.Errorf("query sqlite_master for %q: %w", name, err)
+	}
+	return count > 0, nil
+}
+
+func readSemanticIndexMetadata(ctx context.Context, tx *sql.Tx, vectorStoreID string) (string, int, int, bool, error) {
+	row := tx.QueryRowContext(ctx, `
+		SELECT embedding_model, embedding_dimensions, chunk_count
+		FROM vector_store_semantic_index_meta
+		WHERE vector_store_id = ?
+	`, vectorStoreID)
+
+	var (
+		model      string
+		dims       int
+		chunkCount int
+	)
+	if err := row.Scan(&model, &dims, &chunkCount); err != nil {
+		if err == sql.ErrNoRows {
+			return "", 0, 0, false, nil
+		}
+		return "", 0, 0, false, fmt.Errorf("query semantic index metadata: %w", err)
+	}
+	return model, dims, chunkCount, true, nil
+}
+
+func createSemanticVec0Table(ctx context.Context, tx *sql.Tx, tableName string, dims int) error {
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
+		CREATE VIRTUAL TABLE "%s" USING vec0(
+			chunk_id INTEGER PRIMARY KEY,
+			embedding float[%d] distance_metric=cosine
+		)
+	`, tableName, dims)); err != nil {
+		return fmt.Errorf("create semantic vec0 table: %w", err)
+	}
+	return nil
+}
+
+func insertSemanticVec0Rows(ctx context.Context, tx *sql.Tx, tableName string, rows []semanticIndexRow) error {
+	for _, item := range rows {
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
+			INSERT INTO "%s"(chunk_id, embedding) VALUES (?, vec_f32(?))
+		`, tableName), item.ChunkID, item.Blob); err != nil {
+			return fmt.Errorf("insert semantic vec0 row: %w", err)
+		}
+	}
+	return nil
+}
+
+func deleteSemanticVec0Rows(ctx context.Context, tx *sql.Tx, tableName string, chunkIDs []int64) error {
+	if len(chunkIDs) == 0 {
+		return nil
+	}
+	for start := 0; start < len(chunkIDs); start += 128 {
+		end := start + 128
+		if end > len(chunkIDs) {
+			end = len(chunkIDs)
+		}
+		args := make([]any, 0, end-start)
+		placeholders := make([]string, 0, end-start)
+		for _, chunkID := range chunkIDs[start:end] {
+			args = append(args, chunkID)
+			placeholders = append(placeholders, "?")
+		}
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
+			DELETE FROM "%s" WHERE chunk_id IN (%s)
+		`, tableName, strings.Join(placeholders, ",")), args...); err != nil {
+			return fmt.Errorf("delete semantic vec0 rows: %w", err)
+		}
+	}
+	return nil
+}
+
+func dropSemanticVec0Table(ctx context.Context, tx *sql.Tx, tableName string) error {
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`DROP TABLE IF EXISTS "%s"`, tableName)); err != nil {
+		return fmt.Errorf("drop semantic vec0 table: %w", err)
+	}
+	return nil
+}
+
+func deleteSemanticIndexMetadata(ctx context.Context, tx *sql.Tx, vectorStoreID string) error {
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM vector_store_semantic_index_meta
+		WHERE vector_store_id = ?
+	`, vectorStoreID); err != nil {
+		return fmt.Errorf("delete semantic index metadata: %w", err)
+	}
+	return nil
+}
+
+func upsertSemanticIndexMetadata(ctx context.Context, tx *sql.Tx, vectorStoreID, model string, dims, chunkCount int, createdAt int64) error {
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO vector_store_semantic_index_meta (
 			vector_store_id, embedding_model, embedding_dimensions, chunk_count, updated_at
@@ -684,10 +958,9 @@ func (b sqliteVecRetrievalBackend) refreshVectorStoreVec0IndexCount(ctx context.
 			chunk_count = excluded.chunk_count,
 			updated_at = excluded.updated_at
 	`, vectorStoreID, model, dims, chunkCount, createdAt); err != nil {
-		return 0, fmt.Errorf("upsert semantic index metadata: %w", err)
+		return fmt.Errorf("upsert semantic index metadata: %w", err)
 	}
-
-	return chunkCount, nil
+	return nil
 }
 
 func semanticIndexTableName(vectorStoreID string) string {
