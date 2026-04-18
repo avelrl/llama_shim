@@ -68,16 +68,37 @@ func (s *Store) ListFiles(ctx context.Context, query domain.ListFilesQuery) (dom
 		orderDir = "ASC"
 	}
 
+	where := make([]string, 0, 2)
+	args := make([]any, 0, 4)
+	purpose := strings.TrimSpace(query.Purpose)
+	if purpose != "" {
+		where = append(where, `purpose = ?`)
+		args = append(args, purpose)
+	}
+
+	if cursor := strings.TrimSpace(query.After); cursor != "" {
+		cursorCreatedAt, err := s.lookupListFilesCursorCreatedAt(ctx, cursor, purpose)
+		if err != nil {
+			return domain.StoredFilePage{}, err
+		}
+		comparison := "<"
+		if query.Order == domain.ListOrderAsc {
+			comparison = ">"
+		}
+		where = append(where, `(created_at `+comparison+` ? OR (created_at = ? AND id `+comparison+` ?))`)
+		args = append(args, cursorCreatedAt, cursorCreatedAt, cursor)
+	}
+
 	statement := `
 		SELECT id, purpose, filename, bytes, created_at, expires_at, status, status_details
 		FROM files
 	`
-	args := make([]any, 0, 1)
-	if purpose := strings.TrimSpace(query.Purpose); purpose != "" {
-		statement += ` WHERE purpose = ?`
-		args = append(args, purpose)
+	if len(where) != 0 {
+		statement += ` WHERE ` + strings.Join(where, ` AND `)
 	}
 	statement += ` ORDER BY created_at ` + orderDir + `, id ` + orderDir
+	statement += ` LIMIT ?`
+	args = append(args, query.Limit+1)
 
 	rows, err := s.db.QueryContext(ctx, statement, args...)
 	if err != nil {
@@ -97,12 +118,12 @@ func (s *Store) ListFiles(ctx context.Context, query domain.ListFilesQuery) (dom
 		return domain.StoredFilePage{}, fmt.Errorf("iterate files: %w", err)
 	}
 
-	items, hasMore, err := paginateStoredFiles(files, query.After, query.Limit)
-	if err != nil {
-		return domain.StoredFilePage{}, err
+	hasMore := len(files) > query.Limit
+	if hasMore {
+		files = files[:query.Limit]
 	}
 
-	return domain.StoredFilePage{Files: items, HasMore: hasMore}, nil
+	return domain.StoredFilePage{Files: files, HasMore: hasMore}, nil
 }
 
 func (s *Store) DeleteFile(ctx context.Context, id string) error {
@@ -736,6 +757,24 @@ func scanStoredFileMetadata(row interface{ Scan(...any) error }) (domain.StoredF
 	return file, nil
 }
 
+func (s *Store) lookupListFilesCursorCreatedAt(ctx context.Context, id string, purpose string) (int64, error) {
+	statement := `SELECT created_at FROM files WHERE id = ?`
+	args := []any{id}
+	if purpose != "" {
+		statement += ` AND purpose = ?`
+		args = append(args, purpose)
+	}
+
+	var createdAt int64
+	if err := s.db.QueryRowContext(ctx, statement, args...).Scan(&createdAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, ErrNotFound
+		}
+		return 0, fmt.Errorf("lookup file cursor: %w", err)
+	}
+	return createdAt, nil
+}
+
 func scanVectorStoreBase(row interface{ Scan(...any) error }) (domain.StoredVectorStore, error) {
 	var (
 		store              domain.StoredVectorStore
@@ -814,31 +853,6 @@ func scanVectorStoreFile(row interface{ Scan(...any) error }) (domain.StoredVect
 		return domain.StoredVectorStoreFile{}, fmt.Errorf("decode vector store chunking strategy: %w", err)
 	}
 	return file, nil
-}
-
-func paginateStoredFiles(files []domain.StoredFile, after string, limit int) ([]domain.StoredFile, bool, error) {
-	start := 0
-	if cursor := strings.TrimSpace(after); cursor != "" {
-		start = -1
-		for i, file := range files {
-			if file.ID == cursor {
-				start = i + 1
-				break
-			}
-		}
-		if start < 0 {
-			return nil, false, ErrNotFound
-		}
-	}
-	if start > len(files) {
-		start = len(files)
-	}
-	end := start + limit
-	hasMore := end < len(files)
-	if end > len(files) {
-		end = len(files)
-	}
-	return files[start:end], hasMore, nil
 }
 
 func paginateVectorStores(stores []domain.StoredVectorStore, after, before string, limit int) ([]domain.StoredVectorStore, bool, error) {
