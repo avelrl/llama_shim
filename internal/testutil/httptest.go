@@ -72,6 +72,7 @@ type TestAppOptions struct {
 	MetricsPath                           string
 	JSONBodyLimitBytes                    int64
 	RetrievalFileUploadMaxBytes           int64
+	ChatCompletionsShadowStoreMaxBytes    int64
 	RetrievalMaxConcurrentSearches        int
 	RetrievalMaxSearchQueries             int
 	RetrievalMaxGroundingChunks           int
@@ -152,6 +153,7 @@ func NewTestAppWithOptions(t *testing.T, options TestAppOptions) *TestApp {
 		ServiceLimits: httpapi.ServiceLimits{
 			JSONBodyBytes:                    options.JSONBodyLimitBytes,
 			RetrievalFileUploadBytes:         options.RetrievalFileUploadMaxBytes,
+			ChatCompletionsShadowStoreBytes:  options.ChatCompletionsShadowStoreMaxBytes,
 			RetrievalMaxConcurrentSearches:   options.RetrievalMaxConcurrentSearches,
 			RetrievalMaxSearchQueries:        options.RetrievalMaxSearchQueries,
 			RetrievalMaxGroundingChunks:      options.RetrievalMaxGroundingChunks,

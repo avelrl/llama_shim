@@ -17,7 +17,7 @@ import (
 	"llama_shim/internal/storage/sqlite"
 )
 
-const maxBufferedChatCompletionResponseBytes int64 = 64 << 20
+const maxChatCompletionCanonicalizedErrorBytes int64 = 1 << 20
 
 func (h *proxyHandler) forwardChatCompletions(w http.ResponseWriter, r *http.Request) {
 	rawBody, err := readJSONBody(w, r)
@@ -29,6 +29,16 @@ func (h *proxyHandler) forwardChatCompletions(w http.ResponseWriter, r *http.Req
 		status, payload := MapError(r.Context(), h.logger, err)
 		WriteJSON(w, status, apiErrorPayload{Error: payload})
 		return
+	}
+
+	shouldStore := false
+	if shadowStore, err := h.shouldShadowStoreChatCompletion(rawBody); err != nil {
+		h.logger.WarnContext(r.Context(), "chat completion shadow store eligibility check failed",
+			"request_id", RequestIDFromContext(r.Context()),
+			"err", err,
+		)
+	} else {
+		shouldStore = shadowStore
 	}
 
 	cloned := r.Clone(r.Context())
@@ -49,51 +59,34 @@ func (h *proxyHandler) forwardChatCompletions(w http.ResponseWriter, r *http.Req
 	}
 	defer response.Body.Close()
 
-	isSSE := strings.Contains(strings.ToLower(response.Header.Get("Content-Type")), "text/event-stream")
+	contentType := strings.ToLower(response.Header.Get("Content-Type"))
+	isSSE := strings.Contains(contentType, "text/event-stream")
 	if !isSSE {
-		body, err := readBufferedChatCompletionResponse(response.Body)
-		if err != nil {
-			if errors.Is(err, errChatCompletionResponseTooLarge) {
-				WriteError(w, http.StatusBadGateway, "upstream_error", "upstream response too large", "")
+		if response.StatusCode >= 200 && response.StatusCode < 300 {
+			if shouldSanitizeChatCompletionJSON(contentType) {
+				if err := h.writeSanitizedChatCompletionResponse(w, r, response, rawBody, shouldStore); err != nil {
+					WriteError(w, http.StatusBadGateway, "upstream_error", "failed to read upstream response", "")
+				}
 				return
 			}
-			WriteError(w, http.StatusBadGateway, "upstream_error", "failed to read upstream response", "")
+			if shouldStore {
+				h.logger.WarnContext(r.Context(), "chat completion shadow store skipped",
+					"request_id", RequestIDFromContext(r.Context()),
+					"reason", "non_json_content_type",
+					"content_type", response.Header.Get("Content-Type"),
+				)
+			}
+			copyResponseHeaders(w.Header(), response.Header)
+			w.WriteHeader(response.StatusCode)
+			_, _ = io.Copy(w, response.Body)
 			return
 		}
-		originalBody := body
-
-		if response.StatusCode >= 200 && response.StatusCode < 300 {
-			if sanitized, err := sanitizeChatCompletionJSONBody(body); err != nil {
-				h.logger.WarnContext(r.Context(), "chat completion response sanitize failed",
-					"request_id", RequestIDFromContext(r.Context()),
-					"err", err,
-				)
-			} else {
-				body = sanitized
-			}
-			if shouldStore, err := h.shouldShadowStoreChatCompletion(rawBody); err != nil {
-				h.logger.WarnContext(r.Context(), "chat completion shadow store eligibility check failed",
-					"request_id", RequestIDFromContext(r.Context()),
-					"err", err,
-				)
-			} else if shouldStore {
-				if err := h.shadowStoreChatCompletion(r.Context(), rawBody, body); err != nil {
-					h.logger.ErrorContext(r.Context(), "chat completion shadow store failed",
-						"request_id", RequestIDFromContext(r.Context()),
-						"err", err,
-					)
-				}
-			}
-		} else if canonical, ok, err := canonicalizeAPIErrorBody(response.StatusCode, body); err == nil && ok {
-			body = canonical
+		if err := writeBestEffortCanonicalizedChatCompletionError(w, response); err != nil {
+			h.logger.WarnContext(r.Context(), "chat completion upstream error proxy failed",
+				"request_id", RequestIDFromContext(r.Context()),
+				"err", err,
+			)
 		}
-
-		copyResponseHeaders(w.Header(), response.Header)
-		if !bytes.Equal(body, originalBody) {
-			w.Header().Del("Content-Length")
-		}
-		w.WriteHeader(response.StatusCode)
-		_, _ = w.Write(body)
 		return
 	}
 
@@ -104,15 +97,8 @@ func (h *proxyHandler) forwardChatCompletions(w http.ResponseWriter, r *http.Req
 	w.WriteHeader(response.StatusCode)
 
 	var streamStoreCapture *chatCompletionStreamStoreCapture
-	if response.StatusCode >= 200 && response.StatusCode < 300 {
-		if shouldStore, err := h.shouldShadowStoreChatCompletion(rawBody); err != nil {
-			h.logger.WarnContext(r.Context(), "chat completion shadow store eligibility check failed",
-				"request_id", RequestIDFromContext(r.Context()),
-				"err", err,
-			)
-		} else if shouldStore {
-			streamStoreCapture = newChatCompletionStreamStoreCapture(response.Header.Get("X-Request-Id"))
-		}
+	if response.StatusCode >= 200 && response.StatusCode < 300 && shouldStore {
+		streamStoreCapture = newChatCompletionStreamStoreCapture(response.Header.Get("X-Request-Id"))
 	}
 
 	if err := proxyChatCompletionStream(w, response.Body, streamStoreCapture); err != nil && !shouldIgnoreStreamProxyError(err) {
@@ -136,17 +122,95 @@ func (h *proxyHandler) forwardChatCompletions(w http.ResponseWriter, r *http.Req
 	}
 }
 
-var errChatCompletionResponseTooLarge = errors.New("upstream chat completion response exceeds buffered limit")
+func shouldSanitizeChatCompletionJSON(contentType string) bool {
+	contentType = strings.TrimSpace(strings.ToLower(contentType))
+	return contentType == "" || strings.Contains(contentType, "json")
+}
 
-func readBufferedChatCompletionResponse(body io.Reader) ([]byte, error) {
-	content, err := io.ReadAll(io.LimitReader(body, maxBufferedChatCompletionResponseBytes+1))
+func (h *proxyHandler) writeSanitizedChatCompletionResponse(w http.ResponseWriter, r *http.Request, response *http.Response, rawBody []byte, shouldStore bool) error {
+	headers := response.Header.Clone()
+	headers.Del("Content-Length")
+	writer := &delayedProxyBodyWriter{
+		w:      w,
+		header: headers,
+		status: response.StatusCode,
+	}
+
+	var capture *limitedBodyCaptureBuffer
+	target := io.Writer(writer)
+	if shouldStore {
+		capture = newLimitedBodyCaptureBuffer(h.serviceLimits.ChatCompletionsShadowStoreBytes)
+		target = io.MultiWriter(writer, capture)
+	}
+
+	if err := sanitizeChatCompletionJSONToWriter(target, response.Body); err != nil {
+		if !writer.started {
+			return err
+		}
+		h.logger.WarnContext(r.Context(), "chat completion response sanitize failed after partial write",
+			"request_id", RequestIDFromContext(r.Context()),
+			"err", err,
+		)
+		return nil
+	}
+	writer.start()
+
+	if capture == nil {
+		return nil
+	}
+	if capture.overflowed {
+		h.logger.WarnContext(r.Context(), "chat completion shadow store skipped",
+			"request_id", RequestIDFromContext(r.Context()),
+			"reason", "response_too_large",
+			"limit_bytes", h.serviceLimits.ChatCompletionsShadowStoreBytes,
+		)
+		return nil
+	}
+	if err := h.shadowStoreChatCompletion(r.Context(), rawBody, capture.Bytes()); err != nil {
+		h.logger.ErrorContext(r.Context(), "chat completion shadow store failed",
+			"request_id", RequestIDFromContext(r.Context()),
+			"err", err,
+		)
+	}
+	return nil
+}
+
+func writeBestEffortCanonicalizedChatCompletionError(w http.ResponseWriter, response *http.Response) error {
+	reader := bufio.NewReader(response.Body)
+	body, overflowed, err := readResponsePrefix(reader, maxChatCompletionCanonicalizedErrorBytes)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	if int64(len(content)) > maxBufferedChatCompletionResponseBytes {
-		return nil, errChatCompletionResponseTooLarge
+	if overflowed {
+		copyResponseHeaders(w.Header(), response.Header)
+		w.WriteHeader(response.StatusCode)
+		if _, err := w.Write(body); err != nil {
+			return err
+		}
+		_, err = io.Copy(w, reader)
+		return err
 	}
-	return content, nil
+
+	originalBody := body
+	if canonical, ok, err := canonicalizeAPIErrorBody(response.StatusCode, body); err == nil && ok {
+		body = canonical
+	}
+
+	copyResponseHeaders(w.Header(), response.Header)
+	if !bytes.Equal(body, originalBody) {
+		w.Header().Del("Content-Length")
+	}
+	w.WriteHeader(response.StatusCode)
+	_, err = w.Write(body)
+	return err
+}
+
+func readResponsePrefix(reader io.Reader, maxBytes int64) ([]byte, bool, error) {
+	body, err := io.ReadAll(io.LimitReader(reader, maxBytes+1))
+	if err != nil {
+		return nil, false, err
+	}
+	return body, int64(len(body)) > maxBytes, nil
 }
 
 type chatCompletionsListResponse struct {
@@ -676,29 +740,225 @@ func sanitizeChatCompletionJSONBody(body []byte) ([]byte, error) {
 		return body, nil
 	}
 
-	var payload any
-	if err := json.Unmarshal(body, &payload); err != nil {
+	var out bytes.Buffer
+	if err := sanitizeChatCompletionJSONToWriter(&out, bytes.NewReader(body)); err != nil {
 		return nil, err
 	}
-
-	sanitizeChatCompletionValue(payload)
-	return json.Marshal(payload)
+	return out.Bytes(), nil
 }
 
-func sanitizeChatCompletionValue(value any) {
-	switch typed := value.(type) {
-	case map[string]any:
-		for field := range disallowedChatCompletionFields {
-			delete(typed, field)
+func sanitizeChatCompletionJSONToWriter(dst io.Writer, src io.Reader) error {
+	decoder := json.NewDecoder(src)
+	decoder.UseNumber()
+	if err := writeSanitizedChatCompletionJSONValue(dst, decoder); err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil
 		}
-		for _, nested := range typed {
-			sanitizeChatCompletionValue(nested)
+		return err
+	}
+	if _, err := decoder.Token(); err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil
 		}
-	case []any:
-		for _, nested := range typed {
-			sanitizeChatCompletionValue(nested)
+		return err
+	}
+	return fmt.Errorf("unexpected trailing JSON content")
+}
+
+func writeSanitizedChatCompletionJSONValue(dst io.Writer, decoder *json.Decoder) error {
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	if delim, ok := token.(json.Delim); ok {
+		switch delim {
+		case '{':
+			return writeSanitizedChatCompletionJSONObject(dst, decoder)
+		case '[':
+			return writeSanitizedChatCompletionJSONArray(dst, decoder)
+		default:
+			return fmt.Errorf("unexpected JSON delimiter %q", delim)
 		}
 	}
+	return writeJSONToken(dst, token)
+}
+
+func writeSanitizedChatCompletionJSONObject(dst io.Writer, decoder *json.Decoder) error {
+	if _, err := io.WriteString(dst, "{"); err != nil {
+		return err
+	}
+	first := true
+	for decoder.More() {
+		keyToken, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		key, ok := keyToken.(string)
+		if !ok {
+			return fmt.Errorf("unexpected JSON object key token %T", keyToken)
+		}
+		if _, drop := disallowedChatCompletionFields[key]; drop {
+			if err := skipJSONValue(decoder); err != nil {
+				return err
+			}
+			continue
+		}
+		if !first {
+			if _, err := io.WriteString(dst, ","); err != nil {
+				return err
+			}
+		}
+		first = false
+		if err := writeJSONToken(dst, key); err != nil {
+			return err
+		}
+		if _, err := io.WriteString(dst, ":"); err != nil {
+			return err
+		}
+		if err := writeSanitizedChatCompletionJSONValue(dst, decoder); err != nil {
+			return err
+		}
+	}
+	end, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	delim, ok := end.(json.Delim)
+	if !ok || delim != '}' {
+		return fmt.Errorf("unexpected JSON object terminator %v", end)
+	}
+	_, err = io.WriteString(dst, "}")
+	return err
+}
+
+func writeSanitizedChatCompletionJSONArray(dst io.Writer, decoder *json.Decoder) error {
+	if _, err := io.WriteString(dst, "["); err != nil {
+		return err
+	}
+	first := true
+	for decoder.More() {
+		if !first {
+			if _, err := io.WriteString(dst, ","); err != nil {
+				return err
+			}
+		}
+		first = false
+		if err := writeSanitizedChatCompletionJSONValue(dst, decoder); err != nil {
+			return err
+		}
+	}
+	end, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	delim, ok := end.(json.Delim)
+	if !ok || delim != ']' {
+		return fmt.Errorf("unexpected JSON array terminator %v", end)
+	}
+	_, err = io.WriteString(dst, "]")
+	return err
+}
+
+func skipJSONValue(decoder *json.Decoder) error {
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	delim, ok := token.(json.Delim)
+	if !ok {
+		return nil
+	}
+	switch delim {
+	case '{':
+		for decoder.More() {
+			if _, err := decoder.Token(); err != nil {
+				return err
+			}
+			if err := skipJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+		_, err = decoder.Token()
+		return err
+	case '[':
+		for decoder.More() {
+			if err := skipJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+		_, err = decoder.Token()
+		return err
+	default:
+		return fmt.Errorf("unexpected JSON delimiter %q", delim)
+	}
+}
+
+func writeJSONToken(dst io.Writer, token any) error {
+	encoded, err := json.Marshal(token)
+	if err != nil {
+		return err
+	}
+	_, err = dst.Write(encoded)
+	return err
+}
+
+type delayedProxyBodyWriter struct {
+	w       http.ResponseWriter
+	header  http.Header
+	status  int
+	started bool
+}
+
+func (w *delayedProxyBodyWriter) start() {
+	if w.started {
+		return
+	}
+	copyResponseHeaders(w.w.Header(), w.header)
+	w.w.WriteHeader(w.status)
+	w.started = true
+}
+
+func (w *delayedProxyBodyWriter) Write(p []byte) (int, error) {
+	w.start()
+	return w.w.Write(p)
+}
+
+type limitedBodyCaptureBuffer struct {
+	maxBytes   int64
+	buf        bytes.Buffer
+	overflowed bool
+}
+
+func newLimitedBodyCaptureBuffer(maxBytes int64) *limitedBodyCaptureBuffer {
+	return &limitedBodyCaptureBuffer{maxBytes: maxBytes}
+}
+
+func (b *limitedBodyCaptureBuffer) Write(p []byte) (int, error) {
+	if b == nil || b.maxBytes <= 0 || len(p) == 0 {
+		return len(p), nil
+	}
+	if b.overflowed {
+		return len(p), nil
+	}
+	remaining := b.maxBytes - int64(b.buf.Len())
+	if remaining <= 0 {
+		b.overflowed = true
+		return len(p), nil
+	}
+	if int64(len(p)) > remaining {
+		_, _ = b.buf.Write(p[:remaining])
+		b.overflowed = true
+		return len(p), nil
+	}
+	_, _ = b.buf.Write(p)
+	return len(p), nil
+}
+
+func (b *limitedBodyCaptureBuffer) Bytes() []byte {
+	if b == nil {
+		return nil
+	}
+	return b.buf.Bytes()
 }
 
 func proxyChatCompletionStream(w http.ResponseWriter, body io.Reader, capture *chatCompletionStreamStoreCapture) error {

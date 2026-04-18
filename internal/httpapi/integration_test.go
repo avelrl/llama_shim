@@ -7114,6 +7114,120 @@ func TestChatCompletionsStoreTrueStreamShadowStoresReconstructedCompletion(t *te
 	})
 }
 
+func TestChatCompletionsNonStreamSanitizesAndShadowStoresSanitizedBody(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, http.MethodPost, r.Method)
+		require.Equal(t, "/v1/chat/completions", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"id":      "chatcmpl_sanitized",
+			"object":  "chat.completion",
+			"created": 1712059200,
+			"model":   "gpt-5.4",
+			"provider_specific_fields": map[string]any{
+				"trace": "raw",
+			},
+			"choices": []map[string]any{
+				{
+					"index": 0,
+					"message": map[string]any{
+						"role":              "assistant",
+						"content":           "OK",
+						"reasoning_content": "hidden",
+					},
+					"finish_reason": "stop",
+					"logprobs":      nil,
+				},
+			},
+		}))
+	}))
+	defer upstream.Close()
+
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{LlamaBaseURL: upstream.URL})
+
+	status, body := rawRequest(t, app, http.MethodPost, "/v1/chat/completions", map[string]any{
+		"model": "gpt-5.4",
+		"store": true,
+		"messages": []map[string]any{
+			{"role": "user", "content": "Say OK and nothing else"},
+		},
+	})
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, "chatcmpl_sanitized", asStringAny(body["id"]))
+	require.NotContains(t, body, "provider_specific_fields")
+
+	choices, ok := body["choices"].([]any)
+	require.True(t, ok)
+	require.Len(t, choices, 1)
+	message := choices[0].(map[string]any)["message"].(map[string]any)
+	require.Equal(t, "OK", asStringAny(message["content"]))
+	_, hasReasoning := message["reasoning_content"]
+	require.False(t, hasReasoning)
+
+	stored := getStoredChatCompletion(t, app, "chatcmpl_sanitized")
+	require.Equal(t, "chatcmpl_sanitized", asStringAny(stored["id"]))
+	_, hasProviderFields := stored["provider_specific_fields"]
+	require.False(t, hasProviderFields)
+	storedChoices := stored["choices"].([]any)
+	storedMessage := storedChoices[0].(map[string]any)["message"].(map[string]any)
+	_, hasStoredReasoning := storedMessage["reasoning_content"]
+	require.False(t, hasStoredReasoning)
+}
+
+func TestChatCompletionsNonStreamLargeResponseStillProxiesWhenShadowStoreCaptureOverflows(t *testing.T) {
+	largeContent := strings.Repeat("A", 4096)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, http.MethodPost, r.Method)
+		require.Equal(t, "/v1/chat/completions", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"id":      "chatcmpl_large",
+			"object":  "chat.completion",
+			"created": 1712059200,
+			"model":   "gpt-5.4",
+			"choices": []map[string]any{
+				{
+					"index": 0,
+					"message": map[string]any{
+						"role":    "assistant",
+						"content": largeContent,
+					},
+					"finish_reason": "stop",
+					"logprobs":      nil,
+				},
+			},
+		}))
+	}))
+	defer upstream.Close()
+
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		LlamaBaseURL:                       upstream.URL,
+		ChatCompletionsShadowStoreMaxBytes: 256,
+	})
+
+	status, body := rawRequest(t, app, http.MethodPost, "/v1/chat/completions", map[string]any{
+		"model": "gpt-5.4",
+		"store": true,
+		"messages": []map[string]any{
+			{"role": "user", "content": "Return a long answer"},
+		},
+	})
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, "chatcmpl_large", asStringAny(body["id"]))
+	choices, ok := body["choices"].([]any)
+	require.True(t, ok)
+	require.Len(t, choices, 1)
+	message := choices[0].(map[string]any)["message"].(map[string]any)
+	require.Equal(t, largeContent, asStringAny(message["content"]))
+
+	localPage, err := app.Store.ListChatCompletions(context.Background(), domain.ListStoredChatCompletionsQuery{
+		Limit: 20,
+		Order: domain.ChatCompletionOrderAsc,
+	})
+	require.NoError(t, err)
+	require.Empty(t, localPage.Completions)
+}
+
 func TestChatCompletionsStoreTrueStreamShadowStoresToolCallReconstructedCompletion(t *testing.T) {
 	app := testutil.NewTestApp(t)
 

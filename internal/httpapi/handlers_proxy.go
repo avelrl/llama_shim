@@ -15,14 +15,16 @@ type proxyHandler struct {
 	logger                          *slog.Logger
 	client                          *llama.Client
 	store                           *sqlite.Store
+	serviceLimits                   ServiceLimits
 	chatCompletionsStoreWhenOmitted bool
 }
 
-func newProxyHandler(logger *slog.Logger, client *llama.Client, store *sqlite.Store, chatCompletionsStoreWhenOmitted bool) *proxyHandler {
+func newProxyHandler(logger *slog.Logger, client *llama.Client, store *sqlite.Store, serviceLimits ServiceLimits, chatCompletionsStoreWhenOmitted bool) *proxyHandler {
 	return &proxyHandler{
 		logger:                          logger,
 		client:                          client,
 		store:                           store,
+		serviceLimits:                   normalizeServiceLimits(serviceLimits),
 		chatCompletionsStoreWhenOmitted: chatCompletionsStoreWhenOmitted,
 	}
 }
