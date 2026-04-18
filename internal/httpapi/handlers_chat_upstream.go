@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 
 	"llama_shim/internal/domain"
@@ -15,6 +16,8 @@ import (
 )
 
 const upstreamStoredChatCompletionsPageLimit = 100
+const upstreamStoredChatCompletionsMaxPages = 20
+const upstreamStoredChatCompletionsMaxEntries = upstreamStoredChatCompletionsPageLimit * upstreamStoredChatCompletionsMaxPages
 
 type storedChatCompletionsMergedPage struct {
 	Data    []json.RawMessage
@@ -34,7 +37,7 @@ func (h *proxyHandler) listUpstreamStoredChatCompletions(ctx context.Context, in
 
 	all := make([]json.RawMessage, 0, upstreamStoredChatCompletionsPageLimit)
 	after := ""
-	for {
+	for pageNum := 0; pageNum < upstreamStoredChatCompletionsMaxPages && len(all) < upstreamStoredChatCompletionsMaxEntries; pageNum++ {
 		page, statusCode, headers, body, unsupported, err := h.fetchUpstreamStoredChatCompletionsPage(ctx, incoming, query, after)
 		if err != nil {
 			return nil, 0, nil, nil, err
@@ -45,11 +48,18 @@ func (h *proxyHandler) listUpstreamStoredChatCompletions(ctx context.Context, in
 		if statusCode != 0 {
 			return nil, statusCode, headers, body, nil
 		}
+		if remaining := upstreamStoredChatCompletionsMaxEntries - len(all); len(page.Data) > remaining {
+			page.Data = page.Data[:remaining]
+		}
 		all = append(all, page.Data...)
 		if !page.HasMore || page.LastID == nil || strings.TrimSpace(*page.LastID) == "" {
 			break
 		}
-		after = *page.LastID
+		nextAfter := strings.TrimSpace(*page.LastID)
+		if nextAfter == after {
+			break
+		}
+		after = nextAfter
 	}
 
 	return all, 0, nil, nil, nil
@@ -97,12 +107,22 @@ func buildUpstreamStoredChatCompletionsQuery(query domain.ListStoredChatCompleti
 	for key, value := range query.Metadata {
 		values.Set("metadata["+key+"]", value)
 	}
-	values.Set("limit", "100")
+	values.Set("limit", strconv.Itoa(upstreamStoredChatCompletionsLimit(query.Limit)))
 	values.Set("order", query.Order)
 	if after = strings.TrimSpace(after); after != "" {
 		values.Set("after", after)
 	}
 	return values
+}
+
+func upstreamStoredChatCompletionsLimit(limit int) int {
+	if limit < 1 {
+		return 1
+	}
+	if limit > upstreamStoredChatCompletionsPageLimit {
+		return upstreamStoredChatCompletionsPageLimit
+	}
+	return limit
 }
 
 func buildMergedStoredChatCompletionsPage(local []domain.StoredChatCompletion, upstream []json.RawMessage, query domain.ListStoredChatCompletionsQuery) (storedChatCompletionsMergedPage, error) {
