@@ -6930,21 +6930,23 @@ func TestChatCompletionsStoredListFiltersAndPaginates(t *testing.T) {
 	require.Equal(t, third, asStringAny(page2.Data[0]["id"]))
 }
 
-func TestChatCompletionsStoredListRejectsLimitOverMaximum(t *testing.T) {
+func TestChatCompletionsStoredListAcceptsLimitAboveOneHundred(t *testing.T) {
 	app := testutil.NewTestApp(t)
 
-	postStoredChatCompletion(t, app, map[string]any{
+	completionID := postStoredChatCompletion(t, app, map[string]any{
 		"model":    "gpt-5.4",
 		"store":    true,
 		"messages": []map[string]any{{"role": "user", "content": "Say OK and nothing else"}},
 	})
 
 	status, body := rawRequest(t, app, http.MethodGet, "/v1/chat/completions?limit=101", nil)
-	require.Equal(t, http.StatusBadRequest, status)
-	errObj, ok := body["error"].(map[string]any)
+	require.Equal(t, http.StatusOK, status)
+	data, ok := body["data"].([]any)
 	require.True(t, ok)
-	require.Equal(t, "limit", asStringAny(errObj["param"]))
-	require.Contains(t, asStringAny(errObj["message"]), "between 1 and 100")
+	require.Len(t, data, 1)
+	first, ok := data[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, completionID, asStringAny(first["id"]))
 }
 
 func TestChatCompletionsStoreTrueStreamShadowStoresReconstructedCompletion(t *testing.T) {

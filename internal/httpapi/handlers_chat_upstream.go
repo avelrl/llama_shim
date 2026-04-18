@@ -7,7 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"slices"
+	"strconv"
 	"strings"
 
 	"llama_shim/internal/domain"
@@ -27,36 +27,246 @@ type storedChatCompletionListEntry struct {
 	Raw     json.RawMessage
 }
 
-func (h *proxyHandler) listUpstreamStoredChatCompletions(ctx context.Context, incoming *http.Request, query domain.ListStoredChatCompletionsQuery) ([]json.RawMessage, int, http.Header, []byte, error) {
-	if h.client == nil {
-		return nil, 0, nil, nil, nil
-	}
-
-	all := make([]json.RawMessage, 0, upstreamStoredChatCompletionsPageLimit)
-	after := ""
-	for {
-		page, statusCode, headers, body, unsupported, err := h.fetchUpstreamStoredChatCompletionsPage(ctx, incoming, query, after)
-		if err != nil {
-			return nil, 0, nil, nil, err
-		}
-		if unsupported {
-			return nil, 0, nil, nil, nil
-		}
-		if statusCode != 0 {
-			return nil, statusCode, headers, body, nil
-		}
-		all = append(all, page.Data...)
-		if !page.HasMore || page.LastID == nil || strings.TrimSpace(*page.LastID) == "" {
-			break
-		}
-		after = *page.LastID
-	}
-
-	return all, 0, nil, nil, nil
+type storedChatCompletionForwardResponse struct {
+	StatusCode int
+	Headers    http.Header
+	Body       []byte
 }
 
-func (h *proxyHandler) fetchUpstreamStoredChatCompletionsPage(ctx context.Context, incoming *http.Request, query domain.ListStoredChatCompletionsQuery, after string) (chatCompletionsListResponse, int, http.Header, []byte, bool, error) {
-	values := buildUpstreamStoredChatCompletionsQuery(query, after)
+type storedChatCompletionSourcePage struct {
+	Entries []storedChatCompletionListEntry
+	HasMore bool
+}
+
+type storedChatCompletionSource struct {
+	fetch   func(context.Context, string) (storedChatCompletionSourcePage, *storedChatCompletionForwardResponse, bool, error)
+	after   string
+	entries []storedChatCompletionListEntry
+	next    int
+	hasMore bool
+	loaded  bool
+	done    bool
+}
+
+func (h *proxyHandler) buildMergedStoredChatCompletionsPage(ctx context.Context, incoming *http.Request, query domain.ListStoredChatCompletionsQuery) (storedChatCompletionsMergedPage, *storedChatCompletionForwardResponse, error) {
+	local := newStoredChatCompletionSource(func(fetchCtx context.Context, after string) (storedChatCompletionSourcePage, *storedChatCompletionForwardResponse, bool, error) {
+		page, err := h.store.ListChatCompletions(fetchCtx, domain.ListStoredChatCompletionsQuery{
+			Model:    query.Model,
+			Metadata: query.Metadata,
+			After:    after,
+			Limit:    storedChatCompletionsSourcePageLimit(query.Limit),
+			Order:    query.Order,
+		})
+		if err != nil {
+			return storedChatCompletionSourcePage{}, nil, false, err
+		}
+		entries := make([]storedChatCompletionListEntry, 0, len(page.Completions))
+		for _, completion := range page.Completions {
+			entries = append(entries, storedChatCompletionListEntry{
+				ID:      strings.TrimSpace(completion.ID),
+				Created: completion.CreatedAt,
+				Raw:     append(json.RawMessage(nil), []byte(completion.ResponseJSON)...),
+			})
+		}
+		return storedChatCompletionSourcePage{
+			Entries: entries,
+			HasMore: page.HasMore,
+		}, nil, false, nil
+	})
+
+	var upstream *storedChatCompletionSource
+	if h.client != nil {
+		upstream = newStoredChatCompletionSource(func(fetchCtx context.Context, after string) (storedChatCompletionSourcePage, *storedChatCompletionForwardResponse, bool, error) {
+			page, statusCode, headers, body, unsupported, err := h.fetchUpstreamStoredChatCompletionsPage(fetchCtx, incoming, query, after, storedChatCompletionsSourcePageLimit(query.Limit))
+			if err != nil {
+				return storedChatCompletionSourcePage{}, nil, false, err
+			}
+			if unsupported {
+				return storedChatCompletionSourcePage{}, nil, true, nil
+			}
+			if statusCode != 0 {
+				return storedChatCompletionSourcePage{}, &storedChatCompletionForwardResponse{
+					StatusCode: statusCode,
+					Headers:    headers,
+					Body:       body,
+				}, false, nil
+			}
+			entries := make([]storedChatCompletionListEntry, 0, len(page.Data))
+			for _, raw := range page.Data {
+				entry, err := decodeStoredChatCompletionListEntry(raw)
+				if err != nil {
+					return storedChatCompletionSourcePage{}, nil, false, err
+				}
+				entries = append(entries, entry)
+			}
+			return storedChatCompletionSourcePage{
+				Entries: entries,
+				HasMore: page.HasMore,
+			}, nil, false, nil
+		})
+	}
+
+	after := strings.TrimSpace(query.After)
+	seenAfter := after == ""
+	data := make([]json.RawMessage, 0, storedChatCompletionsSourcePageLimit(query.Limit))
+	for len(data) <= query.Limit {
+		entry, forward, err := nextMergedStoredChatCompletion(ctx, local, upstream, query.Order)
+		if err != nil {
+			return storedChatCompletionsMergedPage{}, nil, err
+		}
+		if forward != nil {
+			return storedChatCompletionsMergedPage{}, forward, nil
+		}
+		if entry == nil {
+			break
+		}
+		if !seenAfter {
+			if entry.ID == after {
+				seenAfter = true
+			}
+			continue
+		}
+		data = append(data, entry.Raw)
+	}
+	if !seenAfter {
+		return storedChatCompletionsMergedPage{}, nil, sqlite.ErrNotFound
+	}
+	hasMore := len(data) > query.Limit
+	if hasMore {
+		data = data[:query.Limit]
+	}
+	return storedChatCompletionsMergedPage{
+		Data:    data,
+		HasMore: hasMore,
+	}, nil, nil
+}
+
+func newStoredChatCompletionSource(fetch func(context.Context, string) (storedChatCompletionSourcePage, *storedChatCompletionForwardResponse, bool, error)) *storedChatCompletionSource {
+	if fetch == nil {
+		return nil
+	}
+	return &storedChatCompletionSource{fetch: fetch}
+}
+
+func (s *storedChatCompletionSource) peek(ctx context.Context) (*storedChatCompletionListEntry, *storedChatCompletionForwardResponse, error) {
+	if s == nil {
+		return nil, nil, nil
+	}
+	for {
+		if s.done {
+			return nil, nil, nil
+		}
+		if s.next < len(s.entries) {
+			return &s.entries[s.next], nil, nil
+		}
+		if s.loaded && !s.hasMore {
+			s.done = true
+			return nil, nil, nil
+		}
+
+		page, forward, unsupported, err := s.fetch(ctx, s.after)
+		if err != nil {
+			return nil, nil, err
+		}
+		if forward != nil {
+			return nil, forward, nil
+		}
+		if unsupported {
+			s.done = true
+			return nil, nil, nil
+		}
+
+		s.loaded = true
+		s.entries = page.Entries
+		s.next = 0
+		s.hasMore = page.HasMore
+		if len(page.Entries) == 0 {
+			s.done = true
+			return nil, nil, nil
+		}
+
+		nextAfter := strings.TrimSpace(page.Entries[len(page.Entries)-1].ID)
+		if nextAfter == "" {
+			s.done = true
+			return nil, nil, nil
+		}
+		if page.HasMore && nextAfter == s.after {
+			s.done = true
+			return nil, nil, nil
+		}
+		s.after = nextAfter
+	}
+}
+
+func (s *storedChatCompletionSource) advance() {
+	if s == nil || s.done {
+		return
+	}
+	if s.next < len(s.entries) {
+		s.next++
+	}
+}
+
+func nextMergedStoredChatCompletion(ctx context.Context, local, upstream *storedChatCompletionSource, order string) (*storedChatCompletionListEntry, *storedChatCompletionForwardResponse, error) {
+	localEntry, forward, err := local.peek(ctx)
+	if err != nil || forward != nil {
+		return nil, forward, err
+	}
+	upstreamEntry, forward, err := upstream.peek(ctx)
+	if err != nil || forward != nil {
+		return nil, forward, err
+	}
+
+	switch {
+	case localEntry == nil && upstreamEntry == nil:
+		return nil, nil, nil
+	case localEntry == nil:
+		chosen := *upstreamEntry
+		upstream.advance()
+		return &chosen, nil, nil
+	case upstreamEntry == nil:
+		chosen := *localEntry
+		local.advance()
+		return &chosen, nil, nil
+	case localEntry.ID == upstreamEntry.ID:
+		chosen := *localEntry
+		local.advance()
+		upstream.advance()
+		return &chosen, nil, nil
+	case compareStoredChatCompletionListEntries(order, *localEntry, *upstreamEntry) <= 0:
+		chosen := *localEntry
+		local.advance()
+		return &chosen, nil, nil
+	default:
+		chosen := *upstreamEntry
+		upstream.advance()
+		return &chosen, nil, nil
+	}
+}
+
+func compareStoredChatCompletionListEntries(order string, left, right storedChatCompletionListEntry) int {
+	switch order {
+	case domain.ChatCompletionOrderDesc:
+		if left.Created != right.Created {
+			if left.Created > right.Created {
+				return -1
+			}
+			return 1
+		}
+		return strings.Compare(right.ID, left.ID)
+	default:
+		if left.Created != right.Created {
+			if left.Created < right.Created {
+				return -1
+			}
+			return 1
+		}
+		return strings.Compare(left.ID, right.ID)
+	}
+}
+
+func (h *proxyHandler) fetchUpstreamStoredChatCompletionsPage(ctx context.Context, incoming *http.Request, query domain.ListStoredChatCompletionsQuery, after string, limit int) (chatCompletionsListResponse, int, http.Header, []byte, bool, error) {
+	values := buildUpstreamStoredChatCompletionsQuery(query, after, limit)
 	request := incoming.Clone(ctx)
 	request.Method = http.MethodGet
 	request.Body = nil
@@ -89,7 +299,7 @@ func (h *proxyHandler) fetchUpstreamStoredChatCompletionsPage(ctx context.Contex
 	return page, 0, nil, nil, false, nil
 }
 
-func buildUpstreamStoredChatCompletionsQuery(query domain.ListStoredChatCompletionsQuery, after string) url.Values {
+func buildUpstreamStoredChatCompletionsQuery(query domain.ListStoredChatCompletionsQuery, after string, limit int) url.Values {
 	values := url.Values{}
 	if model := strings.TrimSpace(query.Model); model != "" {
 		values.Set("model", model)
@@ -97,7 +307,7 @@ func buildUpstreamStoredChatCompletionsQuery(query domain.ListStoredChatCompleti
 	for key, value := range query.Metadata {
 		values.Set("metadata["+key+"]", value)
 	}
-	values.Set("limit", "100")
+	values.Set("limit", strconv.Itoa(storedChatCompletionsSourcePageLimit(limit)))
 	values.Set("order", query.Order)
 	if after = strings.TrimSpace(after); after != "" {
 		values.Set("after", after)
@@ -105,78 +315,14 @@ func buildUpstreamStoredChatCompletionsQuery(query domain.ListStoredChatCompleti
 	return values
 }
 
-func buildMergedStoredChatCompletionsPage(local []domain.StoredChatCompletion, upstream []json.RawMessage, query domain.ListStoredChatCompletionsQuery) (storedChatCompletionsMergedPage, error) {
-	merged := make(map[string]storedChatCompletionListEntry, len(local)+len(upstream))
-	for _, raw := range upstream {
-		entry, err := decodeStoredChatCompletionListEntry(raw)
-		if err != nil {
-			return storedChatCompletionsMergedPage{}, err
-		}
-		merged[entry.ID] = entry
+func storedChatCompletionsSourcePageLimit(limit int) int {
+	if limit < 1 {
+		return 1
 	}
-	for _, completion := range local {
-		entry, err := decodeStoredChatCompletionListEntry([]byte(completion.ResponseJSON))
-		if err != nil {
-			return storedChatCompletionsMergedPage{}, err
-		}
-		merged[entry.ID] = entry
+	if limit > upstreamStoredChatCompletionsPageLimit {
+		return upstreamStoredChatCompletionsPageLimit
 	}
-
-	entries := make([]storedChatCompletionListEntry, 0, len(merged))
-	for _, entry := range merged {
-		entries = append(entries, entry)
-	}
-	slices.SortFunc(entries, func(left, right storedChatCompletionListEntry) int {
-		switch query.Order {
-		case domain.ChatCompletionOrderDesc:
-			if left.Created != right.Created {
-				if left.Created > right.Created {
-					return -1
-				}
-				return 1
-			}
-			return strings.Compare(right.ID, left.ID)
-		default:
-			if left.Created != right.Created {
-				if left.Created < right.Created {
-					return -1
-				}
-				return 1
-			}
-			return strings.Compare(left.ID, right.ID)
-		}
-	})
-
-	start := 0
-	if after := strings.TrimSpace(query.After); after != "" {
-		start = -1
-		for i, entry := range entries {
-			if entry.ID == after {
-				start = i + 1
-				break
-			}
-		}
-		if start < 0 {
-			return storedChatCompletionsMergedPage{}, sqlite.ErrNotFound
-		}
-	}
-	if start > len(entries) {
-		start = len(entries)
-	}
-	end := start + query.Limit
-	hasMore := end < len(entries)
-	if end > len(entries) {
-		end = len(entries)
-	}
-
-	page := make([]json.RawMessage, 0, end-start)
-	for _, entry := range entries[start:end] {
-		page = append(page, entry.Raw)
-	}
-	return storedChatCompletionsMergedPage{
-		Data:    page,
-		HasMore: hasMore,
-	}, nil
+	return limit
 }
 
 func decodeStoredChatCompletionListEntry(raw []byte) (storedChatCompletionListEntry, error) {

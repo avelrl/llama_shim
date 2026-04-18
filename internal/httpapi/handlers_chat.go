@@ -166,30 +166,16 @@ func (h *proxyHandler) listStoredChatCompletions(w http.ResponseWriter, r *http.
 		return
 	}
 
-	localCompletions, err := h.store.ListAllChatCompletions(r.Context(), query)
+	page, upstreamForward, err := h.buildMergedStoredChatCompletionsPage(r.Context(), r, query)
 	if err != nil {
 		status, payload := MapError(r.Context(), h.logger, err)
 		WriteJSON(w, status, apiErrorPayload{Error: payload})
 		return
 	}
-
-	upstreamData, upstreamStatusCode, upstreamHeaders, upstreamBody, err := h.listUpstreamStoredChatCompletions(r.Context(), r, query)
-	if err != nil {
-		status, payload := MapError(r.Context(), h.logger, err)
-		WriteJSON(w, status, apiErrorPayload{Error: payload})
-		return
-	}
-	if upstreamStatusCode != 0 {
-		copyResponseHeaders(w.Header(), upstreamHeaders)
-		w.WriteHeader(upstreamStatusCode)
-		_, _ = w.Write(upstreamBody)
-		return
-	}
-
-	page, err := buildMergedStoredChatCompletionsPage(localCompletions, upstreamData, query)
-	if err != nil {
-		status, payload := MapError(r.Context(), h.logger, err)
-		WriteJSON(w, status, apiErrorPayload{Error: payload})
+	if upstreamForward != nil {
+		copyResponseHeaders(w.Header(), upstreamForward.Headers)
+		w.WriteHeader(upstreamForward.StatusCode)
+		_, _ = w.Write(upstreamForward.Body)
 		return
 	}
 
@@ -379,8 +365,6 @@ func (h *proxyHandler) shadowStoreChatCompletion(ctx context.Context, requestBod
 }
 
 func parseListStoredChatCompletionsQuery(r *http.Request) (domain.ListStoredChatCompletionsQuery, error) {
-	const maxStoredChatCompletionsListLimit = 100
-
 	values := r.URL.Query()
 	metadata, err := parseChatCompletionMetadataFilter(values)
 	if err != nil {
@@ -396,8 +380,8 @@ func parseListStoredChatCompletionsQuery(r *http.Request) (domain.ListStoredChat
 	}
 	if rawLimit := strings.TrimSpace(values.Get("limit")); rawLimit != "" {
 		limit, err := strconv.Atoi(rawLimit)
-		if err != nil || limit < 1 || limit > maxStoredChatCompletionsListLimit {
-			return domain.ListStoredChatCompletionsQuery{}, domain.NewValidationError("limit", "limit must be between 1 and 100")
+		if err != nil || limit < 1 {
+			return domain.ListStoredChatCompletionsQuery{}, domain.NewValidationError("limit", "limit must be a positive integer")
 		}
 		query.Limit = limit
 	}
