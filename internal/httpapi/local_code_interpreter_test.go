@@ -7,6 +7,31 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestBuildLocalCodeInterpreterPlanningPromptUsesDockerBoundaryGuidance(t *testing.T) {
+	t.Parallel()
+
+	promptWithoutFiles := buildLocalCodeInterpreterPlanningPrompt(nil)
+	require.Contains(t, promptWithoutFiles, "shim-managed Docker container")
+	require.Contains(t, promptWithoutFiles, "no network access")
+	require.Contains(t, promptWithoutFiles, "Do not assume any uploaded files are available")
+	require.NotContains(t, promptWithoutFiles, "Do not access any filesystem paths")
+	require.NotContains(t, promptWithoutFiles, "without filesystem, network, or subprocess access")
+
+	promptWithFiles := buildLocalCodeInterpreterPlanningPrompt([]localCodeInterpreterInputFile{
+		{WorkspaceName: "codes.txt", FileID: "file_codes"},
+	})
+	require.Contains(t, promptWithFiles, "Prefer reading the uploaded files already placed in the current working directory using relative paths.")
+	require.Contains(t, promptWithFiles, "codes.txt (file_id=file_codes)")
+	require.Contains(t, promptWithFiles, "Avoid depending on container system files or paths outside the current working directory")
+}
+
+func TestValidateLocalCodeInterpreterPlanCodeAllowsOrdinaryContainerPython(t *testing.T) {
+	t.Parallel()
+
+	err := validateLocalCodeInterpreterPlanCode("import os\nprint(os.getcwd())\n")
+	require.NoError(t, err)
+}
+
 func TestBuildLocalCodeInterpreterAssistantTextAnnotationsPrefersInlineMentions(t *testing.T) {
 	finalText, annotations := buildLocalCodeInterpreterAssistantTextAnnotations(
 		"Created report.txt and plot.png.",

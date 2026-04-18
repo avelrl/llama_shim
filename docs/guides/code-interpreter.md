@@ -5,8 +5,8 @@
 The shim supports a dev-oriented local `code_interpreter` subset inside
 `/v1/responses`.
 
-It gives the model a Python execution environment with shim-managed container
-state and file handling.
+It gives the model a Python execution environment backed by a shim-managed
+Docker container plus local file staging and replay surfaces.
 
 ## When To Use It
 
@@ -44,6 +44,9 @@ curl http://127.0.0.1:8080/v1/responses \
 ## Shim-Specific Notes
 
 - Enable the local runtime with `responses.code_interpreter.backend=docker`.
+- The Docker container boundary is the actual isolation layer for the local
+  subset. The shim does not claim a Python-level import/filesystem sandbox
+  inside that container.
 - The shim reuses `container_id` across local `previous_response_id` lineage
   when possible.
 - Shim-local `/v1/responses` accepts only `container: {"type":"auto"}`.
