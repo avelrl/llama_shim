@@ -135,11 +135,9 @@ responses:
     force_tool_choice_required: true
   code_interpreter:
     # disabled: reject shim-local code_interpreter execution
-    # unsafe_host: dev-only direct host python execution
-    # docker: hardened Docker-backed local execution
+    # docker: hardened Docker-backed local execution and the only supported
+    # local runtime boundary
     backend: disabled
-    # Python binary used by the unsafe_host backend.
-    python_binary: python3
     # Maximum execution time per local code_interpreter run.
     execution_timeout: 20s
     docker:

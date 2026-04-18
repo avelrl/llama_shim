@@ -362,7 +362,9 @@ paths:
           a fallback `Generated files:` appendix and annotates those
           filenames there
         - `backend=docker` uses a hardened reusable session-container
-          boundary
+          boundary; that container runtime is the actual isolation layer for
+          the local subset, and the shim does not claim a Python-level
+          import/filesystem sandbox inside it
         - current-turn `input_file` model content parts are auto-staged into
           the local sandbox workspace for `input_file.file_id`,
           `input_file.file_data`, and HTTP(S) `input_file.file_url`;
@@ -2658,7 +2660,10 @@ components:
         The local `code_interpreter` subset is guarded by
         `responses.code_interpreter.backend`. `backend=docker` uses a hardened
         reusable container with no network, read-only rootfs, tmpfs workspace,
-        non-root user, dropped capabilities, and memory/cpu/pids limits.
+        non-root user, dropped capabilities, and memory/cpu/pids limits. That
+        container runtime is the actual isolation boundary for the local
+        subset; the shim does not claim a Python-level import/filesystem
+        sandbox inside the container itself.
         Shim-local `/v1/responses` accepts only `container.type=auto` for
         execution; explicit `code_interpreter.container="cntr_*"` ids are
         rejected in local mode. Supported local `container.file_ids` values

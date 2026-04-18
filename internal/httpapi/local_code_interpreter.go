@@ -37,31 +37,6 @@ var shimLocalCodeInterpreterFields = map[string]struct{}{
 	"include":             {},
 }
 
-var localCodeInterpreterForbiddenFragments = []string{
-	"import os",
-	"from os",
-	"import subprocess",
-	"from subprocess",
-	"import socket",
-	"from socket",
-	"import pathlib",
-	"from pathlib",
-	"import shutil",
-	"from shutil",
-	"import glob",
-	"from glob",
-	"import urllib",
-	"from urllib",
-	"import requests",
-	"from requests",
-	"exec(",
-	"eval(",
-	"compile(",
-	"__import__(",
-	"input(",
-	"breakpoint(",
-}
-
 type LocalCodeInterpreterRuntimeConfig struct {
 	Backend                sandbox.Backend
 	Limits                 LocalCodeInterpreterLimits
@@ -619,18 +594,17 @@ func buildLocalCodeInterpreterPlanningPrompt(inputFiles []localCodeInterpreterIn
 		"Return JSON only with keys use_code_interpreter and code.",
 		"If Python is not needed, return {\"use_code_interpreter\":false,\"code\":\"\"}.",
 		"If Python is needed, return {\"use_code_interpreter\":true,\"code\":\"...\"}.",
-		"The code must be pure Python for the shim-local code interpreter backend.",
-		"Do not access the network, subprocesses, environment variables, or interactive input.",
-		"Prefer concise code that prints the useful result to stdout.",
+		"The code runs inside a shim-managed Docker container with no network access, a writable current working directory, and bounded local resource limits.",
+		"Prefer concise non-interactive Python that prints the useful result to stdout.",
 	}
 	if len(inputFiles) == 0 {
-		base = append(base, "Do not access any filesystem paths for this turn.")
+		base = append(base, "Do not assume any uploaded files are available in the current working directory for this turn.")
 		return strings.Join(base, " ")
 	}
 
 	var builder strings.Builder
 	builder.WriteString(strings.Join(base, " "))
-	builder.WriteString(" You may read only the uploaded files already placed in the current working directory using relative paths with open().")
+	builder.WriteString(" Prefer reading the uploaded files already placed in the current working directory using relative paths.")
 	builder.WriteString(" Available uploaded files:")
 	for _, inputFile := range inputFiles {
 		builder.WriteString(" ")
@@ -641,7 +615,7 @@ func buildLocalCodeInterpreterPlanningPrompt(inputFiles []localCodeInterpreterIn
 			builder.WriteString(")")
 		}
 	}
-	builder.WriteString(" Do not access any other filesystem paths.")
+	builder.WriteString(" Avoid depending on container system files or paths outside the current working directory unless the task explicitly requires them.")
 	return builder.String()
 }
 
@@ -672,12 +646,6 @@ func validateLocalCodeInterpreterPlanCode(code string) error {
 	}
 	if len(trimmed) > defaultLocalCodeInterpreterPlannedCodeLimit {
 		return domain.NewValidationError("tools", "shim-local code_interpreter planned code exceeded the maximum supported size")
-	}
-	lowered := strings.ToLower(trimmed)
-	for _, fragment := range localCodeInterpreterForbiddenFragments {
-		if strings.Contains(lowered, fragment) {
-			return domain.NewValidationError("tools", "shim-local code_interpreter only supports pure-python snippets without filesystem, network, or subprocess access")
-		}
 	}
 	return nil
 }

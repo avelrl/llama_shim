@@ -210,6 +210,25 @@ Useful directions:
 - provider-specific knobs kept behind backend config, not exposed as fake
   OpenAI request fields
 
+### 7. Local execution hardening
+
+Classification: extension and platform hardening.
+
+Goal:
+Strengthen shim-local execution isolation beyond the current Docker baseline
+without pretending that this is part of the public OpenAI API contract.
+
+Useful directions:
+
+- minimal purpose-built runtime images instead of a general Python base image
+- tighter seccomp, AppArmor, or similar sandbox profiles
+- alternative isolated runtimes such as gVisor, Kata, or comparable container
+  sandboxes
+- smaller visible filesystem and fewer bundled userland tools inside the local
+  execution image
+- clearer capability reporting for which hardening layer is active in a given
+  deployment
+
 ## Working Rule
 
 If a task improves a public OpenAI-compatible contract we already expose, it is

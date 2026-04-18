@@ -53,17 +53,17 @@ func TestDockerBackendBuildDockerRunArgsUsesConfiguredValues(t *testing.T) {
 	require.Contains(t, args, "128")
 }
 
-func TestBuildPythonProgramGuardsOpenToWorkspace(t *testing.T) {
+func TestBuildPythonProgramWrapsUserCodeWithoutMonkeypatchingBuiltins(t *testing.T) {
 	t.Parallel()
 
 	program, err := buildPythonProgram(`print(open("codes.txt", encoding="utf-8").read())`)
 	require.NoError(t, err)
-	require.Contains(t, program, "_shim_safe_open")
-	require.Contains(t, program, "_shim_safe_import")
-	require.Contains(t, program, "_shim_builtins.open = _shim_safe_open")
-	require.Contains(t, program, "_shim_builtins.__import__ = _shim_safe_import")
-	require.Contains(t, program, "_shim_io.open = _shim_safe_open")
-	require.Contains(t, program, "file access outside workspace is not allowed")
+	require.Contains(t, program, "_shim_user_code = ")
+	require.Contains(t, program, `_shim_globals = {"__name__": "__main__"}`)
+	require.Contains(t, program, `exec(compile(_shim_user_code, "<shim-local-code-interpreter>", "exec"), _shim_globals, _shim_globals)`)
+	require.NotContains(t, program, "_shim_safe_open")
+	require.NotContains(t, program, "_shim_builtins.open")
+	require.NotContains(t, program, "_shim_builtins.__import__")
 	require.Contains(t, program, `print(open(\"codes.txt\", encoding=\"utf-8\").read())`)
 }
 
