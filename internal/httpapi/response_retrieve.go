@@ -198,62 +198,79 @@ func writeResponseReplayAsSSE(w http.ResponseWriter, response domain.Response, a
 		return err
 	}
 
-	events := buildResponseReplayEvents(response, artifacts, includeObfuscation)
-	for idx, event := range events {
-		sequence := idx + 1
+	sequence := 0
+	if err := forEachResponseReplayEvent(response, artifacts, includeObfuscation, func(event responseReplayEvent) error {
+		sequence++
 		if sequence <= startingAfter {
-			continue
+			return nil
 		}
 		event.payload["sequence_number"] = sequence
-		if err := emitter.write(event.eventType, event.payload); err != nil {
-			return err
-		}
+		return emitter.write(event.eventType, event.payload)
+	}); err != nil {
+		return err
 	}
 	return emitter.done()
 }
 
 func buildResponseReplayEvents(response domain.Response, artifacts []domain.ResponseReplayArtifact, includeObfuscation bool) []responseReplayEvent {
+	events := make([]responseReplayEvent, 0, 8)
+	_ = forEachResponseReplayEvent(response, artifacts, includeObfuscation, func(event responseReplayEvent) error {
+		events = append(events, event)
+		return nil
+	})
+	return events
+}
+
+func forEachResponseReplayEvent(response domain.Response, artifacts []domain.ResponseReplayArtifact, includeObfuscation bool, visit func(responseReplayEvent) error) error {
 	status := strings.TrimSpace(response.Status)
 	if status == "" {
 		status = "completed"
 	}
 
 	created := responseReplaySnapshot(response, "in_progress", false)
-	events := []responseReplayEvent{
-		{
-			eventType: "response.created",
-			payload: map[string]any{
-				"type":     "response.created",
-				"response": created,
-			},
+	if err := visit(responseReplayEvent{
+		eventType: "response.created",
+		payload: map[string]any{
+			"type":     "response.created",
+			"response": created,
 		},
-		{
-			eventType: "response.in_progress",
-			payload: map[string]any{
-				"type":     "response.in_progress",
-				"response": created,
-			},
+	}); err != nil {
+		return err
+	}
+	if err := visit(responseReplayEvent{
+		eventType: "response.in_progress",
+		payload: map[string]any{
+			"type":     "response.in_progress",
+			"response": created,
 		},
+	}); err != nil {
+		return err
 	}
 
 	outputItems := responseReplayOutputItems(response)
 	for outputIndex, outputItem := range outputItems {
-		events = append(events, buildResponseReplayOutputItemEvents(response.ID, outputIndex, outputItem, artifacts, includeObfuscation)...)
+		itemEvents := buildResponseReplayOutputItemEvents(response.ID, outputIndex, outputItem, artifacts, includeObfuscation)
+		for _, event := range itemEvents {
+			if err := visit(event); err != nil {
+				return err
+			}
+		}
 	}
 
 	finalEventType := "response.completed"
 	if status != "completed" {
 		finalEventType = fmt.Sprintf("response.%s", status)
 	}
-	events = append(events, responseReplayEvent{
+	if err := visit(responseReplayEvent{
 		eventType: finalEventType,
 		payload: map[string]any{
 			"type":     finalEventType,
 			"response": response,
 		},
-	})
-
-	return events
+	}); err != nil {
+		return err
+	}
+	return nil
 }
 
 func responseReplaySnapshot(response domain.Response, status string, completed bool) domain.Response {
