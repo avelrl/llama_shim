@@ -417,21 +417,24 @@ func writeCompletedResponseAsSSE(ctx context.Context, logger *slog.Logger, w htt
 	if err != nil {
 		return err
 	}
-	events := buildResponseReplayEvents(response, nil, includeObfuscation)
-	for index, event := range events {
-		event.payload["sequence_number"] = index + 1
-		if err := emitter.write(event.eventType, event.payload); err != nil {
-			return err
-		}
+	eventCount := 0
+	lastEventType := ""
+	if err := forEachResponseReplayEvent(response, nil, includeObfuscation, func(event responseReplayEvent) error {
+		eventCount++
+		lastEventType = event.eventType
+		event.payload["sequence_number"] = eventCount
+		return emitter.write(event.eventType, event.payload)
+	}); err != nil {
+		return err
 	}
 	if err := emitter.done(); err != nil {
 		return err
 	}
-	if logger != nil && logger.Enabled(ctx, slog.LevelDebug) && len(events) > 0 {
+	if logger != nil && logger.Enabled(ctx, slog.LevelDebug) && eventCount > 0 {
 		logger.DebugContext(ctx, "responses stream summary",
 			"request_id", RequestIDFromContext(ctx),
-			"event_count", len(events),
-			"last_event_type", events[len(events)-1].eventType,
+			"event_count", eventCount,
+			"last_event_type", lastEventType,
 			"response_id", response.ID,
 			"output_text_preview", truncateForLog(response.OutputText, 240),
 		)
@@ -919,15 +922,22 @@ func (p *responseStreamEventProxy) normalizeCompletedToolCallEvent(eventType str
 				p.toolDoneItemIDs[itemID] = struct{}{}
 			}
 		}
-		if replaySpecs := codeInterpreterReplayEventSpecs(item, itemID, outputIndex, false); len(replaySpecs) > 0 {
+		if strings.TrimSpace(asString(item["type"])) == "code_interpreter_call" {
 			if _, seen := p.toolDoneItemIDs[itemID]; !seen {
-				for _, replaySpec := range replaySpecs {
+				emitted := false
+				if err := forEachCodeInterpreterReplayEvent(item, itemID, outputIndex, false, func(replaySpec hostedToolReplayEventSpec) error {
+					emitted = true
 					before = append(before, pendingSSEEvent{
 						eventType: replaySpec.eventType,
 						payload:   replaySpec.payload,
 					})
+					return nil
+				}); err != nil {
+					return before, eventType, payload
 				}
-				p.toolDoneItemIDs[itemID] = struct{}{}
+				if emitted {
+					p.toolDoneItemIDs[itemID] = struct{}{}
+				}
 			}
 		}
 		if hostedEventTypes := hostedToolReplayEventTypes(itemType, item); len(hostedEventTypes) > 0 {
@@ -1720,16 +1730,16 @@ type hostedToolReplayEventSpec struct {
 	payload   map[string]any
 }
 
-func codeInterpreterReplayEventSpecs(item map[string]any, itemID string, outputIndex int, includeObfuscation bool) []hostedToolReplayEventSpec {
+func forEachCodeInterpreterReplayEvent(item map[string]any, itemID string, outputIndex int, includeObfuscation bool, visit func(hostedToolReplayEventSpec) error) error {
 	if strings.TrimSpace(asString(item["type"])) != "code_interpreter_call" || isFailedToolStreamItem(item) {
 		return nil
 	}
 
-	events := []hostedToolReplayEventSpec{
-		{
-			eventType: "response.code_interpreter_call.in_progress",
-			payload:   hostedToolReplayEventPayload("response.code_interpreter_call.in_progress", itemID, outputIndex),
-		},
+	if err := visit(hostedToolReplayEventSpec{
+		eventType: "response.code_interpreter_call.in_progress",
+		payload:   hostedToolReplayEventPayload("response.code_interpreter_call.in_progress", itemID, outputIndex),
+	}); err != nil {
+		return err
 	}
 
 	if _, ok := item["code"]; ok {
@@ -1744,13 +1754,15 @@ func codeInterpreterReplayEventSpecs(item map[string]any, itemID string, outputI
 			if includeObfuscation {
 				deltaPayload["obfuscation"] = strings.Repeat("x", utf8.RuneCountInString(code))
 			}
-			events = append(events, hostedToolReplayEventSpec{
+			if err := visit(hostedToolReplayEventSpec{
 				eventType: "response.code_interpreter_call_code.delta",
 				payload:   deltaPayload,
-			})
+			}); err != nil {
+				return err
+			}
 		}
 
-		events = append(events, hostedToolReplayEventSpec{
+		if err := visit(hostedToolReplayEventSpec{
 			eventType: "response.code_interpreter_call_code.done",
 			payload: map[string]any{
 				"type":         "response.code_interpreter_call_code.done",
@@ -1758,21 +1770,25 @@ func codeInterpreterReplayEventSpecs(item map[string]any, itemID string, outputI
 				"output_index": outputIndex,
 				"code":         code,
 			},
-		})
+		}); err != nil {
+			return err
+		}
 	}
 
-	events = append(events,
-		hostedToolReplayEventSpec{
-			eventType: "response.code_interpreter_call.interpreting",
-			payload:   hostedToolReplayEventPayload("response.code_interpreter_call.interpreting", itemID, outputIndex),
-		},
-		hostedToolReplayEventSpec{
-			eventType: "response.code_interpreter_call.completed",
-			payload:   hostedToolReplayEventPayload("response.code_interpreter_call.completed", itemID, outputIndex),
-		},
-	)
+	if err := visit(hostedToolReplayEventSpec{
+		eventType: "response.code_interpreter_call.interpreting",
+		payload:   hostedToolReplayEventPayload("response.code_interpreter_call.interpreting", itemID, outputIndex),
+	}); err != nil {
+		return err
+	}
+	if err := visit(hostedToolReplayEventSpec{
+		eventType: "response.code_interpreter_call.completed",
+		payload:   hostedToolReplayEventPayload("response.code_interpreter_call.completed", itemID, outputIndex),
+	}); err != nil {
+		return err
+	}
 
-	return events
+	return nil
 }
 
 func hostedToolReplayEventPayload(eventType, itemID string, outputIndex int) map[string]any {

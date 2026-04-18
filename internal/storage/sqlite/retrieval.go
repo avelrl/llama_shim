@@ -68,16 +68,37 @@ func (s *Store) ListFiles(ctx context.Context, query domain.ListFilesQuery) (dom
 		orderDir = "ASC"
 	}
 
-	statement := `
-		SELECT id, purpose, filename, bytes, created_at, expires_at, status, status_details, content
-		FROM files
-	`
-	args := make([]any, 0, 1)
-	if purpose := strings.TrimSpace(query.Purpose); purpose != "" {
-		statement += ` WHERE purpose = ?`
+	where := make([]string, 0, 2)
+	args := make([]any, 0, 4)
+	purpose := strings.TrimSpace(query.Purpose)
+	if purpose != "" {
+		where = append(where, `purpose = ?`)
 		args = append(args, purpose)
 	}
+
+	if cursor := strings.TrimSpace(query.After); cursor != "" {
+		cursorCreatedAt, err := s.lookupListFilesCursorCreatedAt(ctx, cursor, purpose)
+		if err != nil {
+			return domain.StoredFilePage{}, err
+		}
+		comparison := "<"
+		if query.Order == domain.ListOrderAsc {
+			comparison = ">"
+		}
+		where = append(where, `(created_at `+comparison+` ? OR (created_at = ? AND id `+comparison+` ?))`)
+		args = append(args, cursorCreatedAt, cursorCreatedAt, cursor)
+	}
+
+	statement := `
+		SELECT id, purpose, filename, bytes, created_at, expires_at, status, status_details
+		FROM files
+	`
+	if len(where) != 0 {
+		statement += ` WHERE ` + strings.Join(where, ` AND `)
+	}
 	statement += ` ORDER BY created_at ` + orderDir + `, id ` + orderDir
+	statement += ` LIMIT ?`
+	args = append(args, query.Limit+1)
 
 	rows, err := s.db.QueryContext(ctx, statement, args...)
 	if err != nil {
@@ -87,7 +108,7 @@ func (s *Store) ListFiles(ctx context.Context, query domain.ListFilesQuery) (dom
 
 	files := make([]domain.StoredFile, 0, query.Limit+1)
 	for rows.Next() {
-		file, err := scanStoredFile(rows)
+		file, err := scanStoredFileMetadata(rows)
 		if err != nil {
 			return domain.StoredFilePage{}, err
 		}
@@ -97,38 +118,15 @@ func (s *Store) ListFiles(ctx context.Context, query domain.ListFilesQuery) (dom
 		return domain.StoredFilePage{}, fmt.Errorf("iterate files: %w", err)
 	}
 
-	items, hasMore, err := paginateStoredFiles(files, query.After, query.Limit)
-	if err != nil {
-		return domain.StoredFilePage{}, err
+	hasMore := len(files) > query.Limit
+	if hasMore {
+		files = files[:query.Limit]
 	}
 
-	return domain.StoredFilePage{Files: items, HasMore: hasMore}, nil
+	return domain.StoredFilePage{Files: files, HasMore: hasMore}, nil
 }
 
 func (s *Store) DeleteFile(ctx context.Context, id string) error {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT DISTINCT vector_store_id
-		FROM vector_store_files
-		WHERE file_id = ?
-	`, id)
-	if err != nil {
-		return fmt.Errorf("query vector stores for file delete: %w", err)
-	}
-	affectedStores := make([]string, 0, 4)
-	for rows.Next() {
-		var vectorStoreID string
-		if err := rows.Scan(&vectorStoreID); err != nil {
-			rows.Close()
-			return fmt.Errorf("scan vector store for file delete: %w", err)
-		}
-		affectedStores = append(affectedStores, vectorStoreID)
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return fmt.Errorf("iterate vector stores for file delete: %w", err)
-	}
-	rows.Close()
-
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin delete file tx: %w", err)
@@ -136,6 +134,11 @@ func (s *Store) DeleteFile(ctx context.Context, id string) error {
 	defer func() {
 		_ = tx.Rollback()
 	}()
+
+	affectedStores, err := queryVectorStoreChunkIDsByFile(ctx, tx, id)
+	if err != nil {
+		return err
+	}
 
 	result, err := tx.ExecContext(ctx, `DELETE FROM files WHERE id = ?`, id)
 	if err != nil {
@@ -148,8 +151,13 @@ func (s *Store) DeleteFile(ctx context.Context, id string) error {
 	if rowsAffected == 0 {
 		return ErrNotFound
 	}
-	for _, vectorStoreID := range affectedStores {
-		if err := s.retrieval.RefreshVectorStore(ctx, tx, vectorStoreID, domain.NowUTC().Unix()); err != nil {
+	for vectorStoreID, chunkIDs := range affectedStores {
+		if err := s.retrieval.DeleteVectorStoreFile(ctx, tx, deleteVectorStoreFileParams{
+			VectorStoreID:   vectorStoreID,
+			FileID:          id,
+			CreatedAt:       domain.NowUTC().Unix(),
+			RemovedChunkIDs: chunkIDs,
+		}); err != nil {
 			return fmt.Errorf("refresh vector store after file delete: %w", err)
 		}
 	}
@@ -359,6 +367,11 @@ func (s *Store) SaveVectorStoreFile(ctx context.Context, file domain.StoredVecto
 		return fmt.Errorf("upsert vector store file: %w", err)
 	}
 
+	existingChunkIDs, err := queryVectorStoreFileChunkIDs(ctx, tx, file.VectorStoreID, file.ID)
+	if err != nil {
+		return err
+	}
+
 	if _, err := tx.ExecContext(ctx, `
 		DELETE FROM vector_store_chunks
 		WHERE vector_store_id = ? AND file_id = ?
@@ -388,9 +401,10 @@ func (s *Store) SaveVectorStoreFile(ctx context.Context, file domain.StoredVecto
 	}
 
 	if err := s.retrieval.IndexVectorStoreFile(ctx, tx, indexVectorStoreFileParams{
-		VectorStoreID: file.VectorStoreID,
-		FileID:        file.ID,
-		CreatedAt:     file.CreatedAt,
+		VectorStoreID:    file.VectorStoreID,
+		FileID:           file.ID,
+		CreatedAt:        file.CreatedAt,
+		ReplacedChunkIDs: existingChunkIDs,
 	}); err != nil {
 		return fmt.Errorf("index vector store file: %w", err)
 	}
@@ -474,6 +488,11 @@ func (s *Store) DeleteVectorStoreFile(ctx context.Context, vectorStoreID, fileID
 		_ = tx.Rollback()
 	}()
 
+	chunkIDs, err := queryVectorStoreFileChunkIDs(ctx, tx, vectorStoreID, fileID)
+	if err != nil {
+		return err
+	}
+
 	result, err := tx.ExecContext(ctx, `
 		DELETE FROM vector_store_files
 		WHERE vector_store_id = ? AND file_id = ?
@@ -488,7 +507,12 @@ func (s *Store) DeleteVectorStoreFile(ctx context.Context, vectorStoreID, fileID
 	if rowsAffected == 0 {
 		return ErrNotFound
 	}
-	if err := s.retrieval.RefreshVectorStore(ctx, tx, vectorStoreID, domain.NowUTC().Unix()); err != nil {
+	if err := s.retrieval.DeleteVectorStoreFile(ctx, tx, deleteVectorStoreFileParams{
+		VectorStoreID:   vectorStoreID,
+		FileID:          fileID,
+		CreatedAt:       domain.NowUTC().Unix(),
+		RemovedChunkIDs: chunkIDs,
+	}); err != nil {
 		return fmt.Errorf("refresh vector store after file delete: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -705,6 +729,55 @@ func scanStoredFile(row interface{ Scan(...any) error }) (domain.StoredFile, err
 	return file, nil
 }
 
+func scanStoredFileMetadata(row interface{ Scan(...any) error }) (domain.StoredFile, error) {
+	var (
+		file          domain.StoredFile
+		expiresAt     sql.NullInt64
+		status        sql.NullString
+		statusDetails sql.NullString
+	)
+	if err := row.Scan(
+		&file.ID,
+		&file.Purpose,
+		&file.Filename,
+		&file.Bytes,
+		&file.CreatedAt,
+		&expiresAt,
+		&status,
+		&statusDetails,
+	); err != nil {
+		return domain.StoredFile{}, err
+	}
+	if expiresAt.Valid {
+		file.ExpiresAt = &expiresAt.Int64
+	}
+	if status.Valid {
+		file.Status = status.String
+	}
+	if statusDetails.Valid {
+		file.StatusDetails = &statusDetails.String
+	}
+	return file, nil
+}
+
+func (s *Store) lookupListFilesCursorCreatedAt(ctx context.Context, id string, purpose string) (int64, error) {
+	statement := `SELECT created_at FROM files WHERE id = ?`
+	args := []any{id}
+	if purpose != "" {
+		statement += ` AND purpose = ?`
+		args = append(args, purpose)
+	}
+
+	var createdAt int64
+	if err := s.db.QueryRowContext(ctx, statement, args...).Scan(&createdAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, ErrNotFound
+		}
+		return 0, fmt.Errorf("lookup file cursor: %w", err)
+	}
+	return createdAt, nil
+}
+
 func scanVectorStoreBase(row interface{ Scan(...any) error }) (domain.StoredVectorStore, error) {
 	var (
 		store              domain.StoredVectorStore
@@ -785,31 +858,6 @@ func scanVectorStoreFile(row interface{ Scan(...any) error }) (domain.StoredVect
 	return file, nil
 }
 
-func paginateStoredFiles(files []domain.StoredFile, after string, limit int) ([]domain.StoredFile, bool, error) {
-	start := 0
-	if cursor := strings.TrimSpace(after); cursor != "" {
-		start = -1
-		for i, file := range files {
-			if file.ID == cursor {
-				start = i + 1
-				break
-			}
-		}
-		if start < 0 {
-			return nil, false, ErrNotFound
-		}
-	}
-	if start > len(files) {
-		start = len(files)
-	}
-	end := start + limit
-	hasMore := end < len(files)
-	if end > len(files) {
-		end = len(files)
-	}
-	return files[start:end], hasMore, nil
-}
-
 func paginateVectorStores(stores []domain.StoredVectorStore, after, before string, limit int) ([]domain.StoredVectorStore, bool, error) {
 	start := 0
 	end := len(stores)
@@ -884,6 +932,61 @@ func paginateVectorStoreFiles(files []domain.StoredVectorStoreFile, after, befor
 		page = page[:limit]
 	}
 	return page, hasMore, nil
+}
+
+func queryVectorStoreFileChunkIDs(ctx context.Context, tx *sql.Tx, vectorStoreID, fileID string) ([]int64, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT id
+		FROM vector_store_chunks
+		WHERE vector_store_id = ? AND file_id = ?
+		ORDER BY id ASC
+	`, vectorStoreID, fileID)
+	if err != nil {
+		return nil, fmt.Errorf("query vector store chunk ids: %w", err)
+	}
+	defer rows.Close()
+
+	chunkIDs := make([]int64, 0, 16)
+	for rows.Next() {
+		var chunkID int64
+		if err := rows.Scan(&chunkID); err != nil {
+			return nil, fmt.Errorf("scan vector store chunk id: %w", err)
+		}
+		chunkIDs = append(chunkIDs, chunkID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate vector store chunk ids: %w", err)
+	}
+	return chunkIDs, nil
+}
+
+func queryVectorStoreChunkIDsByFile(ctx context.Context, tx *sql.Tx, fileID string) (map[string][]int64, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT vector_store_id, id
+		FROM vector_store_chunks
+		WHERE file_id = ?
+		ORDER BY vector_store_id ASC, id ASC
+	`, fileID)
+	if err != nil {
+		return nil, fmt.Errorf("query vector store chunk ids by file: %w", err)
+	}
+	defer rows.Close()
+
+	chunkIDsByStore := make(map[string][]int64)
+	for rows.Next() {
+		var (
+			vectorStoreID string
+			chunkID       int64
+		)
+		if err := rows.Scan(&vectorStoreID, &chunkID); err != nil {
+			return nil, fmt.Errorf("scan vector store chunk id by file: %w", err)
+		}
+		chunkIDsByStore[vectorStoreID] = append(chunkIDsByStore[vectorStoreID], chunkID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate vector store chunk ids by file: %w", err)
+	}
+	return chunkIDsByStore, nil
 }
 
 func buildVectorStoreFileContent(raw []byte, strategy domain.FileChunkingStrategy) ([]string, string, *domain.VectorStoreFileError) {

@@ -185,30 +185,16 @@ func (h *proxyHandler) listStoredChatCompletions(w http.ResponseWriter, r *http.
 		return
 	}
 
-	localCompletions, err := h.store.ListAllChatCompletions(r.Context(), query)
+	page, upstreamForward, err := h.buildMergedStoredChatCompletionsPage(r.Context(), r, query)
 	if err != nil {
 		status, payload := MapError(r.Context(), h.logger, err)
 		WriteJSON(w, status, apiErrorPayload{Error: payload})
 		return
 	}
-
-	upstreamData, upstreamStatusCode, upstreamHeaders, upstreamBody, err := h.listUpstreamStoredChatCompletions(r.Context(), r, query)
-	if err != nil {
-		status, payload := MapError(r.Context(), h.logger, err)
-		WriteJSON(w, status, apiErrorPayload{Error: payload})
-		return
-	}
-	if upstreamStatusCode != 0 {
-		copyResponseHeaders(w.Header(), upstreamHeaders)
-		w.WriteHeader(upstreamStatusCode)
-		_, _ = w.Write(upstreamBody)
-		return
-	}
-
-	page, err := buildMergedStoredChatCompletionsPage(localCompletions, upstreamData, query)
-	if err != nil {
-		status, payload := MapError(r.Context(), h.logger, err)
-		WriteJSON(w, status, apiErrorPayload{Error: payload})
+	if upstreamForward != nil {
+		copyResponseHeaders(w.Header(), upstreamForward.Headers)
+		w.WriteHeader(upstreamForward.StatusCode)
+		_, _ = w.Write(upstreamForward.Body)
 		return
 	}
 

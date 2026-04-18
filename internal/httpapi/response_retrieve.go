@@ -198,62 +198,67 @@ func writeResponseReplayAsSSE(w http.ResponseWriter, response domain.Response, a
 		return err
 	}
 
-	events := buildResponseReplayEvents(response, artifacts, includeObfuscation)
-	for idx, event := range events {
-		sequence := idx + 1
+	sequence := 0
+	if err := forEachResponseReplayEvent(response, artifacts, includeObfuscation, func(event responseReplayEvent) error {
+		sequence++
 		if sequence <= startingAfter {
-			continue
+			return nil
 		}
 		event.payload["sequence_number"] = sequence
-		if err := emitter.write(event.eventType, event.payload); err != nil {
-			return err
-		}
+		return emitter.write(event.eventType, event.payload)
+	}); err != nil {
+		return err
 	}
 	return emitter.done()
 }
 
-func buildResponseReplayEvents(response domain.Response, artifacts []domain.ResponseReplayArtifact, includeObfuscation bool) []responseReplayEvent {
+func forEachResponseReplayEvent(response domain.Response, artifacts []domain.ResponseReplayArtifact, includeObfuscation bool, visit func(responseReplayEvent) error) error {
 	status := strings.TrimSpace(response.Status)
 	if status == "" {
 		status = "completed"
 	}
 
 	created := responseReplaySnapshot(response, "in_progress", false)
-	events := []responseReplayEvent{
-		{
-			eventType: "response.created",
-			payload: map[string]any{
-				"type":     "response.created",
-				"response": created,
-			},
+	if err := visit(responseReplayEvent{
+		eventType: "response.created",
+		payload: map[string]any{
+			"type":     "response.created",
+			"response": created,
 		},
-		{
-			eventType: "response.in_progress",
-			payload: map[string]any{
-				"type":     "response.in_progress",
-				"response": created,
-			},
+	}); err != nil {
+		return err
+	}
+	if err := visit(responseReplayEvent{
+		eventType: "response.in_progress",
+		payload: map[string]any{
+			"type":     "response.in_progress",
+			"response": created,
 		},
+	}); err != nil {
+		return err
 	}
 
 	outputItems := responseReplayOutputItems(response)
 	for outputIndex, outputItem := range outputItems {
-		events = append(events, buildResponseReplayOutputItemEvents(response.ID, outputIndex, outputItem, artifacts, includeObfuscation)...)
+		if err := forEachResponseReplayOutputItemEvent(response.ID, outputIndex, outputItem, artifacts, includeObfuscation, visit); err != nil {
+			return err
+		}
 	}
 
 	finalEventType := "response.completed"
 	if status != "completed" {
 		finalEventType = fmt.Sprintf("response.%s", status)
 	}
-	events = append(events, responseReplayEvent{
+	if err := visit(responseReplayEvent{
 		eventType: finalEventType,
 		payload: map[string]any{
 			"type":     finalEventType,
 			"response": response,
 		},
-	})
-
-	return events
+	}); err != nil {
+		return err
+	}
+	return nil
 }
 
 func responseReplaySnapshot(response domain.Response, status string, completed bool) domain.Response {
@@ -287,7 +292,7 @@ func replayItemPayload(item domain.Item) map[string]any {
 	return payload
 }
 
-func buildResponseReplayOutputItemEvents(responseID string, outputIndex int, item domain.Item, artifacts []domain.ResponseReplayArtifact, includeObfuscation bool) []responseReplayEvent {
+func forEachResponseReplayOutputItemEvent(responseID string, outputIndex int, item domain.Item, artifacts []domain.ResponseReplayArtifact, includeObfuscation bool, visit func(responseReplayEvent) error) error {
 	addedItem := replayItemPayload(item)
 	itemType := strings.TrimSpace(item.Type)
 	switch itemType {
@@ -305,15 +310,15 @@ func buildResponseReplayOutputItemEvents(responseID string, outputIndex int, ite
 		addedItem["status"] = "in_progress"
 	}
 
-	events := []responseReplayEvent{
-		{
-			eventType: "response.output_item.added",
-			payload: map[string]any{
-				"type":         "response.output_item.added",
-				"output_index": outputIndex,
-				"item":         addedItem,
-			},
+	if err := visit(responseReplayEvent{
+		eventType: "response.output_item.added",
+		payload: map[string]any{
+			"type":         "response.output_item.added",
+			"output_index": outputIndex,
+			"item":         addedItem,
 		},
+	}); err != nil {
+		return err
 	}
 	itemID := strings.TrimSpace(asStringValue(addedItem["id"]))
 
@@ -329,7 +334,7 @@ func buildResponseReplayOutputItemEvents(responseID string, outputIndex int, ite
 				addedPart := cloneReplayMap(part)
 				addedPart["text"] = ""
 				addedPart["annotations"] = []any{}
-				events = append(events, responseReplayEvent{
+				if err := visit(responseReplayEvent{
 					eventType: "response.content_part.added",
 					payload: map[string]any{
 						"type":          "response.content_part.added",
@@ -338,25 +343,31 @@ func buildResponseReplayOutputItemEvents(responseID string, outputIndex int, ite
 						"content_index": contentIndex,
 						"part":          addedPart,
 					},
-				})
-				if text != "" {
-					events = append(events, responseReplayTextDeltaEvent(responseID, itemID, outputIndex, contentIndex, text, includeObfuscation))
+				}); err != nil {
+					return err
 				}
-				events = append(events, responseReplayTextAnnotationEvents(itemID, outputIndex, contentIndex, annotations)...)
-				events = append(events,
-					responseReplayEvent{
-						eventType: "response.output_text.done",
-						payload: map[string]any{
-							"type":          "response.output_text.done",
-							"response_id":   responseID,
-							"item_id":       itemID,
-							"output_index":  outputIndex,
-							"content_index": contentIndex,
-							"text":          text,
-						},
+				if text != "" {
+					if err := visit(responseReplayTextDeltaEvent(responseID, itemID, outputIndex, contentIndex, text, includeObfuscation)); err != nil {
+						return err
+					}
+				}
+				if err := forEachResponseReplayTextAnnotationEvent(itemID, outputIndex, contentIndex, annotations, visit); err != nil {
+					return err
+				}
+				if err := visit(responseReplayEvent{
+					eventType: "response.output_text.done",
+					payload: map[string]any{
+						"type":          "response.output_text.done",
+						"response_id":   responseID,
+						"item_id":       itemID,
+						"output_index":  outputIndex,
+						"content_index": contentIndex,
+						"text":          text,
 					},
-				)
-				events = append(events, responseReplayEvent{
+				}); err != nil {
+					return err
+				}
+				if err := visit(responseReplayEvent{
 					eventType: "response.content_part.done",
 					payload: map[string]any{
 						"type":          "response.content_part.done",
@@ -365,30 +376,34 @@ func buildResponseReplayOutputItemEvents(responseID string, outputIndex int, ite
 						"content_index": contentIndex,
 						"part":          cloneReplayMap(part),
 					},
-				})
+				}); err != nil {
+					return err
+				}
 			default:
-				events = append(events,
-					responseReplayEvent{
-						eventType: "response.content_part.added",
-						payload: map[string]any{
-							"type":          "response.content_part.added",
-							"item_id":       itemID,
-							"output_index":  outputIndex,
-							"content_index": contentIndex,
-							"part":          cloneReplayMap(part),
-						},
+				if err := visit(responseReplayEvent{
+					eventType: "response.content_part.added",
+					payload: map[string]any{
+						"type":          "response.content_part.added",
+						"item_id":       itemID,
+						"output_index":  outputIndex,
+						"content_index": contentIndex,
+						"part":          cloneReplayMap(part),
 					},
-					responseReplayEvent{
-						eventType: "response.content_part.done",
-						payload: map[string]any{
-							"type":          "response.content_part.done",
-							"item_id":       itemID,
-							"output_index":  outputIndex,
-							"content_index": contentIndex,
-							"part":          cloneReplayMap(part),
-						},
+				}); err != nil {
+					return err
+				}
+				if err := visit(responseReplayEvent{
+					eventType: "response.content_part.done",
+					payload: map[string]any{
+						"type":          "response.content_part.done",
+						"item_id":       itemID,
+						"output_index":  outputIndex,
+						"content_index": contentIndex,
+						"part":          cloneReplayMap(part),
 					},
-				)
+				}); err != nil {
+					return err
+				}
 			}
 		}
 	case "reasoning":
@@ -401,19 +416,21 @@ func buildResponseReplayOutputItemEvents(responseID string, outputIndex int, ite
 			if text == "" {
 				continue
 			}
-			events = append(events,
-				responseReplayReasoningDeltaEvent(responseID, itemID, outputIndex, contentIndex, text, includeObfuscation),
-				responseReplayEvent{
-					eventType: "response.reasoning_text.done",
-					payload: map[string]any{
-						"type":          "response.reasoning_text.done",
-						"item_id":       itemID,
-						"output_index":  outputIndex,
-						"content_index": contentIndex,
-						"text":          text,
-					},
+			if err := visit(responseReplayReasoningDeltaEvent(responseID, itemID, outputIndex, contentIndex, text, includeObfuscation)); err != nil {
+				return err
+			}
+			if err := visit(responseReplayEvent{
+				eventType: "response.reasoning_text.done",
+				payload: map[string]any{
+					"type":          "response.reasoning_text.done",
+					"item_id":       itemID,
+					"output_index":  outputIndex,
+					"content_index": contentIndex,
+					"text":          text,
 				},
-			)
+			}); err != nil {
+				return err
+			}
 		}
 	case "function_call", "custom_tool_call", "mcp_call", "mcp_tool_call":
 		deltaEvent, doneEvent, valueKey := toolStreamEventShape(itemType)
@@ -423,12 +440,8 @@ func buildResponseReplayOutputItemEvents(responseID string, outputIndex int, ite
 		ensureCompletedToolItemID(doneItem, responseID, outputIndex)
 		value := strings.TrimSpace(asStringValue(doneItem[valueKey]))
 		if value != "" {
-			events = append(events, responseReplayTextDeltaEvent(responseID, itemID, outputIndex, 0, value, includeObfuscation))
-			events[len(events)-1].eventType = deltaEvent
-			events[len(events)-1].payload["type"] = deltaEvent
-			delete(events[len(events)-1].payload, "content_index")
-			if includeObfuscation {
-				events[len(events)-1].payload["obfuscation"] = strings.Repeat("x", utf8.RuneCountInString(value))
+			if err := visit(responseReplayToolDeltaEvent(deltaEvent, responseID, itemID, outputIndex, value, includeObfuscation)); err != nil {
+				return err
 			}
 		}
 
@@ -442,12 +455,14 @@ func buildResponseReplayOutputItemEvents(responseID string, outputIndex int, ite
 		if value != "" {
 			donePayload[valueKey] = value
 		}
-		events = append(events, responseReplayEvent{
+		if err := visit(responseReplayEvent{
 			eventType: doneEvent,
 			payload:   donePayload,
-		})
+		}); err != nil {
+			return err
+		}
 		if progressEvent != "" {
-			events = append(events, responseReplayEvent{
+			if err := visit(responseReplayEvent{
 				eventType: progressEvent,
 				payload: map[string]any{
 					"type":         progressEvent,
@@ -455,7 +470,9 @@ func buildResponseReplayOutputItemEvents(responseID string, outputIndex int, ite
 					"item_id":      itemID,
 					"output_index": outputIndex,
 				},
-			})
+			}); err != nil {
+				return err
+			}
 		}
 		if failedEvent != "" && isFailedToolStreamItem(doneItem) {
 			failedPayload := map[string]any{
@@ -467,54 +484,61 @@ func buildResponseReplayOutputItemEvents(responseID string, outputIndex int, ite
 			if errPayload, ok := doneItem["error"]; ok && errPayload != nil {
 				failedPayload["error"] = errPayload
 			}
-			events = append(events, responseReplayEvent{
+			if err := visit(responseReplayEvent{
 				eventType: failedEvent,
 				payload:   failedPayload,
-			})
+			}); err != nil {
+				return err
+			}
 		}
 	}
 
-	if replaySpecs := codeInterpreterReplayEventSpecs(replayItemPayload(item), itemID, outputIndex, includeObfuscation); len(replaySpecs) > 0 {
-		for _, replaySpec := range replaySpecs {
-			events = append(events, responseReplayEvent{
-				eventType: replaySpec.eventType,
-				payload:   replaySpec.payload,
-			})
-		}
+	if err := forEachCodeInterpreterReplayEvent(replayItemPayload(item), itemID, outputIndex, includeObfuscation, func(replaySpec hostedToolReplayEventSpec) error {
+		return visit(responseReplayEvent{
+			eventType: replaySpec.eventType,
+			payload:   replaySpec.payload,
+		})
+	}); err != nil {
+		return err
 	}
 
 	if hostedEventTypes := hostedToolReplayEventTypes(itemType, replayItemPayload(item)); len(hostedEventTypes) > 0 {
 		for _, hostedEventType := range hostedEventTypes {
-			events = append(events, responseReplayEvent{
+			if err := visit(responseReplayEvent{
 				eventType: hostedEventType,
 				payload:   hostedToolReplayEventPayload(hostedEventType, itemID, outputIndex),
-			})
+			}); err != nil {
+				return err
+			}
 		}
 	}
-	events = append(events, responseReplayArtifactEventsForItem(outputIndex, itemID, artifacts)...)
+	if err := forEachResponseReplayArtifactEventForItem(outputIndex, itemID, artifacts, visit); err != nil {
+		return err
+	}
 
 	doneItemPayload := replayItemPayload(item)
 	if isToolStreamItemType(itemType) {
 		ensureCompletedToolItemID(doneItemPayload, responseID, outputIndex)
 	}
 
-	events = append(events, responseReplayEvent{
+	if err := visit(responseReplayEvent{
 		eventType: "response.output_item.done",
 		payload: map[string]any{
 			"type":         "response.output_item.done",
 			"output_index": outputIndex,
 			"item":         doneItemPayload,
 		},
-	})
-	return events
+	}); err != nil {
+		return err
+	}
+	return nil
 }
 
-func responseReplayArtifactEventsForItem(outputIndex int, itemID string, artifacts []domain.ResponseReplayArtifact) []responseReplayEvent {
+func forEachResponseReplayArtifactEventForItem(outputIndex int, itemID string, artifacts []domain.ResponseReplayArtifact, visit func(responseReplayEvent) error) error {
 	if len(artifacts) == 0 || strings.TrimSpace(itemID) == "" {
 		return nil
 	}
 
-	events := make([]responseReplayEvent, 0, len(artifacts))
 	for _, artifact := range artifacts {
 		if strings.TrimSpace(artifact.EventType) == "" || strings.TrimSpace(artifact.PayloadJSON) == "" {
 			continue
@@ -532,13 +556,15 @@ func responseReplayArtifactEventsForItem(outputIndex int, itemID string, artifac
 			continue
 		}
 		payload["type"] = strings.TrimSpace(artifact.EventType)
-		events = append(events, responseReplayEvent{
+		if err := visit(responseReplayEvent{
 			eventType: strings.TrimSpace(artifact.EventType),
 			payload:   payload,
-		})
+		}); err != nil {
+			return err
+		}
 	}
 
-	return events
+	return nil
 }
 
 func responseReplayItemParts(item domain.Item) []map[string]any {
@@ -573,13 +599,12 @@ func responseReplayPartAnnotations(part map[string]any) []any {
 	return annotations
 }
 
-func responseReplayTextAnnotationEvents(itemID string, outputIndex, contentIndex int, annotations []any) []responseReplayEvent {
+func forEachResponseReplayTextAnnotationEvent(itemID string, outputIndex, contentIndex int, annotations []any, visit func(responseReplayEvent) error) error {
 	if len(annotations) == 0 {
 		return nil
 	}
-	events := make([]responseReplayEvent, 0, len(annotations))
 	for annotationIndex, annotation := range annotations {
-		events = append(events, responseReplayEvent{
+		if err := visit(responseReplayEvent{
 			eventType: "response.output_text.annotation.added",
 			payload: map[string]any{
 				"type":             "response.output_text.annotation.added",
@@ -589,9 +614,11 @@ func responseReplayTextAnnotationEvents(itemID string, outputIndex, contentIndex
 				"annotation_index": annotationIndex,
 				"annotation":       annotation,
 			},
-		})
+		}); err != nil {
+			return err
+		}
 	}
-	return events
+	return nil
 }
 
 func cloneReplayMap(in map[string]any) map[string]any {
@@ -621,6 +648,23 @@ func responseReplayTextDeltaEvent(responseID, itemID string, outputIndex, conten
 	}
 	return responseReplayEvent{
 		eventType: "response.output_text.delta",
+		payload:   payload,
+	}
+}
+
+func responseReplayToolDeltaEvent(eventType, responseID, itemID string, outputIndex int, value string, includeObfuscation bool) responseReplayEvent {
+	payload := map[string]any{
+		"type":         eventType,
+		"response_id":  responseID,
+		"item_id":      itemID,
+		"output_index": outputIndex,
+		"delta":        value,
+	}
+	if includeObfuscation {
+		payload["obfuscation"] = strings.Repeat("x", utf8.RuneCountInString(value))
+	}
+	return responseReplayEvent{
+		eventType: eventType,
 		payload:   payload,
 	}
 }
