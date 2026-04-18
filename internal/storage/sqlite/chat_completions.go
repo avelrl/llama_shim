@@ -61,36 +61,69 @@ func (s *Store) GetChatCompletion(ctx context.Context, id string) (domain.Stored
 }
 
 func (s *Store) ListChatCompletions(ctx context.Context, query domain.ListStoredChatCompletionsQuery) (domain.StoredChatCompletionPage, error) {
-	filtered, err := s.listAllChatCompletions(ctx, query)
+	if query.Limit < 1 {
+		query.Limit = 20
+	}
+
+	orderDir := "ASC"
+	if query.Order == domain.ChatCompletionOrderDesc {
+		orderDir = "DESC"
+	}
+
+	statement := `
+		SELECT id, model, metadata_json, request_json, response_json, created_at
+		FROM chat_completions
+	`
+	args := make([]any, 0, 1)
+	if strings.TrimSpace(query.Model) != "" {
+		statement += ` WHERE model = ?`
+		args = append(args, strings.TrimSpace(query.Model))
+	}
+	statement += ` ORDER BY created_at ` + orderDir + `, id ` + orderDir
+
+	rows, err := s.db.QueryContext(ctx, statement, args...)
 	if err != nil {
-		return domain.StoredChatCompletionPage{}, err
+		return domain.StoredChatCompletionPage{}, fmt.Errorf("list chat completions: %w", err)
 	}
+	defer rows.Close()
 
-	start := 0
-	if after := strings.TrimSpace(query.After); after != "" {
-		start = -1
-		for i, completion := range filtered {
+	after := strings.TrimSpace(query.After)
+	afterFound := after == ""
+	completions := make([]domain.StoredChatCompletion, 0, query.Limit+1)
+	for rows.Next() {
+		completion, err := scanStoredChatCompletion(rows)
+		if err != nil {
+			return domain.StoredChatCompletionPage{}, err
+		}
+		if !matchesMetadataFilter(completion.Metadata, query.Metadata) {
+			continue
+		}
+		if !afterFound {
 			if completion.ID == after {
-				start = i + 1
-				break
+				afterFound = true
 			}
+			continue
 		}
-		if start < 0 {
-			return domain.StoredChatCompletionPage{}, ErrNotFound
+
+		completions = append(completions, completion)
+		if len(completions) > query.Limit {
+			break
 		}
+	}
+	if err := rows.Err(); err != nil {
+		return domain.StoredChatCompletionPage{}, fmt.Errorf("iterate chat completions: %w", err)
+	}
+	if !afterFound {
+		return domain.StoredChatCompletionPage{}, ErrNotFound
 	}
 
-	if start > len(filtered) {
-		start = len(filtered)
-	}
-	end := start + query.Limit
-	hasMore := end < len(filtered)
-	if end > len(filtered) {
-		end = len(filtered)
+	hasMore := len(completions) > query.Limit
+	if hasMore {
+		completions = completions[:query.Limit]
 	}
 
 	return domain.StoredChatCompletionPage{
-		Completions: filtered[start:end],
+		Completions: completions,
 		HasMore:     hasMore,
 	}, nil
 }
@@ -122,7 +155,7 @@ func (s *Store) listAllChatCompletions(ctx context.Context, query domain.ListSto
 	}
 	defer rows.Close()
 
-	filtered := make([]domain.StoredChatCompletion, 0, query.Limit+1)
+	filtered := make([]domain.StoredChatCompletion, 0)
 	for rows.Next() {
 		completion, err := scanStoredChatCompletion(rows)
 		if err != nil {

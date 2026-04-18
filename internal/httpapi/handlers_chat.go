@@ -379,6 +379,8 @@ func (h *proxyHandler) shadowStoreChatCompletion(ctx context.Context, requestBod
 }
 
 func parseListStoredChatCompletionsQuery(r *http.Request) (domain.ListStoredChatCompletionsQuery, error) {
+	const maxStoredChatCompletionsListLimit = 100
+
 	values := r.URL.Query()
 	metadata, err := parseChatCompletionMetadataFilter(values)
 	if err != nil {
@@ -394,8 +396,8 @@ func parseListStoredChatCompletionsQuery(r *http.Request) (domain.ListStoredChat
 	}
 	if rawLimit := strings.TrimSpace(values.Get("limit")); rawLimit != "" {
 		limit, err := strconv.Atoi(rawLimit)
-		if err != nil || limit < 1 {
-			return domain.ListStoredChatCompletionsQuery{}, domain.NewValidationError("limit", "limit must be a positive integer")
+		if err != nil || limit < 1 || limit > maxStoredChatCompletionsListLimit {
+			return domain.ListStoredChatCompletionsQuery{}, domain.NewValidationError("limit", "limit must be between 1 and 100")
 		}
 		query.Limit = limit
 	}
