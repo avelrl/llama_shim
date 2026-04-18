@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -14,8 +15,10 @@ import (
 	"net/url"
 	"path"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -6928,6 +6931,96 @@ func TestChatCompletionsStoredListFiltersAndPaginates(t *testing.T) {
 	require.Len(t, page2.Data, 1)
 	require.False(t, page2.HasMore)
 	require.Equal(t, third, asStringAny(page2.Data[0]["id"]))
+}
+
+func TestChatCompletionsStoredListMergedPaginationSpansUpstreamPages(t *testing.T) {
+	t.Parallel()
+
+	type upstreamEntry struct {
+		ID      string
+		Created int64
+	}
+
+	entries := make([]upstreamEntry, 0, 25)
+	for i := range 25 {
+		entries = append(entries, upstreamEntry{
+			ID:      fmt.Sprintf("chatcmpl_up_%02d", i+1),
+			Created: int64(i + 1),
+		})
+	}
+
+	var requestCount atomic.Int64
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount.Add(1)
+		require.Equal(t, http.MethodGet, r.Method)
+		require.Equal(t, "/v1/chat/completions", r.URL.Path)
+
+		limit := 20
+		if raw := r.URL.Query().Get("limit"); raw != "" {
+			parsed, err := strconv.Atoi(raw)
+			require.NoError(t, err)
+			limit = parsed
+		}
+
+		start := 0
+		if after := r.URL.Query().Get("after"); after != "" {
+			start = -1
+			for i, entry := range entries {
+				if entry.ID == after {
+					start = i + 1
+					break
+				}
+			}
+			require.NotEqual(t, -1, start)
+		}
+
+		end := start + limit
+		if end > len(entries) {
+			end = len(entries)
+		}
+
+		data := make([]map[string]any, 0, end-start)
+		for _, entry := range entries[start:end] {
+			data = append(data, map[string]any{
+				"id":      entry.ID,
+				"object":  "chat.completion",
+				"created": entry.Created,
+				"model":   "gpt-5.4",
+				"choices": []map[string]any{
+					{
+						"index": 0,
+						"message": map[string]any{
+							"role":    "assistant",
+							"content": entry.ID,
+						},
+						"finish_reason": "stop",
+						"logprobs":      nil,
+					},
+				},
+			})
+		}
+
+		var lastID *string
+		if len(data) > 0 {
+			last := entries[end-1].ID
+			lastID = &last
+		}
+		_ = json.NewEncoder(w).Encode(chatCompletionsListResponse{
+			Object:  "list",
+			Data:    data,
+			LastID:  lastID,
+			HasMore: end < len(entries),
+		})
+	}))
+	defer upstream.Close()
+
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{LlamaBaseURL: upstream.URL})
+
+	page := getStoredChatCompletions(t, app, "?limit=1&order=asc&after=chatcmpl_up_20")
+	require.Len(t, page.Data, 1)
+	require.Equal(t, "chatcmpl_up_21", asStringAny(page.Data[0]["id"]))
+	require.True(t, page.HasMore)
+	require.Greater(t, requestCount.Load(), int64(1))
 }
 
 func TestChatCompletionsStoreTrueStreamShadowStoresReconstructedCompletion(t *testing.T) {

@@ -2,19 +2,12 @@ package httpapi
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
-	"log/slog"
-	"net/http"
-	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"strconv"
-	"sync/atomic"
 	"testing"
-	"time"
 
 	"llama_shim/internal/domain"
-	"llama_shim/internal/llama"
 )
 
 func TestBuildUpstreamStoredChatCompletionsQuery_UsesRequestedLimitWithinPageLimit(t *testing.T) {
@@ -23,7 +16,7 @@ func TestBuildUpstreamStoredChatCompletionsQuery_UsesRequestedLimitWithinPageLim
 	values := buildUpstreamStoredChatCompletionsQuery(domain.ListStoredChatCompletionsQuery{
 		Limit: 7,
 		Order: domain.ChatCompletionOrderDesc,
-	}, "cursor_1")
+	}, "cursor_1", 7)
 
 	if got := values.Get("limit"); got != "7" {
 		t.Fatalf("expected limit=7, got %q", got)
@@ -42,69 +35,81 @@ func TestBuildUpstreamStoredChatCompletionsQuery_CapsLimitAtPageLimit(t *testing
 	values := buildUpstreamStoredChatCompletionsQuery(domain.ListStoredChatCompletionsQuery{
 		Limit: upstreamStoredChatCompletionsPageLimit + 50,
 		Order: domain.ChatCompletionOrderAsc,
-	}, "")
+	}, "", upstreamStoredChatCompletionsPageLimit+50)
 
 	if got := values.Get("limit"); got != strconv.Itoa(upstreamStoredChatCompletionsPageLimit) {
 		t.Fatalf("expected limit=%d, got %q", upstreamStoredChatCompletionsPageLimit, got)
 	}
 }
 
-func TestListUpstreamStoredChatCompletions_StopsAfterMaxPages(t *testing.T) {
+func TestNextMergedStoredChatCompletionPrefersLocalDuplicateAndPreservesOrder(t *testing.T) {
 	t.Parallel()
 
-	var requestCount atomic.Int64
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requestCount.Add(1)
-		q := r.URL.Query()
-		after := q.Get("after")
-		if q.Get("limit") != "1" {
-			t.Fatalf("expected forwarded limit=1, got %q", q.Get("limit"))
-		}
-		next := "1"
-		if after != "" {
-			current, err := strconv.Atoi(after)
-			if err != nil {
-				t.Fatalf("unexpected after value %q: %v", after, err)
-			}
-			next = strconv.Itoa(current + 1)
-		}
-
-		_ = json.NewEncoder(w).Encode(chatCompletionsListResponse{
-			Object:  "list",
-			Data:    []json.RawMessage{json.RawMessage(fmt.Sprintf(`{"id":"chatcmpl_%s","created":%s}`, next, next))},
-			HasMore: true,
-			LastID:  ptrString(next),
-		})
-	}))
-	defer upstream.Close()
-
-	h := &proxyHandler{
-		logger: slog.Default(),
-		client: llama.NewClient(upstream.URL, 2*time.Second),
-	}
-
-	incoming := httptest.NewRequest(http.MethodGet, "http://shim.local/v1/chat/completions", nil)
-	incoming.URL = &url.URL{Path: "/v1/chat/completions"}
-
-	results, statusCode, headers, body, err := h.listUpstreamStoredChatCompletions(context.Background(), incoming, domain.ListStoredChatCompletionsQuery{
-		Limit: 1,
-		Order: domain.ChatCompletionOrderAsc,
+	local := newStaticStoredChatCompletionSource([]storedChatCompletionListEntry{
+		{ID: "chatcmpl_1", Created: 10},
+		{ID: "chatcmpl_3", Created: 30, Raw: []byte(`{"id":"chatcmpl_3","created":30,"source":"local"}`)},
 	})
-	if err != nil {
-		t.Fatalf("list upstream: %v", err)
-	}
-	if statusCode != 0 || headers != nil || body != nil {
-		t.Fatalf("expected successful internal result, got status=%d headers=%v body=%q", statusCode, headers, string(body))
+	upstream := newStaticStoredChatCompletionSource([]storedChatCompletionListEntry{
+		{ID: "chatcmpl_2", Created: 20},
+		{ID: "chatcmpl_3", Created: 30, Raw: []byte(`{"id":"chatcmpl_3","created":30,"source":"upstream"}`)},
+	})
+
+	var (
+		ids []string
+		raw []string
+	)
+	for {
+		entry, forward, err := nextMergedStoredChatCompletion(context.Background(), local, upstream, domain.ChatCompletionOrderAsc)
+		if err != nil {
+			t.Fatalf("merge next: %v", err)
+		}
+		if forward != nil {
+			t.Fatalf("unexpected forward response: %+v", forward)
+		}
+		if entry == nil {
+			break
+		}
+		ids = append(ids, entry.ID)
+		raw = append(raw, string(entry.Raw))
 	}
 
-	if got := int(requestCount.Load()); got != upstreamStoredChatCompletionsMaxPages {
-		t.Fatalf("expected exactly %d upstream pages, got %d", upstreamStoredChatCompletionsMaxPages, got)
+	if !reflect.DeepEqual(ids, []string{"chatcmpl_1", "chatcmpl_2", "chatcmpl_3"}) {
+		t.Fatalf("unexpected merge order: %#v", ids)
 	}
-	if got := len(results); got != upstreamStoredChatCompletionsMaxPages {
-		t.Fatalf("expected %d merged items, got %d", upstreamStoredChatCompletionsMaxPages, got)
+	if raw[2] != `{"id":"chatcmpl_3","created":30,"source":"local"}` {
+		t.Fatalf("expected local duplicate to win, got %q", raw[2])
 	}
 }
 
-func ptrString(s string) *string {
-	return &s
+func newStaticStoredChatCompletionSource(entries []storedChatCompletionListEntry) *storedChatCompletionSource {
+	copied := make([]storedChatCompletionListEntry, 0, len(entries))
+	for _, entry := range entries {
+		cloned := entry
+		if len(cloned.Raw) == 0 {
+			cloned.Raw = []byte(`{"id":"` + cloned.ID + `","created":` + strconv.FormatInt(cloned.Created, 10) + `}`)
+		}
+		copied = append(copied, cloned)
+	}
+
+	return newStoredChatCompletionSource(func(context.Context, string) (storedChatCompletionSourcePage, *storedChatCompletionForwardResponse, bool, error) {
+		page := storedChatCompletionSourcePage{
+			Entries: copied,
+			HasMore: false,
+		}
+		copied = nil
+		return page, nil, false, nil
+	})
+}
+
+func TestCloneURLClonesInput(t *testing.T) {
+	t.Parallel()
+
+	original := &url.URL{Path: "/v1/chat/completions", RawQuery: "limit=1"}
+	cloned := cloneURL(original)
+	if cloned == original {
+		t.Fatal("expected cloneURL to return a distinct pointer")
+	}
+	if cloned.Path != original.Path || cloned.RawQuery != original.RawQuery {
+		t.Fatalf("unexpected cloned URL: %#v", cloned)
+	}
 }

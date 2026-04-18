@@ -696,6 +696,13 @@ func TestStoreSaveChatCompletionRoundTripAndList(t *testing.T) {
 	require.Len(t, page.Completions, 2)
 	require.Equal(t, []string{second.ID, third.ID}, []string{page.Completions[0].ID, page.Completions[1].ID})
 
+	_, err = store.ListChatCompletions(ctx, domain.ListStoredChatCompletionsQuery{
+		After: "chatcmpl_missing_after",
+		Limit: 1,
+		Order: domain.ChatCompletionOrderAsc,
+	})
+	require.ErrorIs(t, err, sqlite.ErrNotFound)
+
 	_, err = store.GetChatCompletion(ctx, "chatcmpl_missing")
 	require.ErrorIs(t, err, sqlite.ErrNotFound)
 }
