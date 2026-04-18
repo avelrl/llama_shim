@@ -621,31 +621,50 @@ func (b sqliteVecRetrievalBackend) refreshVectorStoreVec0IndexCount(ctx context.
 	}
 	defer rows.Close()
 
-	type indexRow struct {
-		ChunkID int64
-		Blob    []byte
-		Dims    int
-	}
-	indexRows := make([]indexRow, 0, 16)
 	dims := expectedDims
+	chunkCount := 0
+	tableCreated := false
 	for rows.Next() {
-		var item indexRow
-		if err := rows.Scan(&item.ChunkID, &item.Blob, &item.Dims); err != nil {
+		var (
+			chunkID int64
+			blob    []byte
+			rowDims int
+		)
+		if err := rows.Scan(&chunkID, &blob, &rowDims); err != nil {
 			return 0, fmt.Errorf("scan semantic vec0 source row: %w", err)
 		}
 		if dims == 0 {
-			dims = item.Dims
+			dims = rowDims
 		}
-		if item.Dims != dims {
-			return 0, fmt.Errorf("semantic vec0 source dimensions mismatch: got %d, want %d", item.Dims, dims)
+		if rowDims != dims {
+			return 0, fmt.Errorf("semantic vec0 source dimensions mismatch: got %d, want %d", rowDims, dims)
 		}
-		indexRows = append(indexRows, item)
+		if !tableCreated {
+			if expectedDims != 0 && dims != expectedDims {
+				return 0, fmt.Errorf("semantic vec0 rebuild dimensions %d do not match expected %d", dims, expectedDims)
+			}
+			if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
+				CREATE VIRTUAL TABLE "%s" USING vec0(
+					chunk_id INTEGER PRIMARY KEY,
+					embedding float[%d] distance_metric=cosine
+				)
+			`, tableName, dims)); err != nil {
+				return 0, fmt.Errorf("create semantic vec0 table: %w", err)
+			}
+			tableCreated = true
+		}
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
+			INSERT INTO "%s"(chunk_id, embedding) VALUES (?, vec_f32(?))
+		`, tableName), chunkID, blob); err != nil {
+			return 0, fmt.Errorf("insert semantic vec0 row: %w", err)
+		}
+		chunkCount++
 	}
 	if err := rows.Err(); err != nil {
 		return 0, fmt.Errorf("iterate semantic vec0 source rows: %w", err)
 	}
 
-	if len(indexRows) == 0 {
+	if chunkCount == 0 {
 		if _, err := tx.ExecContext(ctx, `
 			DELETE FROM vector_store_semantic_index_meta
 			WHERE vector_store_id = ?
@@ -653,27 +672,6 @@ func (b sqliteVecRetrievalBackend) refreshVectorStoreVec0IndexCount(ctx context.
 			return 0, fmt.Errorf("delete empty semantic index metadata: %w", err)
 		}
 		return 0, nil
-	}
-
-	if expectedDims != 0 && dims != expectedDims {
-		return 0, fmt.Errorf("semantic vec0 rebuild dimensions %d do not match expected %d", dims, expectedDims)
-	}
-
-	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
-		CREATE VIRTUAL TABLE "%s" USING vec0(
-			chunk_id INTEGER PRIMARY KEY,
-			embedding float[%d] distance_metric=cosine
-		)
-	`, tableName, dims)); err != nil {
-		return 0, fmt.Errorf("create semantic vec0 table: %w", err)
-	}
-
-	for _, item := range indexRows {
-		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
-			INSERT INTO "%s"(chunk_id, embedding) VALUES (?, vec_f32(?))
-		`, tableName), item.ChunkID, item.Blob); err != nil {
-			return 0, fmt.Errorf("insert semantic vec0 row: %w", err)
-		}
 	}
 
 	if _, err := tx.ExecContext(ctx, `
@@ -685,11 +683,11 @@ func (b sqliteVecRetrievalBackend) refreshVectorStoreVec0IndexCount(ctx context.
 			embedding_dimensions = excluded.embedding_dimensions,
 			chunk_count = excluded.chunk_count,
 			updated_at = excluded.updated_at
-	`, vectorStoreID, model, dims, len(indexRows), createdAt); err != nil {
+	`, vectorStoreID, model, dims, chunkCount, createdAt); err != nil {
 		return 0, fmt.Errorf("upsert semantic index metadata: %w", err)
 	}
 
-	return len(indexRows), nil
+	return chunkCount, nil
 }
 
 func semanticIndexTableName(vectorStoreID string) string {
