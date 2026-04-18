@@ -108,7 +108,7 @@ func (h *proxyHandler) buildMergedStoredChatCompletionsPage(ctx context.Context,
 
 	after := strings.TrimSpace(query.After)
 	seenAfter := after == ""
-	data := make([]json.RawMessage, 0, query.Limit+1)
+	data := make([]json.RawMessage, 0, storedChatCompletionsSourcePageLimit(query.Limit))
 	for len(data) < query.Limit+1 {
 		entry, forward, err := nextMergedStoredChatCompletion(ctx, local, upstream, query.Order)
 		if err != nil {

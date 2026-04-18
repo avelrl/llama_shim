@@ -61,6 +61,9 @@ func (s *Store) GetChatCompletion(ctx context.Context, id string) (domain.Stored
 }
 
 func (s *Store) ListChatCompletions(ctx context.Context, query domain.ListStoredChatCompletionsQuery) (domain.StoredChatCompletionPage, error) {
+	if query.Limit < 1 {
+		query.Limit = 20
+	}
 	orderDir := "ASC"
 	if query.Order == domain.ChatCompletionOrderDesc {
 		orderDir = "DESC"
@@ -85,7 +88,7 @@ func (s *Store) ListChatCompletions(ctx context.Context, query domain.ListStored
 
 	after := strings.TrimSpace(query.After)
 	seenAfter := after == ""
-	page := make([]domain.StoredChatCompletion, 0, query.Limit)
+	page := make([]domain.StoredChatCompletion, 0, storedChatCompletionListCapacity(query.Limit))
 	hasMore := false
 	for rows.Next() {
 		completion, err := scanStoredChatCompletion(rows)
@@ -118,6 +121,16 @@ func (s *Store) ListChatCompletions(ctx context.Context, query domain.ListStored
 		Completions: page,
 		HasMore:     hasMore,
 	}, nil
+}
+
+func storedChatCompletionListCapacity(limit int) int {
+	if limit < 1 {
+		return 1
+	}
+	if limit > 128 {
+		return 128
+	}
+	return limit
 }
 
 func (s *Store) UpdateChatCompletionMetadata(ctx context.Context, id string, metadata map[string]string) (domain.StoredChatCompletion, error) {
