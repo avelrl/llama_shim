@@ -34,6 +34,7 @@ type Config struct {
 	ShimMetricsPath                                string
 	ShimJSONBodyLimitBytes                         int64
 	RetrievalFileUploadMaxBytes                    int64
+	ChatCompletionsShadowStoreMaxBytes             int64
 	RetrievalMaxConcurrentSearches                 int
 	RetrievalMaxSearchQueries                      int
 	RetrievalMaxGroundingChunks                    int
@@ -217,6 +218,11 @@ func Load(configPath string) (Config, error) {
 		return Config{}, fmt.Errorf("parse shim.limits.retrieval_file_upload_bytes: %w", err)
 	}
 	cfg.RetrievalFileUploadMaxBytes = retrievalUploadLimit
+	chatCompletionShadowStoreLimit, err := parseByteSize(v.GetString("shim.limits.chat_completions_shadow_store_bytes"))
+	if err != nil {
+		return Config{}, fmt.Errorf("parse shim.limits.chat_completions_shadow_store_bytes: %w", err)
+	}
+	cfg.ChatCompletionsShadowStoreMaxBytes = chatCompletionShadowStoreLimit
 	retrievalMaxConcurrentSearches, err := parsePositiveInt(v.GetString("shim.limits.retrieval_max_concurrent_searches"))
 	if err != nil {
 		return Config{}, fmt.Errorf("parse shim.limits.retrieval_max_concurrent_searches: %w", err)
@@ -332,6 +338,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("shim.metrics.path", "/metrics")
 	v.SetDefault("shim.limits.json_body_bytes", "1MiB")
 	v.SetDefault("shim.limits.retrieval_file_upload_bytes", "64MiB")
+	v.SetDefault("shim.limits.chat_completions_shadow_store_bytes", "64MiB")
 	v.SetDefault("shim.limits.retrieval_max_concurrent_searches", "8")
 	v.SetDefault("shim.limits.retrieval_max_search_queries", "4")
 	v.SetDefault("shim.limits.retrieval_max_grounding_chunks", "20")

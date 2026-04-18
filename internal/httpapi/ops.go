@@ -111,6 +111,7 @@ func normalizeMetricsConfig(cfg MetricsConfig) MetricsConfig {
 type ServiceLimits struct {
 	JSONBodyBytes                    int64
 	RetrievalFileUploadBytes         int64
+	ChatCompletionsShadowStoreBytes  int64
 	RetrievalMaxConcurrentSearches   int
 	RetrievalMaxSearchQueries        int
 	RetrievalMaxGroundingChunks      int
@@ -123,6 +124,9 @@ func normalizeServiceLimits(limits ServiceLimits) ServiceLimits {
 	}
 	if limits.RetrievalFileUploadBytes <= 0 {
 		limits.RetrievalFileUploadBytes = 64 << 20
+	}
+	if limits.ChatCompletionsShadowStoreBytes <= 0 {
+		limits.ChatCompletionsShadowStoreBytes = 64 << 20
 	}
 	if limits.RetrievalMaxConcurrentSearches <= 0 {
 		limits.RetrievalMaxConcurrentSearches = 8

@@ -56,7 +56,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 	retrievalGate := newConcurrencyGate("retrieval_search", serviceLimits.RetrievalMaxConcurrentSearches, deps.Metrics)
 	codeInterpreterGate := newConcurrencyGate("local_code_interpreter", serviceLimits.CodeInterpreterMaxConcurrentRuns, deps.Metrics)
 
-	proxyHandler := newProxyHandler(deps.Logger, deps.LlamaClient, deps.Store, deps.ChatCompletionsStoreWhenOmitted)
+	proxyHandler := newProxyHandler(deps.Logger, deps.LlamaClient, deps.Store, serviceLimits, deps.ChatCompletionsStoreWhenOmitted)
 	responseHandler := newResponseHandler(
 		deps.Logger,
 		deps.ResponseService,

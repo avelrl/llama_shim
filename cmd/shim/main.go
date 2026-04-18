@@ -123,6 +123,7 @@ func main() {
 			ServiceLimits: httpapi.ServiceLimits{
 				JSONBodyBytes:                    cfg.ShimJSONBodyLimitBytes,
 				RetrievalFileUploadBytes:         cfg.RetrievalFileUploadMaxBytes,
+				ChatCompletionsShadowStoreBytes:  cfg.ChatCompletionsShadowStoreMaxBytes,
 				RetrievalMaxConcurrentSearches:   cfg.RetrievalMaxConcurrentSearches,
 				RetrievalMaxSearchQueries:        cfg.RetrievalMaxSearchQueries,
 				RetrievalMaxGroundingChunks:      cfg.RetrievalMaxGroundingChunks,
@@ -165,6 +166,7 @@ func main() {
 		"shim_metrics_path", cfg.ShimMetricsPath,
 		"shim_json_body_limit_bytes", cfg.ShimJSONBodyLimitBytes,
 		"shim_retrieval_file_upload_max_bytes", cfg.RetrievalFileUploadMaxBytes,
+		"shim_chat_completions_shadow_store_max_bytes", cfg.ChatCompletionsShadowStoreMaxBytes,
 		"shim_retrieval_max_concurrent_searches", cfg.RetrievalMaxConcurrentSearches,
 		"shim_retrieval_max_search_queries", cfg.RetrievalMaxSearchQueries,
 		"shim_retrieval_max_grounding_chunks", cfg.RetrievalMaxGroundingChunks,
