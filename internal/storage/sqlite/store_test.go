@@ -1311,6 +1311,7 @@ func TestStoreSaveFileAttachVectorStoreAndSearch(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, filePage.Files, 1)
 	require.Equal(t, file.ID, filePage.Files[0].ID)
+	require.Empty(t, filePage.Files[0].Content)
 
 	vectorStore := domain.StoredVectorStore{
 		ID:           "vs_alpha",
@@ -1376,6 +1377,88 @@ func TestStoreSaveFileAttachVectorStoreAndSearch(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Empty(t, afterDeletePage.Files)
+}
+
+func TestStoreListFilesUsesKeysetPaginationAndSkipsContent(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store := openTestStore(t, ctx)
+
+	files := []domain.StoredFile{
+		{
+			ID:        "file_a",
+			Filename:  "a.txt",
+			Purpose:   "assistants",
+			Bytes:     5,
+			CreatedAt: 1712059200,
+			Status:    "processed",
+			Content:   []byte("aaaaa"),
+		},
+		{
+			ID:        "file_b",
+			Filename:  "b.txt",
+			Purpose:   "assistants",
+			Bytes:     5,
+			CreatedAt: 1712059201,
+			Status:    "processed",
+			Content:   []byte("bbbbb"),
+		},
+		{
+			ID:        "file_c",
+			Filename:  "c.txt",
+			Purpose:   "assistants",
+			Bytes:     5,
+			CreatedAt: 1712059202,
+			Status:    "processed",
+			Content:   []byte("ccccc"),
+		},
+	}
+	for _, file := range files {
+		require.NoError(t, store.SaveFile(ctx, file))
+	}
+
+	firstPage, err := store.ListFiles(ctx, domain.ListFilesQuery{
+		Purpose: "assistants",
+		Limit:   1,
+		Order:   domain.ListOrderAsc,
+	})
+	require.NoError(t, err)
+	require.Len(t, firstPage.Files, 1)
+	require.Equal(t, "file_a", firstPage.Files[0].ID)
+	require.Empty(t, firstPage.Files[0].Content)
+	require.True(t, firstPage.HasMore)
+
+	secondPage, err := store.ListFiles(ctx, domain.ListFilesQuery{
+		Purpose: "assistants",
+		After:   "file_a",
+		Limit:   1,
+		Order:   domain.ListOrderAsc,
+	})
+	require.NoError(t, err)
+	require.Len(t, secondPage.Files, 1)
+	require.Equal(t, "file_b", secondPage.Files[0].ID)
+	require.Empty(t, secondPage.Files[0].Content)
+	require.True(t, secondPage.HasMore)
+
+	descPage, err := store.ListFiles(ctx, domain.ListFilesQuery{
+		Purpose: "assistants",
+		After:   "file_c",
+		Limit:   1,
+		Order:   domain.ListOrderDesc,
+	})
+	require.NoError(t, err)
+	require.Len(t, descPage.Files, 1)
+	require.Equal(t, "file_b", descPage.Files[0].ID)
+	require.True(t, descPage.HasMore)
+
+	_, err = store.ListFiles(ctx, domain.ListFilesQuery{
+		Purpose: "assistants",
+		After:   "file_missing",
+		Limit:   1,
+		Order:   domain.ListOrderAsc,
+	})
+	require.ErrorIs(t, err, sqlite.ErrNotFound)
 }
 
 func TestStoreAttachBinaryFileToVectorStoreFailsIndexing(t *testing.T) {
