@@ -169,7 +169,6 @@ responses:
     force_tool_choice_required: true
   code_interpreter:
     backend: disabled
-    python_binary: python3
     execution_timeout: 20s
     docker:
       binary: docker
@@ -246,7 +245,6 @@ Supported environment overrides:
 - `RESPONSES_CODEX_ENABLE_COMPATIBILITY` overrides `responses.codex.enable_compatibility`; when disabled, the shim stops injecting Codex-specific instructions/context and skips Codex-specific response normalization
 - `RESPONSES_CODEX_FORCE_TOOL_CHOICE_REQUIRED` overrides `responses.codex.force_tool_choice_required`; when enabled, Codex-like requests with `tool_choice: "auto"` are rewritten to `required`
 - `RESPONSES_CODE_INTERPRETER_BACKEND` overrides `responses.code_interpreter.backend`; supported values: `disabled`, `docker`
-- `RESPONSES_CODE_INTERPRETER_PYTHON_BINARY` overrides `responses.code_interpreter.python_binary`
 - `RESPONSES_CODE_INTERPRETER_DOCKER_BINARY` overrides `responses.code_interpreter.docker.binary`
 - `RESPONSES_CODE_INTERPRETER_DOCKER_IMAGE` overrides `responses.code_interpreter.docker.image`
 - `RESPONSES_CODE_INTERPRETER_DOCKER_MEMORY_LIMIT` overrides `responses.code_interpreter.docker.memory_limit`

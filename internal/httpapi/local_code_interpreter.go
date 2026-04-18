@@ -26,6 +26,8 @@ import (
 
 const (
 	defaultLocalCodeInterpreterPlannedCodeLimit = 16 << 10
+	defaultLocalCodeInterpreterSnapshotMaxFiles = 256
+	maxLocalCodeInterpreterSnapshotMaxFiles     = 1024
 )
 
 var shimLocalCodeInterpreterFields = map[string]struct{}{
@@ -33,31 +35,6 @@ var shimLocalCodeInterpreterFields = map[string]struct{}{
 	"tool_choice":         {},
 	"parallel_tool_calls": {},
 	"include":             {},
-}
-
-var localCodeInterpreterForbiddenFragments = []string{
-	"import os",
-	"from os",
-	"import subprocess",
-	"from subprocess",
-	"import socket",
-	"from socket",
-	"import pathlib",
-	"from pathlib",
-	"import shutil",
-	"from shutil",
-	"import glob",
-	"from glob",
-	"import urllib",
-	"from urllib",
-	"import requests",
-	"from requests",
-	"exec(",
-	"eval(",
-	"compile(",
-	"__import__(",
-	"input(",
-	"breakpoint(",
 }
 
 type LocalCodeInterpreterRuntimeConfig struct {
@@ -617,18 +594,17 @@ func buildLocalCodeInterpreterPlanningPrompt(inputFiles []localCodeInterpreterIn
 		"Return JSON only with keys use_code_interpreter and code.",
 		"If Python is not needed, return {\"use_code_interpreter\":false,\"code\":\"\"}.",
 		"If Python is needed, return {\"use_code_interpreter\":true,\"code\":\"...\"}.",
-		"The code must be pure Python for the shim-local code interpreter backend.",
-		"Do not access the network, subprocesses, environment variables, or interactive input.",
-		"Prefer concise code that prints the useful result to stdout.",
+		"The code runs inside a shim-managed Docker container with no network access, a writable current working directory, and bounded local resource limits.",
+		"Prefer concise non-interactive Python that prints the useful result to stdout.",
 	}
 	if len(inputFiles) == 0 {
-		base = append(base, "Do not access any filesystem paths for this turn.")
+		base = append(base, "Do not assume any uploaded files are available in the current working directory for this turn.")
 		return strings.Join(base, " ")
 	}
 
 	var builder strings.Builder
 	builder.WriteString(strings.Join(base, " "))
-	builder.WriteString(" You may read only the uploaded files already placed in the current working directory using relative paths with open().")
+	builder.WriteString(" Prefer reading the uploaded files already placed in the current working directory using relative paths.")
 	builder.WriteString(" Available uploaded files:")
 	for _, inputFile := range inputFiles {
 		builder.WriteString(" ")
@@ -639,7 +615,7 @@ func buildLocalCodeInterpreterPlanningPrompt(inputFiles []localCodeInterpreterIn
 			builder.WriteString(")")
 		}
 	}
-	builder.WriteString(" Do not access any other filesystem paths.")
+	builder.WriteString(" Avoid depending on container system files or paths outside the current working directory unless the task explicitly requires them.")
 	return builder.String()
 }
 
@@ -670,12 +646,6 @@ func validateLocalCodeInterpreterPlanCode(code string) error {
 	}
 	if len(trimmed) > defaultLocalCodeInterpreterPlannedCodeLimit {
 		return domain.NewValidationError("tools", "shim-local code_interpreter planned code exceeded the maximum supported size")
-	}
-	lowered := strings.ToLower(trimmed)
-	for _, fragment := range localCodeInterpreterForbiddenFragments {
-		if strings.Contains(lowered, fragment) {
-			return domain.NewValidationError("tools", "shim-local code_interpreter only supports pure-python snippets without filesystem, network, or subprocess access")
-		}
 	}
 	return nil
 }
@@ -796,7 +766,8 @@ func (h *responseHandler) executeLocalCodeInterpreterSession(ctx context.Context
 		return localCodeInterpreterExecutionResult{}, err
 	}
 
-	beforeFiles, err := h.localCodeInterpreter.Backend.ListFiles(ctx, sessionID)
+	limits := h.localCodeInterpreter.normalizedLimits()
+	beforeFiles, snapshotAvailable, err := h.snapshotLocalCodeInterpreterSessionFiles(ctx, sessionID, limits)
 	if err != nil {
 		return localCodeInterpreterExecutionResult{}, err
 	}
@@ -810,14 +781,21 @@ func (h *responseHandler) executeLocalCodeInterpreterSession(ctx context.Context
 		return localCodeInterpreterExecutionResult{Logs: execResult.Logs}, err
 	}
 
-	afterFiles, err := h.localCodeInterpreter.Backend.ListFiles(ctx, sessionID)
+	afterFiles, afterSnapshotAvailable, err := h.snapshotLocalCodeInterpreterSessionFiles(ctx, sessionID, limits)
 	if err != nil {
 		return localCodeInterpreterExecutionResult{Logs: execResult.Logs}, err
 	}
 
-	generatedFiles, err := manager.persistGeneratedFiles(ctx, sessionID, diffLocalCodeInterpreterGeneratedFiles(beforeFiles, afterFiles))
-	if err != nil {
-		return localCodeInterpreterExecutionResult{Logs: execResult.Logs}, err
+	generatedFiles := []localCodeInterpreterGeneratedFile(nil)
+	if snapshotAvailable && afterSnapshotAvailable {
+		generated, err := h.readLocalCodeInterpreterGeneratedFiles(ctx, sessionID, limits, diffLocalCodeInterpreterGeneratedFiles(beforeFiles, afterFiles))
+		if err != nil {
+			return localCodeInterpreterExecutionResult{Logs: execResult.Logs}, err
+		}
+		generatedFiles, err = manager.persistGeneratedFiles(ctx, sessionID, generated)
+		if err != nil {
+			return localCodeInterpreterExecutionResult{Logs: execResult.Logs}, err
+		}
 	}
 
 	return localCodeInterpreterExecutionResult{
@@ -1169,27 +1147,99 @@ func sanitizeLocalCodeInterpreterWorkspaceName(filename string, fallback string)
 	return sanitized
 }
 
-func diffLocalCodeInterpreterGeneratedFiles(before []sandbox.SessionFile, after []sandbox.SessionFile) []sandbox.SessionFile {
+func localCodeInterpreterSnapshotMaxFiles(limits LocalCodeInterpreterLimits) int {
+	maxFiles := defaultLocalCodeInterpreterSnapshotMaxFiles
+	if scaled := limits.GeneratedFiles * 32; scaled > maxFiles {
+		maxFiles = scaled
+	}
+	if maxFiles > maxLocalCodeInterpreterSnapshotMaxFiles {
+		maxFiles = maxLocalCodeInterpreterSnapshotMaxFiles
+	}
+	return maxFiles
+}
+
+func (h *responseHandler) snapshotLocalCodeInterpreterSessionFiles(ctx context.Context, sessionID string, limits LocalCodeInterpreterLimits) ([]sandbox.SessionFileInfo, bool, error) {
+	files, err := h.localCodeInterpreter.Backend.ListFileInfos(
+		ctx,
+		sessionID,
+		localCodeInterpreterSnapshotMaxFiles(limits),
+		int64(limits.GeneratedFileBytes),
+	)
+	if err != nil {
+		if errors.Is(err, sandbox.ErrSessionSnapshotTooLarge) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	return files, true, nil
+}
+
+func diffLocalCodeInterpreterGeneratedFiles(before []sandbox.SessionFileInfo, after []sandbox.SessionFileInfo) []sandbox.SessionFileInfo {
 	if len(after) == 0 {
 		return nil
 	}
 
-	beforeByName := make(map[string][]byte, len(before))
+	beforeByName := make(map[string]sandbox.SessionFileInfo, len(before))
 	for _, file := range before {
-		beforeByName[file.Name] = file.Content
+		beforeByName[file.Name] = file
 	}
 
-	generated := make([]sandbox.SessionFile, 0, len(after))
+	generated := make([]sandbox.SessionFileInfo, 0, len(after))
 	for _, file := range after {
-		if content, ok := beforeByName[file.Name]; ok && bytes.Equal(content, file.Content) {
+		if prior, ok := beforeByName[file.Name]; ok && sameLocalCodeInterpreterSnapshotFile(prior, file) {
 			continue
 		}
-		generated = append(generated, sandbox.SessionFile{
-			Name:    file.Name,
-			Content: append([]byte(nil), file.Content...),
-		})
+		generated = append(generated, file)
 	}
 	return generated
+}
+
+func sameLocalCodeInterpreterSnapshotFile(left sandbox.SessionFileInfo, right sandbox.SessionFileInfo) bool {
+	if left.Name != right.Name || left.Size != right.Size {
+		return false
+	}
+	switch {
+	case left.SHA256 != "" && right.SHA256 != "":
+		return left.SHA256 == right.SHA256
+	default:
+		return left.ModTimeUnixNano == right.ModTimeUnixNano
+	}
+}
+
+func (h *responseHandler) readLocalCodeInterpreterGeneratedFiles(ctx context.Context, sessionID string, limits LocalCodeInterpreterLimits, generated []sandbox.SessionFileInfo) ([]sandbox.SessionFile, error) {
+	if len(generated) == 0 {
+		return nil, nil
+	}
+
+	read := make([]sandbox.SessionFile, 0, min(len(generated), limits.GeneratedFiles))
+	totalBytes := 0
+	for _, file := range generated {
+		if len(read) >= limits.GeneratedFiles {
+			break
+		}
+		if file.Size < 0 || file.Size > int64(limits.GeneratedFileBytes) {
+			continue
+		}
+		if totalBytes+int(file.Size) > limits.GeneratedTotalBytes {
+			continue
+		}
+		content, err := h.localCodeInterpreter.Backend.ReadFile(ctx, sessionID, file.Name, int64(limits.GeneratedFileBytes))
+		if err != nil {
+			if errors.Is(err, sandbox.ErrSessionFileTooLarge) || errors.Is(err, sandbox.ErrSessionFileNotFound) {
+				continue
+			}
+			return nil, err
+		}
+		if len(content.Content) > limits.GeneratedFileBytes {
+			continue
+		}
+		if totalBytes+len(content.Content) > limits.GeneratedTotalBytes {
+			continue
+		}
+		read = append(read, content)
+		totalBytes += len(content.Content)
+	}
+	return read, nil
 }
 
 func (h *responseHandler) persistLocalCodeInterpreterGeneratedFiles(ctx context.Context, generated []sandbox.SessionFile) ([]localCodeInterpreterGeneratedFile, error) {

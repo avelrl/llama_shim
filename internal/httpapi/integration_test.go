@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -14,8 +15,10 @@ import (
 	"net/url"
 	"path"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -6930,6 +6933,115 @@ func TestChatCompletionsStoredListFiltersAndPaginates(t *testing.T) {
 	require.Equal(t, third, asStringAny(page2.Data[0]["id"]))
 }
 
+func TestChatCompletionsStoredListAcceptsLimitAboveOneHundred(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	completionID := postStoredChatCompletion(t, app, map[string]any{
+		"model":    "gpt-5.4",
+		"store":    true,
+		"messages": []map[string]any{{"role": "user", "content": "Say OK and nothing else"}},
+	})
+
+	status, body := rawRequest(t, app, http.MethodGet, "/v1/chat/completions?limit=101", nil)
+	require.Equal(t, http.StatusOK, status)
+	data, ok := body["data"].([]any)
+	require.True(t, ok)
+	require.Len(t, data, 1)
+	first, ok := data[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, completionID, asStringAny(first["id"]))
+}
+
+func TestChatCompletionsStoredListMergedPaginationSpansUpstreamPages(t *testing.T) {
+	t.Parallel()
+
+	type upstreamEntry struct {
+		ID      string
+		Created int64
+	}
+
+	entries := make([]upstreamEntry, 0, 25)
+	for i := range 25 {
+		entries = append(entries, upstreamEntry{
+			ID:      fmt.Sprintf("chatcmpl_up_%02d", i+1),
+			Created: int64(i + 1),
+		})
+	}
+
+	var requestCount atomic.Int64
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount.Add(1)
+		require.Equal(t, http.MethodGet, r.Method)
+		require.Equal(t, "/v1/chat/completions", r.URL.Path)
+
+		limit := 20
+		if raw := r.URL.Query().Get("limit"); raw != "" {
+			parsed, err := strconv.Atoi(raw)
+			require.NoError(t, err)
+			limit = parsed
+		}
+
+		start := 0
+		if after := r.URL.Query().Get("after"); after != "" {
+			start = -1
+			for i, entry := range entries {
+				if entry.ID == after {
+					start = i + 1
+					break
+				}
+			}
+			require.NotEqual(t, -1, start)
+		}
+
+		end := start + limit
+		if end > len(entries) {
+			end = len(entries)
+		}
+
+		data := make([]map[string]any, 0, end-start)
+		for _, entry := range entries[start:end] {
+			data = append(data, map[string]any{
+				"id":      entry.ID,
+				"object":  "chat.completion",
+				"created": entry.Created,
+				"model":   "gpt-5.4",
+				"choices": []map[string]any{
+					{
+						"index": 0,
+						"message": map[string]any{
+							"role":    "assistant",
+							"content": entry.ID,
+						},
+						"finish_reason": "stop",
+						"logprobs":      nil,
+					},
+				},
+			})
+		}
+
+		var lastID *string
+		if len(data) > 0 {
+			last := entries[end-1].ID
+			lastID = &last
+		}
+		_ = json.NewEncoder(w).Encode(chatCompletionsListResponse{
+			Object:  "list",
+			Data:    data,
+			LastID:  lastID,
+			HasMore: end < len(entries),
+		})
+	}))
+	defer upstream.Close()
+
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{LlamaBaseURL: upstream.URL})
+
+	page := getStoredChatCompletions(t, app, "?limit=1&order=asc&after=chatcmpl_up_20")
+	require.Len(t, page.Data, 1)
+	require.Equal(t, "chatcmpl_up_21", asStringAny(page.Data[0]["id"]))
+	require.True(t, page.HasMore)
+	require.Greater(t, requestCount.Load(), int64(1))
+}
+
 func TestChatCompletionsStoreTrueStreamShadowStoresReconstructedCompletion(t *testing.T) {
 	app := testutil.NewTestApp(t)
 
@@ -9946,6 +10058,60 @@ func TestResponsesCreateLocalCodeInterpreterPersistsGeneratedImageArtifacts(t *t
 	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
 	require.Equal(t, pngBytes, body)
+}
+
+func TestResponsesCreateLocalCodeInterpreterSkipsGeneratedArtifactsWhenSnapshotTooLarge(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		CodeInterpreterBackend: testutil.FakeSandboxBackend{
+			KindValue: "docker",
+			ListFileInfosFunc: func(_ context.Context, _ string, _ int, _ int64) ([]sandbox.SessionFileInfo, error) {
+				return nil, sandbox.ErrSessionSnapshotTooLarge
+			},
+			ExecuteFunc: func(_ context.Context, _ sandbox.ExecuteRequest) (sandbox.ExecuteResult, error) {
+				return sandbox.ExecuteResult{Logs: "created report.txt\n"}, nil
+			},
+		},
+	})
+
+	response := postResponse(t, app, map[string]any{
+		"model":   "test-model",
+		"store":   true,
+		"input":   "Use Python to write report.txt containing artifact-body, then say created.",
+		"include": []string{"code_interpreter_call.outputs"},
+		"tools": []map[string]any{
+			{
+				"type": "code_interpreter",
+				"container": map[string]any{
+					"type": "auto",
+				},
+			},
+		},
+		"tool_choice": "required",
+	})
+
+	require.Equal(t, "completed", response.Status)
+	require.Equal(t, "Execution completed.", response.OutputText)
+	require.Len(t, response.Output, 2)
+
+	callPayload := response.Output[0].Map()
+	outputs, ok := callPayload["outputs"].([]any)
+	require.True(t, ok)
+	require.Len(t, outputs, 1)
+
+	messagePayload := response.Output[1].Map()
+	content, ok := messagePayload["content"].([]any)
+	require.True(t, ok)
+	require.Len(t, content, 1)
+	textPart, ok := content[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "Execution completed.", asStringAny(textPart["text"]))
+	require.Equal(t, []any{}, textPart["annotations"])
+
+	containerID := asStringAny(callPayload["container_id"])
+	require.NotEmpty(t, containerID)
+	status, filesPayload := rawRequest(t, app, http.MethodGet, "/v1/containers/"+containerID+"/files", nil)
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, []any{}, filesPayload["data"])
 }
 
 func TestResponsesCreateLocalCodeInterpreterStreamReplaysToolEvents(t *testing.T) {

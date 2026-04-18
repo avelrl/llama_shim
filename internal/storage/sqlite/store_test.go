@@ -2,7 +2,9 @@ package sqlite_test
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -270,6 +272,53 @@ func TestStoreSaveResponseReplayArtifactsAppliesLimits(t *testing.T) {
 	require.Equal(t, maxCount, got[len(got)-1].Sequence)
 }
 
+func requireSemanticVec0State(t *testing.T, db *sql.DB, vectorStoreID, model string, dims, chunkCount int) {
+	t.Helper()
+
+	tableName := semanticIndexTableNameForTest(vectorStoreID)
+	if chunkCount == 0 {
+		var metaCount int
+		require.NoError(t, db.QueryRow(`
+			SELECT COUNT(*)
+			FROM vector_store_semantic_index_meta
+			WHERE vector_store_id = ?
+		`, vectorStoreID).Scan(&metaCount))
+		require.Zero(t, metaCount)
+
+		var tableCount int
+		require.NoError(t, db.QueryRow(`
+			SELECT COUNT(*)
+			FROM sqlite_master
+			WHERE type = 'table' AND name = ?
+		`, tableName).Scan(&tableCount))
+		require.Zero(t, tableCount)
+		return
+	}
+
+	var (
+		gotModel      string
+		gotDims       int
+		gotChunkCount int
+	)
+	require.NoError(t, db.QueryRow(`
+		SELECT embedding_model, embedding_dimensions, chunk_count
+		FROM vector_store_semantic_index_meta
+		WHERE vector_store_id = ?
+	`, vectorStoreID).Scan(&gotModel, &gotDims, &gotChunkCount))
+	require.Equal(t, model, gotModel)
+	require.Equal(t, dims, gotDims)
+	require.Equal(t, chunkCount, gotChunkCount)
+
+	var tableRows int
+	require.NoError(t, db.QueryRow(fmt.Sprintf(`SELECT COUNT(*) FROM "%s"`, tableName)).Scan(&tableRows))
+	require.Equal(t, chunkCount, tableRows)
+}
+
+func semanticIndexTableNameForTest(vectorStoreID string) string {
+	sum := sha256.Sum256([]byte(vectorStoreID))
+	return "vector_store_semantic_" + hex.EncodeToString(sum[:12])
+}
+
 func TestOpenWithOptionsRejectsUnsupportedRetrievalBackend(t *testing.T) {
 	t.Parallel()
 
@@ -355,6 +404,120 @@ func TestStoreSearchVectorStoreSQLiteVecBackend(t *testing.T) {
 	require.Equal(t, fileBanana.ID, page.Results[0].FileID)
 	require.Equal(t, "banana.txt", page.Results[0].Filename)
 	require.Greater(t, page.Results[0].Score, 0.7)
+}
+
+func TestStoreSearchVectorStoreSQLiteVecIncrementalIndexMutation(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := testutil.TempDBPath(t)
+	store, err := sqlite.OpenWithOptions(ctx, dbPath, sqlite.OpenOptions{
+		Retrieval: retrieval.Config{
+			IndexBackend: retrieval.IndexBackendSQLiteVec,
+			Embedder: retrieval.EmbedderConfig{
+				Model: "fake-embed",
+			},
+		},
+		Embedder: fakeEmbedder{},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+
+	rawDB, err := sql.Open("sqlite", dbPath)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, rawDB.Close())
+	})
+
+	fileBanana := domain.StoredFile{
+		ID:        "file_banana_mutation",
+		Filename:  "banana.txt",
+		Purpose:   "assistants",
+		Bytes:     int64(len("Banana smoothie recipe with ripe banana and yogurt.")),
+		CreatedAt: 1712059200,
+		Status:    "processed",
+		Content:   []byte("Banana smoothie recipe with ripe banana and yogurt."),
+	}
+	fileOcean := domain.StoredFile{
+		ID:        "file_ocean_mutation",
+		Filename:  "ocean.txt",
+		Purpose:   "assistants",
+		Bytes:     int64(len("Ocean tides and marine currents reference.")),
+		CreatedAt: 1712059201,
+		Status:    "processed",
+		Content:   []byte("Ocean tides and marine currents reference."),
+	}
+	fileBinary := domain.StoredFile{
+		ID:        "file_binary_mutation",
+		Filename:  "binary.bin",
+		Purpose:   "assistants",
+		Bytes:     3,
+		CreatedAt: 1712059202,
+		Status:    "processed",
+		Content:   []byte{0xff, 0xfe, 0xfd},
+	}
+	require.NoError(t, store.SaveFile(ctx, fileBanana))
+	require.NoError(t, store.SaveFile(ctx, fileOcean))
+	require.NoError(t, store.SaveFile(ctx, fileBinary))
+
+	vectorStore := domain.StoredVectorStore{
+		ID:           "vs_semantic_mutation",
+		Name:         "Semantic Mutation Store",
+		Metadata:     map[string]string{},
+		CreatedAt:    1712059202,
+		LastActiveAt: 1712059202,
+	}
+	require.NoError(t, store.SaveVectorStore(ctx, vectorStore))
+
+	_, err = store.AttachFileToVectorStore(ctx, vectorStore.ID, fileBanana.ID, map[string]any{}, domain.DefaultFileChunkingStrategy(), 1712059203)
+	require.NoError(t, err)
+	_, err = store.AttachFileToVectorStore(ctx, vectorStore.ID, fileOcean.ID, map[string]any{}, domain.DefaultFileChunkingStrategy(), 1712059204)
+	require.NoError(t, err)
+	requireSemanticVec0State(t, rawDB, vectorStore.ID, "fake-embed", 3, 2)
+
+	binaryAttached, err := store.AttachFileToVectorStore(ctx, vectorStore.ID, fileBinary.ID, map[string]any{}, domain.DefaultFileChunkingStrategy(), 1712059205)
+	require.NoError(t, err)
+	require.Equal(t, "failed", binaryAttached.Status)
+	requireSemanticVec0State(t, rawDB, vectorStore.ID, "fake-embed", 3, 2)
+	require.NoError(t, store.DeleteVectorStoreFile(ctx, vectorStore.ID, fileBinary.ID))
+	requireSemanticVec0State(t, rawDB, vectorStore.ID, "fake-embed", 3, 2)
+
+	fileBanana.Content = []byte("Banana updated notes and banana serving suggestions.")
+	fileBanana.Bytes = int64(len(fileBanana.Content))
+	fileBanana.CreatedAt = 1712059206
+	require.NoError(t, store.SaveFile(ctx, fileBanana))
+	_, err = store.AttachFileToVectorStore(ctx, vectorStore.ID, fileBanana.ID, map[string]any{}, domain.DefaultFileChunkingStrategy(), 1712059207)
+	require.NoError(t, err)
+	requireSemanticVec0State(t, rawDB, vectorStore.ID, "fake-embed", 3, 2)
+
+	page, err := store.SearchVectorStore(ctx, domain.VectorStoreSearchQuery{
+		VectorStoreID:  vectorStore.ID,
+		Queries:        []string{"banana updated"},
+		MaxNumResults:  5,
+		RawSearchQuery: "banana updated",
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, page.Results)
+	require.Equal(t, fileBanana.ID, page.Results[0].FileID)
+
+	require.NoError(t, store.DeleteVectorStoreFile(ctx, vectorStore.ID, fileOcean.ID))
+	requireSemanticVec0State(t, rawDB, vectorStore.ID, "fake-embed", 3, 1)
+
+	page, err = store.SearchVectorStore(ctx, domain.VectorStoreSearchQuery{
+		VectorStoreID:  vectorStore.ID,
+		Queries:        []string{"ocean currents"},
+		MaxNumResults:  5,
+		RawSearchQuery: "ocean currents",
+	})
+	require.NoError(t, err)
+	if len(page.Results) > 0 {
+		require.NotEqual(t, fileOcean.ID, page.Results[0].FileID)
+	}
+
+	require.NoError(t, store.DeleteFile(ctx, fileBanana.ID))
+	requireSemanticVec0State(t, rawDB, vectorStore.ID, "fake-embed", 0, 0)
 }
 
 func TestStoreSearchVectorStoreSQLiteVecReindexesOnEmbedderModelChange(t *testing.T) {
@@ -695,6 +858,13 @@ func TestStoreSaveChatCompletionRoundTripAndList(t *testing.T) {
 	require.False(t, page.HasMore)
 	require.Len(t, page.Completions, 2)
 	require.Equal(t, []string{second.ID, third.ID}, []string{page.Completions[0].ID, page.Completions[1].ID})
+
+	_, err = store.ListChatCompletions(ctx, domain.ListStoredChatCompletionsQuery{
+		After: "chatcmpl_missing_after",
+		Limit: 1,
+		Order: domain.ChatCompletionOrderAsc,
+	})
+	require.ErrorIs(t, err, sqlite.ErrNotFound)
 
 	_, err = store.GetChatCompletion(ctx, "chatcmpl_missing")
 	require.ErrorIs(t, err, sqlite.ErrNotFound)
@@ -1141,6 +1311,7 @@ func TestStoreSaveFileAttachVectorStoreAndSearch(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, filePage.Files, 1)
 	require.Equal(t, file.ID, filePage.Files[0].ID)
+	require.Empty(t, filePage.Files[0].Content)
 
 	vectorStore := domain.StoredVectorStore{
 		ID:           "vs_alpha",
@@ -1206,6 +1377,88 @@ func TestStoreSaveFileAttachVectorStoreAndSearch(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Empty(t, afterDeletePage.Files)
+}
+
+func TestStoreListFilesUsesKeysetPaginationAndSkipsContent(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store := openTestStore(t, ctx)
+
+	files := []domain.StoredFile{
+		{
+			ID:        "file_a",
+			Filename:  "a.txt",
+			Purpose:   "assistants",
+			Bytes:     5,
+			CreatedAt: 1712059200,
+			Status:    "processed",
+			Content:   []byte("aaaaa"),
+		},
+		{
+			ID:        "file_b",
+			Filename:  "b.txt",
+			Purpose:   "assistants",
+			Bytes:     5,
+			CreatedAt: 1712059201,
+			Status:    "processed",
+			Content:   []byte("bbbbb"),
+		},
+		{
+			ID:        "file_c",
+			Filename:  "c.txt",
+			Purpose:   "assistants",
+			Bytes:     5,
+			CreatedAt: 1712059202,
+			Status:    "processed",
+			Content:   []byte("ccccc"),
+		},
+	}
+	for _, file := range files {
+		require.NoError(t, store.SaveFile(ctx, file))
+	}
+
+	firstPage, err := store.ListFiles(ctx, domain.ListFilesQuery{
+		Purpose: "assistants",
+		Limit:   1,
+		Order:   domain.ListOrderAsc,
+	})
+	require.NoError(t, err)
+	require.Len(t, firstPage.Files, 1)
+	require.Equal(t, "file_a", firstPage.Files[0].ID)
+	require.Empty(t, firstPage.Files[0].Content)
+	require.True(t, firstPage.HasMore)
+
+	secondPage, err := store.ListFiles(ctx, domain.ListFilesQuery{
+		Purpose: "assistants",
+		After:   "file_a",
+		Limit:   1,
+		Order:   domain.ListOrderAsc,
+	})
+	require.NoError(t, err)
+	require.Len(t, secondPage.Files, 1)
+	require.Equal(t, "file_b", secondPage.Files[0].ID)
+	require.Empty(t, secondPage.Files[0].Content)
+	require.True(t, secondPage.HasMore)
+
+	descPage, err := store.ListFiles(ctx, domain.ListFilesQuery{
+		Purpose: "assistants",
+		After:   "file_c",
+		Limit:   1,
+		Order:   domain.ListOrderDesc,
+	})
+	require.NoError(t, err)
+	require.Len(t, descPage.Files, 1)
+	require.Equal(t, "file_b", descPage.Files[0].ID)
+	require.True(t, descPage.HasMore)
+
+	_, err = store.ListFiles(ctx, domain.ListFilesQuery{
+		Purpose: "assistants",
+		After:   "file_missing",
+		Limit:   1,
+		Order:   domain.ListOrderAsc,
+	})
+	require.ErrorIs(t, err, sqlite.ErrNotFound)
 }
 
 func TestStoreAttachBinaryFileToVectorStoreFailsIndexing(t *testing.T) {

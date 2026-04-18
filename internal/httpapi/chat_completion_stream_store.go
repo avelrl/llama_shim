@@ -12,6 +12,7 @@ import (
 type chatCompletionStreamStoreCapture struct {
 	err               error
 	done              bool
+	capturedBytes     int
 	id                string
 	model             string
 	created           int64
@@ -21,6 +22,8 @@ type chatCompletionStreamStoreCapture struct {
 	usage             any
 	choices           map[int]*chatCompletionStreamChoice
 }
+
+const maxChatCompletionStreamStoreCaptureBytes = 8 * 1024 * 1024
 
 type chatCompletionStreamChoice struct {
 	index        int
@@ -211,13 +214,22 @@ func (c *chatCompletionStreamStoreCapture) captureChunk(chunk map[string]any) {
 			choice.role = role
 		}
 		if content := anyString(delta["content"]); content != "" {
-			choice.content.WriteString(content)
+			c.writeString(&choice.content, content)
+			if c.err != nil {
+				return
+			}
 		}
 		if refusal := anyString(delta["refusal"]); refusal != "" {
-			choice.refusal.WriteString(refusal)
+			c.writeString(&choice.refusal, refusal)
+			if c.err != nil {
+				return
+			}
 		}
 		if functionCall, ok := delta["function_call"].(map[string]any); ok {
-			mergeFunctionCall(choice.functionCallState(), functionCall)
+			c.mergeFunctionCall(choice.functionCallState(), functionCall)
+			if c.err != nil {
+				return
+			}
 		}
 		if rawToolCalls, ok := delta["tool_calls"].([]any); ok {
 			for _, rawToolCall := range rawToolCalls {
@@ -237,11 +249,27 @@ func (c *chatCompletionStreamStoreCapture) captureChunk(chunk map[string]any) {
 					toolCall.kind = kind
 				}
 				if functionPayload, ok := toolCallPayload["function"].(map[string]any); ok {
-					mergeFunctionCall(toolCall.functionState(), functionPayload)
+					c.mergeFunctionCall(toolCall.functionState(), functionPayload)
+					if c.err != nil {
+						return
+					}
 				}
 			}
 		}
 	}
+}
+
+func (c *chatCompletionStreamStoreCapture) writeString(builder *strings.Builder, value string) {
+	if c == nil || c.err != nil || value == "" {
+		return
+	}
+	next := c.capturedBytes + len(value)
+	if next > maxChatCompletionStreamStoreCaptureBytes {
+		c.err = fmt.Errorf("chat completion stream capture exceeded %d bytes", maxChatCompletionStreamStoreCaptureBytes)
+		return
+	}
+	builder.WriteString(value)
+	c.capturedBytes = next
 }
 
 func (c *chatCompletionStreamStoreCapture) choice(index int) *chatCompletionStreamChoice {
@@ -384,12 +412,15 @@ func (c *chatCompletionStreamToolCall) reconstructedFunction() any {
 	}
 }
 
-func mergeFunctionCall(target *chatCompletionStreamFunctionCall, payload map[string]any) {
+func (c *chatCompletionStreamStoreCapture) mergeFunctionCall(target *chatCompletionStreamFunctionCall, payload map[string]any) {
 	if name := anyString(payload["name"]); name != "" {
-		target.name.WriteString(name)
+		c.writeString(&target.name, name)
+		if c.err != nil {
+			return
+		}
 	}
 	if arguments := anyString(payload["arguments"]); arguments != "" {
-		target.arguments.WriteString(arguments)
+		c.writeString(&target.arguments, arguments)
 	}
 }
 
