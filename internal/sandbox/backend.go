@@ -1,8 +1,11 @@
 package sandbox
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +13,7 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -26,6 +30,9 @@ const (
 
 var ErrDisabled = errors.New("sandbox backend is disabled")
 var ErrSessionNotFound = errors.New("sandbox session not found")
+var ErrSessionSnapshotTooLarge = errors.New("sandbox session snapshot exceeded limits")
+var ErrSessionFileTooLarge = errors.New("sandbox session file exceeded size limit")
+var ErrSessionFileNotFound = errors.New("sandbox session file not found")
 
 type ToolExecutionError struct {
 	Err error
@@ -56,6 +63,8 @@ type Backend interface {
 	UploadFile(ctx context.Context, sessionID string, file SessionFile) error
 	DeleteFile(ctx context.Context, sessionID string, name string) error
 	ListFiles(ctx context.Context, sessionID string) ([]SessionFile, error)
+	ListFileInfos(ctx context.Context, sessionID string, maxEntries int, maxHashBytes int64) ([]SessionFileInfo, error)
+	ReadFile(ctx context.Context, sessionID string, name string, maxBytes int64) (SessionFile, error)
 	ExecutePython(ctx context.Context, req ExecuteRequest) (ExecuteResult, error)
 	DestroySession(ctx context.Context, sessionID string) error
 }
@@ -68,6 +77,13 @@ type CreateSessionRequest struct {
 type SessionFile struct {
 	Name    string
 	Content []byte
+}
+
+type SessionFileInfo struct {
+	Name            string `json:"name"`
+	Size            int64  `json:"size"`
+	ModTimeUnixNano int64  `json:"mod_time_unix_nano"`
+	SHA256          string `json:"sha256,omitempty"`
 }
 
 type ExecuteRequest struct {
@@ -134,6 +150,44 @@ func (b UnsafeHostBackend) ListFiles(_ context.Context, sessionID string) ([]Ses
 		return nil, fmt.Errorf("list unsafe_host session files: %w", err)
 	}
 	return files, nil
+}
+
+func (b UnsafeHostBackend) ListFileInfos(_ context.Context, sessionID string, maxEntries int, maxHashBytes int64) ([]SessionFileInfo, error) {
+	if strings.TrimSpace(sessionID) == "" {
+		return nil, ErrSessionNotFound
+	}
+
+	sessionDir := b.sessionDir(sessionID)
+	if _, err := os.Stat(sessionDir); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, ErrSessionNotFound
+		}
+		return nil, fmt.Errorf("stat unsafe_host session dir: %w", err)
+	}
+	files, err := listSessionFileInfosFromDir(sessionDir, maxEntries, maxHashBytes)
+	if err != nil {
+		return nil, fmt.Errorf("list unsafe_host session file infos: %w", err)
+	}
+	return files, nil
+}
+
+func (b UnsafeHostBackend) ReadFile(_ context.Context, sessionID string, name string, maxBytes int64) (SessionFile, error) {
+	if strings.TrimSpace(sessionID) == "" {
+		return SessionFile{}, ErrSessionNotFound
+	}
+
+	sessionDir := b.sessionDir(sessionID)
+	if _, err := os.Stat(sessionDir); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return SessionFile{}, ErrSessionNotFound
+		}
+		return SessionFile{}, fmt.Errorf("stat unsafe_host session dir: %w", err)
+	}
+	file, err := readSessionFileFromDir(sessionDir, name, maxBytes)
+	if err != nil {
+		return SessionFile{}, fmt.Errorf("read unsafe_host session file: %w", err)
+	}
+	return file, nil
 }
 
 func (b UnsafeHostBackend) DeleteFile(_ context.Context, sessionID string, name string) error {
@@ -374,6 +428,76 @@ func (b DockerBackend) ListFiles(ctx context.Context, sessionID string) ([]Sessi
 	return files, nil
 }
 
+func (b DockerBackend) ListFileInfos(ctx context.Context, sessionID string, maxEntries int, maxHashBytes int64) ([]SessionFileInfo, error) {
+	if strings.TrimSpace(sessionID) == "" {
+		return nil, ErrSessionNotFound
+	}
+	timeout := b.Timeout
+	if timeout <= 0 {
+		timeout = DefaultExecutionTimeout
+	}
+	execCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	dockerBinary := b.dockerBinary()
+	containerName := b.containerName(sessionID)
+	exists, running, err := b.inspectContainer(execCtx, dockerBinary, containerName)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, ErrSessionNotFound
+	}
+	if !running {
+		if err := b.startContainer(execCtx, dockerBinary, containerName); err != nil {
+			return nil, err
+		}
+	}
+
+	files, err := listDockerSessionFileInfos(execCtx, dockerBinary, containerName, maxEntries, maxHashBytes)
+	if err != nil {
+		return nil, fmt.Errorf("list docker sandbox file infos: %w", err)
+	}
+	return files, nil
+}
+
+func (b DockerBackend) ReadFile(ctx context.Context, sessionID string, name string, maxBytes int64) (SessionFile, error) {
+	if strings.TrimSpace(sessionID) == "" {
+		return SessionFile{}, ErrSessionNotFound
+	}
+	sanitizedName, err := validateSessionWorkspacePath(name)
+	if err != nil {
+		return SessionFile{}, fmt.Errorf("read docker sandbox file: %w", err)
+	}
+	timeout := b.Timeout
+	if timeout <= 0 {
+		timeout = DefaultExecutionTimeout
+	}
+	execCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	dockerBinary := b.dockerBinary()
+	containerName := b.containerName(sessionID)
+	exists, running, err := b.inspectContainer(execCtx, dockerBinary, containerName)
+	if err != nil {
+		return SessionFile{}, err
+	}
+	if !exists {
+		return SessionFile{}, ErrSessionNotFound
+	}
+	if !running {
+		if err := b.startContainer(execCtx, dockerBinary, containerName); err != nil {
+			return SessionFile{}, err
+		}
+	}
+
+	content, err := readDockerSessionFile(execCtx, dockerBinary, containerName, sanitizedName, maxBytes)
+	if err != nil {
+		return SessionFile{}, fmt.Errorf("read docker sandbox file: %w", err)
+	}
+	return SessionFile{Name: sanitizedName, Content: content}, nil
+}
+
 func (b DockerBackend) ExecutePython(ctx context.Context, req ExecuteRequest) (ExecuteResult, error) {
 	if strings.TrimSpace(req.SessionID) == "" {
 		return ExecuteResult{}, fmt.Errorf("execute docker sandbox: session id is required")
@@ -598,6 +722,145 @@ func (b DockerBackend) containerName(sessionID string) string {
 	return "llama-shim-ci-" + sanitizeSessionID(sessionID)
 }
 
+const (
+	dockerListSessionFileInfosSnapshotTooLargeExitCode = 3
+	dockerReadSessionFileTooLargeExitCode              = 4
+	dockerReadSessionFileNotFoundExitCode              = 5
+)
+
+const dockerListSessionFileInfosScript = `
+import hashlib
+import json
+import os
+import sys
+
+max_entries = int(sys.argv[1])
+max_hash_bytes = int(sys.argv[2])
+root = "/workspace"
+count = 0
+
+for dirpath, dirnames, filenames in os.walk(root):
+    dirnames.sort()
+    filenames.sort()
+    for filename in filenames:
+        path = os.path.join(dirpath, filename)
+        try:
+            stat_result = os.stat(path)
+        except OSError as exc:
+            print(str(exc), file=sys.stderr)
+            sys.exit(1)
+        if not os.path.isfile(path):
+            continue
+        count += 1
+        if max_entries > 0 and count > max_entries:
+            sys.exit(3)
+        rel = os.path.relpath(path, root).replace(os.sep, "/")
+        item = {
+            "name": rel,
+            "size": stat_result.st_size,
+            "mod_time_unix_nano": stat_result.st_mtime_ns,
+        }
+        if max_hash_bytes > 0 and stat_result.st_size <= max_hash_bytes:
+            digest = hashlib.sha256()
+            with open(path, "rb") as handle:
+                for chunk in iter(lambda: handle.read(65536), b""):
+                    digest.update(chunk)
+            item["sha256"] = digest.hexdigest()
+        print(json.dumps(item, separators=(",", ":")))
+`
+
+const dockerReadSessionFileScript = `
+import os
+import sys
+
+rel = sys.argv[1]
+max_bytes = int(sys.argv[2])
+root = "/workspace"
+candidate = os.path.abspath(os.path.join(root, rel))
+try:
+    if os.path.commonpath([root, candidate]) != root:
+        sys.exit(5)
+except ValueError:
+    sys.exit(5)
+
+try:
+    stat_result = os.stat(candidate)
+except FileNotFoundError:
+    sys.exit(5)
+except OSError as exc:
+    print(str(exc), file=sys.stderr)
+    sys.exit(1)
+
+if not os.path.isfile(candidate):
+    sys.exit(5)
+if max_bytes > 0 and stat_result.st_size > max_bytes:
+    sys.exit(4)
+
+with open(candidate, "rb") as handle:
+    for chunk in iter(lambda: handle.read(65536), b""):
+        sys.stdout.buffer.write(chunk)
+`
+
+func listDockerSessionFileInfos(ctx context.Context, dockerBinary string, containerName string, maxEntries int, maxHashBytes int64) ([]SessionFileInfo, error) {
+	args := []string{
+		"exec",
+		"--workdir", "/workspace",
+		containerName,
+		"python3",
+		"-c",
+		dockerListSessionFileInfosScript,
+		strconv.Itoa(maxEntries),
+		strconv.FormatInt(maxHashBytes, 10),
+	}
+	cmd := exec.CommandContext(ctx, dockerBinary, args...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		switch dockerExitCode(err) {
+		case dockerListSessionFileInfosSnapshotTooLargeExitCode:
+			return nil, ErrSessionSnapshotTooLarge
+		default:
+			return nil, fmt.Errorf("%w: %s", err, strings.TrimSpace(string(output)))
+		}
+	}
+	return parseSessionFileInfosJSONLines(output)
+}
+
+func readDockerSessionFile(ctx context.Context, dockerBinary string, containerName string, name string, maxBytes int64) ([]byte, error) {
+	args := []string{
+		"exec",
+		"--workdir", "/workspace",
+		containerName,
+		"python3",
+		"-c",
+		dockerReadSessionFileScript,
+		name,
+		strconv.FormatInt(maxBytes, 10),
+	}
+	cmd := exec.CommandContext(ctx, dockerBinary, args...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	output, err := cmd.Output()
+	if err != nil {
+		switch dockerExitCode(err) {
+		case dockerReadSessionFileTooLargeExitCode:
+			return nil, ErrSessionFileTooLarge
+		case dockerReadSessionFileNotFoundExitCode:
+			return nil, ErrSessionFileNotFound
+		default:
+			return nil, fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
+		}
+	}
+	return output, nil
+}
+
+func dockerExitCode(err error) int {
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return exitErr.ExitCode()
+	}
+	return -1
+}
+
 func sanitizeSessionID(value string) string {
 	if strings.TrimSpace(value) == "" {
 		return "unknown"
@@ -699,6 +962,155 @@ func validateSessionFile(file SessionFile) (string, error) {
 	default:
 		return name, nil
 	}
+}
+
+func validateSessionWorkspacePath(name string) (string, error) {
+	normalized := strings.TrimSpace(strings.ReplaceAll(name, `\`, `/`))
+	switch {
+	case normalized == "":
+		return "", fmt.Errorf("file name is required")
+	case strings.HasPrefix(normalized, "/"):
+		return "", fmt.Errorf("file name must be a workspace-relative filename")
+	}
+	cleaned := path.Clean(normalized)
+	switch {
+	case cleaned == "." || cleaned == "..":
+		return "", fmt.Errorf("file name must be a workspace-relative filename")
+	case strings.HasPrefix(cleaned, "../"):
+		return "", fmt.Errorf("file name must not escape the workspace")
+	default:
+		return cleaned, nil
+	}
+}
+
+func listSessionFileInfosFromDir(root string, maxEntries int, maxHashBytes int64) ([]SessionFileInfo, error) {
+	files := make([]SessionFileInfo, 0)
+	if err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if path == root {
+			return nil
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		if !entry.Type().IsRegular() {
+			return nil
+		}
+		if maxEntries > 0 && len(files) >= maxEntries {
+			return ErrSessionSnapshotTooLarge
+		}
+
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+
+		file := SessionFileInfo{
+			Name:            filepath.ToSlash(rel),
+			Size:            info.Size(),
+			ModTimeUnixNano: info.ModTime().UnixNano(),
+		}
+		if maxHashBytes > 0 && info.Size() <= maxHashBytes {
+			digest, err := hashFileSHA256(path)
+			if err != nil {
+				return err
+			}
+			file.SHA256 = digest
+		}
+		files = append(files, file)
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+
+	sort.Slice(files, func(i, j int) bool {
+		return files[i].Name < files[j].Name
+	})
+	return files, nil
+}
+
+func readSessionFileFromDir(root string, name string, maxBytes int64) (SessionFile, error) {
+	sanitizedName, err := validateSessionWorkspacePath(name)
+	if err != nil {
+		return SessionFile{}, err
+	}
+	fullPath := filepath.Join(root, filepath.FromSlash(sanitizedName))
+	info, err := os.Stat(fullPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return SessionFile{}, ErrSessionFileNotFound
+		}
+		return SessionFile{}, err
+	}
+	if !info.Mode().IsRegular() {
+		return SessionFile{}, ErrSessionFileNotFound
+	}
+	if maxBytes > 0 && info.Size() > maxBytes {
+		return SessionFile{}, ErrSessionFileTooLarge
+	}
+	file, err := os.Open(fullPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return SessionFile{}, ErrSessionFileNotFound
+		}
+		return SessionFile{}, err
+	}
+	defer file.Close()
+	reader := io.Reader(file)
+	if maxBytes > 0 {
+		reader = io.LimitReader(file, maxBytes+1)
+	}
+	content, err := io.ReadAll(reader)
+	if err != nil {
+		return SessionFile{}, err
+	}
+	if maxBytes > 0 && int64(len(content)) > maxBytes {
+		return SessionFile{}, ErrSessionFileTooLarge
+	}
+	return SessionFile{Name: sanitizedName, Content: content}, nil
+}
+
+func hashFileSHA256(path string) (string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+
+	digest := sha256.New()
+	if _, err := io.Copy(digest, file); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(digest.Sum(nil)), nil
+}
+
+func parseSessionFileInfosJSONLines(output []byte) ([]SessionFileInfo, error) {
+	scanner := bufio.NewScanner(bytes.NewReader(output))
+	files := make([]SessionFileInfo, 0)
+	for scanner.Scan() {
+		line := bytes.TrimSpace(scanner.Bytes())
+		if len(line) == 0 {
+			continue
+		}
+		var file SessionFileInfo
+		if err := json.Unmarshal(line, &file); err != nil {
+			return nil, err
+		}
+		files = append(files, file)
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	sort.Slice(files, func(i, j int) bool {
+		return files[i].Name < files[j].Name
+	})
+	return files, nil
 }
 
 func listSessionFilesFromDir(root string) ([]SessionFile, error) {

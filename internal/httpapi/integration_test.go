@@ -9948,6 +9948,60 @@ func TestResponsesCreateLocalCodeInterpreterPersistsGeneratedImageArtifacts(t *t
 	require.Equal(t, pngBytes, body)
 }
 
+func TestResponsesCreateLocalCodeInterpreterSkipsGeneratedArtifactsWhenSnapshotTooLarge(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		CodeInterpreterBackend: testutil.FakeSandboxBackend{
+			KindValue: "docker",
+			ListFileInfosFunc: func(_ context.Context, _ string, _ int, _ int64) ([]sandbox.SessionFileInfo, error) {
+				return nil, sandbox.ErrSessionSnapshotTooLarge
+			},
+			ExecuteFunc: func(_ context.Context, _ sandbox.ExecuteRequest) (sandbox.ExecuteResult, error) {
+				return sandbox.ExecuteResult{Logs: "created report.txt\n"}, nil
+			},
+		},
+	})
+
+	response := postResponse(t, app, map[string]any{
+		"model":   "test-model",
+		"store":   true,
+		"input":   "Use Python to write report.txt containing artifact-body, then say created.",
+		"include": []string{"code_interpreter_call.outputs"},
+		"tools": []map[string]any{
+			{
+				"type": "code_interpreter",
+				"container": map[string]any{
+					"type": "auto",
+				},
+			},
+		},
+		"tool_choice": "required",
+	})
+
+	require.Equal(t, "completed", response.Status)
+	require.Equal(t, "Execution completed.", response.OutputText)
+	require.Len(t, response.Output, 2)
+
+	callPayload := response.Output[0].Map()
+	outputs, ok := callPayload["outputs"].([]any)
+	require.True(t, ok)
+	require.Len(t, outputs, 1)
+
+	messagePayload := response.Output[1].Map()
+	content, ok := messagePayload["content"].([]any)
+	require.True(t, ok)
+	require.Len(t, content, 1)
+	textPart, ok := content[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "Execution completed.", asStringAny(textPart["text"]))
+	require.Equal(t, []any{}, textPart["annotations"])
+
+	containerID := asStringAny(callPayload["container_id"])
+	require.NotEmpty(t, containerID)
+	status, filesPayload := rawRequest(t, app, http.MethodGet, "/v1/containers/"+containerID+"/files", nil)
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, []any{}, filesPayload["data"])
+}
+
 func TestResponsesCreateLocalCodeInterpreterStreamReplaysToolEvents(t *testing.T) {
 	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
 		CodeInterpreterBackend: testutil.FakeSandboxBackend{KindValue: "docker"},
