@@ -26,6 +26,8 @@ import (
 
 const (
 	defaultLocalCodeInterpreterPlannedCodeLimit = 16 << 10
+	defaultLocalCodeInterpreterSnapshotMaxFiles = 256
+	maxLocalCodeInterpreterSnapshotMaxFiles     = 1024
 )
 
 var shimLocalCodeInterpreterFields = map[string]struct{}{
@@ -796,7 +798,8 @@ func (h *responseHandler) executeLocalCodeInterpreterSession(ctx context.Context
 		return localCodeInterpreterExecutionResult{}, err
 	}
 
-	beforeFiles, err := h.localCodeInterpreter.Backend.ListFiles(ctx, sessionID)
+	limits := h.localCodeInterpreter.normalizedLimits()
+	beforeFiles, snapshotAvailable, err := h.snapshotLocalCodeInterpreterSessionFiles(ctx, sessionID, limits)
 	if err != nil {
 		return localCodeInterpreterExecutionResult{}, err
 	}
@@ -810,14 +813,21 @@ func (h *responseHandler) executeLocalCodeInterpreterSession(ctx context.Context
 		return localCodeInterpreterExecutionResult{Logs: execResult.Logs}, err
 	}
 
-	afterFiles, err := h.localCodeInterpreter.Backend.ListFiles(ctx, sessionID)
+	afterFiles, afterSnapshotAvailable, err := h.snapshotLocalCodeInterpreterSessionFiles(ctx, sessionID, limits)
 	if err != nil {
 		return localCodeInterpreterExecutionResult{Logs: execResult.Logs}, err
 	}
 
-	generatedFiles, err := manager.persistGeneratedFiles(ctx, sessionID, diffLocalCodeInterpreterGeneratedFiles(beforeFiles, afterFiles))
-	if err != nil {
-		return localCodeInterpreterExecutionResult{Logs: execResult.Logs}, err
+	generatedFiles := []localCodeInterpreterGeneratedFile(nil)
+	if snapshotAvailable && afterSnapshotAvailable {
+		generated, err := h.readLocalCodeInterpreterGeneratedFiles(ctx, sessionID, limits, diffLocalCodeInterpreterGeneratedFiles(beforeFiles, afterFiles))
+		if err != nil {
+			return localCodeInterpreterExecutionResult{Logs: execResult.Logs}, err
+		}
+		generatedFiles, err = manager.persistGeneratedFiles(ctx, sessionID, generated)
+		if err != nil {
+			return localCodeInterpreterExecutionResult{Logs: execResult.Logs}, err
+		}
 	}
 
 	return localCodeInterpreterExecutionResult{
@@ -1169,27 +1179,99 @@ func sanitizeLocalCodeInterpreterWorkspaceName(filename string, fallback string)
 	return sanitized
 }
 
-func diffLocalCodeInterpreterGeneratedFiles(before []sandbox.SessionFile, after []sandbox.SessionFile) []sandbox.SessionFile {
+func localCodeInterpreterSnapshotMaxFiles(limits LocalCodeInterpreterLimits) int {
+	maxFiles := defaultLocalCodeInterpreterSnapshotMaxFiles
+	if scaled := limits.GeneratedFiles * 32; scaled > maxFiles {
+		maxFiles = scaled
+	}
+	if maxFiles > maxLocalCodeInterpreterSnapshotMaxFiles {
+		maxFiles = maxLocalCodeInterpreterSnapshotMaxFiles
+	}
+	return maxFiles
+}
+
+func (h *responseHandler) snapshotLocalCodeInterpreterSessionFiles(ctx context.Context, sessionID string, limits LocalCodeInterpreterLimits) ([]sandbox.SessionFileInfo, bool, error) {
+	files, err := h.localCodeInterpreter.Backend.ListFileInfos(
+		ctx,
+		sessionID,
+		localCodeInterpreterSnapshotMaxFiles(limits),
+		int64(limits.GeneratedFileBytes),
+	)
+	if err != nil {
+		if errors.Is(err, sandbox.ErrSessionSnapshotTooLarge) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	return files, true, nil
+}
+
+func diffLocalCodeInterpreterGeneratedFiles(before []sandbox.SessionFileInfo, after []sandbox.SessionFileInfo) []sandbox.SessionFileInfo {
 	if len(after) == 0 {
 		return nil
 	}
 
-	beforeByName := make(map[string][]byte, len(before))
+	beforeByName := make(map[string]sandbox.SessionFileInfo, len(before))
 	for _, file := range before {
-		beforeByName[file.Name] = file.Content
+		beforeByName[file.Name] = file
 	}
 
-	generated := make([]sandbox.SessionFile, 0, len(after))
+	generated := make([]sandbox.SessionFileInfo, 0, len(after))
 	for _, file := range after {
-		if content, ok := beforeByName[file.Name]; ok && bytes.Equal(content, file.Content) {
+		if prior, ok := beforeByName[file.Name]; ok && sameLocalCodeInterpreterSnapshotFile(prior, file) {
 			continue
 		}
-		generated = append(generated, sandbox.SessionFile{
-			Name:    file.Name,
-			Content: append([]byte(nil), file.Content...),
-		})
+		generated = append(generated, file)
 	}
 	return generated
+}
+
+func sameLocalCodeInterpreterSnapshotFile(left sandbox.SessionFileInfo, right sandbox.SessionFileInfo) bool {
+	if left.Name != right.Name || left.Size != right.Size {
+		return false
+	}
+	switch {
+	case left.SHA256 != "" && right.SHA256 != "":
+		return left.SHA256 == right.SHA256
+	default:
+		return left.ModTimeUnixNano == right.ModTimeUnixNano
+	}
+}
+
+func (h *responseHandler) readLocalCodeInterpreterGeneratedFiles(ctx context.Context, sessionID string, limits LocalCodeInterpreterLimits, generated []sandbox.SessionFileInfo) ([]sandbox.SessionFile, error) {
+	if len(generated) == 0 {
+		return nil, nil
+	}
+
+	read := make([]sandbox.SessionFile, 0, min(len(generated), limits.GeneratedFiles))
+	totalBytes := 0
+	for _, file := range generated {
+		if len(read) >= limits.GeneratedFiles {
+			break
+		}
+		if file.Size < 0 || file.Size > int64(limits.GeneratedFileBytes) {
+			continue
+		}
+		if totalBytes+int(file.Size) > limits.GeneratedTotalBytes {
+			continue
+		}
+		content, err := h.localCodeInterpreter.Backend.ReadFile(ctx, sessionID, file.Name, int64(limits.GeneratedFileBytes))
+		if err != nil {
+			if errors.Is(err, sandbox.ErrSessionFileTooLarge) || errors.Is(err, sandbox.ErrSessionFileNotFound) {
+				continue
+			}
+			return nil, err
+		}
+		if len(content.Content) > limits.GeneratedFileBytes {
+			continue
+		}
+		if totalBytes+len(content.Content) > limits.GeneratedTotalBytes {
+			continue
+		}
+		read = append(read, content)
+		totalBytes += len(content.Content)
+	}
+	return read, nil
 }
 
 func (h *responseHandler) persistLocalCodeInterpreterGeneratedFiles(ctx context.Context, generated []sandbox.SessionFile) ([]localCodeInterpreterGeneratedFile, error) {

@@ -1,6 +1,8 @@
 package sandbox
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
@@ -88,6 +90,62 @@ func TestListSessionFilesFromDirReturnsSortedRelativeFiles(t *testing.T) {
 	require.Equal(t, "B", string(files[0].Content))
 	require.Equal(t, "nested/a.txt", files[1].Name)
 	require.Equal(t, "A", string(files[1].Content))
+}
+
+func TestListSessionFilesFromDirSkipsOversizedFiles(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "small.txt"), []byte("small"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "large.bin"), make([]byte, maxListFileBytes+1), 0o644))
+
+	files, err := listSessionFilesFromDir(root)
+	require.NoError(t, err)
+	require.Len(t, files, 1)
+	require.Equal(t, "small.txt", files[0].Name)
+	require.Equal(t, "small", string(files[0].Content))
+}
+
+func TestListSessionFileInfosFromDirHashesSmallFiles(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "nested"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "nested", "a.txt"), []byte("A"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "b.txt"), []byte("B"), 0o644))
+
+	files, err := listSessionFileInfosFromDir(root, 10, 16)
+	require.NoError(t, err)
+	require.Len(t, files, 2)
+	require.Equal(t, "b.txt", files[0].Name)
+	require.EqualValues(t, 1, files[0].Size)
+	require.NotZero(t, files[0].ModTimeUnixNano)
+	sumB := sha256.Sum256([]byte("B"))
+	require.Equal(t, hex.EncodeToString(sumB[:]), files[0].SHA256)
+	require.Equal(t, "nested/a.txt", files[1].Name)
+	sumA := sha256.Sum256([]byte("A"))
+	require.Equal(t, hex.EncodeToString(sumA[:]), files[1].SHA256)
+}
+
+func TestListSessionFileInfosFromDirRejectsTooManyFiles(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "a.txt"), []byte("A"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "b.txt"), []byte("B"), 0o644))
+
+	_, err := listSessionFileInfosFromDir(root, 1, 16)
+	require.ErrorIs(t, err, ErrSessionSnapshotTooLarge)
+}
+
+func TestReadSessionFileFromDirRejectsOversizedFile(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "report.txt"), []byte("artifact-body"), 0o644))
+
+	_, err := readSessionFileFromDir(root, "report.txt", 4)
+	require.ErrorIs(t, err, ErrSessionFileTooLarge)
 }
 
 func TestIsToolExecutionError(t *testing.T) {
