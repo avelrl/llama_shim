@@ -21,6 +21,7 @@ import (
 const (
 	DefaultExecutionTimeout = 20 * time.Second
 	defaultOutputLimit      = 64 << 10
+	maxListFileBytes        = 8 << 20
 )
 
 var ErrDisabled = errors.New("sandbox backend is disabled")
@@ -713,6 +714,13 @@ func listSessionFilesFromDir(root string) ([]SessionFile, error) {
 			return nil
 		}
 		if !entry.Type().IsRegular() {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if info.Size() > maxListFileBytes {
 			return nil
 		}
 

@@ -90,6 +90,20 @@ func TestListSessionFilesFromDirReturnsSortedRelativeFiles(t *testing.T) {
 	require.Equal(t, "A", string(files[1].Content))
 }
 
+func TestListSessionFilesFromDirSkipsOversizedFiles(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "small.txt"), []byte("small"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "large.bin"), make([]byte, maxListFileBytes+1), 0o644))
+
+	files, err := listSessionFilesFromDir(root)
+	require.NoError(t, err)
+	require.Len(t, files, 1)
+	require.Equal(t, "small.txt", files[0].Name)
+	require.Equal(t, "small", string(files[0].Content))
+}
+
 func TestIsToolExecutionError(t *testing.T) {
 	t.Parallel()
 
