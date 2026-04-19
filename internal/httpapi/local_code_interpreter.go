@@ -1464,23 +1464,24 @@ func localCodeInterpreterFilenameMentionRange(text string, filename string, used
 		return 0, 0, false
 	}
 
-	lowerText := strings.ToLower(text)
-	lowerFilename := strings.ToLower(trimmedFilename)
-	searchOffset := 0
-	for {
-		idx := strings.Index(lowerText[searchOffset:], lowerFilename)
-		if idx < 0 {
-			return 0, 0, false
-		}
-		startByte := searchOffset + idx
-		endByte := startByte + len(lowerFilename)
-		startRune := utf8.RuneCountInString(text[:startByte])
-		endRune := startRune + utf8.RuneCountInString(text[startByte:endByte])
-		if !localCodeInterpreterAnnotationRangeOverlaps(startRune, endRune, used) {
-			return startRune, endRune, true
-		}
-		searchOffset = endByte
+	textRunes := []rune(text)
+	filenameRunes := []rune(trimmedFilename)
+	if len(filenameRunes) == 0 || len(filenameRunes) > len(textRunes) {
+		return 0, 0, false
 	}
+
+	for startRune := 0; startRune+len(filenameRunes) <= len(textRunes); startRune++ {
+		endRune := startRune + len(filenameRunes)
+		if !strings.EqualFold(string(textRunes[startRune:endRune]), trimmedFilename) {
+			continue
+		}
+		if localCodeInterpreterAnnotationRangeOverlaps(startRune, endRune, used) {
+			continue
+		}
+		return startRune, endRune, true
+	}
+
+	return 0, 0, false
 }
 
 func localCodeInterpreterAnnotationRangeOverlaps(start int, end int, used []localCodeInterpreterAnnotationRange) bool {

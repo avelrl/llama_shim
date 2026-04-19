@@ -112,3 +112,12 @@ func TestBuildLocalCodeInterpreterCallItemWithStatusKeepsOutputsLogsOnly(t *test
 	require.Equal(t, "logs", logEntry["type"])
 	require.Equal(t, "hi\n", logEntry["logs"])
 }
+
+func TestLocalCodeInterpreterFilenameMentionRangeUnicodeLowerExpansion(t *testing.T) {
+	t.Parallel()
+
+	start, end, ok := localCodeInterpreterFilenameMentionRange("File Ⱥ.txt ready", "Ⱥ.txt", nil)
+	require.True(t, ok)
+	require.Equal(t, 5, start)
+	require.Equal(t, 10, end)
+}
