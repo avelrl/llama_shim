@@ -32,7 +32,7 @@ func (e *constrainedCustomToolValidationError) Unwrap() error {
 	return e.Cause
 }
 
-func buildLocalChatCompletionRequest(rawFields map[string]json.RawMessage, contextItems []domain.Item, currentInput []domain.Item, _ map[string]domain.ToolCallReference, codexCompatibilityEnabled bool, forceCodexToolChoiceRequired bool, repairPrompt string) ([]byte, customToolTransportPlan, error) {
+func buildLocalChatCompletionRequest(rawFields map[string]json.RawMessage, contextItems []domain.Item, currentInput []domain.Item, _ map[string]domain.ToolCallReference, serviceLimits ServiceLimits, codexCompatibilityEnabled bool, forceCodexToolChoiceRequired bool, repairPrompt string) ([]byte, customToolTransportPlan, error) {
 	model := strings.TrimSpace(rawStringField(rawFields, "model"))
 	if model == "" {
 		return nil, customToolTransportPlan{}, domain.NewValidationError("model", "model is required")
@@ -45,7 +45,7 @@ func buildLocalChatCompletionRequest(rawFields map[string]json.RawMessage, conte
 		effectiveTools = augmentCodexToolDescriptions(rawTools)
 	}
 
-	chatTools, plan, toolChoice, extraInstructions, err := buildLocalToolLoopTransportPlan(rawFields, effectiveTools, forceCodexToolChoiceRequired)
+	chatTools, plan, toolChoice, extraInstructions, err := buildLocalToolLoopTransportPlan(rawFields, effectiveTools, serviceLimits, forceCodexToolChoiceRequired)
 	if err != nil {
 		return nil, customToolTransportPlan{}, err
 	}
@@ -91,7 +91,7 @@ func buildLocalChatCompletionRequest(rawFields map[string]json.RawMessage, conte
 	return body, plan, nil
 }
 
-func buildLocalToolLoopTransportPlan(rawFields map[string]json.RawMessage, tools []map[string]any, forceCodexToolChoiceRequired bool) ([]map[string]any, customToolTransportPlan, any, string, error) {
+func buildLocalToolLoopTransportPlan(rawFields map[string]json.RawMessage, tools []map[string]any, serviceLimits ServiceLimits, forceCodexToolChoiceRequired bool) ([]map[string]any, customToolTransportPlan, any, string, error) {
 	plan := customToolTransportPlan{
 		Mode: customToolsModeBridge,
 		Bridge: customToolBridge{
@@ -150,7 +150,7 @@ func buildLocalToolLoopTransportPlan(rawFields map[string]json.RawMessage, tools
 			usedNames[name] = struct{}{}
 			localTools = append(localTools, definition)
 		case isCustomToolType(toolType):
-			descriptor, definition, err := buildLocalCustomToolDefinition(tool)
+			descriptor, definition, err := buildLocalCustomToolDefinition(tool, serviceLimits)
 			if err != nil {
 				return nil, customToolTransportPlan{}, nil, "", err
 			}
@@ -311,13 +311,13 @@ func buildLocalFunctionToolDefinition(tool map[string]any) (map[string]any, stri
 	}, name, nil
 }
 
-func buildLocalCustomToolDefinition(tool map[string]any) (customToolDescriptor, map[string]any, error) {
+func buildLocalCustomToolDefinition(tool map[string]any, serviceLimits ServiceLimits) (customToolDescriptor, map[string]any, error) {
 	name, namespace := customToolIdentity(tool)
 	if name == "" {
 		return customToolDescriptor{}, nil, domain.NewValidationError("tools", "custom tool name is required")
 	}
 
-	constraint, err := compileCustomToolConstraint(tool)
+	constraint, err := compileCustomToolConstraint(tool, serviceLimits)
 	if err != nil {
 		return customToolDescriptor{}, nil, domain.NewValidationError("tools", err.Error())
 	}

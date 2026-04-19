@@ -4574,6 +4574,35 @@ func TestResponsesLocalOnlyRejectsUnsupportedGrammarCustomTools(t *testing.T) {
 	require.Contains(t, asStringAny(errorPayload["message"]), "recursive lark rule")
 }
 
+func TestResponsesLocalOnlyRejectsOversizedGrammarCustomTools(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		ResponsesMode:   config.ResponsesModeLocalOnly,
+		CustomToolsMode: "auto",
+	})
+
+	status, payload := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model": "test-model",
+		"input": "Use grammar tool",
+		"tools": []map[string]any{
+			{
+				"type": "custom",
+				"name": "math_exp",
+				"format": map[string]any{
+					"type":       "grammar",
+					"syntax":     "regex",
+					"definition": strings.Repeat("a", (16<<10)+1),
+				},
+			},
+		},
+	})
+
+	require.Equal(t, http.StatusBadRequest, status)
+	errorPayload := payload["error"].(map[string]any)
+	require.Equal(t, "invalid_request_error", errorPayload["type"])
+	require.Equal(t, "tools", errorPayload["param"])
+	require.Contains(t, asStringAny(errorPayload["message"]), "shim-local constrained limit")
+}
+
 func TestResponsesRetryStructuredInputAsStringForProxyRequests(t *testing.T) {
 	app := testutil.NewTestApp(t)
 

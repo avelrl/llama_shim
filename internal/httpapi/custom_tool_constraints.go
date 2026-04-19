@@ -19,7 +19,9 @@ type customToolConstraint struct {
 	Pattern    *regexp.Regexp
 }
 
-func compileCustomToolConstraint(tool map[string]any) (*customToolConstraint, error) {
+func compileCustomToolConstraint(tool map[string]any, serviceLimits ServiceLimits) (*customToolConstraint, error) {
+	limits := normalizeServiceLimits(serviceLimits)
+
 	formatType := detectCustomToolFormatType(tool)
 	if formatType == "" || formatType == "text" {
 		return nil, nil
@@ -41,6 +43,12 @@ func compileCustomToolConstraint(tool map[string]any) (*customToolConstraint, er
 	if definition == "" {
 		return nil, fmt.Errorf("custom tool grammar definition is required")
 	}
+	if int64(len(definition)) > limits.CustomToolGrammarDefinitionBytes {
+		return nil, fmt.Errorf(
+			"custom tool grammar definition exceeds the shim-local constrained limit of %d bytes",
+			limits.CustomToolGrammarDefinitionBytes,
+		)
+	}
 
 	var pattern string
 	switch syntax {
@@ -57,6 +65,13 @@ func compileCustomToolConstraint(tool map[string]any) (*customToolConstraint, er
 	}
 
 	anchored := "^(?:" + pattern + ")$"
+	if int64(len(pattern)) > limits.CustomToolCompiledPatternBytes || int64(len(anchored)) > limits.CustomToolCompiledPatternBytes {
+		return nil, fmt.Errorf(
+			"compiled %s grammar exceeds the shim-local constrained limit of %d bytes",
+			syntax,
+			limits.CustomToolCompiledPatternBytes,
+		)
+	}
 	matcher, err := regexp.Compile(anchored)
 	if err != nil {
 		return nil, fmt.Errorf("compile %s grammar: %w", syntax, err)

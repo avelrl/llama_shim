@@ -529,7 +529,7 @@ func (h *responseHandler) runPreparedLocalToolLoopResponse(ctx context.Context, 
 
 	repairPrompt := ""
 	for attempt := 1; ; attempt++ {
-		chatBody, plan, err := buildLocalToolLoopChatCompletionBody(rawFields, prepared.ContextItems, prepared.NormalizedInput, prepared.ToolCallRefs, h.customToolsMode, h.codexCompatibilityEnabled, h.forceCodexToolChoiceRequired, repairPrompt)
+		chatBody, plan, err := buildLocalToolLoopChatCompletionBody(rawFields, prepared.ContextItems, prepared.NormalizedInput, prepared.ToolCallRefs, h.serviceLimits, h.customToolsMode, h.codexCompatibilityEnabled, h.forceCodexToolChoiceRequired, repairPrompt)
 		if err != nil {
 			return domain.Response{}, err
 		}

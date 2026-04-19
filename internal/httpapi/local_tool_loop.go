@@ -145,9 +145,9 @@ func (h *responseHandler) createLocalToolLoopResponse(ctx context.Context, reque
 	return h.service.SaveExternalResponse(ctx, prepared, input, response)
 }
 
-func buildLocalToolLoopChatCompletionBody(rawFields map[string]json.RawMessage, contextItems []domain.Item, currentInput []domain.Item, refs map[string]domain.ToolCallReference, customToolsMode string, codexCompatibilityEnabled bool, forceCodexToolChoiceRequired bool, repairPrompt string) ([]byte, customToolTransportPlan, error) {
+func buildLocalToolLoopChatCompletionBody(rawFields map[string]json.RawMessage, contextItems []domain.Item, currentInput []domain.Item, refs map[string]domain.ToolCallReference, serviceLimits ServiceLimits, customToolsMode string, codexCompatibilityEnabled bool, forceCodexToolChoiceRequired bool, repairPrompt string) ([]byte, customToolTransportPlan, error) {
 	_ = customToolsMode
-	return buildLocalChatCompletionRequest(rawFields, contextItems, currentInput, refs, codexCompatibilityEnabled, forceCodexToolChoiceRequired, repairPrompt)
+	return buildLocalChatCompletionRequest(rawFields, contextItems, currentInput, refs, serviceLimits, codexCompatibilityEnabled, forceCodexToolChoiceRequired, repairPrompt)
 }
 
 func rewriteResponsesBodyToChatCompletionsBody(body []byte) ([]byte, error) {

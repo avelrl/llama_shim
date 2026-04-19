@@ -116,6 +116,8 @@ type ServiceLimits struct {
 	JSONBodyBytes                    int64
 	RetrievalFileUploadBytes         int64
 	ChatCompletionsShadowStoreBytes  int64
+	CustomToolGrammarDefinitionBytes int64
+	CustomToolCompiledPatternBytes   int64
 	RetrievalMaxConcurrentSearches   int
 	RetrievalMaxSearchQueries        int
 	RetrievalMaxGroundingChunks      int
@@ -131,6 +133,12 @@ func normalizeServiceLimits(limits ServiceLimits) ServiceLimits {
 	}
 	if limits.ChatCompletionsShadowStoreBytes <= 0 {
 		limits.ChatCompletionsShadowStoreBytes = 64 << 20
+	}
+	if limits.CustomToolGrammarDefinitionBytes <= 0 {
+		limits.CustomToolGrammarDefinitionBytes = 16 << 10
+	}
+	if limits.CustomToolCompiledPatternBytes <= 0 {
+		limits.CustomToolCompiledPatternBytes = 32 << 10
 	}
 	if limits.RetrievalMaxConcurrentSearches <= 0 {
 		limits.RetrievalMaxConcurrentSearches = 8

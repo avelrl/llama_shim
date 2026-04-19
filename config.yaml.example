@@ -36,6 +36,10 @@ shim:
     # optional local shadow storage. Responses above this size are still
     # proxied to the client but are not persisted locally.
     chat_completions_shadow_store_bytes: 64MiB
+    # Maximum grammar definition size accepted by shim-local constrained custom tools.
+    custom_tool_grammar_definition_bytes: 16KiB
+    # Maximum compiled regex/pattern size accepted after regex or Lark expansion.
+    custom_tool_compiled_pattern_bytes: 32KiB
     # Maximum concurrent retrieval searches across raw vector search and local file_search.
     retrieval_max_concurrent_searches: 8
     # Maximum number of rewritten search queries per retrieval request.

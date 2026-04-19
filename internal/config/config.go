@@ -35,6 +35,8 @@ type Config struct {
 	ShimJSONBodyLimitBytes                         int64
 	RetrievalFileUploadMaxBytes                    int64
 	ChatCompletionsShadowStoreMaxBytes             int64
+	CustomToolGrammarDefinitionMaxBytes            int64
+	CustomToolCompiledPatternMaxBytes              int64
 	RetrievalMaxConcurrentSearches                 int
 	RetrievalMaxSearchQueries                      int
 	RetrievalMaxGroundingChunks                    int
@@ -223,6 +225,16 @@ func Load(configPath string) (Config, error) {
 		return Config{}, fmt.Errorf("parse shim.limits.chat_completions_shadow_store_bytes: %w", err)
 	}
 	cfg.ChatCompletionsShadowStoreMaxBytes = chatCompletionShadowStoreLimit
+	customToolGrammarDefinitionLimit, err := parseByteSize(v.GetString("shim.limits.custom_tool_grammar_definition_bytes"))
+	if err != nil {
+		return Config{}, fmt.Errorf("parse shim.limits.custom_tool_grammar_definition_bytes: %w", err)
+	}
+	cfg.CustomToolGrammarDefinitionMaxBytes = customToolGrammarDefinitionLimit
+	customToolCompiledPatternLimit, err := parseByteSize(v.GetString("shim.limits.custom_tool_compiled_pattern_bytes"))
+	if err != nil {
+		return Config{}, fmt.Errorf("parse shim.limits.custom_tool_compiled_pattern_bytes: %w", err)
+	}
+	cfg.CustomToolCompiledPatternMaxBytes = customToolCompiledPatternLimit
 	retrievalMaxConcurrentSearches, err := parsePositiveInt(v.GetString("shim.limits.retrieval_max_concurrent_searches"))
 	if err != nil {
 		return Config{}, fmt.Errorf("parse shim.limits.retrieval_max_concurrent_searches: %w", err)
@@ -339,6 +351,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("shim.limits.json_body_bytes", "1MiB")
 	v.SetDefault("shim.limits.retrieval_file_upload_bytes", "64MiB")
 	v.SetDefault("shim.limits.chat_completions_shadow_store_bytes", "64MiB")
+	v.SetDefault("shim.limits.custom_tool_grammar_definition_bytes", "16KiB")
+	v.SetDefault("shim.limits.custom_tool_compiled_pattern_bytes", "32KiB")
 	v.SetDefault("shim.limits.retrieval_max_concurrent_searches", "8")
 	v.SetDefault("shim.limits.retrieval_max_search_queries", "4")
 	v.SetDefault("shim.limits.retrieval_max_grounding_chunks", "20")

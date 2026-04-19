@@ -20,7 +20,7 @@ func (h *responseHandler) tryRunPreparedLocalConstrainedCustomToolResponse(ctx c
 		effectiveTools = augmentCodexToolDescriptions(rawTools)
 	}
 
-	_, plan, _, _, err := buildLocalToolLoopTransportPlan(rawFields, effectiveTools, h.forceCodexToolChoiceRequired)
+	_, plan, _, _, err := buildLocalToolLoopTransportPlan(rawFields, effectiveTools, h.serviceLimits, h.forceCodexToolChoiceRequired)
 	if err != nil {
 		return domain.Response{}, false, err
 	}
