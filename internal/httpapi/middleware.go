@@ -301,7 +301,8 @@ func captureRequestBody(r *http.Request) capturedBody {
 		return capturedBody{}
 	}
 
-	body, err := io.ReadAll(r.Body)
+	limitedReader := io.LimitReader(r.Body, maxDebugLogBodyBytes+1)
+	body, err := io.ReadAll(limitedReader)
 	if err != nil {
 		r.Body = io.NopCloser(bytes.NewReader(nil))
 		return capturedBody{
@@ -310,17 +311,21 @@ func captureRequestBody(r *http.Request) capturedBody {
 			totalBytes: 0,
 		}
 	}
-	r.Body = io.NopCloser(bytes.NewReader(body))
+	r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(body), r.Body))
 
 	truncated := false
+	totalBytes := len(body)
 	captured := body
 	if len(body) > maxDebugLogBodyBytes {
 		captured = body[:maxDebugLogBodyBytes]
 		truncated = true
+		if r.ContentLength > int64(totalBytes) {
+			totalBytes = int(r.ContentLength)
+		}
 	}
 	return capturedBody{
 		text:          formatBodyForLog(captured, truncated),
-		totalBytes:    len(body),
+		totalBytes:    totalBytes,
 		capturedBytes: len(captured),
 		truncated:     truncated,
 	}

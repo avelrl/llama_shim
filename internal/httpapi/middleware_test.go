@@ -2,6 +2,7 @@ package httpapi_test
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -99,4 +100,57 @@ func TestRequestLogMiddlewareOmitsSSEBodiesAtDebug(t *testing.T) {
 	require.Contains(t, output, `"response_body":"[text/event-stream body omitted]"`)
 	require.NotContains(t, output, `response.output_text.delta`)
 	require.NotContains(t, output, `"delta":"secret"`)
+}
+
+func TestRequestLogMiddlewareBoundsRequestBodyRead(t *testing.T) {
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	const logBodyLimit = 16 << 10
+	body := &errorAfterNReadCloser{
+		data:        []byte(strings.Repeat("a", logBodyLimit+64)),
+		errorAfterN: logBodyLimit + 1,
+	}
+
+	handler := httpapi.Chain(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusAccepted)
+		}),
+		httpapi.RequestLogMiddleware(logger, nil),
+		httpapi.RequestIDMiddleware,
+	)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/test", body)
+	req.ContentLength = int64(len(body.data))
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	require.Equal(t, http.StatusAccepted, recorder.Code)
+	output := logs.String()
+	require.NotContains(t, output, "[failed to read request body]")
+	require.Contains(t, output, `"request_body_truncated":true`)
+	require.Contains(t, output, `"request_body_bytes":16448`)
+	require.Contains(t, output, `"request_body_captured_bytes":16384`)
+}
+
+type errorAfterNReadCloser struct {
+	data        []byte
+	offset      int
+	errorAfterN int
+}
+
+func (r *errorAfterNReadCloser) Read(p []byte) (int, error) {
+	if r.offset >= r.errorAfterN {
+		return 0, errors.New("read limit exceeded")
+	}
+	if r.offset >= len(r.data) {
+		return 0, io.EOF
+	}
+	n := copy(p, r.data[r.offset:])
+	r.offset += n
+	return n, nil
+}
+
+func (r *errorAfterNReadCloser) Close() error {
+	return nil
 }
