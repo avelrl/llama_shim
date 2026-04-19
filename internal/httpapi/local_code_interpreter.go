@@ -810,8 +810,16 @@ func (h *responseHandler) findReusableLocalCodeInterpreterSessionID(ctx context.
 		return "", false, nil
 	}
 
-	for i := len(prepared.EffectiveInput) - 1; i >= 0; i-- {
-		item := prepared.EffectiveInput[i]
+	trustedEffectiveInput := prepared.EffectiveInput
+	if normalizedLen := len(prepared.NormalizedInput); normalizedLen > 0 && len(trustedEffectiveInput) >= normalizedLen {
+		// Effective input appends normalized current-request input after trusted lineage.
+		// Restrict reuse scanning to the trusted prefix so user-supplied items cannot
+		// inject arbitrary container ids.
+		trustedEffectiveInput = trustedEffectiveInput[:len(trustedEffectiveInput)-normalizedLen]
+	}
+
+	for i := len(trustedEffectiveInput) - 1; i >= 0; i-- {
+		item := trustedEffectiveInput[i]
 		if strings.TrimSpace(item.Type) != "code_interpreter_call" {
 			continue
 		}
