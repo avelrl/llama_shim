@@ -613,6 +613,46 @@ func TestShimRateLimitRejectsExcessRequests(t *testing.T) {
 	require.Equal(t, "rate_limit_exceeded", asStringAny(errorPayload["code"]))
 }
 
+func TestShimRateLimitAppliesToMetricsPathWhenMetricsAreDisabled(t *testing.T) {
+	metricsEnabled := false
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		AuthMode:                   config.ShimAuthModeStaticBearer,
+		BearerTokens:               []string{"shim-secret"},
+		RateLimitEnabled:           true,
+		RateLimitRequestsPerMinute: 1,
+		RateLimitBurst:             1,
+		MetricsEnabled:             &metricsEnabled,
+	})
+
+	req, err := http.NewRequest(http.MethodGet, app.Server.URL+"/metrics", nil)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer shim-secret")
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusNotFound, resp.StatusCode)
+	require.Equal(t, "1", resp.Header.Get("X-RateLimit-Limit-Requests"))
+	require.Equal(t, "0", resp.Header.Get("X-RateLimit-Remaining-Requests"))
+	require.NotEmpty(t, resp.Header.Get("X-RateLimit-Reset-Requests"))
+	resp.Body.Close()
+
+	req, err = http.NewRequest(http.MethodGet, app.Server.URL+"/metrics", nil)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer shim-secret")
+	resp, err = app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusTooManyRequests, resp.StatusCode)
+	require.Equal(t, "1", resp.Header.Get("X-RateLimit-Limit-Requests"))
+	require.Equal(t, "0", resp.Header.Get("X-RateLimit-Remaining-Requests"))
+	require.NotEmpty(t, resp.Header.Get("X-RateLimit-Reset-Requests"))
+
+	var body map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+	errorPayload := body["error"].(map[string]any)
+	require.Equal(t, "rate_limit_error", asStringAny(errorPayload["type"]))
+	require.Equal(t, "rate_limit_exceeded", asStringAny(errorPayload["code"]))
+}
+
 func TestShimMetricsEndpointExposesPrometheusTextAndSharesIngressAuth(t *testing.T) {
 	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
 		AuthMode:     config.ShimAuthModeStaticBearer,

@@ -99,6 +99,10 @@ type MetricsConfig struct {
 }
 
 func normalizeMetricsConfig(cfg MetricsConfig) MetricsConfig {
+	if !cfg.Enabled {
+		cfg.Path = ""
+		return cfg
+	}
 	if strings.TrimSpace(cfg.Path) == "" {
 		cfg.Path = "/metrics"
 	}
