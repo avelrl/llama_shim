@@ -193,10 +193,7 @@ func (s *ResponseService) prepareResponseContext(ctx context.Context, input Crea
 		if err != nil {
 			return PreparedResponseContext{}, err
 		}
-		for _, response := range lineage {
-			baseItems = append(baseItems, response.NormalizedInputItems...)
-			baseItems = append(baseItems, response.Output...)
-		}
+		baseItems = buildLineageContextItems(lineage)
 	case input.ConversationID != "":
 		var items []domain.ConversationItem
 		conversation, items, err = s.conversations.GetConversation(ctx, input.ConversationID)
@@ -207,7 +204,6 @@ func (s *ResponseService) prepareResponseContext(ctx context.Context, input Crea
 	default:
 		baseItems = nil
 	}
-	baseItems = domain.TrimItemsBeforeLatestCompaction(baseItems)
 	baseItems, err = domain.ExpandSyntheticCompactionItems(baseItems)
 	if err != nil {
 		return PreparedResponseContext{}, err
@@ -729,8 +725,37 @@ func MapStorageError(err error) error {
 
 func domainItemsFromConversation(items []domain.ConversationItem) []domain.Item {
 	out := make([]domain.Item, 0, len(items))
+	lastTrustedCompaction := -1
 	for _, item := range items {
 		out = append(out, item.Item)
+		if item.Source == "output" && item.Item.Type == "compaction" {
+			lastTrustedCompaction = len(out) - 1
+		}
+	}
+	if lastTrustedCompaction >= 0 {
+		return append([]domain.Item(nil), out[lastTrustedCompaction:]...)
+	}
+	return out
+}
+
+func buildLineageContextItems(lineage []domain.StoredResponse) []domain.Item {
+	out := make([]domain.Item, 0, len(lineage)*2)
+	for _, response := range lineage {
+		out = append(out, response.NormalizedInputItems...)
+		outputStart := len(out)
+		out = append(out, response.Output...)
+		lastTrustedCompaction := -1
+		for idx, item := range response.Output {
+			if item.Type == "compaction" {
+				lastTrustedCompaction = idx
+			}
+		}
+		if lastTrustedCompaction >= 0 {
+			trimStart := outputStart + lastTrustedCompaction
+			if trimStart > 0 {
+				out = append([]domain.Item(nil), out[trimStart:]...)
+			}
+		}
 	}
 	return out
 }
