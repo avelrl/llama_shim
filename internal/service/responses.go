@@ -728,7 +728,7 @@ func domainItemsFromConversation(items []domain.ConversationItem) []domain.Item 
 	lastTrustedCompaction := -1
 	for _, item := range items {
 		out = append(out, item.Item)
-		if item.Source == "output" && item.Item.Type == "compaction" {
+		if isTrustedConversationCompaction(item) {
 			lastTrustedCompaction = len(out) - 1
 		}
 	}
@@ -758,6 +758,10 @@ func buildLineageContextItems(lineage []domain.StoredResponse) []domain.Item {
 		}
 	}
 	return out
+}
+
+func isTrustedConversationCompaction(item domain.ConversationItem) bool {
+	return item.Item.Type == "compaction" && item.Source == "response_output"
 }
 
 func buildStoredEffectiveInputItems(effectiveInput, normalizedInput []domain.Item) ([]domain.Item, error) {
