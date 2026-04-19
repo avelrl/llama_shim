@@ -135,6 +135,135 @@ When updating [`docs/v2-scope.md`](docs/v2-scope.md):
   streamed shadow-store reconstruction,
   and optional upstream history merge/bridge behavior.
 
+## Mandatory security and regression guardrails
+
+The commit range re-validated on 2026-04-19 exposed a repeating set of
+mistakes. Treat the following as mandatory rules for new work on this repo.
+
+### 1. Do not fix DoS by adding hidden OpenAI-surface regressions
+
+- Do not add undocumented public limits to OpenAI-compatible endpoints just to
+  stop memory growth.
+- In particular, do not add shim-only caps such as:
+  undocumented `limit` maxima,
+  undocumented response-size ceilings,
+  or new `502`/validation failures for payloads that are still valid per the
+  official OpenAI surface.
+- If a limit is only needed for optional shim-owned side effects
+  (shadow-store, replay artifact persistence, debug capture, local snapshots),
+  keep it internal-only, configurable, and non-fatal for the main client
+  response path.
+
+### 2. Avoid full materialization on hot request, replay, list, and rebuild paths
+
+- Do not use `io.ReadAll`, unbounded `strings.Builder`, full-table slices, or
+  per-item event accumulation on public or attacker-reachable paths unless the
+  data is already hard-bounded by contract and tests prove it.
+- Prefer:
+  streaming transforms over buffer-then-rewrite,
+  visitor/callback emission over `[]event` construction,
+  metadata-first scans over full BLOB/file reads,
+  SQL/keyset pagination over load-all-then-slice,
+  incremental updates over full rebuilds.
+- If a list endpoint does not return file or blob content, do not read content
+  from storage just to build the page.
+- If a replay path writes SSE incrementally, do not prebuild the full replay
+  event list in memory.
+
+### 3. Fix every reachable sibling path, not just the first hot path you saw
+
+- When a bug is caused by full buffering, replay synthesis, or list/rebuild
+  logic, review all sibling entrypoints that share the helper or pattern.
+- Do not mark a fix done if one path is bounded but another equivalent path
+  still materializes the same data.
+- Typical sibling pairs to check in this repo:
+  create-stream vs retrieve-stream,
+  stored replay vs synthetic replay,
+  local list path vs merged upstream bridge path,
+  Docker snapshot path vs unsafe-host/local snapshot path,
+  attach/update path vs delete/rebuild path.
+
+### 4. Do not rely on fake language-level sandboxes as a security boundary
+
+- Do not present Python monkeypatching, builtin wrapping, substring blacklists,
+  or planner hints as real sandboxing.
+- For code interpreter security, the real boundary is the runtime/container
+  isolation layer. Prefer Docker hardening and explicit docs over fragile
+  Python-level wrappers.
+- If a shim-local safety layer is only advisory or best-effort, document it as
+  such and do not overclaim filesystem/module isolation.
+
+### 5. Keep limits centralized and docs-aware
+
+- New operational limits belong in normalized config/service limit structs, not
+  scattered `const` values hidden inside handlers.
+- Wire new limits through config defaults, runtime normalization, tests, and
+  example config together.
+- If the limit affects only internal behavior, document it in repo docs/config,
+  not as an OpenAI contract change.
+
+### 6. Prefer conservative architecture over narrow patches
+
+- For storage/listing:
+  use SQL-side filtering/pagination where possible,
+  use cursor/keyset pagination instead of load-all pagination,
+  avoid reading unused columns.
+- For retrieval/vector indexing:
+  prefer incremental row updates or coalesced repair/rebuild paths over full
+  rebuild-on-every-mutation.
+- For snapshots and generated-artifact diffing:
+  compare metadata first and fetch content lazily only for bounded candidates.
+- For sanitization:
+  prefer streaming/token-based rewriting over buffer -> unmarshal -> marshal of
+  the whole payload.
+
+### 7. Do not close partial mitigations as complete fixes
+
+- If a patch removes only one amplification factor but leaves the same attack
+  path reachable through another buffer, scan, rebuild, or replay path, keep
+  the task open or split the remaining work into an explicit follow-up.
+- Backlog, OpenAPI, README, and guides must not claim full closure if the code
+  only implements a bounded subset or best-effort mitigation.
+
+### 8. Mandatory tests for this class of changes
+
+For any security, replay, pagination, storage, sandbox, or resource-bound fix,
+the minimum bar is:
+
+- focused unit tests for the new bound/streaming/helper behavior
+- integration tests for the public endpoint happy path
+- integration tests for the main oversized/adversarial path
+- tests that the client-visible OpenAI contract did not regress
+- tests for all sibling paths that share the same helper/pattern
+- `go test ./...`
+- `make lint`
+- `git diff --check`
+
+Add the following where applicable:
+
+- If changing list pagination:
+  test `after`, `order`, `has_more`, and that large unused fields are not read.
+- If changing replay/SSE:
+  test create-stream, retrieve-stream, and any synthetic replay helper.
+- If changing shadow-store/capture behavior:
+  test that overflow skips local persistence without breaking the client
+  response.
+- If changing code interpreter/container behavior:
+  test owner isolation, adversarial input paths, and both metadata and content
+  handling.
+- If changing vector store indexing:
+  test attach, update, delete, and rebuild/repair behavior separately.
+
+### 9. Review checklist before merge
+
+Before merging work in these areas, explicitly ask and answer:
+
+- Did this fix remove the root cause, or only cap one manifestation?
+- Did we accidentally change the public OpenAI contract to make the fix easier?
+- Did we move the same bug to a sibling path?
+- Is the bound internal-only and best-effort, or is it a real API behavior?
+- Are docs, OpenAPI, config defaults, and tests aligned with that answer?
+
 ## Before calling a task done
 
 Confirm all of the following:
