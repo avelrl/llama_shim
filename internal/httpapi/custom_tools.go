@@ -376,10 +376,6 @@ func rawStringField(fields map[string]json.RawMessage, key string) string {
 }
 
 func remapCustomToolResponseBody(raw []byte, plan customToolTransportPlan) ([]byte, error) {
-	if !plan.BridgeActive() {
-		return raw, nil
-	}
-
 	var payload map[string]any
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		return nil, err
@@ -392,30 +388,55 @@ func remapCustomToolResponseBody(raw []byte, plan customToolTransportPlan) ([]by
 
 	responseID := strings.TrimSpace(asString(payload["id"]))
 	changed := false
-	// Some upstreams collapse a tool call into a placeholder assistant message in
-	// the final response. Recover the structured custom tool call before we store
-	// or re-emit the response, otherwise the conversation loses the tool boundary.
-	if recovered, didRecover := recoverPlaceholderCustomToolCalls(output, responseID, plan.Bridge); didRecover {
-		output = recovered
-		changed = true
+	if plan.BridgeActive() {
+		// Some upstreams collapse a tool call into a placeholder assistant message in
+		// the final response. Recover the structured custom tool call before we store
+		// or re-emit the response, otherwise the conversation loses the tool boundary.
+		if recovered, didRecover := recoverPlaceholderCustomToolCalls(output, responseID, plan.Bridge); didRecover {
+			output = recovered
+			changed = true
+		}
 	}
 	for index, entry := range output {
 		item, ok := entry.(map[string]any)
 		if !ok {
 			continue
 		}
-		rewritten, didChange := remapFunctionCallItemToCustom(item, plan.Bridge)
-		if !didChange {
-			continue
+		if plan.BridgeActive() {
+			rewritten, didChange := remapFunctionCallItemToCustom(item, plan.Bridge)
+			if didChange {
+				output[index] = rewritten
+				changed = true
+				continue
+			}
 		}
-		output[index] = rewritten
-		changed = true
+		rewritten, didChange := normalizeCustomToolCallItem(item)
+		if didChange {
+			output[index] = rewritten
+			changed = true
+		}
 	}
 	if !changed {
 		return raw, nil
 	}
 	payload["output"] = output
 	return json.Marshal(payload)
+}
+
+func normalizeCustomToolCallItem(item map[string]any) (map[string]any, bool) {
+	if strings.TrimSpace(asString(item["type"])) != "custom_tool_call" {
+		return nil, false
+	}
+
+	normalizedInput := extractCustomToolInput(item["input"])
+	currentInput := strings.TrimSpace(asString(item["input"]))
+	if normalizedInput == currentInput && currentInput != "" {
+		return nil, false
+	}
+
+	rewritten := cloneAnyMap(item)
+	rewritten["input"] = normalizedInput
+	return rewritten, true
 }
 
 func remapFunctionCallItemToCustom(item map[string]any, bridge customToolBridge) (map[string]any, bool) {
@@ -1051,13 +1072,7 @@ func extractCustomToolInput(arguments any) string {
 		var payload map[string]any
 		if err := json.Unmarshal([]byte(trimmed), &payload); err == nil {
 			if input, ok := payload["input"]; ok {
-				switch typed := input.(type) {
-				case string:
-					return typed
-				default:
-					body, _ := json.Marshal(typed)
-					return string(body)
-				}
+				return extractCustomToolInput(input)
 			}
 			if input, ok := extractSingleStringMapValue(payload); ok {
 				return input
@@ -1070,13 +1085,7 @@ func extractCustomToolInput(arguments any) string {
 		return trimmed
 	case map[string]any:
 		if input, ok := value["input"]; ok {
-			switch typed := input.(type) {
-			case string:
-				return typed
-			default:
-				body, _ := json.Marshal(typed)
-				return string(body)
-			}
+			return extractCustomToolInput(input)
 		}
 		if input, ok := extractSingleStringMapValue(value); ok {
 			return input

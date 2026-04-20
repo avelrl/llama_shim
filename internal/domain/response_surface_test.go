@@ -51,3 +51,40 @@ func TestHydrateResponseRequestSurfaceSanitizesMCPTools(t *testing.T) {
 	require.NotContains(t, tools[1], "authorization")
 	require.NotContains(t, tools[1], "headers")
 }
+
+func TestHydrateResponseRequestSurfaceHydratesContinuationFields(t *testing.T) {
+	hydrated := HydrateResponseRequestSurface(Response{}, `{
+		"previous_response_id": "resp_prev",
+		"conversation": {"id":"conv_123"}
+	}`)
+
+	require.Equal(t, "resp_prev", hydrated.PreviousResponseID)
+	require.NotNil(t, hydrated.Conversation)
+	require.Equal(t, "conv_123", hydrated.Conversation.ID)
+}
+
+func TestHydrateResponseContinuationJSONPatchesMissingContinuationFields(t *testing.T) {
+	raw, err := HydrateResponseContinuationJSON([]byte(`{
+		"id":"resp_123",
+		"object":"response",
+		"created_at":1741900000,
+		"status":"completed",
+		"model":"test-model",
+		"output":[{"id":"msg_123","type":"message","role":"assistant","content":[{"type":"output_text","text":"OK"}]}],
+		"previous_response_id": null,
+		"conversation": null,
+		"output_text":"OK"
+	}`), `{
+		"previous_response_id":"resp_prev",
+		"conversation":"conv_123"
+	}`)
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(raw, &payload))
+	require.Equal(t, "resp_prev", payload["previous_response_id"])
+
+	conversation, ok := payload["conversation"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "conv_123", conversation["id"])
+}

@@ -131,6 +131,9 @@ func (h *responseHandler) proxyCreateStream(w http.ResponseWriter, r *http.Reque
 				h.logger.ErrorContext(r.Context(), "shadow store failed", "request_id", RequestIDFromContext(r.Context()), "err", err)
 			}
 		}
+		if hydratedBody, hydrateErr := domain.HydrateResponseContinuationJSON(responseBody, requestJSON); hydrateErr == nil {
+			responseBody = hydratedBody
+		}
 		if err := writeCompletedResponseAsSSE(r.Context(), h.logger, w, responseBody, plan, streamOptions.IncludeObfuscation); err != nil && !shouldIgnoreStreamProxyError(err) {
 			h.logger.WarnContext(r.Context(), "stream proxy failed", "request_id", RequestIDFromContext(r.Context()), "err", err)
 		}
@@ -152,6 +155,9 @@ func (h *responseHandler) proxyCreateStream(w http.ResponseWriter, r *http.Reque
 			if _, err := h.service.SaveExternalResponse(r.Context(), prepared, input, response); err != nil {
 				h.logger.ErrorContext(r.Context(), "shadow store failed", "request_id", RequestIDFromContext(r.Context()), "err", err)
 			}
+		}
+		if hydratedBody, hydrateErr := domain.HydrateResponseContinuationJSON(responseBody, requestJSON); hydrateErr == nil {
+			responseBody = hydratedBody
 		}
 		if err := writeCompletedResponseAsSSE(r.Context(), h.logger, w, responseBody, plan, streamOptions.IncludeObfuscation); err != nil && !shouldIgnoreStreamProxyError(err) {
 			h.logger.WarnContext(r.Context(), "stream proxy failed", "request_id", RequestIDFromContext(r.Context()), "err", err)
@@ -178,7 +184,7 @@ func (h *responseHandler) proxyCreateStream(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	if err := proxyResponsesStream(r.Context(), h.logger, w, resp, plan, onCompleted); err != nil && !shouldIgnoreStreamProxyError(err) {
+	if err := proxyResponsesStream(r.Context(), h.logger, w, resp, plan, requestJSON, onCompleted); err != nil && !shouldIgnoreStreamProxyError(err) {
 		h.logger.WarnContext(r.Context(), "stream proxy failed", "request_id", RequestIDFromContext(r.Context()), "err", err)
 	}
 }
@@ -325,6 +331,9 @@ func (h *responseHandler) createStreamViaUpstream(w http.ResponseWriter, r *http
 		if _, err := h.service.SaveExternalResponse(r.Context(), prepared, input, response); err != nil {
 			h.logger.ErrorContext(r.Context(), "upstream local-state stream failed", "request_id", RequestIDFromContext(r.Context()), "err", err)
 		}
+		if hydratedBody, hydrateErr := domain.HydrateResponseContinuationJSON(responseBody, requestJSON); hydrateErr == nil {
+			responseBody = hydratedBody
+		}
 		if err := writeCompletedResponseAsSSE(r.Context(), h.logger, w, responseBody, plan, streamOptions.IncludeObfuscation); err != nil && !shouldIgnoreStreamProxyError(err) {
 			h.logger.WarnContext(r.Context(), "upstream local-state stream failed", "request_id", RequestIDFromContext(r.Context()), "err", err)
 		}
@@ -345,13 +354,16 @@ func (h *responseHandler) createStreamViaUpstream(w http.ResponseWriter, r *http
 		if _, err := h.service.SaveExternalResponse(r.Context(), prepared, input, response); err != nil {
 			h.logger.ErrorContext(r.Context(), "upstream local-state stream failed", "request_id", RequestIDFromContext(r.Context()), "err", err)
 		}
+		if hydratedBody, hydrateErr := domain.HydrateResponseContinuationJSON(responseBody, requestJSON); hydrateErr == nil {
+			responseBody = hydratedBody
+		}
 		if err := writeCompletedResponseAsSSE(r.Context(), h.logger, w, responseBody, plan, streamOptions.IncludeObfuscation); err != nil && !shouldIgnoreStreamProxyError(err) {
 			h.logger.WarnContext(r.Context(), "upstream local-state stream failed", "request_id", RequestIDFromContext(r.Context()), "err", err)
 		}
 		return
 	}
 
-	err = proxyResponsesStream(r.Context(), h.logger, w, resp, plan, func(rawResponse []byte, artifacts []domain.ResponseReplayArtifact) error {
+	err = proxyResponsesStream(r.Context(), h.logger, w, resp, plan, requestJSON, func(rawResponse []byte, artifacts []domain.ResponseReplayArtifact) error {
 		response, err := domain.ParseUpstreamResponse(rawResponse)
 		if err != nil {
 			return err
@@ -384,7 +396,7 @@ func (h *responseHandler) proxyResponseRequest(r *http.Request, body []byte) (*h
 	return h.proxy.client.Proxy(cloned.Context(), cloned)
 }
 
-func proxyResponsesStream(ctx context.Context, logger *slog.Logger, w http.ResponseWriter, resp *http.Response, plan customToolTransportPlan, onCompleted func([]byte, []domain.ResponseReplayArtifact) error) error {
+func proxyResponsesStream(ctx context.Context, logger *slog.Logger, w http.ResponseWriter, resp *http.Response, plan customToolTransportPlan, requestJSON string, onCompleted func([]byte, []domain.ResponseReplayArtifact) error) error {
 	isSSE := strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "text/event-stream")
 	if logger != nil && logger.Enabled(ctx, slog.LevelDebug) {
 		logger.DebugContext(ctx, "responses stream opened",
@@ -427,7 +439,7 @@ func proxyResponsesStream(ctx context.Context, logger *slog.Logger, w http.Respo
 	}
 	flusher.Flush()
 
-	parser := newResponseStreamEventProxy(ctx, logger, plan, onCompleted)
+	parser := newResponseStreamEventProxy(ctx, logger, plan, requestJSON, onCompleted)
 	reader := bufio.NewReader(resp.Body)
 	for {
 		line, err := reader.ReadString('\n')
@@ -502,6 +514,7 @@ type responseStreamEventProxy struct {
 	ctx                          context.Context
 	logger                       *slog.Logger
 	plan                         customToolTransportPlan
+	requestJSON                  string
 	onCompleted                  func([]byte, []domain.ResponseReplayArtifact) error
 	eventType                    string
 	dataLines                    []string
@@ -528,11 +541,12 @@ type responseStreamEventProxy struct {
 	replayArtifactBytes          int
 }
 
-func newResponseStreamEventProxy(ctx context.Context, logger *slog.Logger, plan customToolTransportPlan, onCompleted func([]byte, []domain.ResponseReplayArtifact) error) *responseStreamEventProxy {
+func newResponseStreamEventProxy(ctx context.Context, logger *slog.Logger, plan customToolTransportPlan, requestJSON string, onCompleted func([]byte, []domain.ResponseReplayArtifact) error) *responseStreamEventProxy {
 	return &responseStreamEventProxy{
 		ctx:             ctx,
 		logger:          logger,
 		plan:            plan,
+		requestJSON:     requestJSON,
 		onCompleted:     onCompleted,
 		customItemByID:  make(map[string]customToolDescriptor),
 		addedItemIDs:    make(map[string]struct{}),
@@ -639,17 +653,22 @@ func (p *responseStreamEventProxy) remapEvent(eventType string, payload map[stri
 		eventType = strings.TrimSpace(asString(payload["type"]))
 	}
 
-	if p.plan.BridgeActive() {
-		switch eventType {
-		case "response.output_item.added", "response.output_item.done":
-			if item, ok := payload["item"].(map[string]any); ok {
-				if rewritten, descriptor, changed := remapStreamOutputItem(item, p.plan.Bridge); changed {
-					payload["item"] = rewritten
+	switch eventType {
+	case "response.output_item.added", "response.output_item.done":
+		if item, ok := payload["item"].(map[string]any); ok {
+			if rewritten, descriptor, changed := remapStreamOutputItem(item, p.plan.Bridge); changed {
+				payload["item"] = rewritten
+				if descriptor.Name != "" {
 					if itemID := strings.TrimSpace(asString(rewritten["id"])); itemID != "" {
 						p.customItemByID[itemID] = descriptor
 					}
 				}
 			}
+		}
+	}
+
+	if p.plan.BridgeActive() {
+		switch eventType {
 		case "response.function_call_arguments.delta":
 			itemID := strings.TrimSpace(asString(payload["item_id"]))
 			if _, ok := p.customItemByID[itemID]; ok {
@@ -702,6 +721,50 @@ func (p *responseStreamEventProxy) remapEvent(eventType string, payload map[stri
 					responsePayload["output"] = output
 					payload["response"] = responsePayload
 				}
+			}
+		}
+	}
+	switch eventType {
+	case "response.custom_tool_call_input.done":
+		if input, ok := payload["input"]; ok {
+			payload["input"] = extractCustomToolInput(input)
+		}
+		if item, ok := payload["item"].(map[string]any); ok {
+			if rewritten, descriptor, changed := remapStreamOutputItem(item, p.plan.Bridge); changed {
+				payload["item"] = rewritten
+				if descriptor.Name != "" {
+					if itemID := strings.TrimSpace(asString(rewritten["id"])); itemID != "" {
+						p.customItemByID[itemID] = descriptor
+					}
+				}
+			}
+		}
+	case "response.completed":
+		if responsePayload, ok := payload["response"].(map[string]any); ok {
+			if output, ok := responsePayload["output"].([]any); ok {
+				for index, entry := range output {
+					item, ok := entry.(map[string]any)
+					if !ok {
+						continue
+					}
+					if rewritten, descriptor, changed := remapStreamOutputItem(item, p.plan.Bridge); changed {
+						output[index] = rewritten
+						if descriptor.Name != "" {
+							if itemID := strings.TrimSpace(asString(rewritten["id"])); itemID != "" {
+								p.customItemByID[itemID] = descriptor
+							}
+						}
+					}
+				}
+				responsePayload["output"] = output
+				payload["response"] = responsePayload
+			}
+		}
+	}
+	if eventType == "response.created" || eventType == "response.in_progress" || eventType == "response.completed" {
+		if responsePayload, ok := payload["response"].(map[string]any); ok {
+			if hydrated, err := hydrateResponseEnvelopeContinuation(responsePayload, p.requestJSON); err == nil {
+				payload["response"] = hydrated
 			}
 		}
 	}
@@ -1635,12 +1698,37 @@ func looksLikeResponseID(value string) bool {
 }
 
 func remapStreamOutputItem(item map[string]any, bridge customToolBridge) (map[string]any, customToolDescriptor, bool) {
+	if rewritten, changed := normalizeCustomToolCallItem(item); changed {
+		descriptor, _ := bridge.ByCanonicalIdentity(strings.TrimSpace(asString(rewritten["name"])), strings.TrimSpace(asString(rewritten["namespace"])))
+		return rewritten, descriptor, true
+	}
 	rewritten, changed := remapFunctionCallItemToCustom(item, bridge)
 	if !changed {
 		return nil, customToolDescriptor{}, false
 	}
 	descriptor, _ := bridge.ByCanonicalIdentity(strings.TrimSpace(asString(rewritten["name"])), strings.TrimSpace(asString(rewritten["namespace"])))
 	return rewritten, descriptor, true
+}
+
+func hydrateResponseEnvelopeContinuation(responsePayload map[string]any, requestJSON string) (map[string]any, error) {
+	if strings.TrimSpace(requestJSON) == "" {
+		return responsePayload, nil
+	}
+
+	raw, err := json.Marshal(responsePayload)
+	if err != nil {
+		return nil, err
+	}
+	hydrated, err := domain.HydrateResponseContinuationJSON(raw, requestJSON)
+	if err != nil {
+		return nil, err
+	}
+
+	var rewritten map[string]any
+	if err := json.Unmarshal(hydrated, &rewritten); err != nil {
+		return nil, err
+	}
+	return rewritten, nil
 }
 
 func inProgressOutputItemSnapshot(item map[string]any) map[string]any {

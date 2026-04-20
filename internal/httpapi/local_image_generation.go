@@ -223,7 +223,7 @@ func captureLocalImageGenerationStream(ctx context.Context, logger *slog.Logger,
 		completedRaw []byte
 		artifacts    []domain.ResponseReplayArtifact
 	)
-	proxy := newResponseStreamEventProxy(ctx, logger, customToolTransportPlan{}, func(rawResponse []byte, replayArtifacts []domain.ResponseReplayArtifact) error {
+	proxy := newResponseStreamEventProxy(ctx, logger, customToolTransportPlan{}, "", func(rawResponse []byte, replayArtifacts []domain.ResponseReplayArtifact) error {
 		completedRaw = append([]byte(nil), rawResponse...)
 		artifacts = append([]domain.ResponseReplayArtifact(nil), replayArtifacts...)
 		return nil

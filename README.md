@@ -36,6 +36,7 @@ v1 supports:
 ## Documentation
 
 - practical guides: [docs/guides/README.md](docs/guides/README.md)
+- runtime hardening notes: [docs/guides/runtime-hardening.md](docs/guides/runtime-hardening.md)
 - V2 release notes: [docs/release-notes-v2.md](docs/release-notes-v2.md)
 - API contract and boundaries: [docs/compatibility-matrix.md](docs/compatibility-matrix.md)
 - V2 release scope: [docs/v2-scope.md](docs/v2-scope.md)

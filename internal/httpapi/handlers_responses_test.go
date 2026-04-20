@@ -749,6 +749,56 @@ func TestExtractCustomToolInputUnwrapsDoubleEncodedSingleStringProperty(t *testi
 	require.Equal(t, `print("hello world")`, extractCustomToolInput(string(wrapped)))
 }
 
+func TestExtractCustomToolInputUnwrapsNestedInputStringProperty(t *testing.T) {
+	require.Equal(t, `print("hello world")`, extractCustomToolInput(`{"input":"{\"code\":\"print(\\\"hello world\\\")\"}"}`))
+}
+
+func TestExtractCustomToolInputUnwrapsNestedInputObjectProperty(t *testing.T) {
+	require.Equal(t, `print("hello world")`, extractCustomToolInput(map[string]any{
+		"input": map[string]any{
+			"code": `print("hello world")`,
+		},
+	}))
+}
+
+func TestParseLocalToolLoopChatCompletionUnwrapsNestedCustomToolInput(t *testing.T) {
+	plan := customToolTransportPlan{
+		Mode: customToolsModeBridge,
+		Bridge: customToolBridge{
+			ByModelName: map[string]customToolDescriptor{
+				"code_exec": {Name: "code_exec", SyntheticName: syntheticCustomToolName("", "code_exec")},
+			},
+			BySynthetic: map[string]customToolDescriptor{
+				syntheticCustomToolName("", "code_exec"): {Name: "code_exec", SyntheticName: syntheticCustomToolName("", "code_exec")},
+			},
+			ByCanonical: map[string]customToolDescriptor{
+				canonicalCustomToolKey("", "code_exec"): {Name: "code_exec", SyntheticName: syntheticCustomToolName("", "code_exec")},
+			},
+		},
+	}
+
+	raw := []byte(`{
+		"choices": [{
+			"message": {
+				"tool_calls": [{
+					"id": "call_123",
+					"type": "function",
+					"function": {
+						"name": "code_exec",
+						"arguments": "{\"input\":\"{\\\"code\\\":\\\"print(\\\\\\\"hello world\\\\\\\")\\\"}\"}"
+					}
+				}]
+			}
+		}]
+	}`)
+
+	response, err := parseLocalToolLoopChatCompletion(raw, "resp_test", "test-model", "", "", plan)
+	require.NoError(t, err)
+	require.Len(t, response.Output, 1)
+	require.Equal(t, "custom_tool_call", response.Output[0].Type)
+	require.Equal(t, `print("hello world")`, asString(response.Output[0].Map()["input"]))
+}
+
 func TestRemapCustomToolsPayloadAppendsCodexCompatibilityHint(t *testing.T) {
 	rawFields := map[string]json.RawMessage{
 		"instructions": json.RawMessage(`"You are a coding agent running in the Codex CLI, a terminal-based coding assistant."`),
@@ -887,6 +937,37 @@ func TestNormalizeUpstreamResponseBodyDoesNotSynthesizeAssistantMessage(t *testi
 	require.Equal(t, "function_call", output[1].(map[string]any)["type"])
 }
 
+func TestNormalizeUpstreamResponseBodyUnwrapsNativeCustomToolCallInput(t *testing.T) {
+	raw := []byte(`{
+		"id":"upstream_resp_custom_native",
+		"object":"response",
+		"model":"test-model",
+		"output_text":"",
+		"output":[
+			{
+				"id":"ctc_1",
+				"type":"custom_tool_call",
+				"call_id":"call_1",
+				"name":"code_exec",
+				"input":"{\"code\":\"print(\\\"hello world\\\")\"}",
+				"status":"completed"
+			}
+		]
+	}`)
+
+	body, err := normalizeUpstreamResponseBody(raw, customToolTransportPlan{Mode: customToolsModePassthrough})
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(body, &payload))
+
+	output := payload["output"].([]any)
+	require.Len(t, output, 1)
+	item := output[0].(map[string]any)
+	require.Equal(t, "custom_tool_call", item["type"])
+	require.Equal(t, `print("hello world")`, item["input"])
+}
+
 func TestRemapCustomToolResponseBodyRestoresOnlyCustomTools(t *testing.T) {
 	raw := []byte(`{
 		"id":"upstream_resp_1",
@@ -957,6 +1038,72 @@ func TestRemapCustomToolResponseBodyRestoresOnlyCustomTools(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "function_call", functionCall["type"])
 	require.Equal(t, "add", functionCall["name"])
+}
+
+func TestProxyCreateWithShadowStoreHydratesContinuationFieldsInResponseBody(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, http.MethodPost, r.Method)
+		require.Equal(t, "/v1/responses", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"id":                   "resp_proxy_prev",
+			"object":               "response",
+			"created_at":           1712059200,
+			"status":               "completed",
+			"completed_at":         1712059201,
+			"model":                "test-model",
+			"previous_response_id": nil,
+			"conversation":         nil,
+			"output": []map[string]any{
+				{
+					"id":     "msg_1",
+					"type":   "message",
+					"role":   "assistant",
+					"status": "completed",
+					"content": []map[string]any{
+						{"type": "output_text", "text": "OK"},
+					},
+				},
+			},
+			"output_text": "OK",
+		}))
+	}))
+	defer upstream.Close()
+
+	handler := &responseHandler{
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		proxy:  newProxyHandler(nil, llama.NewClient(upstream.URL, time.Second), nil, ServiceLimits{}, false),
+	}
+
+	rawFields := map[string]json.RawMessage{
+		"model": json.RawMessage(`"test-model"`),
+		"input": json.RawMessage(`"Say OK"`),
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	rec := httptest.NewRecorder()
+
+	handler.proxyCreateWithShadowStore(rec, req, CreateResponseRequest{
+		PreviousResponseID: "resp_prev",
+		Conversation:       "conv_123",
+	}, nil, `{
+		"model":"test-model",
+		"input":"Say OK",
+		"previous_response_id":"resp_prev",
+		"conversation":"conv_123"
+	}`, rawFields)
+
+	resp := rec.Result()
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var payload map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&payload))
+	require.Equal(t, "resp_prev", payload["previous_response_id"])
+
+	conversation, ok := payload["conversation"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "conv_123", conversation["id"])
 }
 
 func TestRemapCustomToolsPayloadRejectsDuplicateBridgeNamesAcrossNamespaces(t *testing.T) {

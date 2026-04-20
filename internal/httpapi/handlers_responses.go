@@ -1662,6 +1662,14 @@ func (h *responseHandler) proxyCreateWithShadowStore(w http.ResponseWriter, r *h
 		} else {
 			responseBody = remappedBody
 		}
+		if hydratedBody, err := domain.HydrateResponseContinuationJSON(responseBody, requestJSON); err != nil {
+			h.logger.WarnContext(r.Context(), "response continuation hydration failed",
+				"request_id", RequestIDFromContext(r.Context()),
+				"err", err,
+			)
+		} else {
+			responseBody = hydratedBody
+		}
 		parsed, err = domain.ParseUpstreamResponse(responseBody)
 		if err == nil && (parsed.OutputText != "" || len(parsed.Output) > 0) {
 			parsed = annotateResponseCustomToolMetadata(parsed, plan)
@@ -1690,6 +1698,14 @@ func (h *responseHandler) proxyCreateWithShadowStore(w http.ResponseWriter, r *h
 			h.writeError(w, r, err)
 			return
 		}
+		if hydratedBody, hydrateErr := domain.HydrateResponseContinuationJSON(finalBody, requestJSON); hydrateErr == nil {
+			finalBody = hydratedBody
+		} else {
+			h.logger.WarnContext(r.Context(), "response continuation hydration failed",
+				"request_id", RequestIDFromContext(r.Context()),
+				"err", hydrateErr,
+			)
+		}
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -1714,6 +1730,14 @@ func (h *responseHandler) proxyCreateWithShadowStore(w http.ResponseWriter, r *h
 		if err != nil {
 			h.writeError(w, r, err)
 			return
+		}
+		if hydratedBody, hydrateErr := domain.HydrateResponseContinuationJSON(finalBody, requestJSON); hydrateErr == nil {
+			finalBody = hydratedBody
+		} else {
+			h.logger.WarnContext(r.Context(), "response continuation hydration failed",
+				"request_id", RequestIDFromContext(r.Context()),
+				"err", hydrateErr,
+			)
 		}
 
 		w.Header().Set("Content-Type", "application/json")

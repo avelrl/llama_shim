@@ -20,7 +20,7 @@ func TestResponseStreamEventProxyLogsOutputTextAndSummary(t *testing.T) {
 	logger := slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 	ctx := context.WithValue(context.Background(), requestIDKey, "req_test")
-	proxy := newResponseStreamEventProxy(ctx, logger, customToolTransportPlan{}, nil)
+	proxy := newResponseStreamEventProxy(ctx, logger, customToolTransportPlan{}, "", nil)
 
 	var out bytes.Buffer
 	lines := []string{
@@ -50,7 +50,7 @@ func TestResponseStreamEventProxyLogsOutputTextAndSummary(t *testing.T) {
 }
 
 func TestResponseStreamEventProxyKeepsStreamedMessageIDOnCompleted(t *testing.T) {
-	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, nil)
+	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, "", nil)
 
 	var out bytes.Buffer
 	lines := []string{
@@ -94,7 +94,7 @@ func TestProxyResponsesStreamCanonicalizesErrorBody(t *testing.T) {
 	}
 
 	recorder := httptest.NewRecorder()
-	err := proxyResponsesStream(context.Background(), nil, recorder, resp, customToolTransportPlan{}, nil)
+	err := proxyResponsesStream(context.Background(), nil, recorder, resp, customToolTransportPlan{}, "", nil)
 	require.NoError(t, err)
 	require.JSONEq(t, `{"error":{"message":"messages is required","type":"invalid_request_error","param":null,"code":null}}`, recorder.Body.String())
 }
@@ -222,6 +222,73 @@ func TestWriteCompletedResponseAsSSEReplaysFailedResponseWithoutPrematureError(t
 	require.Contains(t, body, `"error":{"code":"server_error","message":"shim-local code_interpreter execution failed"}`)
 }
 
+func TestResponseStreamEventProxyNormalizesNativeCustomToolDoneEvent(t *testing.T) {
+	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, "", nil)
+
+	eventType, payload := proxy.remapEvent("response.custom_tool_call_input.done", map[string]any{
+		"type":        "response.custom_tool_call_input.done",
+		"response_id": "resp_test",
+		"item_id":     "ctc_1",
+		"input":       `{"code":"print(\"hello world\")"}`,
+		"item": map[string]any{
+			"id":      "ctc_1",
+			"type":    "custom_tool_call",
+			"name":    "code_exec",
+			"input":   `{"code":"print(\"hello world\")"}`,
+			"status":  "completed",
+			"call_id": "call_1",
+		},
+	})
+
+	require.Equal(t, "response.custom_tool_call_input.done", eventType)
+	require.Equal(t, `print("hello world")`, asString(payload["input"]))
+	item, ok := payload["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, `print("hello world")`, asString(item["input"]))
+}
+
+func TestResponseStreamEventProxyHydratesContinuationFieldsOnCompleted(t *testing.T) {
+	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, `{
+		"previous_response_id":"resp_prev",
+		"conversation":"conv_123"
+	}`, nil)
+
+	eventType, payload := proxy.remapEvent("response.completed", map[string]any{
+		"type": "response.completed",
+		"response": map[string]any{
+			"id":                   "resp_test",
+			"object":               "response",
+			"created_at":           1741900000,
+			"status":               "completed",
+			"completed_at":         1741900001,
+			"model":                "test-model",
+			"previous_response_id": nil,
+			"conversation":         nil,
+			"output": []any{
+				map[string]any{
+					"id":     "msg_test",
+					"type":   "message",
+					"role":   "assistant",
+					"status": "completed",
+					"content": []any{
+						map[string]any{"type": "output_text", "text": "OK"},
+					},
+				},
+			},
+			"output_text": "OK",
+		},
+	})
+
+	require.Equal(t, "response.completed", eventType)
+	response, ok := payload["response"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "resp_prev", asString(response["previous_response_id"]))
+
+	conversation, ok := response["conversation"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "conv_123", asString(conversation["id"]))
+}
+
 func TestShouldIgnoreStreamProxyError(t *testing.T) {
 	require.True(t, shouldIgnoreStreamProxyError(context.Canceled))
 	require.False(t, shouldIgnoreStreamProxyError(io.EOF))
@@ -229,7 +296,7 @@ func TestShouldIgnoreStreamProxyError(t *testing.T) {
 }
 
 func TestNormalizeCompletedToolCallEventSynthesizesMCPReplayEvents(t *testing.T) {
-	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, nil)
+	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, "", nil)
 
 	before, eventType, payload := proxy.normalizeCompletedToolCallEvent("response.completed", map[string]any{
 		"type": "response.completed",
@@ -287,7 +354,7 @@ func TestNormalizeCompletedToolCallEventSynthesizesMCPReplayEvents(t *testing.T)
 }
 
 func TestNormalizeTextStreamEventSynthesizesAnnotationReplayFromCompletedResponse(t *testing.T) {
-	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, nil)
+	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, "", nil)
 
 	before, eventType, payload := proxy.normalizeTextStreamEvent("response.completed", map[string]any{
 		"type": "response.completed",
@@ -361,7 +428,7 @@ func TestNormalizeTextStreamEventSynthesizesAnnotationReplayFromCompletedRespons
 }
 
 func TestNormalizeCompletedToolCallEventSynthesizesFailedMCPReplayEvents(t *testing.T) {
-	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, nil)
+	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, "", nil)
 
 	before, _, _ := proxy.normalizeCompletedToolCallEvent("response.completed", map[string]any{
 		"type": "response.completed",
@@ -400,7 +467,7 @@ func TestNormalizeCompletedToolCallEventSynthesizesFailedMCPReplayEvents(t *test
 }
 
 func TestNormalizeCompletedToolCallEventSynthesizesHostedAddedDoneReplay(t *testing.T) {
-	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, nil)
+	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, "", nil)
 
 	before, eventType, payload := proxy.normalizeCompletedToolCallEvent("response.completed", map[string]any{
 		"type": "response.completed",
@@ -465,7 +532,7 @@ func TestNormalizeCompletedToolCallEventSynthesizesHostedAddedDoneReplay(t *test
 }
 
 func TestNormalizeCompletedToolCallEventSynthesizesHostedOpenPageReplay(t *testing.T) {
-	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, nil)
+	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, "", nil)
 
 	before, eventType, payload := proxy.normalizeCompletedToolCallEvent("response.completed", map[string]any{
 		"type": "response.completed",
@@ -522,7 +589,7 @@ func TestNormalizeCompletedToolCallEventSynthesizesHostedOpenPageReplay(t *testi
 }
 
 func TestNormalizeCompletedToolCallEventSynthesizesHostedFileSearchAddedDoneReplay(t *testing.T) {
-	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, nil)
+	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, "", nil)
 
 	before, eventType, payload := proxy.normalizeCompletedToolCallEvent("response.completed", map[string]any{
 		"type": "response.completed",
@@ -590,7 +657,7 @@ func TestNormalizeCompletedToolCallEventSynthesizesHostedFileSearchAddedDoneRepl
 }
 
 func TestNormalizeCompletedToolCallEventSynthesizesHostedFindInPageReplay(t *testing.T) {
-	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, nil)
+	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, "", nil)
 
 	before, eventType, payload := proxy.normalizeCompletedToolCallEvent("response.completed", map[string]any{
 		"type": "response.completed",
@@ -649,7 +716,7 @@ func TestNormalizeCompletedToolCallEventSynthesizesHostedFindInPageReplay(t *tes
 }
 
 func TestNormalizeCompletedToolCallEventSynthesizesHostedCodeInterpreterAddedDoneReplay(t *testing.T) {
-	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, nil)
+	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, "", nil)
 
 	before, eventType, payload := proxy.normalizeCompletedToolCallEvent("response.completed", map[string]any{
 		"type": "response.completed",
@@ -725,7 +792,7 @@ func TestNormalizeCompletedToolCallEventSynthesizesHostedCodeInterpreterAddedDon
 }
 
 func TestNormalizeCompletedToolCallEventSynthesizesHostedCodeInterpreterNilOutputsReplay(t *testing.T) {
-	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, nil)
+	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, "", nil)
 
 	before, eventType, payload := proxy.normalizeCompletedToolCallEvent("response.completed", map[string]any{
 		"type": "response.completed",
@@ -782,7 +849,7 @@ func TestNormalizeCompletedToolCallEventSynthesizesHostedCodeInterpreterNilOutpu
 }
 
 func TestNormalizeCompletedToolCallEventSynthesizesComputerCallAddedDoneReplay(t *testing.T) {
-	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, nil)
+	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, "", nil)
 
 	before, eventType, payload := proxy.normalizeCompletedToolCallEvent("response.completed", map[string]any{
 		"type": "response.completed",
@@ -846,7 +913,7 @@ func TestNormalizeCompletedToolCallEventSynthesizesComputerCallAddedDoneReplay(t
 }
 
 func TestNormalizeCompletedToolCallEventSynthesizesImageGenerationCallReplaySubset(t *testing.T) {
-	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, nil)
+	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, "", nil)
 
 	before, eventType, payload := proxy.normalizeCompletedToolCallEvent("response.completed", map[string]any{
 		"type": "response.completed",
@@ -923,7 +990,7 @@ func TestResponseStreamEventProxyCapturesImageGenerationPartialImageReplayArtifa
 		artifacts    []domain.ResponseReplayArtifact
 	)
 
-	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, func(rawResponse []byte, replayArtifacts []domain.ResponseReplayArtifact) error {
+	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, "", func(rawResponse []byte, replayArtifacts []domain.ResponseReplayArtifact) error {
 		completedRaw = append([]byte(nil), rawResponse...)
 		artifacts = append([]domain.ResponseReplayArtifact(nil), replayArtifacts...)
 		return nil
@@ -960,7 +1027,7 @@ func TestResponseStreamEventProxyCapturesImageGenerationPartialImageReplayArtifa
 }
 
 func TestResponseStreamEventProxyDropsOversizedReplayArtifactPayload(t *testing.T) {
-	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, nil)
+	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, "", nil)
 
 	payload := map[string]any{
 		"type":              "response.image_generation_call.partial_image",
@@ -974,7 +1041,7 @@ func TestResponseStreamEventProxyDropsOversizedReplayArtifactPayload(t *testing.
 }
 
 func TestResponseStreamEventProxyCapsReplayArtifactsByCount(t *testing.T) {
-	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, nil)
+	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, "", nil)
 
 	for i := 1; i <= responseReplayArtifactMaxCount+5; i++ {
 		proxy.noteEvent("response.image_generation_call.partial_image", map[string]any{
@@ -991,7 +1058,7 @@ func TestResponseStreamEventProxyCapsReplayArtifactsByCount(t *testing.T) {
 }
 
 func TestNormalizeCompletedToolCallEventSynthesizesMCPApprovalRequestGenericReplay(t *testing.T) {
-	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, nil)
+	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, "", nil)
 
 	before, eventType, payload := proxy.normalizeCompletedToolCallEvent("response.completed", map[string]any{
 		"type": "response.completed",
@@ -1044,7 +1111,7 @@ func TestNormalizeCompletedToolCallEventSynthesizesMCPApprovalRequestGenericRepl
 }
 
 func TestNormalizeCompletedToolCallEventSynthesizesMCPListToolsGenericReplay(t *testing.T) {
-	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, nil)
+	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, "", nil)
 
 	before, eventType, payload := proxy.normalizeCompletedToolCallEvent("response.completed", map[string]any{
 		"type": "response.completed",
@@ -1117,7 +1184,7 @@ func TestNormalizeCompletedToolCallEventSynthesizesMCPListToolsGenericReplay(t *
 }
 
 func TestNormalizeCompletedToolCallEventSynthesizesToolSearchGenericReplay(t *testing.T) {
-	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, nil)
+	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, "", nil)
 
 	before, eventType, payload := proxy.normalizeCompletedToolCallEvent("response.completed", map[string]any{
 		"type": "response.completed",

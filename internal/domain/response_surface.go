@@ -19,6 +19,12 @@ var (
 func HydrateResponseRequestSurface(response Response, requestJSON string) Response {
 	fields := parseResponseRequestFields(SanitizeResponseRequestSurfaceJSON(requestJSON))
 
+	if response.PreviousResponseID == "" {
+		response.PreviousResponseID = requestPreviousResponseID(fields)
+	}
+	if response.Conversation == nil {
+		response.Conversation = requestConversationReference(fields)
+	}
 	response.Instructions = coalesceRawMessage(response.Instructions, fields["instructions"], rawJSONNull)
 	response.MaxOutputTokens = coalesceRawMessage(response.MaxOutputTokens, fields["max_output_tokens"], rawJSONNull)
 	response.MaxToolCalls = coalesceRawMessage(response.MaxToolCalls, fields["max_tool_calls"], rawJSONNull)
@@ -38,6 +44,46 @@ func HydrateResponseRequestSurface(response Response, requestJSON string) Respon
 	response.User = coalesceRawMessage(response.User, fields["user"], rawJSONNull)
 
 	return response
+}
+
+func HydrateResponseContinuationJSON(responseJSON []byte, requestJSON string) ([]byte, error) {
+	fields := parseResponseRequestFields(SanitizeResponseRequestSurfaceJSON(requestJSON))
+	if len(fields) == 0 {
+		return append([]byte(nil), responseJSON...), nil
+	}
+
+	previousResponseID := requestPreviousResponseID(fields)
+	conversation := requestConversationReference(fields)
+	if previousResponseID == "" && conversation == nil {
+		return append([]byte(nil), responseJSON...), nil
+	}
+
+	var responseFields map[string]json.RawMessage
+	if err := json.Unmarshal(responseJSON, &responseFields); err != nil {
+		return nil, err
+	}
+
+	changed := false
+	if previousResponseID != "" && rawStringFieldUnset(responseFields["previous_response_id"]) {
+		rawPreviousResponseID, err := json.Marshal(previousResponseID)
+		if err != nil {
+			return nil, err
+		}
+		responseFields["previous_response_id"] = rawPreviousResponseID
+		changed = true
+	}
+	if conversation != nil && rawConversationFieldUnset(responseFields["conversation"]) {
+		rawConversation, err := json.Marshal(conversation)
+		if err != nil {
+			return nil, err
+		}
+		responseFields["conversation"] = rawConversation
+		changed = true
+	}
+	if !changed {
+		return append([]byte(nil), responseJSON...), nil
+	}
+	return json.Marshal(responseFields)
 }
 
 func SanitizeResponseRequestSurfaceJSON(requestJSON string) string {
@@ -115,6 +161,25 @@ func sanitizeResponseRequestToolsRaw(raw json.RawMessage) json.RawMessage {
 	return sanitized
 }
 
+func requestPreviousResponseID(fields map[string]json.RawMessage) string {
+	if len(fields) == 0 {
+		return ""
+	}
+
+	var previousResponseID string
+	if err := json.Unmarshal(fields["previous_response_id"], &previousResponseID); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(previousResponseID)
+}
+
+func requestConversationReference(fields map[string]json.RawMessage) *ConversationReference {
+	if len(fields) == 0 {
+		return nil
+	}
+	return extractConversationReference(fields["conversation"])
+}
+
 func cloneRawMessage(raw json.RawMessage) json.RawMessage {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 {
@@ -125,6 +190,27 @@ func cloneRawMessage(raw json.RawMessage) json.RawMessage {
 
 func rawMessageMissing(raw json.RawMessage) bool {
 	return len(bytes.TrimSpace(raw)) == 0
+}
+
+func rawStringFieldUnset(raw json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return true
+	}
+
+	var value string
+	if err := json.Unmarshal(trimmed, &value); err != nil {
+		return false
+	}
+	return strings.TrimSpace(value) == ""
+}
+
+func rawConversationFieldUnset(raw json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return true
+	}
+	return extractConversationReference(trimmed) == nil
 }
 
 func coalesceRawMessage(primary, secondary, fallback json.RawMessage) json.RawMessage {

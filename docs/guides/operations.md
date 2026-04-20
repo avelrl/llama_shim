@@ -94,5 +94,6 @@ The shim also supports:
 ## Related Docs
 
 - [README](../../README.md)
+- [Runtime Hardening](runtime-hardening.md)
 - [Dev Stack](devstack.md)
 - [V2 Scope](../v2-scope.md)
