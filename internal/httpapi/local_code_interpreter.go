@@ -626,7 +626,7 @@ func buildLocalCodeInterpreterPlanningOptions(options map[string]json.RawMessage
 }
 
 func parseLocalCodeInterpreterPlan(raw string) (localCodeInterpreterPlan, error) {
-	trimmed := strings.TrimSpace(raw)
+	trimmed := domain.NormalizeStructuredOutputJSONText(raw)
 	if trimmed == "" {
 		return localCodeInterpreterPlan{}, &llama.InvalidResponseError{Message: "shim-local code_interpreter planner response was empty"}
 	}

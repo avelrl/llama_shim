@@ -14,6 +14,7 @@ type ResponseTextConfig struct {
 
 type ResponseTextFormat struct {
 	Type   string          `json:"type"`
+	Name   string          `json:"name,omitempty"`
 	Strict *bool           `json:"strict,omitempty"`
 	Schema json.RawMessage `json:"schema,omitempty"`
 }
@@ -109,10 +110,18 @@ func parseResponseTextFormat(raw json.RawMessage) (ResponseTextFormat, error) {
 	case "json_schema":
 		if err := rejectUnsupportedResponseTextFormatKeys(payload, map[string]struct{}{
 			"type":   {},
+			"name":   {},
 			"strict": {},
 			"schema": {},
 		}); err != nil {
 			return ResponseTextFormat{}, err
+		}
+		if rawName, ok := payload["name"]; ok && len(bytes.TrimSpace(rawName)) > 0 && !bytes.Equal(bytes.TrimSpace(rawName), []byte("null")) {
+			var name string
+			if err := json.Unmarshal(rawName, &name); err != nil {
+				return ResponseTextFormat{}, NewValidationError("text.format.name", "text.format.name must be a string")
+			}
+			format.Name = strings.TrimSpace(name)
 		}
 		if rawStrict, ok := payload["strict"]; ok && len(bytes.TrimSpace(rawStrict)) > 0 && !bytes.Equal(bytes.TrimSpace(rawStrict), []byte("null")) {
 			var strict bool
@@ -257,6 +266,44 @@ func validateSupportedResponseJSONSchemaNode(payload map[string]any, path string
 	}
 
 	return nil
+}
+
+func NormalizeStructuredOutputJSONText(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+	if json.Valid([]byte(trimmed)) {
+		return trimmed
+	}
+	if unwrapped, ok := unwrapStructuredOutputJSONFence(trimmed); ok && json.Valid([]byte(unwrapped)) {
+		return unwrapped
+	}
+	return trimmed
+}
+
+func unwrapStructuredOutputJSONFence(raw string) (string, bool) {
+	if !strings.HasPrefix(raw, "```") || !strings.HasSuffix(raw, "```") {
+		return "", false
+	}
+
+	body := strings.TrimPrefix(raw, "```")
+	newlineIdx := strings.IndexByte(body, '\n')
+	if newlineIdx < 0 {
+		return "", false
+	}
+
+	info := strings.TrimSpace(strings.TrimRight(body[:newlineIdx], "\r"))
+	if info != "" && !strings.EqualFold(info, "json") {
+		return "", false
+	}
+
+	content := strings.TrimSuffix(body[newlineIdx+1:], "```")
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return "", false
+	}
+	return content, true
 }
 
 func mustMarshalDefaultResponseTextConfig() json.RawMessage {

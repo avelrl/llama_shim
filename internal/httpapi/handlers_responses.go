@@ -752,6 +752,13 @@ func (h *responseHandler) createResponseWithToolChoiceFallback(ctx context.Conte
 	if err == nil {
 		return rawResponse, false, nil
 	}
+	if shouldRetryToolChoiceWithRequiredError(err, plan) {
+		rawResponse, err = h.retryResponseWithRequiredNamed(ctx, upstreamBody, plan, false)
+		if err != nil {
+			return nil, true, err
+		}
+		return rawResponse, true, nil
+	}
 	if !shouldRetryToolChoiceWithAutoError(err, plan) {
 		return nil, false, err
 	}
@@ -764,6 +771,32 @@ func (h *responseHandler) createResponseWithToolChoiceFallback(ctx context.Conte
 		return nil, true, err
 	}
 	return rawResponse, true, nil
+}
+
+func (h *responseHandler) retryResponseWithRequiredNamed(ctx context.Context, upstreamBody []byte, plan customToolTransportPlan, disableStream bool) ([]byte, error) {
+	var (
+		retryBody []byte
+		err       error
+	)
+	if disableStream {
+		retryBody, err = rewriteToolChoiceRequiredRetryBody(upstreamBody)
+	} else {
+		retryBody, err = rewriteToolChoiceToRequired(upstreamBody)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	if h.logger != nil {
+		h.logger.InfoContext(ctx, "retrying responses request with tool_choice=required after named tool_choice rejection",
+			"request_id", RequestIDFromContext(ctx),
+			"contract_mode", plan.ToolChoiceContract.Mode,
+			"contract_name", plan.ToolChoiceContract.Name,
+			"contract_namespace", plan.ToolChoiceContract.Namespace,
+		)
+	}
+
+	return h.proxy.client.CreateResponse(ctx, retryBody)
 }
 
 func (h *responseHandler) retryResponseWithAuto(ctx context.Context, upstreamBody []byte, plan customToolTransportPlan) ([]byte, error) {
@@ -1645,6 +1678,31 @@ func (h *responseHandler) proxyCreateWithShadowStore(w http.ResponseWriter, r *h
 				}
 			}
 		}
+	} else if shouldRetryToolChoiceWithRequiredBody(response.StatusCode, body, plan) {
+		rawResponse, err := h.retryResponseWithRequiredNamed(r.Context(), upstreamBody, plan, false)
+		if err != nil {
+			h.writeError(w, r, err)
+			return
+		}
+
+		finalBody, parsed, err := finalizeUpstreamResponse(rawResponse, plan, true)
+		if err != nil {
+			h.writeError(w, r, err)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(finalBody)
+
+		prepared, input, ok := prepareShadowStore(r.Context(), h.service.PrepareCreateContext, request, requestJSON)
+		if !ok {
+			return
+		}
+		if _, err := h.service.SaveExternalResponse(r.Context(), prepared, input, parsed); err != nil {
+			h.logger.ErrorContext(r.Context(), "shadow store failed", "request_id", RequestIDFromContext(r.Context()), "err", err)
+		}
+		return
 	} else if shouldRetryToolChoiceWithAutoBody(response.StatusCode, body, plan) {
 		rawResponse, err := h.retryResponseWithAuto(r.Context(), upstreamBody, plan)
 		if err != nil {

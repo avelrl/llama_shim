@@ -3,8 +3,12 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -614,6 +618,95 @@ func TestShouldRetryToolChoiceWithAutoBody(t *testing.T) {
 	require.False(t, shouldRetryToolChoiceWithAutoBody(http.StatusNotImplemented, []byte(`{"error":{"message":"different error"}}`), plan))
 }
 
+func TestShouldRetryToolChoiceWithRequiredBody(t *testing.T) {
+	plan := customToolTransportPlan{
+		ToolChoiceContract: toolChoiceContract{Mode: toolChoiceContractRequiredNamedFunction, Name: "add"},
+	}
+
+	require.True(t, shouldRetryToolChoiceWithRequiredBody(http.StatusBadRequest, []byte(`{"error":{"message":"Invalid tool choice, tool_choice={'name': 'add', 'type': 'function'}"}}`), plan))
+	require.False(t, shouldRetryToolChoiceWithRequiredBody(http.StatusBadRequest, []byte(`{"error":{"message":"Only 'auto' tool_choice is supported"}}`), plan))
+}
+
+func TestProxyCreateWithShadowStoreRetriesNamedToolChoiceRejection(t *testing.T) {
+	requestBodies := make([]map[string]any, 0, 2)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, http.MethodPost, r.Method)
+		require.Equal(t, "/v1/responses", r.URL.Path)
+
+		var payload map[string]any
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+		requestBodies = append(requestBodies, payload)
+
+		if len(requestBodies) == 1 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+				"error": map[string]any{
+					"message": "Invalid tool choice, tool_choice={'name': 'add', 'type': 'function'}",
+				},
+			}))
+			return
+		}
+
+		require.Equal(t, "required", payload["tool_choice"])
+		w.Header().Set("Content-Type", "application/json")
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"id":          "resp_1",
+			"object":      "response",
+			"model":       "test-model",
+			"output_text": "",
+			"output": []map[string]any{
+				{
+					"id":        "fc_1",
+					"type":      "function_call",
+					"call_id":   "call_1",
+					"name":      "add",
+					"arguments": `{"a":40,"b":2}`,
+					"status":    "completed",
+				},
+			},
+		}))
+	}))
+	defer upstream.Close()
+
+	handler := &responseHandler{
+		logger:          slog.New(slog.NewTextHandler(io.Discard, nil)),
+		proxy:           newProxyHandler(nil, llama.NewClient(upstream.URL, time.Second), nil, ServiceLimits{}, false),
+		customToolsMode: "bridge",
+	}
+
+	rawFields := map[string]json.RawMessage{
+		"model":               json.RawMessage(`"test-model"`),
+		"input":               json.RawMessage(`"Call add with a=40 and b=2. Do not answer yourself."`),
+		"parallel_tool_calls": json.RawMessage(`false`),
+		"tool_choice":         json.RawMessage(`{"name":"add","type":"function"}`),
+		"tools": json.RawMessage(`[
+			{"type":"function","name":"add","description":"Adds two integers and returns the sum.","parameters":{"type":"object","properties":{"a":{"type":"integer"},"b":{"type":"integer"}},"required":["a","b"],"additionalProperties":false}}
+		]`),
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	rec := httptest.NewRecorder()
+
+	handler.proxyCreateWithShadowStore(rec, req, CreateResponseRequest{}, nil, "", rawFields)
+
+	resp := rec.Result()
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Len(t, requestBodies, 2)
+	require.Equal(t, "function", requestBodies[0]["tool_choice"].(map[string]any)["type"])
+	require.Equal(t, "required", requestBodies[1]["tool_choice"])
+
+	var payload map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&payload))
+	output := payload["output"].([]any)
+	require.Len(t, output, 1)
+	toolCall := output[0].(map[string]any)
+	require.Equal(t, "function_call", toolCall["type"])
+	require.Equal(t, "add", toolCall["name"])
+}
+
 func TestShouldRetryCustomToolsWithBridgeBody(t *testing.T) {
 	plan := customToolTransportPlan{Mode: customToolsModePassthrough, BridgeFallbackSafe: true}
 
@@ -644,6 +737,16 @@ func TestEnforceToolChoiceContractAcceptsMatchingFunctionCall(t *testing.T) {
 	}, toolChoiceContract{Mode: toolChoiceContractRequiredNamedFunction, Name: "add"})
 
 	require.NoError(t, err)
+}
+
+func TestExtractCustomToolInputUnwrapsSingleStringProperty(t *testing.T) {
+	require.Equal(t, `print("hello world")`, extractCustomToolInput(`{"code":"print(\"hello world\")"}`))
+}
+
+func TestExtractCustomToolInputUnwrapsDoubleEncodedSingleStringProperty(t *testing.T) {
+	wrapped, err := json.Marshal(`{"code":"print(\"hello world\")"}`)
+	require.NoError(t, err)
+	require.Equal(t, `print("hello world")`, extractCustomToolInput(string(wrapped)))
 }
 
 func TestRemapCustomToolsPayloadAppendsCodexCompatibilityHint(t *testing.T) {

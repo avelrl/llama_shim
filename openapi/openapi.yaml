@@ -3065,6 +3065,9 @@ components:
         type:
           type: string
           enum: [text, json_object, json_schema]
+        name:
+          type: string
+          description: Optional OpenAI-style schema name preserved on `json_schema` requests.
         strict:
           type: boolean
         schema:

@@ -32,10 +32,12 @@ func (s *ResponseService) FinalizeLocalResponse(input CreateResponseInput, conte
 		if err := validateJSONModeContext(contextItems); err != nil {
 			return domain.Response{}, err
 		}
+		response = normalizeLocalStructuredOutput(response)
 		if err := validateJSONObjectOutput(response.OutputText); err != nil {
 			return domain.Response{}, err
 		}
 	case "json_schema":
+		response = normalizeLocalStructuredOutput(response)
 		if err := validateJSONSchemaOutput(config.Format.Schema, response.OutputText); err != nil {
 			return domain.Response{}, err
 		}
@@ -119,7 +121,7 @@ func validateJSONSchemaOutput(schemaRaw json.RawMessage, outputText string) erro
 }
 
 func decodeStructuredOutput(outputText string) (any, error) {
-	trimmed := strings.TrimSpace(outputText)
+	trimmed := domain.NormalizeStructuredOutputJSONText(outputText)
 	if trimmed == "" {
 		return nil, invalidStructuredOutputError("structured output response was empty")
 	}
@@ -134,6 +136,16 @@ func decodeStructuredOutput(outputText string) (any, error) {
 		return nil, invalidStructuredOutputError("structured output response was not valid JSON")
 	}
 	return value, nil
+}
+
+func normalizeLocalStructuredOutput(response domain.Response) domain.Response {
+	normalized := domain.NormalizeStructuredOutputJSONText(response.OutputText)
+	if normalized == "" || normalized == response.OutputText {
+		return response
+	}
+	response.OutputText = normalized
+	response.Output = []domain.Item{domain.NewOutputTextMessage(normalized)}
+	return response
 }
 
 func validateJSONValueAgainstSchema(value any, schema map[string]any, path string) error {

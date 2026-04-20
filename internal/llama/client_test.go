@@ -13,7 +13,7 @@ import (
 	"llama_shim/internal/domain"
 )
 
-func TestBuildChatCompletionRequestCollapsesAdjacentRoles(t *testing.T) {
+func TestBuildChatCompletionRequestPreservesAdjacentRoles(t *testing.T) {
 	client := NewClient("http://example.com", 0)
 
 	body, err := client.buildChatCompletionRequest("test-model", []domain.MessageItem{
@@ -26,11 +26,13 @@ func TestBuildChatCompletionRequestCollapsesAdjacentRoles(t *testing.T) {
 	var payload ChatCompletionRequest
 	require.NoError(t, json.Unmarshal(body, &payload))
 	require.Equal(t, "test-model", payload.Model)
-	require.Len(t, payload.Messages, 2)
+	require.Len(t, payload.Messages, 3)
 	require.Equal(t, "system", payload.Messages[0].Role)
 	require.Equal(t, "You are a test assistant.", payload.Messages[0].Content)
 	require.Equal(t, "user", payload.Messages[1].Role)
-	require.Equal(t, "Remember: code=777. Reply OK.\n\nWhat is the code? Reply with just the number.", payload.Messages[1].Content)
+	require.Equal(t, "Remember: code=777. Reply OK.", payload.Messages[1].Content)
+	require.Equal(t, "user", payload.Messages[2].Role)
+	require.Equal(t, "What is the code? Reply with just the number.", payload.Messages[2].Content)
 }
 
 func TestGenerateForwardsAuthorizationFromContext(t *testing.T) {

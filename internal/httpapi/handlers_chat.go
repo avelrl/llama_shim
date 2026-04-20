@@ -30,6 +30,7 @@ func (h *proxyHandler) forwardChatCompletions(w http.ResponseWriter, r *http.Req
 		WriteJSON(w, status, apiErrorPayload{Error: payload})
 		return
 	}
+	sanitizeProfile := buildChatCompletionSanitizationProfile(rawBody)
 
 	shouldStore := false
 	if shadowStore, err := h.shouldShadowStoreChatCompletion(rawBody); err != nil {
@@ -39,6 +40,31 @@ func (h *proxyHandler) forwardChatCompletions(w http.ResponseWriter, r *http.Req
 		)
 	} else {
 		shouldStore = shadowStore
+	}
+	if profile, err := parseChatToolCompatRequest(rawBody); err == nil && shouldApplyChatToolCompat(profile) {
+		rawResponse, err := h.createChatCompletionWithToolCompat(r.Context(), rawBody, profile.Contract)
+		if err != nil {
+			status, payload := MapError(r.Context(), h.logger, err)
+			WriteJSON(w, status, apiErrorPayload{Error: payload})
+			return
+		}
+		sanitized, err := sanitizeChatCompletionJSONBodyWithProfile(rawResponse, sanitizeProfile)
+		if err != nil {
+			WriteError(w, http.StatusBadGateway, "upstream_error", "failed to read upstream response", "")
+			return
+		}
+		if shouldStore {
+			if err := h.shadowStoreChatCompletion(r.Context(), rawBody, sanitized); err != nil {
+				h.logger.ErrorContext(r.Context(), "chat completion shadow store failed",
+					"request_id", RequestIDFromContext(r.Context()),
+					"err", err,
+				)
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(sanitized)
+		return
 	}
 
 	cloned := r.Clone(r.Context())
@@ -64,7 +90,7 @@ func (h *proxyHandler) forwardChatCompletions(w http.ResponseWriter, r *http.Req
 	if !isSSE {
 		if response.StatusCode >= 200 && response.StatusCode < 300 {
 			if shouldSanitizeChatCompletionJSON(contentType) {
-				if err := h.writeSanitizedChatCompletionResponse(w, r, response, rawBody, shouldStore); err != nil {
+				if err := h.writeSanitizedChatCompletionResponse(w, r, response, rawBody, shouldStore, sanitizeProfile); err != nil {
 					WriteError(w, http.StatusBadGateway, "upstream_error", "failed to read upstream response", "")
 				}
 				return
@@ -101,7 +127,7 @@ func (h *proxyHandler) forwardChatCompletions(w http.ResponseWriter, r *http.Req
 		streamStoreCapture = newChatCompletionStreamStoreCapture(response.Header.Get("X-Request-Id"))
 	}
 
-	if err := proxyChatCompletionStream(w, response.Body, streamStoreCapture); err != nil && !shouldIgnoreStreamProxyError(err) {
+	if err := proxyChatCompletionStream(w, response.Body, streamStoreCapture, sanitizeProfile); err != nil && !shouldIgnoreStreamProxyError(err) {
 		h.logger.WarnContext(r.Context(), "chat completion stream proxy failed",
 			"request_id", RequestIDFromContext(r.Context()),
 			"err", err,
@@ -127,7 +153,39 @@ func shouldSanitizeChatCompletionJSON(contentType string) bool {
 	return contentType == "" || strings.Contains(contentType, "json")
 }
 
-func (h *proxyHandler) writeSanitizedChatCompletionResponse(w http.ResponseWriter, r *http.Request, response *http.Response, rawBody []byte, shouldStore bool) error {
+type chatCompletionSanitizationProfile struct {
+	NormalizeStructuredJSON bool
+}
+
+func buildChatCompletionSanitizationProfile(rawRequest []byte) chatCompletionSanitizationProfile {
+	var request struct {
+		ResponseFormat json.RawMessage `json:"response_format"`
+	}
+	if err := json.Unmarshal(rawRequest, &request); err != nil {
+		return chatCompletionSanitizationProfile{}
+	}
+
+	trimmed := bytes.TrimSpace(request.ResponseFormat)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return chatCompletionSanitizationProfile{}
+	}
+
+	var responseFormat struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(trimmed, &responseFormat); err != nil {
+		return chatCompletionSanitizationProfile{}
+	}
+
+	switch strings.TrimSpace(responseFormat.Type) {
+	case "json_object", "json_schema":
+		return chatCompletionSanitizationProfile{NormalizeStructuredJSON: true}
+	default:
+		return chatCompletionSanitizationProfile{}
+	}
+}
+
+func (h *proxyHandler) writeSanitizedChatCompletionResponse(w http.ResponseWriter, r *http.Request, response *http.Response, rawBody []byte, shouldStore bool, profile chatCompletionSanitizationProfile) error {
 	headers := response.Header.Clone()
 	headers.Del("Content-Length")
 	writer := &delayedProxyBodyWriter{
@@ -143,7 +201,7 @@ func (h *proxyHandler) writeSanitizedChatCompletionResponse(w http.ResponseWrite
 		target = io.MultiWriter(writer, capture)
 	}
 
-	if err := sanitizeChatCompletionJSONToWriter(target, response.Body); err != nil {
+	if err := sanitizeChatCompletionJSONToWriterWithProfile(target, response.Body, profile); err != nil {
 		if !writer.started {
 			return err
 		}
@@ -736,21 +794,29 @@ var disallowedChatCompletionFields = map[string]struct{}{
 }
 
 func sanitizeChatCompletionJSONBody(body []byte) ([]byte, error) {
+	return sanitizeChatCompletionJSONBodyWithProfile(body, chatCompletionSanitizationProfile{})
+}
+
+func sanitizeChatCompletionJSONBodyWithProfile(body []byte, profile chatCompletionSanitizationProfile) ([]byte, error) {
 	if len(bytes.TrimSpace(body)) == 0 {
 		return body, nil
 	}
 
 	var out bytes.Buffer
-	if err := sanitizeChatCompletionJSONToWriter(&out, bytes.NewReader(body)); err != nil {
+	if err := sanitizeChatCompletionJSONToWriterWithProfile(&out, bytes.NewReader(body), profile); err != nil {
 		return nil, err
 	}
 	return out.Bytes(), nil
 }
 
 func sanitizeChatCompletionJSONToWriter(dst io.Writer, src io.Reader) error {
+	return sanitizeChatCompletionJSONToWriterWithProfile(dst, src, chatCompletionSanitizationProfile{})
+}
+
+func sanitizeChatCompletionJSONToWriterWithProfile(dst io.Writer, src io.Reader, profile chatCompletionSanitizationProfile) error {
 	decoder := json.NewDecoder(src)
 	decoder.UseNumber()
-	if err := writeSanitizedChatCompletionJSONValue(dst, decoder); err != nil {
+	if err := writeSanitizedChatCompletionJSONValue(dst, decoder, nil, profile); err != nil {
 		if errors.Is(err, io.EOF) {
 			return nil
 		}
@@ -765,7 +831,7 @@ func sanitizeChatCompletionJSONToWriter(dst io.Writer, src io.Reader) error {
 	return fmt.Errorf("unexpected trailing JSON content")
 }
 
-func writeSanitizedChatCompletionJSONValue(dst io.Writer, decoder *json.Decoder) error {
+func writeSanitizedChatCompletionJSONValue(dst io.Writer, decoder *json.Decoder, path []string, profile chatCompletionSanitizationProfile) error {
 	token, err := decoder.Token()
 	if err != nil {
 		return err
@@ -773,17 +839,20 @@ func writeSanitizedChatCompletionJSONValue(dst io.Writer, decoder *json.Decoder)
 	if delim, ok := token.(json.Delim); ok {
 		switch delim {
 		case '{':
-			return writeSanitizedChatCompletionJSONObject(dst, decoder)
+			return writeSanitizedChatCompletionJSONObject(dst, decoder, path, profile)
 		case '[':
-			return writeSanitizedChatCompletionJSONArray(dst, decoder)
+			return writeSanitizedChatCompletionJSONArray(dst, decoder, path, profile)
 		default:
 			return fmt.Errorf("unexpected JSON delimiter %q", delim)
 		}
 	}
+	if text, ok := token.(string); ok {
+		token = normalizeChatCompletionJSONString(text, path, profile)
+	}
 	return writeJSONToken(dst, token)
 }
 
-func writeSanitizedChatCompletionJSONObject(dst io.Writer, decoder *json.Decoder) error {
+func writeSanitizedChatCompletionJSONObject(dst io.Writer, decoder *json.Decoder, path []string, profile chatCompletionSanitizationProfile) error {
 	if _, err := io.WriteString(dst, "{"); err != nil {
 		return err
 	}
@@ -815,7 +884,7 @@ func writeSanitizedChatCompletionJSONObject(dst io.Writer, decoder *json.Decoder
 		if _, err := io.WriteString(dst, ":"); err != nil {
 			return err
 		}
-		if err := writeSanitizedChatCompletionJSONValue(dst, decoder); err != nil {
+		if err := writeSanitizedChatCompletionJSONValue(dst, decoder, appendJSONPath(path, key), profile); err != nil {
 			return err
 		}
 	}
@@ -831,7 +900,7 @@ func writeSanitizedChatCompletionJSONObject(dst io.Writer, decoder *json.Decoder
 	return err
 }
 
-func writeSanitizedChatCompletionJSONArray(dst io.Writer, decoder *json.Decoder) error {
+func writeSanitizedChatCompletionJSONArray(dst io.Writer, decoder *json.Decoder, path []string, profile chatCompletionSanitizationProfile) error {
 	if _, err := io.WriteString(dst, "["); err != nil {
 		return err
 	}
@@ -843,7 +912,7 @@ func writeSanitizedChatCompletionJSONArray(dst io.Writer, decoder *json.Decoder)
 			}
 		}
 		first = false
-		if err := writeSanitizedChatCompletionJSONValue(dst, decoder); err != nil {
+		if err := writeSanitizedChatCompletionJSONValue(dst, decoder, appendJSONPath(path, "[]"), profile); err != nil {
 			return err
 		}
 	}
@@ -961,7 +1030,7 @@ func (b *limitedBodyCaptureBuffer) Bytes() []byte {
 	return b.buf.Bytes()
 }
 
-func proxyChatCompletionStream(w http.ResponseWriter, body io.Reader, capture *chatCompletionStreamStoreCapture) error {
+func proxyChatCompletionStream(w http.ResponseWriter, body io.Reader, capture *chatCompletionStreamStoreCapture, profile chatCompletionSanitizationProfile) error {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		return nil
@@ -972,7 +1041,7 @@ func proxyChatCompletionStream(w http.ResponseWriter, body io.Reader, capture *c
 	for {
 		line, err := reader.ReadString('\n')
 		if line != "" {
-			sanitized, sanitizeErr := sanitizeChatCompletionSSELine(line)
+			sanitized, sanitizeErr := sanitizeChatCompletionSSELineWithProfile(line, profile)
 			if sanitizeErr != nil {
 				return sanitizeErr
 			}
@@ -994,6 +1063,10 @@ func proxyChatCompletionStream(w http.ResponseWriter, body io.Reader, capture *c
 }
 
 func sanitizeChatCompletionSSELine(line string) (string, error) {
+	return sanitizeChatCompletionSSELineWithProfile(line, chatCompletionSanitizationProfile{})
+}
+
+func sanitizeChatCompletionSSELineWithProfile(line string, profile chatCompletionSanitizationProfile) (string, error) {
 	if !strings.HasPrefix(line, "data:") {
 		return line, nil
 	}
@@ -1003,7 +1076,7 @@ func sanitizeChatCompletionSSELine(line string) (string, error) {
 		return line, nil
 	}
 
-	body, err := sanitizeChatCompletionJSONBody([]byte(payload))
+	body, err := sanitizeChatCompletionJSONBodyWithProfile([]byte(payload), profile)
 	if err != nil {
 		return line, nil
 	}
@@ -1013,4 +1086,32 @@ func sanitizeChatCompletionSSELine(line string) (string, error) {
 		newline = "\r\n"
 	}
 	return "data: " + string(body) + newline, nil
+}
+
+func appendJSONPath(path []string, segment string) []string {
+	child := make([]string, len(path)+1)
+	copy(child, path)
+	child[len(path)] = segment
+	return child
+}
+
+func normalizeChatCompletionJSONString(value string, path []string, profile chatCompletionSanitizationProfile) string {
+	if !shouldNormalizeChatCompletionJSONString(path, profile) {
+		return value
+	}
+	normalized := domain.NormalizeStructuredOutputJSONText(value)
+	if normalized == "" {
+		return value
+	}
+	return normalized
+}
+
+func shouldNormalizeChatCompletionJSONString(path []string, profile chatCompletionSanitizationProfile) bool {
+	if !profile.NormalizeStructuredJSON || len(path) != 4 {
+		return false
+	}
+	if path[0] != "choices" || path[1] != "[]" || path[3] != "content" {
+		return false
+	}
+	return path[2] == "message" || path[2] == "delta"
 }

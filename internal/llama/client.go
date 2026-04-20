@@ -417,23 +417,10 @@ func collapseChatMessages(items []domain.Item) ([]ChatMessageDTO, error) {
 		}
 
 		content := domain.MessageText(item)
-		if len(messages) == 0 || messages[len(messages)-1].Role != role {
-			messages = append(messages, ChatMessageDTO{
-				Role:    role,
-				Content: content,
-			})
-			continue
-		}
-
-		if content == "" {
-			continue
-		}
-		if messages[len(messages)-1].Content == "" {
-			messages[len(messages)-1].Content = content
-			continue
-		}
-
-		messages[len(messages)-1].Content += "\n\n" + content
+		messages = append(messages, ChatMessageDTO{
+			Role:    role,
+			Content: content,
+		})
 	}
 	return messages, nil
 }

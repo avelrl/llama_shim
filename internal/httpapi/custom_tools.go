@@ -1059,6 +1059,13 @@ func extractCustomToolInput(arguments any) string {
 					return string(body)
 				}
 			}
+			if input, ok := extractSingleStringMapValue(payload); ok {
+				return input
+			}
+		}
+		var nested string
+		if err := json.Unmarshal([]byte(trimmed), &nested); err == nil {
+			return extractCustomToolInput(nested)
 		}
 		return trimmed
 	case map[string]any:
@@ -1071,6 +1078,13 @@ func extractCustomToolInput(arguments any) string {
 				return string(body)
 			}
 		}
+		if input, ok := extractSingleStringMapValue(value); ok {
+			return input
+		}
+	case []byte:
+		return extractCustomToolInput(string(value))
+	case json.RawMessage:
+		return extractCustomToolInput(string(value))
 	}
 
 	body, err := json.Marshal(arguments)
@@ -1078,6 +1092,20 @@ func extractCustomToolInput(arguments any) string {
 		return ""
 	}
 	return string(body)
+}
+
+func extractSingleStringMapValue(payload map[string]any) (string, bool) {
+	if len(payload) != 1 {
+		return "", false
+	}
+	for _, value := range payload {
+		text, ok := value.(string)
+		if !ok {
+			return "", false
+		}
+		return text, true
+	}
+	return "", false
 }
 
 func customToolCallID(item map[string]any) string {

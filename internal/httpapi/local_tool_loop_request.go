@@ -183,11 +183,25 @@ func buildLocalToolLoopTransportPlan(rawFields map[string]json.RawMessage, tools
 		if err != nil {
 			return nil, customToolTransportPlan{}, nil, "", err
 		}
-		toolChoice = rewrittenChoice
 		plan.ToolChoiceContract = deriveToolChoiceContract(rawChoice, rewrittenChoice)
+		toolChoice, err = adaptLocalToolLoopToolChoiceForChat(rewrittenChoice)
+		if err != nil {
+			return nil, customToolTransportPlan{}, nil, "", err
+		}
 	}
 
 	return localTools, plan, toolChoice, buildLocalCustomToolLoopInstructions(customDescriptors), nil
+}
+
+func adaptLocalToolLoopToolChoiceForChat(choice any) (any, error) {
+	if choice == nil {
+		return nil, nil
+	}
+	raw, err := json.Marshal(choice)
+	if err != nil {
+		return nil, err
+	}
+	return decodeChatToolChoice(raw)
 }
 
 func applyLocalAllowedToolsSubset(rawChoice json.RawMessage, tools []map[string]any) ([]map[string]any, json.RawMessage, error) {

@@ -309,7 +309,7 @@ func buildLocalConstrainedToolSelectionOptions(options map[string]json.RawMessag
 }
 
 func parseLocalConstrainedToolSelectionOutput(raw string, candidates []localConstrainedToolCandidate, allowAssistant bool) (localConstrainedToolCandidate, error) {
-	trimmed := strings.TrimSpace(raw)
+	trimmed := domain.NormalizeStructuredOutputJSONText(raw)
 	if trimmed == "" {
 		return localConstrainedToolCandidate{}, &llama.InvalidResponseError{Message: "shim-local constrained tool selector returned empty structured output"}
 	}
@@ -553,7 +553,7 @@ func buildLocalConstrainedCustomToolRuntimeChatCompletionBody(model string, item
 }
 
 func parseLocalConstrainedCustomToolRuntimeOutput(raw string, descriptor customToolDescriptor) (string, error) {
-	trimmed := strings.TrimSpace(raw)
+	trimmed := domain.NormalizeStructuredOutputJSONText(raw)
 	if trimmed == "" {
 		return "", &llama.InvalidResponseError{Message: fmt.Sprintf("shim-local constrained custom tool %s returned empty structured output", descriptor.Name)}
 	}

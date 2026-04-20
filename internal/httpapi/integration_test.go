@@ -3762,6 +3762,70 @@ func TestResponsesWithJSONSchemaAreHandledLocally(t *testing.T) {
 	require.Equal(t, true, formatPayload["strict"])
 }
 
+func TestResponsesWithJSONSchemaStripMarkdownFenceFromLocalOutput(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, http.MethodPost, r.Method)
+		require.Equal(t, "/v1/chat/completions", r.URL.Path)
+
+		var request map[string]any
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
+
+		w.Header().Set("Content-Type", "application/json")
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"id":      "chatcmpl_structured_fenced",
+			"object":  "chat.completion",
+			"created": 1712059200,
+			"model":   asStringAny(request["model"]),
+			"choices": []map[string]any{
+				{
+					"index": 0,
+					"message": map[string]any{
+						"role":    "assistant",
+						"content": "```json\n{\n  \"answer\": \"OK\",\n  \"count\": 1\n}\n```",
+					},
+					"finish_reason": "stop",
+					"logprobs":      nil,
+				},
+			},
+			"usage": map[string]any{
+				"prompt_tokens":     4,
+				"completion_tokens": 8,
+				"total_tokens":      12,
+			},
+		}))
+	}))
+	defer upstream.Close()
+
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{LlamaBaseURL: upstream.URL})
+
+	status, body := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model": "test-model",
+		"input": "Reply with JSON object containing answer and count.",
+		"text": map[string]any{
+			"format": map[string]any{
+				"type":   "json_schema",
+				"strict": true,
+				"schema": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"answer": map[string]any{"type": "string"},
+						"count":  map[string]any{"type": "integer"},
+					},
+					"required":             []string{"answer", "count"},
+					"additionalProperties": false,
+				},
+			},
+		},
+	})
+
+	require.Equal(t, http.StatusOK, status)
+	require.JSONEq(t, `{"answer":"OK","count":1}`, asStringAny(body["output_text"]))
+
+	storedStatus, stored := rawRequest(t, app, http.MethodGet, "/v1/responses/"+asStringAny(body["id"]), nil)
+	require.Equal(t, http.StatusOK, storedStatus)
+	require.JSONEq(t, `{"answer":"OK","count":1}`, asStringAny(stored["output_text"]))
+}
+
 func TestResponsesJSONSchemaRejectsUnsupportedSchemaFeatures(t *testing.T) {
 	app := testutil.NewTestApp(t)
 
@@ -7241,6 +7305,78 @@ func TestChatCompletionsNonStreamSanitizesAndShadowStoresSanitizedBody(t *testin
 	storedMessage := storedChoices[0].(map[string]any)["message"].(map[string]any)
 	_, hasStoredReasoning := storedMessage["reasoning_content"]
 	require.False(t, hasStoredReasoning)
+}
+
+func TestChatCompletionsStructuredJSONUnwrapsMarkdownFenceAndShadowStoresNormalizedBody(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, http.MethodPost, r.Method)
+		require.Equal(t, "/v1/chat/completions", r.URL.Path)
+
+		var request map[string]any
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
+		responseFormat, ok := request["response_format"].(map[string]any)
+		require.True(t, ok)
+		require.Equal(t, "json_schema", asStringAny(responseFormat["type"]))
+
+		w.Header().Set("Content-Type", "application/json")
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"id":      "chatcmpl_structured_sanitized",
+			"object":  "chat.completion",
+			"created": 1712059200,
+			"model":   asStringAny(request["model"]),
+			"choices": []map[string]any{
+				{
+					"index": 0,
+					"message": map[string]any{
+						"role":    "assistant",
+						"content": "```json\n{\n  \"status\": \"ok\",\n  \"value\": 42\n}\n```",
+					},
+					"finish_reason": "stop",
+					"logprobs":      nil,
+				},
+			},
+		}))
+	}))
+	defer upstream.Close()
+
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{LlamaBaseURL: upstream.URL})
+
+	status, body := rawRequest(t, app, http.MethodPost, "/v1/chat/completions", map[string]any{
+		"model": "gpt-5.4",
+		"store": true,
+		"messages": []map[string]any{
+			{"role": "system", "content": "Return JSON strictly according to the schema."},
+			{"role": "user", "content": "Generate an object with status=\"ok\" and value=42."},
+		},
+		"response_format": map[string]any{
+			"type": "json_schema",
+			"json_schema": map[string]any{
+				"name":   "simple_status",
+				"strict": true,
+				"schema": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"status": map[string]any{"type": "string"},
+						"value":  map[string]any{"type": "integer"},
+					},
+					"required":             []string{"status", "value"},
+					"additionalProperties": false,
+				},
+			},
+		},
+	})
+	require.Equal(t, http.StatusOK, status)
+
+	choices, ok := body["choices"].([]any)
+	require.True(t, ok)
+	require.Len(t, choices, 1)
+	message := choices[0].(map[string]any)["message"].(map[string]any)
+	require.JSONEq(t, `{"status":"ok","value":42}`, asStringAny(message["content"]))
+
+	stored := getStoredChatCompletion(t, app, "chatcmpl_structured_sanitized")
+	storedChoices := stored["choices"].([]any)
+	storedMessage := storedChoices[0].(map[string]any)["message"].(map[string]any)
+	require.JSONEq(t, `{"status":"ok","value":42}`, asStringAny(storedMessage["content"]))
 }
 
 func TestChatCompletionsNonStreamLargeResponseStillProxiesWhenShadowStoreCaptureOverflows(t *testing.T) {

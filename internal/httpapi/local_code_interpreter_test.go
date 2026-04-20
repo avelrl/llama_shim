@@ -32,6 +32,14 @@ func TestValidateLocalCodeInterpreterPlanCodeAllowsOrdinaryContainerPython(t *te
 	require.NoError(t, err)
 }
 
+func TestParseLocalCodeInterpreterPlanAcceptsMarkdownFencedJSON(t *testing.T) {
+	t.Parallel()
+
+	plan, err := parseLocalCodeInterpreterPlan("```json\n{\"code\":\"print(42)\"}\n```")
+	require.NoError(t, err)
+	require.Equal(t, "print(42)", plan.Code)
+}
+
 func TestBuildLocalCodeInterpreterAssistantTextAnnotationsPrefersInlineMentions(t *testing.T) {
 	finalText, annotations := buildLocalCodeInterpreterAssistantTextAnnotations(
 		"Created report.txt and plot.png.",

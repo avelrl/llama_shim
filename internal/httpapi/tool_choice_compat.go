@@ -68,7 +68,7 @@ func deriveToolChoiceContract(raw json.RawMessage, upstreamChoice any) toolChoic
 		}
 		return toolChoiceContract{}
 	case "function":
-		name := strings.TrimSpace(asString(choice["name"]))
+		name := namedFunctionToolChoiceName(choice)
 		if name == "" {
 			return toolChoiceContract{}
 		}
@@ -91,6 +91,18 @@ func deriveToolChoiceContract(raw json.RawMessage, upstreamChoice any) toolChoic
 	}
 }
 
+func namedFunctionToolChoiceName(choice map[string]any) string {
+	name := strings.TrimSpace(asString(choice["name"]))
+	if name != "" {
+		return name
+	}
+	function, ok := choice["function"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(asString(function["name"]))
+}
+
 func rewriteToolChoiceToAuto(body []byte) ([]byte, error) {
 	fields, err := decodeRawFields(body)
 	if err != nil {
@@ -110,12 +122,39 @@ func rewriteToolChoiceRetryBody(body []byte) ([]byte, error) {
 	return json.Marshal(fields)
 }
 
+func rewriteToolChoiceToRequired(body []byte) ([]byte, error) {
+	fields, err := decodeRawFields(body)
+	if err != nil {
+		return nil, err
+	}
+	fields["tool_choice"] = json.RawMessage(`"required"`)
+	return json.Marshal(fields)
+}
+
+func rewriteToolChoiceRequiredRetryBody(body []byte) ([]byte, error) {
+	fields, err := decodeRawFields(body)
+	if err != nil {
+		return nil, err
+	}
+	fields["tool_choice"] = json.RawMessage(`"required"`)
+	fields["stream"] = json.RawMessage(`false`)
+	return json.Marshal(fields)
+}
+
 func shouldRetryToolChoiceWithAutoError(err error, plan customToolTransportPlan) bool {
 	var upstreamErr *llama.UpstreamError
 	if !errors.As(err, &upstreamErr) {
 		return false
 	}
 	return shouldRetryToolChoiceWithAutoBody(upstreamErr.StatusCode, []byte(upstreamErr.Message), plan)
+}
+
+func shouldRetryToolChoiceWithRequiredError(err error, plan customToolTransportPlan) bool {
+	var upstreamErr *llama.UpstreamError
+	if !errors.As(err, &upstreamErr) {
+		return false
+	}
+	return shouldRetryToolChoiceWithRequiredBody(upstreamErr.StatusCode, []byte(upstreamErr.Message), plan)
 }
 
 func shouldRetryToolChoiceWithAutoResponse(resp *http.Response, plan customToolTransportPlan) (bool, error) {
@@ -129,6 +168,19 @@ func shouldRetryToolChoiceWithAutoResponse(resp *http.Response, plan customToolT
 	}
 	resp.Body = io.NopCloser(bytes.NewReader(body))
 	return shouldRetryToolChoiceWithAutoBody(resp.StatusCode, body, plan), nil
+}
+
+func shouldRetryToolChoiceWithRequiredResponse(resp *http.Response, plan customToolTransportPlan) (bool, error) {
+	if resp == nil || (resp.StatusCode >= 200 && resp.StatusCode < 300) {
+		return false, nil
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return false, err
+	}
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	return shouldRetryToolChoiceWithRequiredBody(resp.StatusCode, body, plan), nil
 }
 
 func shouldRetryToolChoiceWithAutoBody(status int, body []byte, plan customToolTransportPlan) bool {
@@ -145,6 +197,25 @@ func shouldRetryToolChoiceWithAutoBody(status int, body []byte, plan customToolT
 		strings.Contains(message, "auto") &&
 		strings.Contains(message, "supported") &&
 		strings.Contains(message, "only")
+}
+
+func shouldRetryToolChoiceWithRequiredBody(status int, body []byte, plan customToolTransportPlan) bool {
+	if status < 400 {
+		return false
+	}
+	switch plan.ToolChoiceContract.Mode {
+	case toolChoiceContractRequiredNamedFunction, toolChoiceContractRequiredNamedCustom:
+	default:
+		return false
+	}
+
+	message := strings.ToLower(strings.TrimSpace(extractAPIErrorMessage(body)))
+	if message == "" {
+		message = strings.ToLower(strings.TrimSpace(string(body)))
+	}
+
+	return strings.Contains(message, "tool_choice") &&
+		(strings.Contains(message, "invalid") || strings.Contains(message, "please ensure"))
 }
 
 func shouldRetryCustomToolsWithBridgeError(err error, plan customToolTransportPlan) bool {

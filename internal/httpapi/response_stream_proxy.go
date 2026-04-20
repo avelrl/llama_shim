@@ -102,6 +102,11 @@ func (h *responseHandler) proxyCreateStream(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
+	retryWithRequired, err := shouldRetryToolChoiceWithRequiredResponse(resp, plan)
+	if err != nil {
+		WriteError(w, http.StatusBadGateway, "upstream_error", "failed to read upstream response", "")
+		return
+	}
 	retryWithAuto, err := shouldRetryToolChoiceWithAutoResponse(resp, plan)
 	if err != nil {
 		WriteError(w, http.StatusBadGateway, "upstream_error", "failed to read upstream response", "")
@@ -109,6 +114,28 @@ func (h *responseHandler) proxyCreateStream(w http.ResponseWriter, r *http.Reque
 	}
 
 	prepared, input, ok := prepareShadowStore(r.Context(), h.service.PrepareCreateContext, request, requestJSON)
+	if retryWithRequired {
+		rawResponse, err := h.retryResponseWithRequiredNamed(r.Context(), upstreamBody, plan, true)
+		if err != nil {
+			h.writeError(w, r, err)
+			return
+		}
+
+		responseBody, response, err := finalizeUpstreamResponse(rawResponse, plan, true)
+		if err != nil {
+			h.writeError(w, r, err)
+			return
+		}
+		if ok {
+			if _, err := h.service.SaveExternalResponse(r.Context(), prepared, input, response); err != nil {
+				h.logger.ErrorContext(r.Context(), "shadow store failed", "request_id", RequestIDFromContext(r.Context()), "err", err)
+			}
+		}
+		if err := writeCompletedResponseAsSSE(r.Context(), h.logger, w, responseBody, plan, streamOptions.IncludeObfuscation); err != nil && !shouldIgnoreStreamProxyError(err) {
+			h.logger.WarnContext(r.Context(), "stream proxy failed", "request_id", RequestIDFromContext(r.Context()), "err", err)
+		}
+		return
+	}
 	if retryWithAuto {
 		rawResponse, err := h.retryResponseWithAuto(r.Context(), upstreamBody, plan)
 		if err != nil {
@@ -273,9 +300,34 @@ func (h *responseHandler) createStreamViaUpstream(w http.ResponseWriter, r *http
 		}
 	}
 
+	retryWithRequired, err := shouldRetryToolChoiceWithRequiredResponse(resp, plan)
+	if err != nil {
+		WriteError(w, http.StatusBadGateway, "upstream_error", "failed to read upstream response", "")
+		return
+	}
 	retryWithAuto, err := shouldRetryToolChoiceWithAutoResponse(resp, plan)
 	if err != nil {
 		WriteError(w, http.StatusBadGateway, "upstream_error", "failed to read upstream response", "")
+		return
+	}
+	if retryWithRequired {
+		rawResponse, err := h.retryResponseWithRequiredNamed(r.Context(), upstreamBody, plan, true)
+		if err != nil {
+			h.writeError(w, r, err)
+			return
+		}
+
+		responseBody, response, err := finalizeUpstreamResponse(rawResponse, plan, true)
+		if err != nil {
+			h.writeError(w, r, err)
+			return
+		}
+		if _, err := h.service.SaveExternalResponse(r.Context(), prepared, input, response); err != nil {
+			h.logger.ErrorContext(r.Context(), "upstream local-state stream failed", "request_id", RequestIDFromContext(r.Context()), "err", err)
+		}
+		if err := writeCompletedResponseAsSSE(r.Context(), h.logger, w, responseBody, plan, streamOptions.IncludeObfuscation); err != nil && !shouldIgnoreStreamProxyError(err) {
+			h.logger.WarnContext(r.Context(), "upstream local-state stream failed", "request_id", RequestIDFromContext(r.Context()), "err", err)
+		}
 		return
 	}
 	if retryWithAuto {

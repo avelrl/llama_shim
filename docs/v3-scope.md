@@ -1,6 +1,6 @@
 # V3 Expansion Staging
 
-Last updated: April 16, 2026.
+Last updated: April 19, 2026.
 
 This document is the parking lot for work that did not make the V2 ship bar
 and should not be reintroduced into the frozen V2 scope.
@@ -71,6 +71,11 @@ The tracks below assume the small preflight substrate in
 - backend-native constrained decoding hooks
 - embedded constrained decoder/runtime libraries
 - lower-level sampler/logits integrations
+- first narrow rollout target: `llama.cpp`-first native constrained decoding
+  with the current shim-local validate/repair path kept as fallback
+
+See [v3-constrained-decoding.md](v3-constrained-decoding.md) for the design
+starting point and rollout assumptions.
 
 This is valuable work, but it is a runtime-expansion track, not a V2 facade
 requirement.

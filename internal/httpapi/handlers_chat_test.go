@@ -58,6 +58,82 @@ func TestSanitizeChatCompletionJSONToWriterStripsNestedNonOpenAIFields(t *testin
 	require.JSONEq(t, `{"id":"chatcmpl_ok","choices":[{"message":{"content":"OK","tool_calls":[{"function":{"arguments":"{}"}}]}}]}`, out.String())
 }
 
+func TestSanitizeChatCompletionJSONBodyWithStructuredProfileUnwrapsMarkdownFence(t *testing.T) {
+	body := []byte("{\n" +
+		"  \"id\":\"chatcmpl_structured\",\n" +
+		"  \"choices\":[\n" +
+		"    {\n" +
+		"      \"index\":0,\n" +
+		"      \"message\":{\n" +
+		"        \"role\":\"assistant\",\n" +
+		"        \"content\":\"```json\\n{\\n  \\\"status\\\": \\\"ok\\\",\\n  \\\"value\\\": 42\\n}\\n```\"\n" +
+		"      },\n" +
+		"      \"finish_reason\":\"stop\"\n" +
+		"    }\n" +
+		"  ]\n" +
+		"}")
+
+	sanitized, err := sanitizeChatCompletionJSONBodyWithProfile(body, chatCompletionSanitizationProfile{NormalizeStructuredJSON: true})
+	require.NoError(t, err)
+	require.JSONEq(t, `{
+		"id":"chatcmpl_structured",
+		"choices":[
+			{
+				"index":0,
+				"message":{
+					"role":"assistant",
+					"content":"{\n  \"status\": \"ok\",\n  \"value\": 42\n}"
+				},
+				"finish_reason":"stop"
+			}
+		]
+	}`, string(sanitized))
+}
+
+func TestSanitizeChatCompletionSSELineWithStructuredProfileUnwrapsMarkdownFenceInDelta(t *testing.T) {
+	line := "data: {\"choices\":[{\"delta\":{\"content\":\"```json\\n{\\n  \\\"status\\\": \\\"ok\\\",\\n  \\\"value\\\": 42\\n}\\n```\"}}]}\n"
+
+	sanitized, err := sanitizeChatCompletionSSELineWithProfile(line, chatCompletionSanitizationProfile{NormalizeStructuredJSON: true})
+	require.NoError(t, err)
+	require.Equal(t, "data: {\"choices\":[{\"delta\":{\"content\":\"{\\n  \\\"status\\\": \\\"ok\\\",\\n  \\\"value\\\": 42\\n}\"}}]}\n", sanitized)
+}
+
+func TestValidateChatToolCallContractAcceptsNamedFunctionChoice(t *testing.T) {
+	err := validateChatToolCallContract([]byte(`{
+		"choices":[{
+			"message":{
+				"role":"assistant",
+				"tool_calls":[{
+					"type":"function",
+					"function":{"name":"add","arguments":"{\"a\":1,\"b\":2}"}
+				}]
+			},
+			"finish_reason":"tool_calls"
+		}]
+	}`), toolChoiceContract{Mode: toolChoiceContractRequiredNamedFunction, Name: "add"})
+
+	require.NoError(t, err)
+}
+
+func TestValidateChatToolCallContractRejectsTruncatedArguments(t *testing.T) {
+	err := validateChatToolCallContract([]byte(`{
+		"choices":[{
+			"message":{
+				"role":"assistant",
+				"tool_calls":[{
+					"type":"function",
+					"function":{"name":"add","arguments":"{\"a\":"}
+				}]
+			},
+			"finish_reason":"length"
+		}]
+	}`), toolChoiceContract{Mode: toolChoiceContractRequiredAny})
+
+	var incompatErr *toolChoiceIncompatibleBackendError
+	require.ErrorAs(t, err, &incompatErr)
+	require.Contains(t, incompatErr.Error(), "truncated tool call arguments")
+}
+
 func TestLimitedBodyCaptureBufferMarksOverflowWithoutFailingWrites(t *testing.T) {
 	capture := newLimitedBodyCaptureBuffer(4)
 
