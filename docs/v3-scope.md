@@ -1,6 +1,6 @@
 # V3 Expansion Staging
 
-Last updated: April 19, 2026.
+Last updated: April 21, 2026.
 
 This document is the parking lot for work that did not make the V2 ship bar
 and should not be reintroduced into the frozen V2 scope.
@@ -80,7 +80,23 @@ starting point and rollout assumptions.
 This is valuable work, but it is a runtime-expansion track, not a V2 facade
 requirement.
 
-### 5. Ops and deployment expansion
+### 5. Higher-fidelity compaction runtime
+
+- model-assisted local compaction beyond the current heuristic broad subset
+- retained-window plus opaque compaction state instead of a single readable
+  synopsis
+- tool-aware and multimodal-aware state carry-forward where the shim owns local
+  state
+- canonical next-window shaping for `/v1/responses/compact` and related local
+  follow-up paths
+
+See [v3-compaction.md](v3-compaction.md) for the design starting point and
+rollout assumptions.
+
+This is a runtime-expansion and quality track, not a reason to reopen the
+frozen V2 contract.
+
+### 6. Ops and deployment expansion
 
 - multi-tenant authz / tenant isolation
 - richer exporters and dashboards

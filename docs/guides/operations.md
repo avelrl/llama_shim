@@ -55,6 +55,12 @@ Important distinction:
 - `/debug/capabilities` remains a normal shim route, so it shares shim ingress
   auth and request rate limiting, and reports degraded dependencies inside
   `ready` and `probes.*` instead of failing the route itself
+- `shimctl probe` is separate from `/readyz`: it is recommendation-only,
+  runs on demand from the shared `config.yaml`, can use the shared `.env` for
+  `SHIMCTL_PROBE_*` overrides, prints per-request progress to `stderr`
+  including the full successful assistant content for each probe, and reports
+  operator-facing latency observations as JSON without changing the running
+  HTTP server
 
 ## Maintenance
 
