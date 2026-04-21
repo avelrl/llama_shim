@@ -20,6 +20,7 @@ type chatCompletionResponse struct {
 type chatCompletionChoice struct {
 	Delta        chatCompletionMessage `json:"delta"`
 	Message      chatCompletionMessage `json:"message"`
+	Text         json.RawMessage       `json:"text"`
 	FinishReason *string               `json:"finish_reason"`
 }
 

@@ -105,13 +105,17 @@ const (
 )
 
 func Load(configPath string) (Config, error) {
+	if err := loadDotEnv(resolveDotEnvPath()); err != nil {
+		return Config{}, err
+	}
+
 	v := viper.New()
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.AutomaticEnv()
 
 	setDefaults(v)
 
-	if err := readConfigFile(v, resolveConfigPath(configPath)); err != nil {
+	if err := readConfigFileNamed(v, resolveConfigPath(configPath), "config"); err != nil {
 		return Config{}, err
 	}
 
@@ -463,7 +467,65 @@ func resolveConfigPath(configPath string) string {
 	return strings.TrimSpace(os.Getenv("SHIM_CONFIG"))
 }
 
+func resolveDotEnvPath() string {
+	if override := strings.TrimSpace(os.Getenv("SHIM_DOTENV")); override != "" {
+		return override
+	}
+	return ".env"
+}
+
+func loadDotEnv(path string) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("read dotenv file %q: %w", path, err)
+	}
+	for idx, rawLine := range strings.Split(string(data), "\n") {
+		line := strings.TrimSpace(strings.TrimRight(rawLine, "\r"))
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.HasPrefix(line, "export ") {
+			line = strings.TrimSpace(strings.TrimPrefix(line, "export "))
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			return fmt.Errorf("parse dotenv file %q line %d: missing '='", path, idx+1)
+		}
+		key = strings.TrimSpace(key)
+		if key == "" {
+			return fmt.Errorf("parse dotenv file %q line %d: empty key", path, idx+1)
+		}
+		if _, exists := os.LookupEnv(key); exists {
+			continue
+		}
+		value = strings.TrimSpace(value)
+		if len(value) >= 2 {
+			switch value[0] {
+			case '"', '\'':
+				if value[len(value)-1] == value[0] {
+					value = value[1 : len(value)-1]
+				}
+			}
+		}
+		if err := os.Setenv(key, value); err != nil {
+			return fmt.Errorf("set dotenv env %q from %q: %w", key, path, err)
+		}
+	}
+	return nil
+}
+
 func readConfigFile(v *viper.Viper, configPath string) error {
+	return readConfigFileNamed(v, configPath, "config")
+}
+
+func readConfigFileNamed(v *viper.Viper, configPath string, configName string) error {
 	if configPath != "" {
 		v.SetConfigFile(configPath)
 		if err := v.ReadInConfig(); err != nil {
@@ -472,7 +534,7 @@ func readConfigFile(v *viper.Viper, configPath string) error {
 		return nil
 	}
 
-	v.SetConfigName("config")
+	v.SetConfigName(strings.TrimSpace(configName))
 	v.AddConfigPath(".")
 	if err := v.ReadInConfig(); err != nil {
 		var notFound viper.ConfigFileNotFoundError

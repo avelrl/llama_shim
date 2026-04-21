@@ -82,6 +82,13 @@ llama:
     tls_handshake_timeout: 10s
     expect_continue_timeout: 1s
 
+# Shimctl-only probe settings living in the same shared config file.
+probe:
+  count: 3
+  request_timeout: 8s
+  bearer_token: ""
+  model: ""
+
 # Shim logging.
 log:
   # Log level: debug, info, warn, error.

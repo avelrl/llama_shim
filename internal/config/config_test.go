@@ -12,7 +12,13 @@ import (
 	"llama_shim/internal/config"
 )
 
+func disableDotEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv("SHIM_DOTENV", filepath.Join(t.TempDir(), "missing.env"))
+}
+
 func TestLoadFromYAMLFile(t *testing.T) {
+	disableDotEnv(t)
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
 	writeFile(t, configPath, `
 shim:
@@ -184,6 +190,7 @@ responses:
 }
 
 func TestEnvOverridesYAMLFile(t *testing.T) {
+	disableDotEnv(t)
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
 	writeFile(t, configPath, `
 shim:
@@ -337,6 +344,7 @@ responses:
 }
 
 func TestLoadUsesCodexSafeDefaults(t *testing.T) {
+	disableDotEnv(t)
 	tempDir := t.TempDir()
 	previousWD, err := os.Getwd()
 	require.NoError(t, err)
@@ -404,6 +412,7 @@ func TestLoadUsesCodexSafeDefaults(t *testing.T) {
 }
 
 func TestLoadRejectsLegacyUnsafeHostAlias(t *testing.T) {
+	disableDotEnv(t)
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
 	writeFile(t, configPath, `
 responses:
@@ -416,7 +425,27 @@ responses:
 	require.ErrorContains(t, err, "parse responses.code_interpreter.enable_unsafe_host_executor")
 }
 
+func TestLoadReadsDotEnvWhenEnvUnset(t *testing.T) {
+	tempDir := t.TempDir()
+	previousWD, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(tempDir))
+	t.Cleanup(func() {
+		_ = os.Chdir(previousWD)
+	})
+
+	writeFile(t, filepath.Join(tempDir, ".env"), `
+SHIM_ADDR=:9191
+`)
+	t.Setenv("SHIM_DOTENV", filepath.Join(tempDir, ".env"))
+
+	cfg, err := config.Load("")
+	require.NoError(t, err)
+	require.Equal(t, ":9191", cfg.Addr)
+}
+
 func TestLoadRejectsUnsafeHostCodeInterpreterBackend(t *testing.T) {
+	disableDotEnv(t)
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
 	writeFile(t, configPath, `
 responses:
@@ -430,6 +459,7 @@ responses:
 }
 
 func TestLoadRejectsUnsupportedRetrievalBackend(t *testing.T) {
+	disableDotEnv(t)
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
 	writeFile(t, configPath, `
 retrieval:
@@ -443,6 +473,7 @@ retrieval:
 }
 
 func TestLoadRejectsImageGenerationResponsesBackendWithoutBaseURL(t *testing.T) {
+	disableDotEnv(t)
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
 	writeFile(t, configPath, `
 responses:
@@ -456,6 +487,7 @@ responses:
 }
 
 func TestLoadRejectsUnsupportedComputerBackend(t *testing.T) {
+	disableDotEnv(t)
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
 	writeFile(t, configPath, `
 responses:

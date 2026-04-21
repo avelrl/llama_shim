@@ -116,9 +116,9 @@ implemented, but they must stay conservative:
   slot ownership; config parsing tests for the new runtime knobs; metrics
   integration coverage; `go test ./...`; `go vet ./...`; `git diff --check`
 
-### 2026-04-21: Planned startup calibration and recommendation mode
+### 2026-04-21: Startup calibration and recommendation mode
 
-- Status: planned
+- Status: implemented
 - Symptom: operators can see that the upstream is alive via `/readyz`, but that
   does not tell them whether the hot path is merely alive or already too slow
   for the intended agent concurrency
@@ -129,13 +129,15 @@ implemented, but they must stay conservative:
   preflight for normal `POST /v1/responses` traffic, and it must not mutate
   OpenAI-visible request or response semantics
 - Intended change:
-  add an internal startup calibration mode that performs a small number of
-  short deterministic upstream probes, records observed latency, and emits
-  conservative runtime recommendations through logs and shim-owned operational
-  surfaces such as `/debug/capabilities`
-- First stage:
-  recommendation-only mode; measure and report, but do not automatically change
-  behavior
+  add an operator-facing probe mode that performs a small number of short
+  deterministic upstream probes, records observed latency, and emits
+  conservative runtime recommendations through `shimctl probe`
+- Current implementation:
+  recommendation-only mode; `shimctl probe` reads `probe.*` from the shared
+  `config.yaml`, checks `GET /v1/models`, runs a small number of short
+  `POST /v1/chat/completions` probes, and prints a conservative recommendation
+  for `llama.max_concurrent_requests` and queue slack without auto-changing
+  runtime behavior
 - Possible later stage:
   optional internal auto-tuning of shim-only upstream admission limits or queue
   budgets, with explicit opt-in and hard min/max clamps
@@ -144,10 +146,14 @@ implemented, but they must stay conservative:
   auto-tune undocumented public API limits, and do not use calibration as a
   reason to add side-effecting request retries
 - Verification plan:
-  confirm that startup calibration stays informational in recommendation mode,
-  confirms the difference between simple readiness and real hot-path latency,
+  confirm that `shimctl probe` stays informational in recommendation mode,
+  that it reflects the difference between simple readiness and real hot-path latency,
   and produces stable enough guidance to help operators size safe upstream
   concurrency without changing the external API contract
+- Verification used:
+  targeted client tests for successful and failed calibration runs, config
+  parsing tests for the shared `config.yaml` `probe.*` knobs, `go test
+  ./...`, `go vet ./...`, and `git diff --check`
 
 ## Change Note Template
 

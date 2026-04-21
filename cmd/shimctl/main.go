@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"llama_shim/internal/config"
+	"llama_shim/internal/llama"
 	"llama_shim/internal/retrieval"
 	"llama_shim/internal/storage/sqlite"
 )
@@ -24,7 +26,7 @@ func main() {
 func run(args []string, stdout, stderr io.Writer) error {
 	root := flag.NewFlagSet("shimctl", flag.ContinueOnError)
 	root.SetOutput(stderr)
-	configPath := root.String("config", "", "path to YAML config file")
+	configPath := root.String("config", "", "path to shared YAML config file")
 	if err := root.Parse(args); err != nil {
 		return err
 	}
@@ -35,7 +37,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return errors.New("maintenance command is required")
 	}
 
-	cfg, err := config.Load(*configPath)
+	cfg, err := config.LoadShimctl(*configPath)
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
@@ -47,6 +49,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return runOptimize(cfg, stdout)
 	case "vacuum":
 		return runVacuum(cfg, stdout)
+	case "probe":
+		return runProbe(cfg, rest[1:], stdout, stderr)
 	case "backup":
 		return runBackup(cfg, rest[1:], stdout, stderr)
 	case "restore":
@@ -57,7 +61,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 	}
 }
 
-func runCleanup(cfg config.Config, stdout io.Writer) error {
+func runCleanup(cfg config.ShimctlConfig, stdout io.Writer) error {
 	store, err := openStore(cfg)
 	if err != nil {
 		return err
@@ -77,7 +81,7 @@ func runCleanup(cfg config.Config, stdout io.Writer) error {
 	return err
 }
 
-func runOptimize(cfg config.Config, stdout io.Writer) error {
+func runOptimize(cfg config.ShimctlConfig, stdout io.Writer) error {
 	store, err := openStore(cfg)
 	if err != nil {
 		return err
@@ -91,7 +95,7 @@ func runOptimize(cfg config.Config, stdout io.Writer) error {
 	return err
 }
 
-func runVacuum(cfg config.Config, stdout io.Writer) error {
+func runVacuum(cfg config.ShimctlConfig, stdout io.Writer) error {
 	store, err := openStore(cfg)
 	if err != nil {
 		return err
@@ -105,7 +109,7 @@ func runVacuum(cfg config.Config, stdout io.Writer) error {
 	return err
 }
 
-func runBackup(cfg config.Config, args []string, stdout, stderr io.Writer) error {
+func runBackup(cfg config.ShimctlConfig, args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("backup", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	outPath := fs.String("out", "", "path to write the backup SQLite file")
@@ -129,7 +133,7 @@ func runBackup(cfg config.Config, args []string, stdout, stderr io.Writer) error
 	return err
 }
 
-func runRestore(cfg config.Config, args []string, stdout, stderr io.Writer) error {
+func runRestore(cfg config.ShimctlConfig, args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("restore", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fromPath := fs.String("from", "", "path to the backup SQLite file to restore from")
@@ -147,7 +151,52 @@ func runRestore(cfg config.Config, args []string, stdout, stderr io.Writer) erro
 	return err
 }
 
-func openStore(cfg config.Config) (*sqlite.Store, error) {
+func runProbe(cfg config.ShimctlConfig, args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("probe", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	model := fs.String("model", cfg.ProbeModel, "override probe model")
+	probeCount := fs.Int("probe-count", cfg.ProbeCount, "number of probe requests to run")
+	requestTimeout := fs.Duration("request-timeout", cfg.ProbeRequestTimeout, "per-probe timeout budget")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	client := llama.NewClientWithOptions(cfg.LlamaBaseURL, cfg.LlamaTimeout, llama.ClientOptions{
+		MaxConcurrentRequests:         cfg.LlamaMaxConcurrentRequests,
+		MaxQueueWait:                  cfg.LlamaMaxQueueWait,
+		Transport:                     buildLlamaTransportOptions(cfg),
+		StartupCalibrationBearerToken: cfg.ProbeBearerToken,
+	})
+
+	snapshot := client.RunStartupCalibration(context.Background(), llama.StartupCalibrationOptions{
+		Enabled:              true,
+		ProbeCount:           *probeCount,
+		RequestTimeout:       *requestTimeout,
+		Model:                *model,
+		UpstreamTimeout:      cfg.LlamaTimeout,
+		CurrentMaxConcurrent: cfg.LlamaMaxConcurrentRequests,
+		CurrentMaxQueueWait:  cfg.LlamaMaxQueueWait,
+		Progress: func(event llama.StartupCalibrationProgressEvent) {
+			printProbeProgress(stderr, event)
+		},
+	})
+
+	encoder := json.NewEncoder(stdout)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(snapshot); err != nil {
+		return fmt.Errorf("encode probe result: %w", err)
+	}
+	printProbeSummary(stderr, snapshot)
+	if snapshot.Status == "failed" {
+		if snapshot.Error == "" {
+			return errors.New("probe failed")
+		}
+		return errors.New(snapshot.Error)
+	}
+	return nil
+}
+
+func openStore(cfg config.ShimctlConfig) (*sqlite.Store, error) {
 	ctx := context.Background()
 	embedder, err := retrieval.NewEmbedder(retrieval.EmbedderConfig{
 		Backend: cfg.RetrievalEmbedderBackend,
@@ -179,5 +228,103 @@ func retrievalNowUnix() int64 {
 }
 
 func printUsage(w io.Writer) {
-	_, _ = fmt.Fprintln(w, "usage: shimctl [-config path] <cleanup|optimize|vacuum|backup|restore> [flags]")
+	_, _ = fmt.Fprintln(w, "usage: shimctl [-config path-to-config.yaml] <cleanup|optimize|vacuum|probe|backup|restore> [flags]")
+}
+
+func printProbeProgress(w io.Writer, event llama.StartupCalibrationProgressEvent) {
+	if w == nil {
+		return
+	}
+
+	status := "failed"
+	if event.Success {
+		status = "ok"
+	}
+
+	switch event.Step {
+	case "models":
+		_, _ = fmt.Fprintf(
+			w,
+			"[probe] %s %s step=models result=%s status=%d duration_ms=%d models=%d",
+			event.Method,
+			event.Path,
+			status,
+			event.StatusCode,
+			event.DurationMS,
+			event.ModelsCount,
+		)
+	case "probe":
+		_, _ = fmt.Fprintf(
+			w,
+			"[probe] %s %s step=probe result=%s probe=%d/%d profile=%s model=%s max_tokens=%d status=%d duration_ms=%d",
+			event.Method,
+			event.Path,
+			status,
+			event.ProbeIndex,
+			event.ProbeCount,
+			event.ProbeProfile,
+			event.Model,
+			event.MaxTokens,
+			event.StatusCode,
+			event.DurationMS,
+		)
+	default:
+		_, _ = fmt.Fprintf(
+			w,
+			"[probe] step=%s result=%s status=%d duration_ms=%d",
+			event.Step,
+			status,
+			event.StatusCode,
+			event.DurationMS,
+		)
+	}
+	if event.ResponsePreview != "" {
+		_, _ = fmt.Fprintf(w, " preview=%q", event.ResponsePreview)
+	}
+	if event.Error != "" {
+		_, _ = fmt.Fprintf(w, " error=%q", event.Error)
+	}
+	_, _ = fmt.Fprintln(w)
+}
+
+func printProbeSummary(w io.Writer, snapshot llama.StartupCalibrationSnapshot) {
+	if w == nil {
+		return
+	}
+
+	_, _ = fmt.Fprintf(
+		w,
+		"[probe] finished status=%s model=%s successful_probes=%d/%d",
+		snapshot.Status,
+		snapshot.Model,
+		snapshot.SuccessfulProbes,
+		snapshot.ProbeCount,
+	)
+	if snapshot.ObservedLatency != nil {
+		_, _ = fmt.Fprintf(
+			w,
+			" latency_ms[min=%d p50=%d avg=%d max=%d]",
+			snapshot.ObservedLatency.Min,
+			snapshot.ObservedLatency.P50,
+			snapshot.ObservedLatency.Avg,
+			snapshot.ObservedLatency.Max,
+		)
+	}
+	if snapshot.Error != "" {
+		_, _ = fmt.Fprintf(w, " error=%q", snapshot.Error)
+	}
+	_, _ = fmt.Fprintln(w)
+}
+
+func buildLlamaTransportOptions(cfg config.ShimctlConfig) llama.TransportOptions {
+	return llama.TransportOptions{
+		MaxIdleConns:          cfg.LlamaHTTPMaxIdleConns,
+		MaxIdleConnsPerHost:   cfg.LlamaHTTPMaxIdleConnsPerHost,
+		MaxConnsPerHost:       cfg.LlamaHTTPMaxConnsPerHost,
+		IdleConnTimeout:       cfg.LlamaHTTPIdleConnTimeout,
+		DialTimeout:           cfg.LlamaHTTPDialTimeout,
+		KeepAlive:             cfg.LlamaHTTPKeepAlive,
+		TLSHandshakeTimeout:   cfg.LlamaHTTPTLSHandshakeTimeout,
+		ExpectContinueTimeout: cfg.LlamaHTTPExpectContinueTimeout,
+	}
 }

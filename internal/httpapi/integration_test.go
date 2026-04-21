@@ -278,6 +278,106 @@ func TestReadyzReturns503WhenImageGenerationBackendIsUnavailable(t *testing.T) {
 	require.Equal(t, "image generation backend is not ready", payload["error"]["message"])
 }
 
+func TestReadyzDoesNotUseStartupCalibrationToken(t *testing.T) {
+	var seenAuthorization string
+	llamaServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenAuthorization = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"object": "list",
+			"data": []map[string]any{
+				{"id": "test-model", "object": "model", "created": time.Now().Unix(), "owned_by": "shim-test"},
+			},
+		}))
+	}))
+	defer llamaServer.Close()
+
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		LlamaBaseURL:                       llamaServer.URL,
+		LlamaStartupCalibrationBearerToken: "startup-probe-secret",
+	})
+
+	req, err := http.NewRequest(http.MethodGet, app.Server.URL+"/readyz", nil)
+	require.NoError(t, err)
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Empty(t, seenAuthorization)
+}
+
+func TestResponsesCreateDoesNotUseStartupCalibrationToken(t *testing.T) {
+	var seenAuthorization string
+	llamaServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenAuthorization = r.Header.Get("Authorization")
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/chat/completions" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer llamaServer.Close()
+
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		LlamaBaseURL:                       llamaServer.URL,
+		LlamaStartupCalibrationBearerToken: "startup-probe-secret",
+	})
+
+	status, payload := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model": "test-model",
+		"input": "Reply with exactly: pong",
+	})
+
+	require.Equal(t, http.StatusBadGateway, status)
+	require.Equal(t, "upstream_error", asStringAny(payload["error"].(map[string]any)["type"]))
+	require.Empty(t, seenAuthorization)
+}
+
+func TestChatCompletionsCreateDoesNotUseStartupCalibrationToken(t *testing.T) {
+	var seenAuthorization string
+	llamaServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenAuthorization = r.Header.Get("Authorization")
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/chat/completions" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer llamaServer.Close()
+
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		LlamaBaseURL:                       llamaServer.URL,
+		LlamaStartupCalibrationBearerToken: "startup-probe-secret",
+	})
+
+	reqBody, err := json.Marshal(map[string]any{
+		"model": "test-model",
+		"messages": []map[string]any{
+			{
+				"role":    "user",
+				"content": "Reply with exactly: pong",
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	req, err := http.NewRequest(http.MethodPost, app.Server.URL+"/v1/chat/completions", bytes.NewReader(reqBody))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	require.GreaterOrEqual(t, resp.StatusCode, http.StatusBadRequest)
+	require.Empty(t, seenAuthorization)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.NotEmpty(t, strings.TrimSpace(string(body)))
+}
+
 func TestCapabilitiesEndpointReportsConfiguredRuntime(t *testing.T) {
 	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
 		ResponsesMode:                     config.ResponsesModeLocalOnly,

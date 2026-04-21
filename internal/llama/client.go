@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -20,18 +21,23 @@ import (
 )
 
 type Client struct {
-	baseURL       string
-	requestClient *http.Client
-	streamClient  *http.Client
-	admission     *admissionController
+	baseURL                       string
+	requestClient                 *http.Client
+	streamClient                  *http.Client
+	admission                     *admissionController
+	logger                        *slog.Logger
+	startupCalibrationBearerToken string
+	calibrationMu                 sync.RWMutex
+	calibration                   StartupCalibrationSnapshot
 }
 
 type ClientOptions struct {
-	MaxConcurrentRequests int
-	MaxQueueWait          time.Duration
-	Logger                *slog.Logger
-	Observer              AdmissionObserver
-	Transport             TransportOptions
+	MaxConcurrentRequests         int
+	MaxQueueWait                  time.Duration
+	Logger                        *slog.Logger
+	Observer                      AdmissionObserver
+	Transport                     TransportOptions
+	StartupCalibrationBearerToken string
 }
 
 type TransportOptions struct {
@@ -112,7 +118,10 @@ func NewClientWithOptions(baseURL string, timeout time.Duration, options ClientO
 		streamClient: &http.Client{
 			Transport: newHTTPTransport(options.Transport),
 		},
-		admission: newAdmissionController(options),
+		admission:                     newAdmissionController(options),
+		logger:                        options.Logger,
+		startupCalibrationBearerToken: strings.TrimSpace(options.StartupCalibrationBearerToken),
+		calibration:                   DisabledStartupCalibrationSnapshot(),
 	}
 }
 
@@ -133,57 +142,88 @@ func (c *Client) CreateChatCompletionText(ctx context.Context, requestBody []byt
 }
 
 func (c *Client) CheckReady(ctx context.Context) error {
+	_, err := c.listModels(ctx)
+	return err
+}
+
+func (c *Client) listModels(ctx context.Context) ([]string, error) {
+	return c.listModelsWithBearerToken(ctx, "")
+}
+
+func (c *Client) listModelsWithBearerToken(ctx context.Context, bearerToken string) ([]string, error) {
+	result, err := c.listModelsDetailedWithBearerToken(ctx, bearerToken)
+	return result.ModelIDs, err
+}
+
+type listModelsResult struct {
+	StatusCode int
+	Body       []byte
+	ModelIDs   []string
+}
+
+func (c *Client) listModelsDetailedWithBearerToken(ctx context.Context, bearerToken string) (listModelsResult, error) {
 	if c == nil {
-		return errors.New("llama client is nil")
+		return listModelsResult{}, errors.New("llama client is nil")
 	}
 
 	endpoint, err := url.JoinPath(c.baseURL, "/v1/models")
 	if err != nil {
-		return fmt.Errorf("build llama url: %w", err)
+		return listModelsResult{}, fmt.Errorf("build llama url: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return fmt.Errorf("create llama request: %w", err)
+		return listModelsResult{}, fmt.Errorf("create llama request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
 	applyContextHeaders(ctx, req.Header)
+	applyBearerAuth(req.Header, bearerToken)
 
 	resp, err := c.requestClient.Do(req)
 	if err != nil {
 		if mappedErr := mapTimeoutError(err); mappedErr != nil {
-			return mappedErr
+			return listModelsResult{}, mappedErr
 		}
-		return fmt.Errorf("call llama: %w", err)
+		return listModelsResult{}, fmt.Errorf("call llama: %w", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return fmt.Errorf("read llama response: %w", err)
+		return listModelsResult{}, fmt.Errorf("read llama response: %w", err)
+	}
+	result := listModelsResult{
+		StatusCode: resp.StatusCode,
+		Body:       body,
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return &UpstreamError{
+		return result, &UpstreamError{
 			StatusCode: resp.StatusCode,
 			Message:    string(bytes.TrimSpace(body)),
 		}
 	}
 
 	var payload struct {
-		Object string            `json:"object"`
-		Data   []json.RawMessage `json:"data"`
+		Object string `json:"object"`
+		Data   []struct {
+			ID string `json:"id"`
+		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
-		return fmt.Errorf("decode llama response: %w", err)
+		return result, fmt.Errorf("decode llama response: %w", err)
 	}
 	if payload.Object != "" && payload.Object != "list" {
-		return &InvalidResponseError{Message: "llama models response did not contain a list object"}
+		return result, &InvalidResponseError{Message: "llama models response did not contain a list object"}
 	}
 	if payload.Data == nil {
-		return &InvalidResponseError{Message: "llama models response did not contain data"}
+		return result, &InvalidResponseError{Message: "llama models response did not contain data"}
 	}
-
-	return nil
+	modelIDs := make([]string, 0, len(payload.Data))
+	for _, model := range payload.Data {
+		modelIDs = append(modelIDs, strings.TrimSpace(model.ID))
+	}
+	result.ModelIDs = modelIDs
+	return result, nil
 }
 
 func (c *Client) Generate(ctx context.Context, model string, items []domain.Item, options map[string]json.RawMessage) (string, error) {
@@ -274,45 +314,64 @@ func (c *Client) Proxy(ctx context.Context, incoming *http.Request) (*http.Respo
 }
 
 func (c *Client) doJSONRequest(ctx context.Context, method string, path string, requestBody []byte, scope string, maxBodyBytes int64) ([]byte, error) {
+	return c.doJSONRequestWithBearerToken(ctx, method, path, requestBody, scope, maxBodyBytes, "")
+}
+
+func (c *Client) doJSONRequestWithBearerToken(ctx context.Context, method string, path string, requestBody []byte, scope string, maxBodyBytes int64, bearerToken string) ([]byte, error) {
+	result, err := c.doJSONRequestDetailedWithBearerToken(ctx, method, path, requestBody, scope, maxBodyBytes, bearerToken)
+	return result.Body, err
+}
+
+type jsonRequestResult struct {
+	StatusCode int
+	Body       []byte
+}
+
+func (c *Client) doJSONRequestDetailedWithBearerToken(ctx context.Context, method string, path string, requestBody []byte, scope string, maxBodyBytes int64, bearerToken string) (jsonRequestResult, error) {
 	endpoint, err := url.JoinPath(c.baseURL, path)
 	if err != nil {
-		return nil, fmt.Errorf("build llama url: %w", err)
+		return jsonRequestResult{}, fmt.Errorf("build llama url: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, method, endpoint, bytes.NewReader(requestBody))
 	if err != nil {
-		return nil, fmt.Errorf("create llama request: %w", err)
+		return jsonRequestResult{}, fmt.Errorf("create llama request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	applyContextHeaders(ctx, req.Header)
+	applyBearerAuth(req.Header, bearerToken)
 
 	release, err := c.acquireUpstreamSlot(ctx, scope)
 	if err != nil {
-		return nil, err
+		return jsonRequestResult{}, err
 	}
 	defer release()
 
 	resp, err := c.requestClient.Do(req)
 	if err != nil {
 		if mappedErr := mapTimeoutError(err); mappedErr != nil {
-			return nil, mappedErr
+			return jsonRequestResult{}, mappedErr
 		}
-		return nil, fmt.Errorf("call llama: %w", err)
+		return jsonRequestResult{}, fmt.Errorf("call llama: %w", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes))
 	if err != nil {
-		return nil, fmt.Errorf("read llama response: %w", err)
+		return jsonRequestResult{}, fmt.Errorf("read llama response: %w", err)
+	}
+	result := jsonRequestResult{
+		StatusCode: resp.StatusCode,
+		Body:       body,
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, &UpstreamError{
+		return result, &UpstreamError{
 			StatusCode: resp.StatusCode,
 			Message:    string(bytes.TrimSpace(body)),
 		}
 	}
 
-	return body, nil
+	return result, nil
 }
 
 func (c *Client) doStreamingRequest(ctx context.Context, path string, requestBody []byte, scope string) (*http.Response, func(), error) {
@@ -362,6 +421,16 @@ func proxyAdmissionScope(path string) string {
 	default:
 		return ""
 	}
+}
+
+func applyBearerAuth(outgoing http.Header, bearerToken string) {
+	if strings.TrimSpace(bearerToken) == "" {
+		return
+	}
+	if strings.TrimSpace(outgoing.Get("Authorization")) != "" {
+		return
+	}
+	outgoing.Set("Authorization", "Bearer "+strings.TrimSpace(bearerToken))
 }
 
 func (c *Client) buildUpstreamURL(path, rawQuery string) (string, error) {
@@ -561,11 +630,20 @@ func extractAssistantText(body []byte) (string, error) {
 		return "", &InvalidResponseError{Message: "llama response did not contain choices"}
 	}
 
-	text := extractMessageContent(payload.Choices[0].Message.Content)
-	if strings.TrimSpace(text) == "" {
-		return "", &InvalidResponseError{Message: "llama response content was empty"}
+	choice := payload.Choices[0]
+	for _, candidate := range []json.RawMessage{choice.Message.Content, choice.Delta.Content, choice.Text} {
+		if text := extractMessageContent(candidate); strings.TrimSpace(text) != "" {
+			return text, nil
+		}
 	}
-	return text, nil
+
+	var generic map[string]any
+	if err := json.Unmarshal(body, &generic); err == nil {
+		if text := extractAssistantTextFromGeneric(generic); strings.TrimSpace(text) != "" {
+			return text, nil
+		}
+	}
+	return "", &InvalidResponseError{Message: "llama response content was empty"}
 }
 
 func extractStreamChunkText(choice chatCompletionChoice) string {
@@ -576,7 +654,8 @@ func extractStreamChunkText(choice chatCompletionChoice) string {
 }
 
 func extractMessageContent(raw json.RawMessage) string {
-	if len(bytes.TrimSpace(raw)) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
 		return ""
 	}
 
@@ -585,18 +664,118 @@ func extractMessageContent(raw json.RawMessage) string {
 		return text
 	}
 
-	var parts []struct {
-		Text string `json:"text"`
-	}
+	var parts []json.RawMessage
 	if err := json.Unmarshal(raw, &parts); err == nil {
 		var builder strings.Builder
 		for _, part := range parts {
-			builder.WriteString(part.Text)
+			builder.WriteString(extractMessageContent(part))
 		}
 		return builder.String()
 	}
 
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &object); err == nil {
+		for _, key := range []string{"text", "content", "value"} {
+			if candidate, ok := object[key]; ok {
+				if text := extractMessageContent(candidate); text != "" {
+					return text
+				}
+			}
+		}
+	}
+
 	return ""
+}
+
+func extractAssistantTextFromGeneric(payload map[string]any) string {
+	choices, _ := payload["choices"].([]any)
+	if len(choices) == 0 {
+		return ""
+	}
+	choice, _ := choices[0].(map[string]any)
+	if len(choice) == 0 {
+		return ""
+	}
+	for _, key := range []string{"message", "delta", "text"} {
+		if candidate, ok := choice[key]; ok {
+			if text := extractStructuredAssistantText(candidate); strings.TrimSpace(text) != "" {
+				return text
+			}
+		}
+	}
+	return ""
+}
+
+func extractStructuredAssistantText(value any) string {
+	switch typed := value.(type) {
+	case nil:
+		return ""
+	case string:
+		return typed
+	case []any:
+		var builder strings.Builder
+		for _, item := range typed {
+			builder.WriteString(extractStructuredAssistantText(item))
+		}
+		return builder.String()
+	case map[string]any:
+		for _, key := range []string{
+			"content",
+			"output_text",
+			"text",
+			"value",
+			"parts",
+			"content_parts",
+			"content_blocks",
+			"message",
+			"delta",
+			"reasoning_content",
+		} {
+			if candidate, ok := typed[key]; ok {
+				if text := extractStructuredAssistantText(candidate); strings.TrimSpace(text) != "" {
+					return text
+				}
+			}
+		}
+
+		keys := make([]string, 0, len(typed))
+		for key := range typed {
+			if _, skip := ignoredAssistantTextKeys[key]; skip {
+				continue
+			}
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+
+		var builder strings.Builder
+		for _, key := range keys {
+			if text := extractStructuredAssistantText(typed[key]); strings.TrimSpace(text) != "" {
+				builder.WriteString(text)
+			}
+		}
+		return builder.String()
+	default:
+		return ""
+	}
+}
+
+var ignoredAssistantTextKeys = map[string]struct{}{
+	"annotations":        {},
+	"arguments":          {},
+	"created":            {},
+	"finish_reason":      {},
+	"function_call":      {},
+	"id":                 {},
+	"index":              {},
+	"logprobs":           {},
+	"model":              {},
+	"name":               {},
+	"object":             {},
+	"refusal":            {},
+	"role":               {},
+	"system_fingerprint": {},
+	"tool_calls":         {},
+	"type":               {},
 }
 
 func normalizeClientOptions(options ClientOptions) ClientOptions {

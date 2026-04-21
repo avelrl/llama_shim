@@ -87,7 +87,7 @@ POST /v1/chat/completions
 
 ## Running the shim
 
-You can run the shim with plain environment variables, with a YAML config file, or with both. Environment variables override values from YAML.
+You can run the shim with plain environment variables, with a YAML config file, or with both. Environment variables override values from YAML. If a repo-local `.env` file exists, the shim loads it first as a convenience layer and then lets real process environment variables win. A starter template is provided in [.env.example](.env.example).
 
 ```bash
 LLAMA_BASE_URL=http://127.0.0.1:8081 \
@@ -289,12 +289,22 @@ Examples:
 go run ./cmd/shimctl -config ./config.yaml cleanup
 go run ./cmd/shimctl -config ./config.yaml optimize
 go run ./cmd/shimctl -config ./config.yaml vacuum
+go run ./cmd/shimctl -config ./config.yaml probe
+go run ./cmd/shimctl -config ./config.yaml probe -probe-count 3 -request-timeout 8s -model unsloth/Kimi-K2.5
 go run ./cmd/shimctl -config ./config.yaml backup -out ./.data/shim-backup.db
 go run ./cmd/shimctl -config ./config.yaml restore -from ./.data/shim-backup.db
 ```
 
 The restore path is intentionally offline-oriented: stop the running shim
 before replacing the SQLite file.
+
+`shimctl` uses the same `config.yaml` and the same repo-local `.env` as the
+running shim, but it only reads the subset of fields it needs. For probe-only
+overrides in `.env`, use `SHIMCTL_PROBE_BEARER_TOKEN` and
+`SHIMCTL_PROBE_MODEL`. `shimctl probe` runs the same calibration logic on
+demand, without starting the HTTP server, prints live per-request progress to
+`stderr` including the full successful assistant content for each probe, and
+writes the structured result snapshot as JSON to `stdout`.
 
 ## Local DX
 
@@ -319,6 +329,7 @@ The shim now has a shim-owned operational layer that is separate from route-cont
 - optional ingress bearer auth via `shim.auth.mode=static_bearer`
 - optional in-memory per-client request rate limiting via `shim.rate_limit.*`
 - optional shim-owned capability manifest at `/debug/capabilities`
+- optional on-demand upstream sizing probe via `shimctl probe` and `probe.*` in `config.yaml`
 - optional Prometheus-text metrics at `shim.metrics.path` (default `/metrics`)
 - configurable request, upload, retrieval, and local `code_interpreter` limits
 - structured JSON logs with `request_id`, optional `client_request_id`, stable route labels, auth subject fingerprints, and retrieval/runtime events
@@ -327,6 +338,8 @@ Important behavior:
 
 - `/healthz` and `/readyz` stay unauthenticated and unthrottled so external probes keep working
 - `/debug/capabilities` is a shim-owned operator/debug route that reports current surfaces, routing classes, runtime config, and dependency probe state; it returns `200` even when some dependencies are degraded, and shares normal shim auth and request rate limiting
+- `shimctl probe` remains shim-owned and separate from the running HTTP server: it reads `probe.*` from the shared `config.yaml`, probes documented upstream `/v1/models` and `/v1/chat/completions` endpoints on demand, and prints a structured JSON snapshot with conservative sizing guidance
+- the optional calibration token is scoped only to `shimctl probe`; `/readyz`, normal request handling, proxy/backend traffic, and `/debug/capabilities` never borrow it
 - `/metrics` is skipped by the request rate limiter but still shares ingress auth when shim auth is enabled
 - when shim ingress auth is enabled, the ingress `Authorization` header is consumed by the shim and is not forwarded to the upstream text-generation backend; `X-Client-Request-Id` still propagates upstream
 - request rate limiting is currently a shim-owned in-memory subset with request-based headers:

@@ -25,6 +25,7 @@ type TestApp struct {
 	Server      *httptest.Server
 	Store       *sqlite.Store
 	LlamaServer *httptest.Server
+	LlamaClient *llama.Client
 	close       func()
 }
 
@@ -79,6 +80,7 @@ type TestAppOptions struct {
 	CodeInterpreterMaxConcurrentRuns      int
 	DBPath                                string
 	LlamaBaseURL                          string
+	LlamaStartupCalibrationBearerToken    string
 	LlamaMaxConcurrentRequests            int
 	LlamaMaxQueueWait                     time.Duration
 	RetrievalConfig                       retrieval.Config
@@ -120,9 +122,10 @@ func NewTestAppWithOptions(t *testing.T, options TestAppOptions) *TestApp {
 		llamaMaxConcurrentRequests = 4
 	}
 	llamaClient := llama.NewClientWithOptions(llamaBaseURL, 200*time.Millisecond, llama.ClientOptions{
-		MaxConcurrentRequests: llamaMaxConcurrentRequests,
-		MaxQueueWait:          options.LlamaMaxQueueWait,
-		Observer:              metrics,
+		MaxConcurrentRequests:         llamaMaxConcurrentRequests,
+		MaxQueueWait:                  options.LlamaMaxQueueWait,
+		StartupCalibrationBearerToken: options.LlamaStartupCalibrationBearerToken,
+		Observer:                      metrics,
 	})
 	responseService := service.NewResponseService(store, store, llamaClient)
 	conversationService := service.NewConversationService(store)
@@ -202,6 +205,7 @@ func NewTestAppWithOptions(t *testing.T, options TestAppOptions) *TestApp {
 		Server:      server,
 		Store:       store,
 		LlamaServer: llamaServer,
+		LlamaClient: llamaClient,
 		close:       closeFn,
 	}
 }
