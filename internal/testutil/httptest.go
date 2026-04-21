@@ -79,6 +79,8 @@ type TestAppOptions struct {
 	CodeInterpreterMaxConcurrentRuns      int
 	DBPath                                string
 	LlamaBaseURL                          string
+	LlamaMaxConcurrentRequests            int
+	LlamaMaxQueueWait                     time.Duration
 	RetrievalConfig                       retrieval.Config
 	RetrievalEmbedder                     retrieval.Embedder
 	WebSearchProvider                     websearch.Provider
@@ -112,7 +114,16 @@ func NewTestAppWithOptions(t *testing.T, options TestAppOptions) *TestApp {
 	}
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	llamaClient := llama.NewClient(llamaBaseURL, 200*time.Millisecond)
+	metrics := httpapi.NewMetrics()
+	llamaMaxConcurrentRequests := options.LlamaMaxConcurrentRequests
+	if llamaMaxConcurrentRequests <= 0 {
+		llamaMaxConcurrentRequests = 4
+	}
+	llamaClient := llama.NewClientWithOptions(llamaBaseURL, 200*time.Millisecond, llama.ClientOptions{
+		MaxConcurrentRequests: llamaMaxConcurrentRequests,
+		MaxQueueWait:          options.LlamaMaxQueueWait,
+		Observer:              metrics,
+	})
 	responseService := service.NewResponseService(store, store, llamaClient)
 	conversationService := service.NewConversationService(store)
 	testCtx, cancel := context.WithCancel(context.Background())
@@ -138,7 +149,6 @@ func NewTestAppWithOptions(t *testing.T, options TestAppOptions) *TestApp {
 	if options.MetricsEnabled != nil {
 		metricsEnabled = *options.MetricsEnabled
 	}
-	metrics := httpapi.NewMetrics()
 	httpapi.StartLocalCodeInterpreterCleanupLoop(testCtx, logger, localCodeInterpreter, store, store, options.CodeInterpreterCleanupInterval)
 
 	server := httptest.NewServer(httpapi.NewRouter(httpapi.RouterDeps{

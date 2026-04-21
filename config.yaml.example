@@ -65,6 +65,22 @@ llama:
   # Timeout for ordinary upstream requests.
   # Streaming uses a dedicated client without a shared request timeout.
   timeout: 60s
+  # Internal admission control for expensive upstream create/generate paths.
+  # 0 disables shim-side concurrency smoothing.
+  max_concurrent_requests: 4
+  # Optional extra wait budget for the internal admission queue.
+  # 0 means wait only as long as the request context allows.
+  max_queue_wait: 0s
+  http:
+    # Shared upstream connection-pool tuning for both request and stream clients.
+    max_idle_conns: 32
+    max_idle_conns_per_host: 16
+    max_conns_per_host: 8
+    idle_conn_timeout: 90s
+    dial_timeout: 10s
+    keep_alive: 30s
+    tls_handshake_timeout: 10s
+    expect_continue_timeout: 1s
 
 # Shim logging.
 log:

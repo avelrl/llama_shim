@@ -82,9 +82,9 @@ implemented, but they must stay conservative:
 - avoid implying that a planned mechanism has already shipped
 - avoid turning this guide into a scope ledger or feature roadmap
 
-### 2026-04-21: Planned upstream admission control and transport tuning
+### 2026-04-21: Upstream admission control and transport tuning
 
-- Status: planned
+- Status: implemented
 - Symptom: when several agents or concurrent compatibility scenarios hit the
   shim at once, the upstream text backend may slow down sharply, pushing p95
   and p99 latency high enough to trigger timeout cascades
@@ -95,19 +95,26 @@ implemented, but they must stay conservative:
 - Invariant: valid `POST /v1/responses` traffic must not gain a new
   undocumented compatibility preflight or a shim-only contract regression just
   to make overload easier to manage
-- Intended change:
-  add bounded internal admission control before slow upstream model calls so
-  the shim can shed or queue pressure in a controlled way, and tune upstream
-  HTTP transport reuse to reduce avoidable connection churn
+- Change:
+  add bounded internal admission control before slow upstream model calls and
+  hold the slot until the proxied or streamed upstream body is closed; tune the
+  upstream HTTP transport for explicit connection reuse and host-level caps
+- Operator surface:
+  new internal knobs live under `llama.max_concurrent_requests`,
+  `llama.max_queue_wait`, and `llama.http.*` in the shim config; these are
+  shim-only runtime controls, not OpenAI-surface request fields
+- Observability:
+  emit `shim_upstream_admission_total`, `shim_upstream_queue_wait_ms`,
+  `shim_inflight`, and `shim_queued` metrics, and log slow or failed admission
+  waits
 - Non-goals:
   do not retry side-effecting create requests after timeout, do not add public
   undocumented payload caps, and do not reframe a runtime protection as a new
   OpenAI API behavior
-- Verification plan:
-  compare targeted concurrent runs and full compatibility reruns before and
-  after the change; check that the result is fewer shim-originated timeout
-  cascades without introducing new spec violations on `custom_tool`,
-  `previous_response_id`, `conversation`, or normal create/retrieve behavior
+- Verification used:
+  targeted client tests for serialized admission, queue timeout, and proxy-body
+  slot ownership; config parsing tests for the new runtime knobs; metrics
+  integration coverage; `go test ./...`; `go vet ./...`; `git diff --check`
 
 ### 2026-04-21: Planned startup calibration and recommendation mode
 

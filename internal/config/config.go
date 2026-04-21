@@ -22,6 +22,16 @@ type Config struct {
 	SQLiteMaintenanceCleanupInterval               time.Duration
 	LlamaBaseURL                                   string
 	LlamaTimeout                                   time.Duration
+	LlamaMaxConcurrentRequests                     int
+	LlamaMaxQueueWait                              time.Duration
+	LlamaHTTPMaxIdleConns                          int
+	LlamaHTTPMaxIdleConnsPerHost                   int
+	LlamaHTTPMaxConnsPerHost                       int
+	LlamaHTTPIdleConnTimeout                       time.Duration
+	LlamaHTTPDialTimeout                           time.Duration
+	LlamaHTTPKeepAlive                             time.Duration
+	LlamaHTTPTLSHandshakeTimeout                   time.Duration
+	LlamaHTTPExpectContinueTimeout                 time.Duration
 	ReadTimeout                                    time.Duration
 	WriteTimeout                                   time.Duration
 	IdleTimeout                                    time.Duration
@@ -151,6 +161,44 @@ func Load(configPath string) (Config, error) {
 
 	if err := parseDuration(v.GetString("llama.timeout"), &cfg.LlamaTimeout); err != nil {
 		return Config{}, fmt.Errorf("parse llama.timeout: %w", err)
+	}
+	llamaMaxConcurrentRequests, err := parseNonNegativeInt(v.GetString("llama.max_concurrent_requests"))
+	if err != nil {
+		return Config{}, fmt.Errorf("parse llama.max_concurrent_requests: %w", err)
+	}
+	cfg.LlamaMaxConcurrentRequests = llamaMaxConcurrentRequests
+	if err := parseDuration(v.GetString("llama.max_queue_wait"), &cfg.LlamaMaxQueueWait); err != nil {
+		return Config{}, fmt.Errorf("parse llama.max_queue_wait: %w", err)
+	}
+	llamaHTTPMaxIdleConns, err := parsePositiveInt(v.GetString("llama.http.max_idle_conns"))
+	if err != nil {
+		return Config{}, fmt.Errorf("parse llama.http.max_idle_conns: %w", err)
+	}
+	cfg.LlamaHTTPMaxIdleConns = llamaHTTPMaxIdleConns
+	llamaHTTPMaxIdleConnsPerHost, err := parsePositiveInt(v.GetString("llama.http.max_idle_conns_per_host"))
+	if err != nil {
+		return Config{}, fmt.Errorf("parse llama.http.max_idle_conns_per_host: %w", err)
+	}
+	cfg.LlamaHTTPMaxIdleConnsPerHost = llamaHTTPMaxIdleConnsPerHost
+	llamaHTTPMaxConnsPerHost, err := parsePositiveInt(v.GetString("llama.http.max_conns_per_host"))
+	if err != nil {
+		return Config{}, fmt.Errorf("parse llama.http.max_conns_per_host: %w", err)
+	}
+	cfg.LlamaHTTPMaxConnsPerHost = llamaHTTPMaxConnsPerHost
+	if err := parseDuration(v.GetString("llama.http.idle_conn_timeout"), &cfg.LlamaHTTPIdleConnTimeout); err != nil {
+		return Config{}, fmt.Errorf("parse llama.http.idle_conn_timeout: %w", err)
+	}
+	if err := parseDuration(v.GetString("llama.http.dial_timeout"), &cfg.LlamaHTTPDialTimeout); err != nil {
+		return Config{}, fmt.Errorf("parse llama.http.dial_timeout: %w", err)
+	}
+	if err := parseDuration(v.GetString("llama.http.keep_alive"), &cfg.LlamaHTTPKeepAlive); err != nil {
+		return Config{}, fmt.Errorf("parse llama.http.keep_alive: %w", err)
+	}
+	if err := parseDuration(v.GetString("llama.http.tls_handshake_timeout"), &cfg.LlamaHTTPTLSHandshakeTimeout); err != nil {
+		return Config{}, fmt.Errorf("parse llama.http.tls_handshake_timeout: %w", err)
+	}
+	if err := parseDuration(v.GetString("llama.http.expect_continue_timeout"), &cfg.LlamaHTTPExpectContinueTimeout); err != nil {
+		return Config{}, fmt.Errorf("parse llama.http.expect_continue_timeout: %w", err)
 	}
 	if err := parseDuration(v.GetString("sqlite.maintenance.cleanup_interval"), &cfg.SQLiteMaintenanceCleanupInterval); err != nil {
 		return Config{}, fmt.Errorf("parse sqlite.maintenance.cleanup_interval: %w", err)
@@ -361,6 +409,16 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("sqlite.maintenance.cleanup_interval", "15m")
 	v.SetDefault("llama.base_url", "http://127.0.0.1:8081")
 	v.SetDefault("llama.timeout", "60s")
+	v.SetDefault("llama.max_concurrent_requests", "4")
+	v.SetDefault("llama.max_queue_wait", "0s")
+	v.SetDefault("llama.http.max_idle_conns", "32")
+	v.SetDefault("llama.http.max_idle_conns_per_host", "16")
+	v.SetDefault("llama.http.max_conns_per_host", "8")
+	v.SetDefault("llama.http.idle_conn_timeout", "90s")
+	v.SetDefault("llama.http.dial_timeout", "10s")
+	v.SetDefault("llama.http.keep_alive", "30s")
+	v.SetDefault("llama.http.tls_handshake_timeout", "10s")
+	v.SetDefault("llama.http.expect_continue_timeout", "1s")
 	v.SetDefault("log.level", "info")
 	v.SetDefault("log.file_path", "")
 	v.SetDefault("retrieval.index.backend", retrieval.IndexBackendLexical)
@@ -518,6 +576,17 @@ func parsePositiveInt(value string) (int, error) {
 		return 0, err
 	}
 	if parsed <= 0 {
+		return 0, strconv.ErrSyntax
+	}
+	return parsed, nil
+}
+
+func parseNonNegativeInt(value string) (int, error) {
+	parsed, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil {
+		return 0, err
+	}
+	if parsed < 0 {
 		return 0, strconv.ErrSyntax
 	}
 	return parsed, nil

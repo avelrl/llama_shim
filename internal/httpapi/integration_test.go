@@ -687,6 +687,28 @@ func TestShimMetricsEndpointExposesPrometheusTextAndSharesIngressAuth(t *testing
 	require.Contains(t, text, "shim_http_requests_total")
 	require.Contains(t, text, `shim_auth_failures_total{reason="missing_bearer"} 1`)
 	require.Contains(t, text, `shim_http_requests_total{method="GET",route="/healthz",status="200"}`)
+
+	status, _, _ := rawRequestWithHeaders(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model": "test-model",
+		"input": "Say OK and nothing else",
+	}, map[string]string{
+		"Authorization": "Bearer shim-secret",
+	})
+	require.Equal(t, http.StatusOK, status)
+
+	req, err = http.NewRequest(http.MethodGet, app.Server.URL+"/metrics", nil)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer shim-secret")
+	resp, err = app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	text = string(body)
+	require.Contains(t, text, `shim_upstream_admission_total{scope="upstream_chat_completions_generate",outcome="acquired"}`)
+	require.Contains(t, text, `shim_upstream_queue_wait_ms_count{scope="upstream_chat_completions_generate",outcome="acquired"}`)
+	require.Contains(t, text, `shim_inflight{scope="upstream_chat_completions_generate"} 0`)
+	require.Contains(t, text, `shim_queued{scope="upstream_chat_completions_generate"} 0`)
 }
 
 func TestShimJSONBodyLimitReturnsInvalidRequestError(t *testing.T) {

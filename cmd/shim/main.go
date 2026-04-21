@@ -45,6 +45,7 @@ func main() {
 	}))
 	processCtx, processCancel := context.WithCancel(context.Background())
 	defer processCancel()
+	metrics := httpapi.NewMetrics()
 
 	retrievalEmbedder, err := retrieval.NewEmbedder(retrieval.EmbedderConfig{
 		Backend: cfg.RetrievalEmbedderBackend,
@@ -73,10 +74,24 @@ func main() {
 	}
 	defer store.Close()
 
-	llamaClient := llama.NewClient(cfg.LlamaBaseURL, cfg.LlamaTimeout)
+	llamaClient := llama.NewClientWithOptions(cfg.LlamaBaseURL, cfg.LlamaTimeout, llama.ClientOptions{
+		MaxConcurrentRequests: cfg.LlamaMaxConcurrentRequests,
+		MaxQueueWait:          cfg.LlamaMaxQueueWait,
+		Logger:                logger,
+		Observer:              metrics,
+		Transport: llama.TransportOptions{
+			MaxIdleConns:          cfg.LlamaHTTPMaxIdleConns,
+			MaxIdleConnsPerHost:   cfg.LlamaHTTPMaxIdleConnsPerHost,
+			MaxConnsPerHost:       cfg.LlamaHTTPMaxConnsPerHost,
+			IdleConnTimeout:       cfg.LlamaHTTPIdleConnTimeout,
+			DialTimeout:           cfg.LlamaHTTPDialTimeout,
+			KeepAlive:             cfg.LlamaHTTPKeepAlive,
+			TLSHandshakeTimeout:   cfg.LlamaHTTPTLSHandshakeTimeout,
+			ExpectContinueTimeout: cfg.LlamaHTTPExpectContinueTimeout,
+		},
+	})
 	responseService := service.NewResponseService(store, store, llamaClient)
 	conversationService := service.NewConversationService(store)
-	metrics := httpapi.NewMetrics()
 	localComputer, err := buildLocalComputerRuntimeConfig(cfg)
 	if err != nil {
 		logger.Error("build computer runtime", "err", err)
@@ -155,6 +170,17 @@ func main() {
 		"shim listening",
 		"addr", cfg.Addr,
 		"llama_base_url", cfg.LlamaBaseURL,
+		"llama_timeout", cfg.LlamaTimeout,
+		"llama_max_concurrent_requests", cfg.LlamaMaxConcurrentRequests,
+		"llama_max_queue_wait", cfg.LlamaMaxQueueWait,
+		"llama_http_max_idle_conns", cfg.LlamaHTTPMaxIdleConns,
+		"llama_http_max_idle_conns_per_host", cfg.LlamaHTTPMaxIdleConnsPerHost,
+		"llama_http_max_conns_per_host", cfg.LlamaHTTPMaxConnsPerHost,
+		"llama_http_idle_conn_timeout", cfg.LlamaHTTPIdleConnTimeout,
+		"llama_http_dial_timeout", cfg.LlamaHTTPDialTimeout,
+		"llama_http_keep_alive", cfg.LlamaHTTPKeepAlive,
+		"llama_http_tls_handshake_timeout", cfg.LlamaHTTPTLSHandshakeTimeout,
+		"llama_http_expect_continue_timeout", cfg.LlamaHTTPExpectContinueTimeout,
 		"sqlite_path", cfg.SQLitePath,
 		"sqlite_maintenance_cleanup_interval", cfg.SQLiteMaintenanceCleanupInterval,
 		"config_file", cfg.ConfigFile,

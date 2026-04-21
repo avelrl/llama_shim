@@ -48,6 +48,17 @@ sqlite:
 llama:
   base_url: http://127.0.0.1:9091
   timeout: 12s
+  max_concurrent_requests: 6
+  max_queue_wait: 12s
+  http:
+    max_idle_conns: 48
+    max_idle_conns_per_host: 24
+    max_conns_per_host: 12
+    idle_conn_timeout: 75s
+    dial_timeout: 4s
+    keep_alive: 21s
+    tls_handshake_timeout: 8s
+    expect_continue_timeout: 1500ms
 log:
   level: debug
   file_path: ./tmp/shim.log
@@ -107,6 +118,16 @@ responses:
 	require.Equal(t, 17*time.Minute, cfg.SQLiteMaintenanceCleanupInterval)
 	require.Equal(t, "http://127.0.0.1:9091", cfg.LlamaBaseURL)
 	require.Equal(t, 12*time.Second, cfg.LlamaTimeout)
+	require.Equal(t, 6, cfg.LlamaMaxConcurrentRequests)
+	require.Equal(t, 12*time.Second, cfg.LlamaMaxQueueWait)
+	require.Equal(t, 48, cfg.LlamaHTTPMaxIdleConns)
+	require.Equal(t, 24, cfg.LlamaHTTPMaxIdleConnsPerHost)
+	require.Equal(t, 12, cfg.LlamaHTTPMaxConnsPerHost)
+	require.Equal(t, 75*time.Second, cfg.LlamaHTTPIdleConnTimeout)
+	require.Equal(t, 4*time.Second, cfg.LlamaHTTPDialTimeout)
+	require.Equal(t, 21*time.Second, cfg.LlamaHTTPKeepAlive)
+	require.Equal(t, 8*time.Second, cfg.LlamaHTTPTLSHandshakeTimeout)
+	require.Equal(t, 1500*time.Millisecond, cfg.LlamaHTTPExpectContinueTimeout)
 	require.Equal(t, 5*time.Second, cfg.ReadTimeout)
 	require.Equal(t, 30*time.Second, cfg.WriteTimeout)
 	require.Equal(t, 45*time.Second, cfg.IdleTimeout)
@@ -206,6 +227,16 @@ responses:
 	t.Setenv("SHIM_LIMITS_CODE_INTERPRETER_MAX_CONCURRENT_RUNS", "7")
 	t.Setenv("SQLITE_MAINTENANCE_CLEANUP_INTERVAL", "21m")
 	t.Setenv("LLAMA_TIMEOUT", "25s")
+	t.Setenv("LLAMA_MAX_CONCURRENT_REQUESTS", "7")
+	t.Setenv("LLAMA_MAX_QUEUE_WAIT", "14s")
+	t.Setenv("LLAMA_HTTP_MAX_IDLE_CONNS", "40")
+	t.Setenv("LLAMA_HTTP_MAX_IDLE_CONNS_PER_HOST", "20")
+	t.Setenv("LLAMA_HTTP_MAX_CONNS_PER_HOST", "10")
+	t.Setenv("LLAMA_HTTP_IDLE_CONN_TIMEOUT", "80s")
+	t.Setenv("LLAMA_HTTP_DIAL_TIMEOUT", "5s")
+	t.Setenv("LLAMA_HTTP_KEEP_ALIVE", "18s")
+	t.Setenv("LLAMA_HTTP_TLS_HANDSHAKE_TIMEOUT", "9s")
+	t.Setenv("LLAMA_HTTP_EXPECT_CONTINUE_TIMEOUT", "1200ms")
 	t.Setenv("LOG_LEVEL", "warn")
 	t.Setenv("LOG_FILE_PATH", "./override.log")
 	t.Setenv("RETRIEVAL_INDEX_BACKEND", "lexical")
@@ -260,6 +291,16 @@ responses:
 	require.Equal(t, 11, cfg.RetrievalMaxGroundingChunks)
 	require.Equal(t, 7, cfg.ResponsesCodeInterpreterMaxConcurrentRuns)
 	require.Equal(t, 25*time.Second, cfg.LlamaTimeout)
+	require.Equal(t, 7, cfg.LlamaMaxConcurrentRequests)
+	require.Equal(t, 14*time.Second, cfg.LlamaMaxQueueWait)
+	require.Equal(t, 40, cfg.LlamaHTTPMaxIdleConns)
+	require.Equal(t, 20, cfg.LlamaHTTPMaxIdleConnsPerHost)
+	require.Equal(t, 10, cfg.LlamaHTTPMaxConnsPerHost)
+	require.Equal(t, 80*time.Second, cfg.LlamaHTTPIdleConnTimeout)
+	require.Equal(t, 5*time.Second, cfg.LlamaHTTPDialTimeout)
+	require.Equal(t, 18*time.Second, cfg.LlamaHTTPKeepAlive)
+	require.Equal(t, 9*time.Second, cfg.LlamaHTTPTLSHandshakeTimeout)
+	require.Equal(t, 1200*time.Millisecond, cfg.LlamaHTTPExpectContinueTimeout)
 	require.Equal(t, slog.LevelWarn, cfg.LogLevel)
 	require.Equal(t, "./override.log", cfg.LogFilePath)
 	require.Equal(t, "lexical", cfg.RetrievalIndexBackend)
@@ -350,6 +391,16 @@ func TestLoadUsesCodexSafeDefaults(t *testing.T) {
 	require.EqualValues(t, 2<<20, cfg.ResponsesCodeInterpreterGeneratedFileBytes)
 	require.EqualValues(t, 8<<20, cfg.ResponsesCodeInterpreterGeneratedTotalBytes)
 	require.EqualValues(t, 50<<20, cfg.ResponsesCodeInterpreterRemoteInputFileBytes)
+	require.Equal(t, 4, cfg.LlamaMaxConcurrentRequests)
+	require.Equal(t, time.Duration(0), cfg.LlamaMaxQueueWait)
+	require.Equal(t, 32, cfg.LlamaHTTPMaxIdleConns)
+	require.Equal(t, 16, cfg.LlamaHTTPMaxIdleConnsPerHost)
+	require.Equal(t, 8, cfg.LlamaHTTPMaxConnsPerHost)
+	require.Equal(t, 90*time.Second, cfg.LlamaHTTPIdleConnTimeout)
+	require.Equal(t, 10*time.Second, cfg.LlamaHTTPDialTimeout)
+	require.Equal(t, 30*time.Second, cfg.LlamaHTTPKeepAlive)
+	require.Equal(t, 10*time.Second, cfg.LlamaHTTPTLSHandshakeTimeout)
+	require.Equal(t, time.Second, cfg.LlamaHTTPExpectContinueTimeout)
 }
 
 func TestLoadRejectsLegacyUnsafeHostAlias(t *testing.T) {

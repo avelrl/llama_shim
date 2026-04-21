@@ -11,6 +11,7 @@ import (
 )
 
 var httpDurationBuckets = []float64{5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000}
+var upstreamQueueWaitBuckets = []float64{0, 1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000}
 
 type Metrics struct {
 	mu sync.Mutex
@@ -20,7 +21,10 @@ type Metrics struct {
 	rateLimitRejects    map[string]uint64
 	retrievalSearches   map[searchMetricKey]uint64
 	codeInterpreterRuns map[string]uint64
+	upstreamAdmissions  map[upstreamAdmissionMetricKey]uint64
+	upstreamQueueWait   map[upstreamAdmissionMetricKey]*httpMetricValue
 	inFlight            map[string]int64
+	queued              map[string]int64
 }
 
 type httpMetricKey struct {
@@ -40,6 +44,11 @@ type searchMetricKey struct {
 	Outcome string
 }
 
+type upstreamAdmissionMetricKey struct {
+	Scope   string
+	Outcome string
+}
+
 func NewMetrics() *Metrics {
 	return &Metrics{
 		httpRequests:        make(map[httpMetricKey]*httpMetricValue),
@@ -47,7 +56,10 @@ func NewMetrics() *Metrics {
 		rateLimitRejects:    make(map[string]uint64),
 		retrievalSearches:   make(map[searchMetricKey]uint64),
 		codeInterpreterRuns: make(map[string]uint64),
+		upstreamAdmissions:  make(map[upstreamAdmissionMetricKey]uint64),
+		upstreamQueueWait:   make(map[upstreamAdmissionMetricKey]*httpMetricValue),
 		inFlight:            make(map[string]int64),
+		queued:              make(map[string]int64),
 	}
 }
 
@@ -151,6 +163,48 @@ func (m *Metrics) AddInFlight(scope string, delta int64) {
 	}
 }
 
+func (m *Metrics) AddQueued(scope string, delta int64) {
+	if m == nil {
+		return
+	}
+	label := normalizeMetricLabel(scope, "unknown")
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.queued[label] += delta
+	if m.queued[label] < 0 {
+		m.queued[label] = 0
+	}
+}
+
+func (m *Metrics) ObserveUpstreamAdmission(scope string, outcome string, queueWait time.Duration) {
+	if m == nil {
+		return
+	}
+	key := upstreamAdmissionMetricKey{
+		Scope:   normalizeMetricLabel(scope, "unknown"),
+		Outcome: normalizeMetricLabel(outcome, "unknown"),
+	}
+	queueWaitMS := float64(queueWait.Milliseconds())
+	if queueWait > 0 && queueWaitMS == 0 {
+		queueWaitMS = float64(queueWait) / float64(time.Millisecond)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.upstreamAdmissions[key]++
+	value := m.upstreamQueueWait[key]
+	if value == nil {
+		value = &httpMetricValue{Buckets: make([]uint64, len(upstreamQueueWaitBuckets))}
+		m.upstreamQueueWait[key] = value
+	}
+	value.Count++
+	value.SumMS += queueWaitMS
+	for i, upperBound := range upstreamQueueWaitBuckets {
+		if queueWaitMS <= upperBound {
+			value.Buckets[i]++
+		}
+	}
+}
+
 func (m *Metrics) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
@@ -227,6 +281,37 @@ func (m *Metrics) renderPrometheus() string {
 	builder.WriteString("# TYPE shim_code_interpreter_runs_total counter\n")
 	appendStringCounterMetric(&builder, "shim_code_interpreter_runs_total", "outcome", m.codeInterpreterRuns)
 
+	builder.WriteString("# HELP shim_upstream_admission_total Total upstream admission controller decisions.\n")
+	builder.WriteString("# TYPE shim_upstream_admission_total counter\n")
+	upstreamAdmissionKeys := make([]upstreamAdmissionMetricKey, 0, len(m.upstreamAdmissions))
+	for key := range m.upstreamAdmissions {
+		upstreamAdmissionKeys = append(upstreamAdmissionKeys, key)
+	}
+	sort.Slice(upstreamAdmissionKeys, func(i, j int) bool {
+		if upstreamAdmissionKeys[i].Scope == upstreamAdmissionKeys[j].Scope {
+			return upstreamAdmissionKeys[i].Outcome < upstreamAdmissionKeys[j].Outcome
+		}
+		return upstreamAdmissionKeys[i].Scope < upstreamAdmissionKeys[j].Scope
+	})
+	builder.WriteString("# HELP shim_upstream_queue_wait_ms Upstream admission queue wait in milliseconds.\n")
+	builder.WriteString("# TYPE shim_upstream_queue_wait_ms histogram\n")
+	for _, key := range upstreamAdmissionKeys {
+		labels := fmt.Sprintf(`scope=%q,outcome=%q`, key.Scope, key.Outcome)
+		builder.WriteString(fmt.Sprintf("shim_upstream_admission_total{%s} %d\n", labels, m.upstreamAdmissions[key]))
+		value := m.upstreamQueueWait[key]
+		if value == nil {
+			continue
+		}
+		var cumulative uint64
+		for i, upperBound := range upstreamQueueWaitBuckets {
+			cumulative += value.Buckets[i]
+			builder.WriteString(fmt.Sprintf("shim_upstream_queue_wait_ms_bucket{%s,le=%q} %d\n", labels, formatPrometheusFloat(upperBound), cumulative))
+		}
+		builder.WriteString(fmt.Sprintf("shim_upstream_queue_wait_ms_bucket{%s,le=\"+Inf\"} %d\n", labels, value.Count))
+		builder.WriteString(fmt.Sprintf("shim_upstream_queue_wait_ms_sum{%s} %s\n", labels, formatPrometheusFloat(value.SumMS)))
+		builder.WriteString(fmt.Sprintf("shim_upstream_queue_wait_ms_count{%s} %d\n", labels, value.Count))
+	}
+
 	builder.WriteString("# HELP shim_inflight Current in-flight shim operations.\n")
 	builder.WriteString("# TYPE shim_inflight gauge\n")
 	inFlightKeys := make([]string, 0, len(m.inFlight))
@@ -236,6 +321,17 @@ func (m *Metrics) renderPrometheus() string {
 	sort.Strings(inFlightKeys)
 	for _, key := range inFlightKeys {
 		builder.WriteString(fmt.Sprintf("shim_inflight{scope=%q} %d\n", key, m.inFlight[key]))
+	}
+
+	builder.WriteString("# HELP shim_queued Current queued shim operations waiting for internal admission.\n")
+	builder.WriteString("# TYPE shim_queued gauge\n")
+	queuedKeys := make([]string, 0, len(m.queued))
+	for key := range m.queued {
+		queuedKeys = append(queuedKeys, key)
+	}
+	sort.Strings(queuedKeys)
+	for _, key := range queuedKeys {
+		builder.WriteString(fmt.Sprintf("shim_queued{scope=%q} %d\n", key, m.queued[key]))
 	}
 
 	return builder.String()
