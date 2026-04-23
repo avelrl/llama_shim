@@ -146,6 +146,25 @@ responses:
     base_url: ""
     # Timeout per local image generation request to the image backend.
     timeout: 60s
+  compaction:
+    # heuristic: deterministic fallback compactor
+    # model_assisted_text: call a fast OpenAI-compatible /v1/chat/completions
+    # backend to produce richer shim-owned opaque compaction state
+    backend: heuristic
+    # Base URL of the compaction backend. When omitted with model_assisted_text,
+    # llama.base_url is reused.
+    base_url: ""
+    # Fast local model used only for internal compaction when model_assisted_text
+    # is enabled.
+    model: ""
+    # Timeout per internal compaction model request.
+    timeout: 10s
+    # Output budget sent to the compaction model.
+    max_output_tokens: 1000
+    # Number of recent prior items retained verbatim inside shim-owned opaque state.
+    retained_items: 8
+    # Maximum prior-context characters rendered into the compaction prompt.
+    max_input_chars: 32000
   computer:
     # disabled: no shim-local computer runtime
     # chat_completions: use the configured upstream /v1/chat/completions

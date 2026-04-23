@@ -1,6 +1,6 @@
 # V4 Extensions And Plugin Model
 
-Last updated: April 15, 2026.
+Last updated: April 23, 2026.
 
 This document is the parking lot for post-compatibility work that is useful in
 practice, but should not be confused with the shim's core OpenAI-compatibility
@@ -228,6 +228,50 @@ Useful directions:
   execution image
 - clearer capability reporting for which hardening layer is active in a given
   deployment
+
+### 8. Shim-owned opaque state encryption
+
+Classification: extension and platform hardening.
+
+Goal:
+Make shim-owned continuation artifacts less readable outside the shim without
+claiming exact hosted OpenAI encrypted-state parity.
+
+The V3 compaction track currently uses an OpenAI-shaped `compaction` item with
+shim-owned opaque content. The public surface is intentionally still
+`encrypted_content`, but the local implementation uses a readable
+`llama_shim.compaction.v1:<base64-json>` payload so developers can inspect and
+debug the compacted state while the feature is maturing.
+
+This is acceptable for a local development shim, but it should not be treated
+as a long-term security boundary. Once compaction state is shared across users,
+stored in less trusted systems, or logged in production, the shim should support
+real local encryption for its own opaque state.
+
+Useful directions:
+
+- add an AES-GCM encrypted compaction payload version such as
+  `llama_shim.compaction.v2:<base64url nonce+ciphertext>`
+- load encryption material from shim-owned config or environment, not from
+  OpenAI-compatible request fields
+- keep the key-management story explicit: required key length, rotation plan,
+  startup validation, and failure behavior when a key is missing or wrong
+- preserve backward-compatible reads for existing `v1` payloads during a
+  migration window
+- keep client-visible semantics unchanged: clients still pass the
+  `compaction` item through as opaque `encrypted_content`
+- avoid claiming hosted OpenAI parity; this is local confidentiality hardening,
+  not evidence that the shim matches OpenAI's internal encrypted state runtime
+- add tests for decrypt failure, unknown version, tampered ciphertext, key
+  rotation, `previous_response_id`, conversation replay, standalone compact,
+  and automatic `context_management` compaction
+
+Non-goals for the first slice:
+
+- no public route for reading decrypted compaction state
+- no client-provided encryption keys on OpenAI-compatible endpoints
+- no hard dependency on encryption for local development configs
+- no change to the OpenAI-compatible response shape
 
 ## Working Rule
 

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"llama_shim/internal/compactor"
 	"llama_shim/internal/config"
 	"llama_shim/internal/httpapi"
 	"llama_shim/internal/imagegen"
@@ -91,6 +92,21 @@ func main() {
 		},
 	})
 	responseService := service.NewResponseService(store, store, llamaClient)
+	responseCompactor, err := compactor.New(compactor.Config{
+		Backend:         cfg.ResponsesCompactionBackend,
+		BaseURL:         cfg.ResponsesCompactionBaseURL,
+		Model:           cfg.ResponsesCompactionModel,
+		Timeout:         cfg.ResponsesCompactionTimeout,
+		MaxOutputTokens: cfg.ResponsesCompactionMaxOutputTokens,
+		RetainedItems:   cfg.ResponsesCompactionRetainedItems,
+		MaxInputRunes:   cfg.ResponsesCompactionMaxInputRunes,
+		Logger:          logger,
+	})
+	if err != nil {
+		logger.Error("build compactor", "err", err)
+		os.Exit(1)
+	}
+	responseService.SetCompactor(responseCompactor)
 	conversationService := service.NewConversationService(store)
 	localComputer, err := buildLocalComputerRuntimeConfig(cfg)
 	if err != nil {
@@ -217,6 +233,13 @@ func main() {
 		"responses_image_generation_backend", cfg.ResponsesImageGenerationBackend,
 		"responses_image_generation_base_url", cfg.ResponsesImageGenerationBaseURL,
 		"responses_image_generation_timeout", cfg.ResponsesImageGenerationTimeout,
+		"responses_compaction_backend", cfg.ResponsesCompactionBackend,
+		"responses_compaction_base_url", cfg.ResponsesCompactionBaseURL,
+		"responses_compaction_model", cfg.ResponsesCompactionModel,
+		"responses_compaction_timeout", cfg.ResponsesCompactionTimeout,
+		"responses_compaction_max_output_tokens", cfg.ResponsesCompactionMaxOutputTokens,
+		"responses_compaction_retained_items", cfg.ResponsesCompactionRetainedItems,
+		"responses_compaction_max_input_chars", cfg.ResponsesCompactionMaxInputRunes,
 		"responses_computer_backend", cfg.ResponsesComputerBackend,
 		"responses_code_interpreter_backend", cfg.ResponsesCodeInterpreterBackend,
 		"responses_code_interpreter_python_binary", cfg.ResponsesCodeInterpreterPythonBinary,

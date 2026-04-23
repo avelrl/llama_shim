@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"llama_shim/internal/compactor"
 	"llama_shim/internal/imagegen"
 	"llama_shim/internal/retrieval"
 	"llama_shim/internal/websearch"
@@ -68,6 +69,13 @@ type Config struct {
 	ResponsesImageGenerationBackend                string
 	ResponsesImageGenerationBaseURL                string
 	ResponsesImageGenerationTimeout                time.Duration
+	ResponsesCompactionBackend                     string
+	ResponsesCompactionBaseURL                     string
+	ResponsesCompactionModel                       string
+	ResponsesCompactionTimeout                     time.Duration
+	ResponsesCompactionMaxOutputTokens             int
+	ResponsesCompactionRetainedItems               int
+	ResponsesCompactionMaxInputRunes               int
 	ResponsesComputerBackend                       string
 	ChatCompletionsStoreWhenOmitted                bool
 	ResponsesMode                                  string
@@ -140,6 +148,9 @@ func Load(configPath string) (Config, error) {
 		ResponsesWebSearchBaseURL:                      strings.TrimSpace(v.GetString("responses.web_search.base_url")),
 		ResponsesImageGenerationBackend:                strings.ToLower(strings.TrimSpace(v.GetString("responses.image_generation.backend"))),
 		ResponsesImageGenerationBaseURL:                strings.TrimSpace(v.GetString("responses.image_generation.base_url")),
+		ResponsesCompactionBackend:                     strings.ToLower(strings.TrimSpace(v.GetString("responses.compaction.backend"))),
+		ResponsesCompactionBaseURL:                     strings.TrimSpace(v.GetString("responses.compaction.base_url")),
+		ResponsesCompactionModel:                       strings.TrimSpace(v.GetString("responses.compaction.model")),
 		ResponsesComputerBackend:                       strings.ToLower(strings.TrimSpace(v.GetString("responses.computer.backend"))),
 		ChatCompletionsStoreWhenOmitted:                v.GetBool("chat_completions.default_store_when_omitted"),
 		ResponsesMode:                                  strings.ToLower(strings.TrimSpace(v.GetString("responses.mode"))),
@@ -337,6 +348,46 @@ func Load(configPath string) (Config, error) {
 	cfg.ResponsesImageGenerationBackend = normalizedImageGeneration.Backend
 	cfg.ResponsesImageGenerationBaseURL = normalizedImageGeneration.BaseURL
 	cfg.ResponsesImageGenerationTimeout = normalizedImageGeneration.Timeout
+	if err := parseDuration(v.GetString("responses.compaction.timeout"), &cfg.ResponsesCompactionTimeout); err != nil {
+		return Config{}, fmt.Errorf("parse responses.compaction.timeout: %w", err)
+	}
+	compactionMaxOutputTokens, err := parseNonNegativeInt(v.GetString("responses.compaction.max_output_tokens"))
+	if err != nil {
+		return Config{}, fmt.Errorf("parse responses.compaction.max_output_tokens: %w", err)
+	}
+	cfg.ResponsesCompactionMaxOutputTokens = compactionMaxOutputTokens
+	compactionRetainedItems, err := parseNonNegativeInt(v.GetString("responses.compaction.retained_items"))
+	if err != nil {
+		return Config{}, fmt.Errorf("parse responses.compaction.retained_items: %w", err)
+	}
+	cfg.ResponsesCompactionRetainedItems = compactionRetainedItems
+	compactionMaxInputRunes, err := parseNonNegativeInt(v.GetString("responses.compaction.max_input_chars"))
+	if err != nil {
+		return Config{}, fmt.Errorf("parse responses.compaction.max_input_chars: %w", err)
+	}
+	cfg.ResponsesCompactionMaxInputRunes = compactionMaxInputRunes
+	if strings.TrimSpace(cfg.ResponsesCompactionBaseURL) == "" && cfg.ResponsesCompactionBackend == compactor.BackendModelAssistedText {
+		cfg.ResponsesCompactionBaseURL = cfg.LlamaBaseURL
+	}
+	normalizedCompaction, err := compactor.NormalizeConfig(compactor.Config{
+		Backend:         cfg.ResponsesCompactionBackend,
+		BaseURL:         cfg.ResponsesCompactionBaseURL,
+		Model:           cfg.ResponsesCompactionModel,
+		Timeout:         cfg.ResponsesCompactionTimeout,
+		MaxOutputTokens: cfg.ResponsesCompactionMaxOutputTokens,
+		RetainedItems:   cfg.ResponsesCompactionRetainedItems,
+		MaxInputRunes:   cfg.ResponsesCompactionMaxInputRunes,
+	})
+	if err != nil {
+		return Config{}, fmt.Errorf("parse responses.compaction config: %w", err)
+	}
+	cfg.ResponsesCompactionBackend = normalizedCompaction.Backend
+	cfg.ResponsesCompactionBaseURL = normalizedCompaction.BaseURL
+	cfg.ResponsesCompactionModel = normalizedCompaction.Model
+	cfg.ResponsesCompactionTimeout = normalizedCompaction.Timeout
+	cfg.ResponsesCompactionMaxOutputTokens = normalizedCompaction.MaxOutputTokens
+	cfg.ResponsesCompactionRetainedItems = normalizedCompaction.RetainedItems
+	cfg.ResponsesCompactionMaxInputRunes = normalizedCompaction.MaxInputRunes
 	if err := parseDuration(v.GetString("responses.code_interpreter.cleanup_interval"), &cfg.ResponsesCodeInterpreterCleanupInterval); err != nil {
 		return Config{}, fmt.Errorf("parse responses.code_interpreter.cleanup_interval: %w", err)
 	}
@@ -441,6 +492,13 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("responses.image_generation.backend", imagegen.BackendDisabled)
 	v.SetDefault("responses.image_generation.base_url", "")
 	v.SetDefault("responses.image_generation.timeout", "60s")
+	v.SetDefault("responses.compaction.backend", compactor.BackendHeuristic)
+	v.SetDefault("responses.compaction.base_url", "")
+	v.SetDefault("responses.compaction.model", "")
+	v.SetDefault("responses.compaction.timeout", "10s")
+	v.SetDefault("responses.compaction.max_output_tokens", "1200")
+	v.SetDefault("responses.compaction.retained_items", "8")
+	v.SetDefault("responses.compaction.max_input_chars", "60000")
 	v.SetDefault("responses.computer.backend", ResponsesComputerBackendDisabled)
 	v.SetDefault("responses.code_interpreter.backend", "")
 	v.SetDefault("responses.code_interpreter.enable_unsafe_host_executor", false)

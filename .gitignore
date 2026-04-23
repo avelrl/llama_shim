@@ -1,5 +1,7 @@
 .env
 config.yaml
 *.jsonl
+.cache/
+.tmp/
 .data/
 .DS_Store

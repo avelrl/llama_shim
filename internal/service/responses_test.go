@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"llama_shim/internal/compactor"
 	"llama_shim/internal/domain"
 	"llama_shim/internal/service"
 )
@@ -77,6 +78,46 @@ func TestCreateResponseAutomaticCompactionCompactsPriorHistoryBeforeGeneration(t
 	require.Len(t, saved.EffectiveInputItems, 2)
 	require.Equal(t, "compaction", saved.EffectiveInputItems[0].Type)
 	require.Equal(t, "What is the launch code?", domain.MessageText(saved.EffectiveInputItems[1]))
+}
+
+func TestCreateResponseAutomaticCompactionUsesConfiguredCompactorState(t *testing.T) {
+	t.Parallel()
+
+	responseStore := &recordingResponseStore{
+		lineages: map[string][]domain.StoredResponse{
+			"resp_prev": {
+				{
+					ID:                   "resp_prev",
+					Model:                "test-model",
+					NormalizedInputItems: []domain.Item{domain.NewInputTextMessage("user", "Keep repository path internal/service.")},
+					EffectiveInputItems:  []domain.Item{domain.NewInputTextMessage("user", "Keep repository path internal/service.")},
+					Output:               []domain.Item{domain.NewOutputTextMessage("Stored.")},
+					OutputText:           "Stored.",
+					Store:                true,
+				},
+			},
+		},
+	}
+	generator := &recordingGenerator{}
+	svc := service.NewResponseService(responseStore, noopConversationStore{}, generator)
+	svc.SetCompactor(staticStructuredCompactor{})
+
+	response, err := svc.Create(context.Background(), service.CreateResponseInput{
+		Model:              "test-model",
+		Input:              json.RawMessage(`"What path should stay available?"`),
+		PreviousResponseID: "resp_prev",
+		ContextManagement:  json.RawMessage(`[{"type":"compaction","compact_threshold":1}]`),
+		RequestJSON:        `{"model":"test-model","previous_response_id":"resp_prev","input":"What path should stay available?","context_management":[{"type":"compaction","compact_threshold":1}]}`,
+	})
+	require.NoError(t, err)
+
+	require.Len(t, generator.contexts, 1)
+	require.Len(t, generator.contexts[0], 3)
+	require.Contains(t, domain.MessageText(generator.contexts[0][0]), "Structured compaction summary")
+	require.Contains(t, domain.MessageText(generator.contexts[0][0]), "internal/service")
+	require.Equal(t, "Retained recent tail.", domain.MessageText(generator.contexts[0][1]))
+	require.Equal(t, "What path should stay available?", domain.MessageText(generator.contexts[0][2]))
+	require.Equal(t, "compaction", response.Output[0].Type)
 }
 
 func TestPrepareCreateContextTrimsHistoryBeforeLatestCompaction(t *testing.T) {
@@ -353,6 +394,27 @@ func (g *recordingGenerator) GenerateStream(_ context.Context, _ string, items [
 		return onDelta(output)
 	}
 	return nil
+}
+
+type staticStructuredCompactor struct{}
+
+func (staticStructuredCompactor) Compact(context.Context, []domain.Item) (compactor.Result, error) {
+	item, err := domain.NewSyntheticCompactionItemWithOptions("Structured compaction summary.", 2, domain.SyntheticCompactionOptions{
+		Mode: "test",
+		State: domain.SyntheticCompactionState{
+			Summary:  "Structured compaction summary.",
+			KeyFacts: []string{"internal/service must stay available"},
+		},
+		RetainedItems: []domain.Item{domain.NewOutputTextMessage("Retained recent tail.")},
+	})
+	if err != nil {
+		return compactor.Result{}, err
+	}
+	expanded, err := domain.ExpandSyntheticCompactionItems([]domain.Item{item})
+	if err != nil {
+		return compactor.Result{}, err
+	}
+	return compactor.Result{Item: item, Expanded: expanded}, nil
 }
 
 type noopResponseStore struct{}

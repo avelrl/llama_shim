@@ -4,34 +4,58 @@ CONFIG ?= config.yaml
 BACKUP ?= ./.data/shim-backup.db
 IMAGE ?= llama-shim:local
 DEVSTACK_COMPOSE ?= docker-compose.devstack.yml
+GO ?= go
 GOLANGCI_LINT ?= golangci-lint
+TOOL_CACHE_DIR ?= ./.cache
+TOOL_TMP_DIR ?= ./.tmp
+TOOL_PATH_PREFIX := $(if $(HOMEBREW_PREFIX),$(HOMEBREW_PREFIX)/bin:)$(if $(GOBIN),$(GOBIN):)$(if $(GOPATH),$(GOPATH)/bin:)
+TOOL_PATH_ENV := PATH="$(TOOL_PATH_PREFIX)$(PATH)"
+
+ifeq ($(CODEX_SANDBOX),)
+TOOL_ENV := $(TOOL_PATH_ENV)
+TOOL_PREP := @:
+else
+TOOL_CACHE_ROOT := $(abspath $(TOOL_CACHE_DIR))
+TOOL_TMP_ROOT := $(abspath $(TOOL_TMP_DIR))
+TOOL_ENV := $(TOOL_PATH_ENV) GOCACHE="$(TOOL_CACHE_ROOT)/go-build" GOLANGCI_LINT_CACHE="$(TOOL_CACHE_ROOT)/golangci-lint" TMPDIR="$(TOOL_TMP_ROOT)"
+TOOL_PREP := mkdir -p "$(TOOL_CACHE_ROOT)/go-build" "$(TOOL_CACHE_ROOT)/golangci-lint" "$(TOOL_TMP_ROOT)"
+endif
 
 run:
-	go run ./cmd/shim -config $(CONFIG)
+	$(TOOL_PREP)
+	$(TOOL_ENV) $(GO) run ./cmd/shim -config $(CONFIG)
 
 build:
-	go build ./cmd/shim ./cmd/shimctl ./cmd/upstream-sse-capture ./cmd/devstack-fixture
+	$(TOOL_PREP)
+	$(TOOL_ENV) $(GO) build ./cmd/shim ./cmd/shimctl ./cmd/upstream-sse-capture ./cmd/devstack-fixture
 
 lint:
-	$(GOLANGCI_LINT) run
+	$(TOOL_PREP)
+	$(TOOL_ENV) $(GOLANGCI_LINT) run
 
 vet:
-	go vet ./...
+	$(TOOL_PREP)
+	$(TOOL_ENV) $(GO) vet ./...
 
 test:
-	go test ./...
+	$(TOOL_PREP)
+	$(TOOL_ENV) $(GO) test ./...
 
 maint-cleanup:
-	go run ./cmd/shimctl -config $(CONFIG) cleanup
+	$(TOOL_PREP)
+	$(TOOL_ENV) $(GO) run ./cmd/shimctl -config $(CONFIG) cleanup
 
 maint-optimize:
-	go run ./cmd/shimctl -config $(CONFIG) optimize
+	$(TOOL_PREP)
+	$(TOOL_ENV) $(GO) run ./cmd/shimctl -config $(CONFIG) optimize
 
 maint-vacuum:
-	go run ./cmd/shimctl -config $(CONFIG) vacuum
+	$(TOOL_PREP)
+	$(TOOL_ENV) $(GO) run ./cmd/shimctl -config $(CONFIG) vacuum
 
 maint-backup:
-	go run ./cmd/shimctl -config $(CONFIG) backup -out $(BACKUP)
+	$(TOOL_PREP)
+	$(TOOL_ENV) $(GO) run ./cmd/shimctl -config $(CONFIG) backup -out $(BACKUP)
 
 docker-build:
 	docker build -t $(IMAGE) .

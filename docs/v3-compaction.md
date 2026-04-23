@@ -1,6 +1,6 @@
 # V3 Compaction Runtime
 
-Last updated: April 21, 2026.
+Last updated: April 23, 2026.
 
 This document fixes the design starting point for the V3 compaction track
 before implementation begins.
@@ -105,15 +105,27 @@ The first V3 target is "normal compaction quality" for long local sessions:
 The first rollout should stay narrow and operator-friendly:
 
 - keep the current heuristic compactor as the baseline fallback
-- add one shared compactor abstraction above the current synthetic item format
-- add one higher-quality local compactor backend driven by a small fast local
-  instruct model chosen by the operator
+- use the shared `internal/compactor` abstraction above the current synthetic
+  item format
+- enable a `model_assisted_text` backend driven by a small fast local instruct
+  model chosen by the operator
 - bias the first model-assisted slice toward text and tool metadata before
   broader multimodal state
 
 This intentionally does not lock V3 to one model family.
 A Gemma-family local model is a reasonable candidate, but the design should
 stay backend-agnostic.
+
+The initial implementation is configured under `responses.compaction`:
+
+- `backend: heuristic` keeps the deterministic V2-compatible fallback
+- `backend: model_assisted_text` calls an OpenAI-compatible
+  `/v1/chat/completions` backend for internal compaction only
+- `model`, `base_url`, `timeout`, `max_output_tokens`, `retained_items`, and
+  `max_input_chars` tune the internal compactor without changing the public
+  `/v1/responses` or `/v1/responses/compact` contract
+- if the model-assisted call fails, times out, or returns invalid JSON, the
+  shim falls back to `heuristic` instead of failing the main client path
 
 ## Output Model
 

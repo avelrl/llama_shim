@@ -12,18 +12,39 @@ import (
 const syntheticCompactionPrefix = "llama_shim.compaction.v1:"
 
 type syntheticCompactionPayload struct {
-	Version   int    `json:"version"`
-	Summary   string `json:"summary"`
-	ItemCount int    `json:"item_count"`
+	Version       int                       `json:"version"`
+	Summary       string                    `json:"summary"`
+	ItemCount     int                       `json:"item_count"`
+	Mode          string                    `json:"mode,omitempty"`
+	State         *SyntheticCompactionState `json:"state,omitempty"`
+	RetainedItems []json.RawMessage         `json:"retained_items,omitempty"`
+}
+
+type SyntheticCompactionState struct {
+	Summary         string   `json:"summary,omitempty"`
+	KeyFacts        []string `json:"key_facts,omitempty"`
+	Constraints     []string `json:"constraints,omitempty"`
+	OpenLoops       []string `json:"open_loops,omitempty"`
+	RecentToolState []string `json:"recent_tool_state,omitempty"`
+}
+
+type SyntheticCompactionOptions struct {
+	Mode          string
+	State         SyntheticCompactionState
+	RetainedItems []Item
 }
 
 func NewSyntheticCompactionItem(summary string, itemCount int) (Item, error) {
+	return NewSyntheticCompactionItemWithOptions(summary, itemCount, SyntheticCompactionOptions{})
+}
+
+func NewSyntheticCompactionItemWithOptions(summary string, itemCount int, options SyntheticCompactionOptions) (Item, error) {
 	id, err := NewPrefixedID("cmp")
 	if err != nil {
 		return Item{}, fmt.Errorf("generate compaction id: %w", err)
 	}
 
-	encryptedContent, err := EncodeSyntheticCompactionPayload(summary, itemCount)
+	encryptedContent, err := EncodeSyntheticCompactionPayloadWithOptions(summary, itemCount, options)
 	if err != nil {
 		return Item{}, err
 	}
@@ -40,10 +61,24 @@ func NewSyntheticCompactionItem(summary string, itemCount int) (Item, error) {
 }
 
 func EncodeSyntheticCompactionPayload(summary string, itemCount int) (string, error) {
+	return EncodeSyntheticCompactionPayloadWithOptions(summary, itemCount, SyntheticCompactionOptions{})
+}
+
+func EncodeSyntheticCompactionPayloadWithOptions(summary string, itemCount int, options SyntheticCompactionOptions) (string, error) {
+	retainedItems, err := marshalSyntheticCompactionRetainedItems(options.RetainedItems)
+	if err != nil {
+		return "", err
+	}
+	state := normalizeSyntheticCompactionState(options.State)
 	payload := syntheticCompactionPayload{
-		Version:   1,
-		Summary:   strings.TrimSpace(summary),
-		ItemCount: itemCount,
+		Version:       1,
+		Summary:       strings.TrimSpace(summary),
+		ItemCount:     itemCount,
+		Mode:          strings.TrimSpace(options.Mode),
+		RetainedItems: retainedItems,
+	}
+	if !isEmptySyntheticCompactionState(state) {
+		payload.State = &state
 	}
 	raw, err := json.Marshal(payload)
 	if err != nil {
@@ -53,20 +88,8 @@ func EncodeSyntheticCompactionPayload(summary string, itemCount int) (string, er
 }
 
 func DecodeSyntheticCompactionPayload(encryptedContent string) (string, bool) {
-	trimmed := strings.TrimSpace(encryptedContent)
-	if !strings.HasPrefix(trimmed, syntheticCompactionPrefix) {
-		return "", false
-	}
-	encoded := strings.TrimPrefix(trimmed, syntheticCompactionPrefix)
-	raw, err := base64.RawURLEncoding.DecodeString(encoded)
-	if err != nil {
-		return "", false
-	}
-	var payload syntheticCompactionPayload
-	if err := json.Unmarshal(raw, &payload); err != nil {
-		return "", false
-	}
-	if payload.Version != 1 {
+	payload, ok := decodeSyntheticCompactionPayload(encryptedContent)
+	if !ok {
 		return "", false
 	}
 	return strings.TrimSpace(payload.Summary), true
@@ -84,19 +107,22 @@ func ExpandSyntheticCompactionItems(items []Item) ([]Item, error) {
 			continue
 		}
 
-		summary, ok := DecodeSyntheticCompactionPayload(item.StringField("encrypted_content"))
+		payload, ok := decodeSyntheticCompactionPayload(item.StringField("encrypted_content"))
 		if !ok {
 			return nil, ErrUnsupportedShape
 		}
-		summaryMessage := NewInputTextMessage("system", syntheticCompactionSummaryMessage(summary))
+		expanded, err := expandSyntheticCompactionPayload(payload)
+		if err != nil {
+			return nil, err
+		}
 		if id := strings.TrimSpace(item.ID()); id != "" {
-			withID, err := summaryMessage.WithID(id)
+			withID, err := expanded[0].WithID(id)
 			if err != nil {
 				return nil, err
 			}
-			summaryMessage = withID
+			expanded[0] = withID
 		}
-		out = append(out, summaryMessage)
+		out = append(out, expanded...)
 	}
 	return out, nil
 }
@@ -140,6 +166,41 @@ func BuildSyntheticCompactionSummary(items []Item) string {
 		return "No prior context was provided."
 	}
 	return truncateRunes(strings.Join(lines, "\n"), maxSummaryRune)
+}
+
+func BuildSyntheticCompactionTranscript(items []Item, maxItems int, maxRunes int) string {
+	if maxItems <= 0 {
+		maxItems = len(items)
+	}
+	if maxRunes <= 0 {
+		return ""
+	}
+
+	lines := make([]string, 0, min(len(items), maxItems))
+	var runes int
+	for idx, item := range items {
+		if idx >= maxItems {
+			break
+		}
+		line := strings.TrimSpace(syntheticCompactionLine(item))
+		if line == "" {
+			continue
+		}
+		prefix := fmt.Sprintf("%03d %s", idx+1, line)
+		lineRunes := utf8.RuneCountInString(prefix)
+		if runes+lineRunes+1 > maxRunes {
+			remaining := maxRunes - runes - 1
+			if remaining <= 0 {
+				break
+			}
+			prefix = truncateRunes(prefix, remaining)
+			lines = append(lines, prefix)
+			break
+		}
+		lines = append(lines, prefix)
+		runes += lineRunes + 1
+	}
+	return strings.Join(lines, "\n")
 }
 
 func BuildSyntheticUsage(inputTokens, outputTokens int) json.RawMessage {
@@ -189,6 +250,132 @@ func syntheticCompactionSummaryMessage(summary string) string {
 		trimmed = "No prior context was provided."
 	}
 	return "Compacted prior context summary:\n" + trimmed
+}
+
+func decodeSyntheticCompactionPayload(encryptedContent string) (syntheticCompactionPayload, bool) {
+	trimmed := strings.TrimSpace(encryptedContent)
+	if !strings.HasPrefix(trimmed, syntheticCompactionPrefix) {
+		return syntheticCompactionPayload{}, false
+	}
+	encoded := strings.TrimPrefix(trimmed, syntheticCompactionPrefix)
+	raw, err := base64.RawURLEncoding.DecodeString(encoded)
+	if err != nil {
+		return syntheticCompactionPayload{}, false
+	}
+	var payload syntheticCompactionPayload
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return syntheticCompactionPayload{}, false
+	}
+	if payload.Version != 1 {
+		return syntheticCompactionPayload{}, false
+	}
+	payload.Summary = strings.TrimSpace(payload.Summary)
+	if payload.State != nil {
+		state := normalizeSyntheticCompactionState(*payload.State)
+		payload.State = &state
+	}
+	return payload, true
+}
+
+func expandSyntheticCompactionPayload(payload syntheticCompactionPayload) ([]Item, error) {
+	items := []Item{NewInputTextMessage("system", renderSyntheticCompactionPayload(payload))}
+	for _, raw := range payload.RetainedItems {
+		item, err := NewItem(raw)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, nil
+}
+
+func renderSyntheticCompactionPayload(payload syntheticCompactionPayload) string {
+	if payload.State == nil || isEmptySyntheticCompactionState(*payload.State) {
+		return syntheticCompactionSummaryMessage(payload.Summary)
+	}
+
+	state := normalizeSyntheticCompactionState(*payload.State)
+	var builder strings.Builder
+	builder.WriteString("Compacted prior context summary:\n")
+	summary := strings.TrimSpace(state.Summary)
+	if summary == "" {
+		summary = strings.TrimSpace(payload.Summary)
+	}
+	if summary == "" {
+		summary = "No prior context was provided."
+	}
+	builder.WriteString(summary)
+	writeSyntheticCompactionList(&builder, "Key facts", state.KeyFacts)
+	writeSyntheticCompactionList(&builder, "Constraints", state.Constraints)
+	writeSyntheticCompactionList(&builder, "Open loops", state.OpenLoops)
+	writeSyntheticCompactionList(&builder, "Recent tool state", state.RecentToolState)
+	return builder.String()
+}
+
+func writeSyntheticCompactionList(builder *strings.Builder, title string, values []string) {
+	if len(values) == 0 {
+		return
+	}
+	builder.WriteString("\n\n")
+	builder.WriteString(title)
+	builder.WriteString(":\n")
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		builder.WriteString("- ")
+		builder.WriteString(trimmed)
+		builder.WriteString("\n")
+	}
+}
+
+func marshalSyntheticCompactionRetainedItems(items []Item) ([]json.RawMessage, error) {
+	if len(items) == 0 {
+		return nil, nil
+	}
+	out := make([]json.RawMessage, 0, len(items))
+	for _, item := range items {
+		raw, err := json.Marshal(item)
+		if err != nil {
+			return nil, fmt.Errorf("marshal retained compaction item: %w", err)
+		}
+		out = append(out, json.RawMessage(raw))
+	}
+	return out, nil
+}
+
+func normalizeSyntheticCompactionState(state SyntheticCompactionState) SyntheticCompactionState {
+	return SyntheticCompactionState{
+		Summary:         truncateRunes(strings.TrimSpace(state.Summary), 4096),
+		KeyFacts:        normalizeSyntheticCompactionList(state.KeyFacts, 16, 512),
+		Constraints:     normalizeSyntheticCompactionList(state.Constraints, 16, 512),
+		OpenLoops:       normalizeSyntheticCompactionList(state.OpenLoops, 16, 512),
+		RecentToolState: normalizeSyntheticCompactionList(state.RecentToolState, 16, 512),
+	}
+}
+
+func normalizeSyntheticCompactionList(values []string, maxItems int, maxRunes int) []string {
+	out := make([]string, 0, min(len(values), maxItems))
+	for _, value := range values {
+		trimmed := truncateRunes(strings.TrimSpace(value), maxRunes)
+		if trimmed == "" {
+			continue
+		}
+		out = append(out, trimmed)
+		if len(out) >= maxItems {
+			break
+		}
+	}
+	return out
+}
+
+func isEmptySyntheticCompactionState(state SyntheticCompactionState) bool {
+	return strings.TrimSpace(state.Summary) == "" &&
+		len(state.KeyFacts) == 0 &&
+		len(state.Constraints) == 0 &&
+		len(state.OpenLoops) == 0 &&
+		len(state.RecentToolState) == 0
 }
 
 func syntheticCompactionLine(item Item) string {

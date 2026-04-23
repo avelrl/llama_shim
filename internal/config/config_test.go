@@ -88,6 +88,14 @@ responses:
     backend: responses
     base_url: http://127.0.0.1:8188
     timeout: 95s
+  compaction:
+    backend: model_assisted_text
+    base_url: http://127.0.0.1:8189
+    model: local-compact
+    timeout: 11s
+    max_output_tokens: 900
+    retained_items: 5
+    max_input_chars: 45000
   computer:
     backend: chat_completions
   custom_tools:
@@ -167,6 +175,13 @@ responses:
 	require.Equal(t, "responses", cfg.ResponsesImageGenerationBackend)
 	require.Equal(t, "http://127.0.0.1:8188", cfg.ResponsesImageGenerationBaseURL)
 	require.Equal(t, 95*time.Second, cfg.ResponsesImageGenerationTimeout)
+	require.Equal(t, "model_assisted_text", cfg.ResponsesCompactionBackend)
+	require.Equal(t, "http://127.0.0.1:8189", cfg.ResponsesCompactionBaseURL)
+	require.Equal(t, "local-compact", cfg.ResponsesCompactionModel)
+	require.Equal(t, 11*time.Second, cfg.ResponsesCompactionTimeout)
+	require.Equal(t, 900, cfg.ResponsesCompactionMaxOutputTokens)
+	require.Equal(t, 5, cfg.ResponsesCompactionRetainedItems)
+	require.Equal(t, 45000, cfg.ResponsesCompactionMaxInputRunes)
 	require.Equal(t, config.ResponsesComputerBackendChatCompletions, cfg.ResponsesComputerBackend)
 	require.Equal(t, "bridge", cfg.ResponsesCustomToolsMode)
 	require.True(t, cfg.ResponsesCodexEnableCompatibility)
@@ -259,6 +274,13 @@ responses:
 	t.Setenv("RESPONSES_IMAGE_GENERATION_BACKEND", "responses")
 	t.Setenv("RESPONSES_IMAGE_GENERATION_BASE_URL", "http://127.0.0.1:8282")
 	t.Setenv("RESPONSES_IMAGE_GENERATION_TIMEOUT", "70s")
+	t.Setenv("RESPONSES_COMPACTION_BACKEND", "model_assisted_text")
+	t.Setenv("RESPONSES_COMPACTION_BASE_URL", "http://127.0.0.1:8283")
+	t.Setenv("RESPONSES_COMPACTION_MODEL", "env-compact")
+	t.Setenv("RESPONSES_COMPACTION_TIMEOUT", "12s")
+	t.Setenv("RESPONSES_COMPACTION_MAX_OUTPUT_TOKENS", "777")
+	t.Setenv("RESPONSES_COMPACTION_RETAINED_ITEMS", "6")
+	t.Setenv("RESPONSES_COMPACTION_MAX_INPUT_CHARS", "50000")
 	t.Setenv("RESPONSES_COMPUTER_BACKEND", "chat_completions")
 	t.Setenv("RESPONSES_CODEX_ENABLE_COMPATIBILITY", "true")
 	t.Setenv("RESPONSES_CODEX_FORCE_TOOL_CHOICE_REQUIRED", "true")
@@ -323,6 +345,13 @@ responses:
 	require.Equal(t, "responses", cfg.ResponsesImageGenerationBackend)
 	require.Equal(t, "http://127.0.0.1:8282", cfg.ResponsesImageGenerationBaseURL)
 	require.Equal(t, 70*time.Second, cfg.ResponsesImageGenerationTimeout)
+	require.Equal(t, "model_assisted_text", cfg.ResponsesCompactionBackend)
+	require.Equal(t, "http://127.0.0.1:8283", cfg.ResponsesCompactionBaseURL)
+	require.Equal(t, "env-compact", cfg.ResponsesCompactionModel)
+	require.Equal(t, 12*time.Second, cfg.ResponsesCompactionTimeout)
+	require.Equal(t, 777, cfg.ResponsesCompactionMaxOutputTokens)
+	require.Equal(t, 6, cfg.ResponsesCompactionRetainedItems)
+	require.Equal(t, 50000, cfg.ResponsesCompactionMaxInputRunes)
 	require.Equal(t, config.ResponsesComputerBackendChatCompletions, cfg.ResponsesComputerBackend)
 	require.True(t, cfg.ResponsesCodexEnableCompatibility)
 	require.True(t, cfg.ResponsesCodexForceToolChoiceRequired)
@@ -380,6 +409,13 @@ func TestLoadUsesCodexSafeDefaults(t *testing.T) {
 	require.Equal(t, "disabled", cfg.ResponsesImageGenerationBackend)
 	require.Empty(t, cfg.ResponsesImageGenerationBaseURL)
 	require.Equal(t, 0*time.Second, cfg.ResponsesImageGenerationTimeout)
+	require.Equal(t, "heuristic", cfg.ResponsesCompactionBackend)
+	require.Empty(t, cfg.ResponsesCompactionBaseURL)
+	require.Empty(t, cfg.ResponsesCompactionModel)
+	require.Equal(t, 0*time.Second, cfg.ResponsesCompactionTimeout)
+	require.Equal(t, 0, cfg.ResponsesCompactionMaxOutputTokens)
+	require.Equal(t, 0, cfg.ResponsesCompactionRetainedItems)
+	require.Equal(t, 0, cfg.ResponsesCompactionMaxInputRunes)
 	require.Equal(t, config.ResponsesComputerBackendDisabled, cfg.ResponsesComputerBackend)
 	require.Equal(t, "auto", cfg.ResponsesCustomToolsMode)
 	require.True(t, cfg.ResponsesCodexEnableCompatibility)
@@ -484,6 +520,43 @@ responses:
 	_, err := config.Load(configPath)
 	require.Error(t, err)
 	require.ErrorContains(t, err, "responses.image_generation.base_url must not be empty")
+}
+
+func TestLoadDefaultsCompactionBaseURLToLlamaBaseURL(t *testing.T) {
+	disableDotEnv(t)
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	writeFile(t, configPath, `
+llama:
+  base_url: http://127.0.0.1:9091
+responses:
+  compaction:
+    backend: model_assisted_text
+    model: local-compact
+`)
+
+	cfg, err := config.Load(configPath)
+	require.NoError(t, err)
+	require.Equal(t, "model_assisted_text", cfg.ResponsesCompactionBackend)
+	require.Equal(t, "http://127.0.0.1:9091", cfg.ResponsesCompactionBaseURL)
+	require.Equal(t, "local-compact", cfg.ResponsesCompactionModel)
+	require.Equal(t, 10*time.Second, cfg.ResponsesCompactionTimeout)
+	require.Equal(t, 1200, cfg.ResponsesCompactionMaxOutputTokens)
+	require.Equal(t, 8, cfg.ResponsesCompactionRetainedItems)
+	require.Equal(t, 60000, cfg.ResponsesCompactionMaxInputRunes)
+}
+
+func TestLoadRejectsCompactionModelAssistedWithoutModel(t *testing.T) {
+	disableDotEnv(t)
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	writeFile(t, configPath, `
+responses:
+  compaction:
+    backend: model_assisted_text
+`)
+
+	_, err := config.Load(configPath)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "responses.compaction.model must not be empty")
 }
 
 func TestLoadRejectsUnsupportedComputerBackend(t *testing.T) {

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"llama_shim/internal/compactor"
 	"llama_shim/internal/domain"
 	"llama_shim/internal/llama"
 	"llama_shim/internal/storage/sqlite"
@@ -66,6 +67,7 @@ type ResponseService struct {
 	responses     ResponseStore
 	conversations ConversationStore
 	generator     Generator
+	compactor     compactor.Compactor
 }
 
 func NewResponseService(responses ResponseStore, conversations ConversationStore, generator Generator) *ResponseService {
@@ -73,7 +75,16 @@ func NewResponseService(responses ResponseStore, conversations ConversationStore
 		responses:     responses,
 		conversations: conversations,
 		generator:     generator,
+		compactor:     compactor.Heuristic{},
 	}
+}
+
+func (s *ResponseService) SetCompactor(next compactor.Compactor) {
+	if next == nil {
+		s.compactor = compactor.Heuristic{}
+		return
+	}
+	s.compactor = next
 }
 
 func (s *ResponseService) Create(ctx context.Context, input CreateResponseInput) (domain.Response, error) {
@@ -81,7 +92,7 @@ func (s *ResponseService) Create(ctx context.Context, input CreateResponseInput)
 	if err != nil {
 		return domain.Response{}, err
 	}
-	prepared, err = s.applyAutomaticCompaction(input, prepared)
+	prepared, err = s.applyAutomaticCompaction(ctx, input, prepared)
 	if err != nil {
 		return domain.Response{}, err
 	}
@@ -126,12 +137,11 @@ func (s *ResponseService) Compact(ctx context.Context, input CreateResponseInput
 		return domain.ResponseCompaction{}, err
 	}
 
-	summary := domain.BuildSyntheticCompactionSummary(prepared.ContextItems)
-	compactionItem, err := domain.NewSyntheticCompactionItem(summary, len(prepared.ContextItems))
+	result, err := s.compactor.Compact(ctx, prepared.ContextItems)
 	if err != nil {
 		return domain.ResponseCompaction{}, err
 	}
-	output := []domain.Item{compactionItem}
+	output := []domain.Item{result.Item}
 
 	inputTokens, err := domain.EstimateSyntheticTokenCount(prepared.ContextItems)
 	if err != nil {
@@ -355,7 +365,7 @@ func (s *ResponseService) CreateStream(ctx context.Context, input CreateResponse
 	if err != nil {
 		return domain.Response{}, err
 	}
-	prepared, err = s.applyAutomaticCompaction(input, prepared)
+	prepared, err = s.applyAutomaticCompaction(ctx, input, prepared)
 	if err != nil {
 		return domain.Response{}, err
 	}
@@ -514,7 +524,7 @@ type preparedResponse struct {
 	CreatedAt       time.Time
 }
 
-func (s *ResponseService) applyAutomaticCompaction(input CreateResponseInput, prepared preparedResponse) (preparedResponse, error) {
+func (s *ResponseService) applyAutomaticCompaction(ctx context.Context, input CreateResponseInput, prepared preparedResponse) (preparedResponse, error) {
 	threshold, ok, err := parseCompactionThreshold(input.ContextManagement)
 	if err != nil || !ok {
 		return prepared, err
@@ -533,16 +543,16 @@ func (s *ResponseService) applyAutomaticCompaction(input CreateResponseInput, pr
 		return prepared, nil
 	}
 
-	compactionItem, expandedCompaction, err := buildAutomaticCompactionItems(baseItems)
+	result, err := s.compactor.Compact(ctx, baseItems)
 	if err != nil {
 		return prepared, err
 	}
 
 	prepared.EffectiveInput = make([]domain.Item, 0, 1+len(prepared.NormalizedInput))
-	prepared.EffectiveInput = append(prepared.EffectiveInput, compactionItem)
+	prepared.EffectiveInput = append(prepared.EffectiveInput, result.Item)
 	prepared.EffectiveInput = append(prepared.EffectiveInput, prepared.NormalizedInput...)
-	prepared.ContextItems = domain.AppendCurrentRequestContext(expandedCompaction, input.Instructions, prepared.NormalizedInput)
-	prepared.OutputPrefix = append(prepared.OutputPrefix, compactionItem)
+	prepared.ContextItems = domain.AppendCurrentRequestContext(result.Expanded, input.Instructions, prepared.NormalizedInput)
+	prepared.OutputPrefix = append(prepared.OutputPrefix, result.Item)
 	return prepared, nil
 }
 
@@ -582,19 +592,6 @@ func priorEffectiveItems(effectiveInput, normalizedInput []domain.Item) []domain
 		return nil
 	}
 	return append([]domain.Item(nil), effectiveInput[:len(effectiveInput)-len(normalizedInput)]...)
-}
-
-func buildAutomaticCompactionItems(baseItems []domain.Item) (domain.Item, []domain.Item, error) {
-	summary := domain.BuildSyntheticCompactionSummary(baseItems)
-	compactionItem, err := domain.NewSyntheticCompactionItem(summary, len(baseItems))
-	if err != nil {
-		return domain.Item{}, nil, err
-	}
-	expanded, err := domain.ExpandSyntheticCompactionItems([]domain.Item{compactionItem})
-	if err != nil {
-		return domain.Item{}, nil, err
-	}
-	return compactionItem, expanded, nil
 }
 
 func (s *ResponseService) Get(ctx context.Context, id string) (domain.Response, error) {

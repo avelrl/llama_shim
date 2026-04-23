@@ -240,6 +240,13 @@ Supported environment overrides:
 - `RESPONSES_IMAGE_GENERATION_BACKEND` overrides `responses.image_generation.backend`; supported values: `disabled`, `responses`
 - `RESPONSES_IMAGE_GENERATION_BASE_URL` overrides `responses.image_generation.base_url`
 - `RESPONSES_IMAGE_GENERATION_TIMEOUT` overrides `responses.image_generation.timeout`
+- `RESPONSES_COMPACTION_BACKEND` overrides `responses.compaction.backend`; supported values: `heuristic`, `model_assisted_text`
+- `RESPONSES_COMPACTION_BASE_URL` overrides `responses.compaction.base_url`; when omitted with `model_assisted_text`, the shim reuses `llama.base_url`
+- `RESPONSES_COMPACTION_MODEL` overrides `responses.compaction.model`
+- `RESPONSES_COMPACTION_TIMEOUT` overrides `responses.compaction.timeout`
+- `RESPONSES_COMPACTION_MAX_OUTPUT_TOKENS` overrides `responses.compaction.max_output_tokens`
+- `RESPONSES_COMPACTION_RETAINED_ITEMS` overrides `responses.compaction.retained_items`
+- `RESPONSES_COMPACTION_MAX_INPUT_CHARS` overrides `responses.compaction.max_input_chars`
 - `RESPONSES_COMPUTER_BACKEND` overrides `responses.computer.backend`; supported values: `disabled`, `chat_completions`
 - `RESPONSES_CUSTOM_TOOLS_MODE` overrides `responses.custom_tools.mode`; supported values: `bridge`, `auto`, `passthrough`
   Use `auto` for the default path: it keeps bridge behavior for plain-text custom tools, routes supported `grammar` / `regex` custom tools into the shim-local constrained path, uses backend-native structured generation of raw `input` for named constrained custom tools and `tool_choice: "required"` with a single constrained tool, and in broader auto/mixed cases runs a shim-local tool selector before backend-native constrained generation for the selected custom tool. Shim-local `tool_choice.type=allowed_tools` is supported for function/custom subsets. The old validation/repair loop remains only as an error fallback, not the happy path.
