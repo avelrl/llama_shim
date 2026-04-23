@@ -1,6 +1,6 @@
 # V2 Compatibility Matrix
 
-Last updated: April 15, 2026.
+Last updated: April 23, 2026.
 
 This document is the source of truth for the current V2-compatible surface of
 `llama_shim`.
@@ -21,10 +21,13 @@ Primary official references reviewed for this matrix:
 
 - [Migrate to the Responses API](https://developers.openai.com/api/docs/guides/migrate-to-responses)
 - [Using tools](https://developers.openai.com/api/docs/guides/tools)
+- [Shell](https://developers.openai.com/api/docs/guides/tools-shell)
+- [Apply Patch](https://developers.openai.com/api/docs/guides/tools-apply-patch)
 - [Conversation state](https://developers.openai.com/api/docs/guides/conversation-state)
 - [Compaction](https://developers.openai.com/api/docs/guides/compaction)
 - [Counting tokens](https://developers.openai.com/api/docs/guides/token-counting)
 - [Data controls in the OpenAI platform](https://developers.openai.com/api/docs/guides/your-data)
+- [Codex advanced config](https://developers.openai.com/codex/config-advanced)
 - current official API endpoint list, including
   `/v1/responses`, `/v1/conversations`, `/v1/chat/completions`,
   `/v1/files`, and `/v1/vector_stores`
@@ -80,6 +83,8 @@ Practical usage guides live in [guides/README.md](guides/README.md).
 | local `image_generation` | Broad subset | Keep separate image-backend contract explicit | Current subset is docs-aligned, not exact hosted planner parity |
 | local `computer` | Broad subset | Keep external-loop contract explicit | Current subset is screenshot-first and intentionally generic on replay |
 | local `code_interpreter` | Broad subset | Keep dev-only/local boundary explicit | Current contract is useful but not hosted-equivalent |
+| native local `shell` tool contract | V3 | Keep the current bridge-vs-native boundary explicit until code, tests, and capabilities exist | Current Codex support remains compatibility-oriented; official `shell` local subset is staged in [v3-coding-tools.md](v3-coding-tools.md) |
+| native local `apply_patch` tool contract | V3 | Keep the current bridge-vs-native boundary explicit until code, tests, and capabilities exist | Current Codex support remains compatibility-oriented; official `apply_patch` local subset is staged in [v3-coding-tools.md](v3-coding-tools.md) |
 | remote MCP | Broad subset | Keep `server_url` vs `connector_id` boundary explicit | `server_url` subset is implemented; connectors remain a stricter compatibility boundary |
 | `tool_search` | Broad subset | Keep runtime and passthrough boundaries explicit | Current subset is already docs-backed |
 | hosted/native tool-specific SSE beyond current core traces | V3 | Only take on exact replay work when docs or fixtures make it necessary | Not a V2 ship blocker anymore |
@@ -87,7 +92,7 @@ Practical usage guides live in [guides/README.md](guides/README.md).
 ## Current Mode Matrix
 
 This is the current V2-facing routing contract for `POST /v1/responses` as of
-April 15, 2026. It is intentionally conservative: `prefer_upstream` remains a
+April 23, 2026. It is intentionally conservative: `prefer_upstream` remains a
 proxy-first escape hatch for standalone hosted/native requests, while
 `prefer_local` is the default mode for the shim facade.
 
@@ -117,6 +122,9 @@ proxy-first escape hatch for standalone hosted/native requests, while
 
 - Exact hosted tool choreography is not claimed where docs or fixtures do not
   pin down the wire contract.
+- Official native local `shell` and `apply_patch` tool contracts are not part
+  of the current V2 surface; current Codex support remains a compatibility
+  bridge.
 - `prefer_upstream` remains a proxy-first mode, not a hosted parity guarantee.
 - Retrieval ranking is docs-backed and usable, but not presented as exact
   hosted reranker equivalence.

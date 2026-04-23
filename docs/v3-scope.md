@@ -1,6 +1,6 @@
 # V3 Expansion Staging
 
-Last updated: April 21, 2026.
+Last updated: April 23, 2026.
 
 This document is the parking lot for work that did not make the V2 ship bar
 and should not be reintroduced into the frozen V2 scope.
@@ -66,7 +66,21 @@ The tracks below assume the small preflight substrate in
 - more ambitious local shell / browser / multimodal runtime loops after the V2
   contract is stable
 
-### 4. Deeper constrained decoding work
+### 4. Native coding tools for local execution
+
+- official local `shell` subset for `/v1/responses`
+- official local `apply_patch` subset for `/v1/responses`
+- typed item persistence and replay for `shell_call`, `shell_call_output`,
+  `apply_patch_call`, and `apply_patch_call_output`
+- real `openai/codex` smoke coverage against the shim via `openai_base_url`
+
+See [v3-coding-tools.md](v3-coding-tools.md) for the design starting point and
+rollout assumptions.
+
+This is a compatibility-quality and runtime-expansion track, not a reason to
+reopen the frozen V2 contract before code, tests, and capabilities exist.
+
+### 5. Deeper constrained decoding work
 
 - backend-native constrained decoding hooks
 - embedded constrained decoder/runtime libraries
@@ -80,7 +94,7 @@ starting point and rollout assumptions.
 This is valuable work, but it is a runtime-expansion track, not a V2 facade
 requirement.
 
-### 5. Higher-fidelity compaction runtime
+### 6. Higher-fidelity compaction runtime
 
 - model-assisted local compaction beyond the current heuristic broad subset
 - retained-window plus opaque compaction state instead of a single readable
@@ -96,7 +110,7 @@ rollout assumptions.
 This is a runtime-expansion and quality track, not a reason to reopen the
 frozen V2 contract.
 
-### 6. Ops and deployment expansion
+### 7. Ops and deployment expansion
 
 - multi-tenant authz / tenant isolation
 - richer exporters and dashboards

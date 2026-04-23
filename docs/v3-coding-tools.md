@@ -1,0 +1,224 @@
+# V3 Coding Tools
+
+Last updated: April 23, 2026.
+
+This document fixes the design starting point for the V3 coding-tools track
+before implementation begins.
+
+It does not change the frozen V2 contract.
+It does not change OpenAPI.
+It does not claim new OpenAI-surface parity before code, tests, and
+capabilities exist.
+
+## Why This Exists
+
+The shim already has a useful Codex-oriented bridge path:
+
+- stateful `/v1/responses`
+- stored follow-up through `previous_response_id`
+- typed item preservation for the current shipped tool families
+- Codex compatibility mode that injects shim-local guidance for
+  `exec_command` and `apply_patch`
+
+That is valuable, but it is still a compatibility bridge around function/custom
+tool flows rather than the current official Responses coding-tool contract.
+
+The current official OpenAI docs now define coding-oriented built-in tools that
+matter directly for Codex and similar clients:
+
+- `shell` for hosted or local shell execution
+- `apply_patch` for structured file edits
+
+The official Codex docs also explicitly support pointing the built-in OpenAI
+provider at a proxy or router with `openai_base_url`.
+
+That makes a new V3 track worthwhile:
+
+- keep the existing bridge path as the current working baseline
+- add a narrow shim-local subset of the official Responses-native coding tools
+- validate the result against a real `openai/codex` smoke path before widening
+  compatibility wording
+
+This is a runtime-expansion and compatibility-quality track, not a reason to
+reopen the frozen V2 ledger.
+
+## Official References Reviewed
+
+This design note was re-checked on April 23, 2026 against:
+
+- local official-docs index: `openapi/llms.txt`
+- OpenAI docs:
+  - [Shell](https://developers.openai.com/api/docs/guides/tools-shell)
+  - [Apply Patch](https://developers.openai.com/api/docs/guides/tools-apply-patch)
+  - [Code generation](https://developers.openai.com/api/docs/guides/code-generation)
+  - [Codex advanced config](https://developers.openai.com/codex/config-advanced)
+- current official API reference for `POST /v1/responses`
+
+The practical takeaway from the current official docs is:
+
+- `shell` is a current Responses tool and supports a local execution mode
+- local shell uses `shell_call` and `shell_call_output`
+- `apply_patch` is a current Responses tool for structured diffs
+- apply-patch follow-up uses `apply_patch_call_output`
+- Codex can target an OpenAI-compatible proxy by setting `openai_base_url`
+
+## Current V2 Baseline
+
+The frozen V2 truth remains:
+
+- `POST /v1/responses` is a `Broad subset` in
+  [compatibility-matrix.md](compatibility-matrix.md)
+- create-stream and retrieve-stream intentionally avoid claims of exact hosted
+  tool choreography where docs or fixtures do not pin it down
+- the current Codex path is a compatibility bridge, not a shipped claim that
+  the shim already supports the official native `shell` or `apply_patch` tool
+  families
+
+This document does not reopen those claims.
+
+## First-Cut Scope
+
+The first V3 coding-tools rollout should stay narrow.
+
+### `shell`
+
+Support the local subset of the official Responses shell contract:
+
+- accept `tools: [{"type":"shell","environment":{"type":"local"}}]`
+- preserve `shell_call` typed output items
+- accept `shell_call_output` follow-up items
+- keep the loop compatible with stored responses and `previous_response_id`
+
+### `apply_patch`
+
+Support the local subset of the official Responses apply-patch contract:
+
+- accept `tools: [{"type":"apply_patch"}]`
+- preserve `apply_patch_call` typed output items
+- accept `apply_patch_call_output` follow-up items
+- keep the loop compatible with stored responses and `previous_response_id`
+
+### Stateful Surfaces Included In Scope
+
+Before either tool is called done, the first cut should cover all of:
+
+- non-stream `POST /v1/responses`
+- create-stream
+- `GET /v1/responses/{id}`
+- retrieve-stream
+- `GET /v1/responses/{id}/input_items`
+- stored follow-up through `previous_response_id`
+
+The existing shim-owned conversation/state substrate may be reused, but the
+first acceptance bar should stay anchored to the Responses surfaces above.
+
+## Working Assumptions
+
+The coding-tools track starts from the following assumptions:
+
+- the shim should target the current official Responses tool names rather than
+  inventing a second local naming scheme
+- the first rollout should implement only the narrow local subset the shim can
+  own honestly
+- hosted container semantics are a separate problem from local shell execution
+- typed item preservation matters more than clever prompt-based normalization
+- exact hosted SSE choreography should stay out of scope until docs or fixtures
+  pin it down
+
+## Routing Policy
+
+The existing `responses.mode` contract stays in force.
+V3 should refine runtime routing without rewriting the public mode model.
+
+### `prefer_local`
+
+- use the shim-local native coding-tools subset when the request fits the
+  supported local shape
+- keep upstream fallback explicit when the request asks for unsupported hosted
+  or wider runtime behavior
+- do not silently widen local claims beyond the implemented subset
+
+### `prefer_upstream`
+
+- remain proxy-first
+- do not rewrite the public docs story into "full native coding tools" unless
+  the shim actually owns the local path end to end
+- keep hosted-only shell features as upstream territory unless the shim later
+  implements them explicitly
+
+### `local_only`
+
+- require the local subset to be available
+- reject unsupported hosted-only shell fields or unsupported apply-patch shapes
+  explicitly
+- do not fall back to the current Codex bridge path in a way that makes the
+  public contract ambiguous
+
+## Output And Replay Policy
+
+The first cut should keep the replay story conservative and observable:
+
+- store `shell_call`, `shell_call_output`, `apply_patch_call`, and
+  `apply_patch_call_output` as typed items
+- preserve those item families in retrieve and input-items reads
+- allow generic `response.output_item.*` replay where official docs do not pin
+  down a stricter tool-specific SSE contract
+- avoid claims of exact hosted `response.shell.*` or
+  `response.apply_patch.*` choreography without fixture-backed evidence
+
+## `/debug/capabilities` Direction
+
+The capability manifest should grow beyond the current Codex compatibility
+toggle and answer:
+
+- whether native local `shell` is available
+- whether native local `apply_patch` is available
+- whether the process is still relying only on the older Codex compatibility
+  bridge
+- which routing modes can use the local subset
+
+This keeps the V3 work visible to operators, testers, and autonomous clients.
+
+## Test Expectations
+
+Before the first native coding-tools slice is called done, coverage should
+include:
+
+- request-shape and validation tests for `shell` and `apply_patch`
+- integration tests for non-stream local tool loops
+- integration tests for create-stream and retrieve-stream replay
+- stored follow-up coverage through `previous_response_id`
+- `/input_items` coverage for the new typed item families
+- mode coverage for `prefer_local`, `prefer_upstream`, and `local_only`
+- a repo-owned real Codex CLI smoke path that points Codex at the shim with
+  `openai_base_url`
+
+The current Codex bridge tests remain part of the baseline until the new path is
+implemented and proven.
+
+## Non-Goals For The First Cut
+
+The first V3 coding-tools slice should not try to do all of the following at
+once:
+
+- implement hosted shell container parity
+- implement `container_auto` or `container_reference`
+- implement hosted shell `network_policy` or `domain_secrets`
+- claim exact hosted SSE choreography for shell or apply patch
+- replace the current Codex bridge before the native path is proven
+- widen compatibility wording before code, tests, and capabilities are aligned
+
+## Initial Rollout Shape
+
+The expected first rollout is:
+
+1. keep the current bridge path and V2 wording intact
+2. add local `shell` request parsing and typed item storage
+3. add local `apply_patch` request parsing and typed item storage
+4. add follow-up handling for `shell_call_output` and
+   `apply_patch_call_output`
+5. expose the new local-vs-bridge state in `/debug/capabilities`
+6. add a real Codex CLI smoke path before any broader compatibility claims
+
+That is the narrowest practical path from the current Codex bridge to a real V3
+native coding-tools track.
