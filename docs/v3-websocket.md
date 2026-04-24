@@ -15,7 +15,8 @@ streaming for the local subset. That was enough for broad compatibility because
 Codex could fall back to HTTP when the WebSocket upgrade was rejected, but it
 left a transport gap:
 
-- Codex CLI 0.124 first attempts `ws://.../v1/responses`
+- Codex CLI 0.124 started attempting `ws://.../v1/responses`, and current
+  `codex-cli 0.125.0` still expects that transport to be available
 - the old shim returned HTTP 405 because `/v1/responses` only accepted `POST`
 - Codex then fell back to HTTP and completed successfully
 - the run was functionally usable, but it did not exercise the lower-latency
@@ -82,7 +83,8 @@ As of April 24, 2026:
 - Codex CLI smokes now fail if Codex logs HTTP 405 from
   `ws://.../v1/responses`
 - the V3 coding-tools HTTP/SSE status is closed as a `Broad subset`, including
-  a real Codex CLI coding-task smoke that edits a scratch workspace file
+  a real Codex CLI task matrix smoke that edits scratch workspace files and
+  verifies a tiny Go bugfix
 
 The model/tool loop is shared with HTTP. WebSocket is now an additional
 transport adapter for the current shim-local Responses subset.
@@ -300,7 +302,7 @@ The existing Codex CLI smokes were updated:
 
 - HTTP 405 from `ws://.../v1/responses` now fails the smoke
 - Codex must still complete the basic `exec_command` smoke
-- Codex must still complete the scratch coding-task smoke
+- Codex must still complete the scratch task matrix smoke
 
 ## Fixture Policy
 

@@ -114,6 +114,18 @@ The real Codex coding-task smoke wrapper is:
 make codex-cli-coding-task-smoke
 ```
 
+The real Codex task matrix smoke wrapper is:
+
+```bash
+make codex-cli-task-matrix-smoke
+```
+
+The real Codex fallback-shell smoke wrapper is:
+
+```bash
+make codex-cli-shell-tool-smoke
+```
+
 By default it targets the deterministic dev stack:
 
 ```bash
@@ -123,8 +135,8 @@ make devstack-down
 ```
 
 `make devstack-full-smoke` is an orchestrator. It runs the general devstack
-smoke, focused V3 native coding-tools smoke, basic real Codex CLI smoke, and
-real Codex coding-task smoke in sequence.
+smoke, focused V3 native coding-tools smoke, basic real Codex CLI smoke,
+fallback-shell Codex CLI smoke, and real Codex task matrix smoke in sequence.
 
 Equivalent direct invocation:
 
@@ -154,7 +166,9 @@ The repo-owned Codex CLI smoke wrappers are:
 
 ```bash
 make codex-cli-devstack-smoke
+make codex-cli-shell-tool-smoke
 make codex-cli-coding-task-smoke
+make codex-cli-task-matrix-smoke
 ```
 
 Equivalent direct invocation:
@@ -165,6 +179,17 @@ MODEL=devstack-model \
 CODEX_HOME=.tmp/codex-smoke \
 OPENAI_API_KEY=shim-dev-key \
 ./scripts/codex-cli-devstack-smoke.sh
+```
+
+Fallback-shell equivalent:
+
+```bash
+SHIM_BASE_URL=http://127.0.0.1:18080 \
+MODEL=devstack-model \
+CODEX_HOME=.tmp/codex-shell-tool-smoke/codex-home \
+CODEX_SHELL_TOOL_SMOKE_WORKDIR=.tmp/codex-shell-tool-smoke/workspace \
+OPENAI_API_KEY=shim-dev-key \
+./scripts/codex-cli-shell-tool-smoke.sh
 ```
 
 Coding-task equivalent:
@@ -178,16 +203,37 @@ OPENAI_API_KEY=shim-dev-key \
 ./scripts/codex-cli-coding-task-smoke.sh
 ```
 
+Task-matrix equivalent:
+
+```bash
+SHIM_BASE_URL=http://127.0.0.1:18080 \
+MODEL=devstack-model \
+CODEX_HOME=.tmp/codex-task-matrix-smoke/codex-home \
+CODEX_TASK_MATRIX_WORKDIR=.tmp/codex-task-matrix-smoke \
+OPENAI_API_KEY=shim-dev-key \
+./scripts/codex-cli-task-matrix-smoke.sh
+```
+
 These use the real `codex exec` binary with the built-in `openai_base_url`
 setting pointed at the shim. Responses WebSocket transport is now expected to
 be available; HTTP 405 for `ws://.../v1/responses` is treated as a smoke
 failure.
 
 The basic smoke must execute `exec_command`, emit final `READY`, and complete.
+The fallback-shell smoke must run Codex with `features.unified_exec=false`,
+execute the Codex function tool named `shell`, emit final `READY`, complete,
+and verify the stored request did not use `exec_command` or `write_stdin`.
 The coding-task smoke must also verify that Codex changed
 `.tmp/codex-coding-task-smoke/workspace/smoke_target.txt` from
 `status = TODO` to `status = patched-by-codex`, emit final `PATCHED`, and
 complete.
+
+The task matrix smoke must verify four deterministic real-Codex tasks:
+
+- `basic_patch`: one-file text patch, final `PATCHED`
+- `bugfix_go`: tiny Go bugfix plus `go test ./...`, final `BUGFIXED`
+- `plan_doc`: deterministic `PLAN.md`, final `PLANNED`
+- `multi_file`: two-file workspace update, final `MULTIFILE`
 
 The WebSocket follow-up is tracked in [v3-websocket.md](v3-websocket.md); the
 Codex smokes no longer accept WebSocket 405 as a successful path.

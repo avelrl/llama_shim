@@ -156,6 +156,36 @@ codex exec \
   'Make the requested small code change, run the relevant test, and summarize.'
 ```
 
+### Codex Tool Modes
+
+Current Codex CLI has two relevant local command-tool modes for this shim:
+
+- By default, `[features].unified_exec` is enabled on non-Windows platforms.
+  Codex then sends function tools such as `exec_command` and `write_stdin`.
+- With `-c 'features.unified_exec=false'`, Codex can fall back to the default
+  function tool named `shell`.
+
+Both of those are Codex CLI function-tool declarations. They are different
+from the official Responses native shell declaration, which is
+`tools: [{"type":"shell", ...}]` and returns `shell_call` items. The native
+Responses `shell` and `apply_patch` subset is covered by
+`make v3-coding-tools-smoke`; real Codex CLI compatibility is covered by the
+Codex smoke scripts below.
+
+One-off fallback-shell check:
+
+```bash
+OPENAI_API_KEY=shim-dev-key \
+codex exec \
+  --json \
+  -m devstack-model \
+  -c 'openai_base_url="http://127.0.0.1:18080/v1"' \
+  -c 'approval_policy="never"' \
+  -c 'sandbox_mode="workspace-write"' \
+  -c 'features.unified_exec=false' \
+  'Use the shell tool to run pwd, then reply READY.'
+```
+
 ### With Custom Provider
 
 If `~/.codex/config.toml` contains the `[model_providers.llama_shim]` block
@@ -207,12 +237,27 @@ For the dev stack:
 make devstack-up
 make responses-websocket-smoke
 make codex-cli-devstack-smoke
+make codex-cli-shell-tool-smoke
 make codex-cli-coding-task-smoke
+make codex-cli-task-matrix-smoke
 ```
 
 The Codex smoke scripts now fail if Codex hits HTTP 405 from
 `ws://.../v1/responses`, because WebSocket support is expected for this shim
 configuration.
+
+`make codex-cli-shell-tool-smoke` runs the real `codex exec` binary with
+`features.unified_exec=false` and verifies that the stored request used the
+fallback Codex function tool named `shell`, without `exec_command` or
+`write_stdin`.
+
+`make codex-cli-task-matrix-smoke` runs the real `codex exec` binary through
+the shim over `openai_base_url` and verifies four deterministic tasks:
+
+- single-file patch
+- tiny Go bugfix with `go test ./...`
+- deterministic `PLAN.md` creation
+- two-file workspace update
 
 ## Boundaries
 

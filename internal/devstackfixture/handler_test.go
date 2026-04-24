@@ -332,6 +332,69 @@ func TestHandlerChatCompletionsPlansAndCompletesCodexExecCommandToolCalls(t *tes
 	require.False(t, hasToolCalls)
 }
 
+func TestHandlerChatCompletionsPlansAndCompletesCodexShellToolCalls(t *testing.T) {
+	server := httptest.NewServer(NewHandler())
+	defer server.Close()
+
+	payload := map[string]any{
+		"model": DefaultModel,
+		"messages": []map[string]any{
+			{"role": "system", "content": "You are a coding agent running in the Codex CLI, a terminal-based coding assistant."},
+			{"role": "user", "content": "Use the shell tool to run pwd, then reply READY."},
+		},
+		"tools": []map[string]any{
+			{
+				"type": "function",
+				"function": map[string]any{
+					"name": "shell",
+				},
+			},
+		},
+	}
+
+	body, err := json.Marshal(payload)
+	require.NoError(t, err)
+
+	resp, err := server.Client().Post(server.URL+"/v1/chat/completions", "application/json", bytes.NewReader(body))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var response map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&response))
+	choices := response["choices"].([]any)
+	firstChoice := choices[0].(map[string]any)
+	require.Equal(t, "tool_calls", firstChoice["finish_reason"])
+	message := firstChoice["message"].(map[string]any)
+	toolCalls := message["tool_calls"].([]any)
+	require.Len(t, toolCalls, 1)
+	function := toolCalls[0].(map[string]any)["function"].(map[string]any)
+	require.Equal(t, "shell", function["name"])
+	require.JSONEq(t, `{"command":["bash","-lc","pwd"],"timeout_ms":1000,"workdir":"."}`, function["arguments"].(string))
+
+	payload["messages"] = []map[string]any{
+		{"role": "system", "content": "You are a coding agent running in the Codex CLI, a terminal-based coding assistant."},
+		{"role": "user", "content": "Use the shell tool to run pwd, then reply READY."},
+		{"role": "tool", "tool_call_id": "call_devstack_codex_1", "content": "/workdir"},
+	}
+	body, err = json.Marshal(payload)
+	require.NoError(t, err)
+
+	resp, err = server.Client().Post(server.URL+"/v1/chat/completions", "application/json", bytes.NewReader(body))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&response))
+	choices = response["choices"].([]any)
+	firstChoice = choices[0].(map[string]any)
+	require.Equal(t, "stop", firstChoice["finish_reason"])
+	message = firstChoice["message"].(map[string]any)
+	require.Equal(t, "READY", message["content"])
+	_, hasToolCalls := message["tool_calls"]
+	require.False(t, hasToolCalls)
+}
+
 func TestHandlerChatCompletionsPlansAndCompletesCodexCodingTaskToolCall(t *testing.T) {
 	server := httptest.NewServer(NewHandler())
 	defer server.Close()
@@ -393,6 +456,77 @@ func TestHandlerChatCompletionsPlansAndCompletesCodexCodingTaskToolCall(t *testi
 	require.Equal(t, "PATCHED", message["content"])
 	_, hasToolCalls := message["tool_calls"]
 	require.False(t, hasToolCalls)
+}
+
+func TestChatCompletionsCodexTaskMatrixRules(t *testing.T) {
+	tools := []chatTool{
+		{
+			Type: "function",
+			Function: chatToolFunction{
+				Name: "exec_command",
+			},
+		},
+	}
+	cases := []struct {
+		name          string
+		prompt        string
+		commandMarker string
+		toolOutput    string
+		final         string
+	}{
+		{
+			name:          "bugfix go",
+			prompt:        "This is the Codex task matrix bugfix go case. Use exec_command to fix calc.go and reply BUGFIXED.",
+			commandMarker: "bugfix go task passed",
+			toolOutput:    "bugfix go task passed",
+			final:         "BUGFIXED",
+		},
+		{
+			name:          "plan doc",
+			prompt:        "This is the Codex task matrix plan doc case. Use exec_command to write PLAN.md and reply PLANNED.",
+			commandMarker: "PLAN.md",
+			toolOutput:    "plan task written",
+			final:         "PLANNED",
+		},
+		{
+			name:          "multi file",
+			prompt:        "This is the Codex task matrix multi file case. Use exec_command to update app files and reply MULTIFILE.",
+			commandMarker: "multi file task updated",
+			toolOutput:    "multi file task updated",
+			final:         "MULTIFILE",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			request := chatCompletionRequest{
+				Model: DefaultModel,
+				Messages: []chatMessage{
+					{Role: "system", Content: "You are a coding agent running in the Codex CLI, a terminal-based coding assistant."},
+					{Role: "user", Content: tc.prompt},
+				},
+				Tools: tools,
+			}
+
+			content, toolCalls, finishReason := chatCompletionReply(request)
+			require.Empty(t, content)
+			require.Equal(t, "tool_calls", finishReason)
+			require.Len(t, toolCalls, 1)
+			function := toolCalls[0]["function"].(map[string]any)
+			require.Equal(t, "exec_command", function["name"])
+			require.Contains(t, function["arguments"], tc.commandMarker)
+
+			request.Messages = append(request.Messages, chatMessage{
+				Role:       "tool",
+				ToolCallID: "call_devstack_codex_1",
+				Content:    tc.toolOutput,
+			})
+			content, toolCalls, finishReason = chatCompletionReply(request)
+			require.Equal(t, tc.final, content)
+			require.Nil(t, toolCalls)
+			require.Equal(t, "stop", finishReason)
+		})
+	}
 }
 
 func TestHandlerChatCompletionsPlansAndCompletesToolSearchFunctionCalls(t *testing.T) {

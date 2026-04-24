@@ -16,6 +16,14 @@ const (
 	fixtureBuiltinShellToolName      = "__llama_shim_builtin_shell"
 	fixtureBuiltinApplyPatchToolName = "__llama_shim_builtin_apply_patch"
 	fixtureCodexExecCommandToolName  = "exec_command"
+	fixtureCodexShellToolName        = "shell"
+)
+
+type fixtureCodexCommandToolKind string
+
+const (
+	fixtureCodexCommandToolExec  fixtureCodexCommandToolKind = "exec_command"
+	fixtureCodexCommandToolShell fixtureCodexCommandToolKind = "shell"
 )
 
 func NewHandler() http.Handler {
@@ -412,7 +420,7 @@ func chatCompletionReply(request chatCompletionRequest) (string, []map[string]an
 }
 
 func fixtureCodexFunctionFinalOutput(request chatCompletionRequest) (string, bool) {
-	if fixtureFunctionToolName(request.Tools, fixtureCodexExecCommandToolName) == "" {
+	if !fixtureHasCodexCommandTool(request.Tools) {
 		return "", false
 	}
 	message, ok := lastNonEmptyMessage(request.Messages)
@@ -420,6 +428,24 @@ func fixtureCodexFunctionFinalOutput(request chatCompletionRequest) (string, boo
 		return "", false
 	}
 	joined := strings.ToLower(strings.TrimSpace(joinMessageContent(request.Messages)))
+	if containsAny(joined, "codex task matrix bugfix go", "matrix bugfix go") {
+		if !strings.Contains(joined, "bugfix go task passed") {
+			return "command did not report bugfix completion: " + strings.TrimSpace(message.Content), true
+		}
+		return "BUGFIXED", true
+	}
+	if containsAny(joined, "codex task matrix plan doc", "matrix plan doc") {
+		if !strings.Contains(joined, "plan task written") {
+			return "command did not report plan completion: " + strings.TrimSpace(message.Content), true
+		}
+		return "PLANNED", true
+	}
+	if containsAny(joined, "codex task matrix multi file", "matrix multi file") {
+		if !strings.Contains(joined, "multi file task updated") {
+			return "command did not report multi-file completion: " + strings.TrimSpace(message.Content), true
+		}
+		return "MULTIFILE", true
+	}
 	if containsAny(joined, "reply patched", "codex coding task smoke", "patched-by-codex") {
 		if !strings.Contains(joined, "patched smoke_target.txt") {
 			return "command did not report patch completion: " + strings.TrimSpace(message.Content), true
@@ -433,18 +459,65 @@ func fixtureCodexFunctionFinalOutput(request chatCompletionRequest) (string, boo
 }
 
 func fixtureCodexFunctionPlannedCall(request chatCompletionRequest) (string, string, bool) {
-	name := fixtureFunctionToolName(request.Tools, fixtureCodexExecCommandToolName)
+	name, kind := fixtureCodexCommandTool(request.Tools)
 	if name == "" {
 		return "", "", false
 	}
 	joined := strings.ToLower(strings.TrimSpace(joinMessageContent(request.Messages)))
-	if !containsAny(joined, "exec_command", "run command", " run ", "pwd", "remember code 777") {
+	if !containsAny(joined, "exec_command", "shell tool", "run command", " run ", "pwd", "remember code 777") {
 		return "", "", false
 	}
-	if containsAny(joined, "codex coding task smoke", "smoke_target.txt", "patched-by-codex") {
-		return name, `{"cmd":"python3 -c \"import os; from pathlib import Path; p=Path(os.environ['LLAMA_SHIM_CODEX_SMOKE_TARGET']); p.write_text(p.read_text().replace('status = TODO', 'status = patched-by-codex')); print('patched smoke_target.txt')\"","yield_time_ms":5000,"max_output_tokens":12000}`, true
+	if containsAny(joined, "codex task matrix bugfix go", "matrix bugfix go") {
+		return name, fixtureCodexCommandArguments(kind, "python3 -c \"import os, subprocess; from pathlib import Path; d=Path(os.environ['LLAMA_SHIM_CODEX_MATRIX_WORKDIR']); p=d/'calc.go'; p.write_text(p.read_text().replace('return a - b', 'return a + b')); os.environ['GOCACHE']=str(d/'.gocache'); subprocess.run(['go','test','./...'], cwd=d, check=True); print('bugfix go task passed')\"", 60000), true
 	}
-	return name, `{"cmd":"pwd","yield_time_ms":1000,"max_output_tokens":12000}`, true
+	if containsAny(joined, "codex task matrix plan doc", "matrix plan doc") {
+		return name, fixtureCodexCommandArguments(kind, "python3 -c \"import os; from pathlib import Path; d=Path(os.environ['LLAMA_SHIM_CODEX_MATRIX_WORKDIR']); (d/'PLAN.md').write_text('# Implementation Plan\\n\\n- [x] Read requirements\\n- [x] Identify API change\\n- [x] Add regression test\\n'); print('plan task written')\"", 5000), true
+	}
+	if containsAny(joined, "codex task matrix multi file", "matrix multi file") {
+		return name, fixtureCodexCommandArguments(kind, "python3 -c \"import os; from pathlib import Path; d=Path(os.environ['LLAMA_SHIM_CODEX_MATRIX_WORKDIR']); (d/'app').mkdir(exist_ok=True); (d/'app/config.txt').write_text('mode=matrix\\nfeature=enabled\\n'); (d/'app/status.txt').write_text('status=updated\\n'); print('multi file task updated')\"", 5000), true
+	}
+	if containsAny(joined, "codex coding task smoke", "smoke_target.txt", "patched-by-codex") {
+		return name, fixtureCodexCommandArguments(kind, "python3 -c \"import os; from pathlib import Path; p=Path(os.environ['LLAMA_SHIM_CODEX_SMOKE_TARGET']); p.write_text(p.read_text().replace('status = TODO', 'status = patched-by-codex')); print('patched smoke_target.txt')\"", 5000), true
+	}
+	return name, fixtureCodexCommandArguments(kind, "pwd", 1000), true
+}
+
+func fixtureHasCodexCommandTool(tools []chatTool) bool {
+	name, _ := fixtureCodexCommandTool(tools)
+	return name != ""
+}
+
+func fixtureCodexCommandTool(tools []chatTool) (string, fixtureCodexCommandToolKind) {
+	if name := fixtureFunctionToolName(tools, fixtureCodexExecCommandToolName); name != "" {
+		return name, fixtureCodexCommandToolExec
+	}
+	if name := fixtureFunctionToolName(tools, fixtureCodexShellToolName); name != "" {
+		return name, fixtureCodexCommandToolShell
+	}
+	return "", ""
+}
+
+func fixtureCodexCommandArguments(kind fixtureCodexCommandToolKind, command string, timeoutMS int) string {
+	var payload map[string]any
+	switch kind {
+	case fixtureCodexCommandToolShell:
+		payload = map[string]any{
+			"command":    []string{"bash", "-lc", command},
+			"timeout_ms": timeoutMS,
+			"workdir":    ".",
+		}
+	default:
+		payload = map[string]any{
+			"cmd":               command,
+			"max_output_tokens": 12000,
+			"yield_time_ms":     timeoutMS,
+		}
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		panic(err)
+	}
+	return string(encoded)
 }
 
 func fixtureBuiltinCodingToolFinalOutput(request chatCompletionRequest) (string, bool) {

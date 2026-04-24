@@ -17,6 +17,16 @@ Use this order every time:
    Prefer only official OpenAI domains.
 4. If MCP and the official site disagree, or MCP is thin, ambiguous, or missing exact schema details, treat the current official site page as the tie-breaker and update the backlog/spec conservatively.
 
+For Codex CLI compatibility work, also inspect
+[`openai/codex`](https://github.com/openai/codex) as an implementation
+reference after the official-docs check. Use it to understand the actual
+Codex agent tool registry, feature flags, model metadata, transport choices,
+and request shape. It is not a substitute for official API docs and must not
+be used as the source of truth for OpenAI wire-contract claims. If no local
+checkout is available, clone it into an ignored temporary directory such as
+`.tmp/codex-upstream/`, inspect the relevant files, and do not commit the
+checkout.
+
 Do not close a compatibility task from memory alone.
 
 ## What must be checked

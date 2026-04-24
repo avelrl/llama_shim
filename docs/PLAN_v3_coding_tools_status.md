@@ -50,11 +50,12 @@ The matrix label was strengthened because all of these are true:
    - `make devstack-up`
    - `make v3-coding-tools-smoke`
    - `make codex-cli-devstack-smoke`
-   - `make codex-cli-coding-task-smoke`
+   - `make codex-cli-shell-tool-smoke`
+   - `make codex-cli-task-matrix-smoke`
    - `make devstack-down`
 5. A real Codex CLI smoke against the shim passes with `openai_base_url`
-   pointing at the shim, including a coding-task smoke that changes a scratch
-   workspace file.
+   pointing at the shim, including a task matrix smoke that changes scratch
+   workspace files and verifies a tiny Go bugfix.
 
 ## Codex CLI Smoke Acceptance
 
@@ -68,9 +69,13 @@ Minimum pass for this combined status gate:
 - Codex CLI is configured to use the shim as its OpenAI-compatible base URL.
 - Codex CLI can request at least one local command through the current
   compatibility bridge.
+- Codex CLI can request at least one local command through the fallback
+  function tool named `shell` when `[features].unified_exec=false`.
 - Codex CLI can perform at least one file edit through native `apply_patch` if
   the public CLI emits that declaration, or through the current compatibility
   bridge if it has not switched yet.
+- Codex CLI can complete the repo-owned task matrix:
+  `basic_patch`, `bugfix_go`, `plan_doc`, and `multi_file`.
 - Stored follow-up still works through `previous_response_id`.
 - The shim log shows successful `/v1/responses` requests without upstream
   fallback being mistaken for local native support.
@@ -82,23 +87,25 @@ requests, but it must not claim that current Codex CLI uses native `shell` and
 
 ## Latest Codex CLI Result
 
-Last checked on April 24, 2026 with `codex-cli 0.124.0`.
+Last checked on April 24, 2026 with `codex-cli 0.125.0`.
 
 Result: pass with the built-in `openai_base_url` setting pointed at the shim.
 
 Observed details:
 
-- At the time of this coding-tools status check, Codex CLI first attempted the
-  Responses WebSocket transport, received HTTP 405 from
-  `ws://127.0.0.1:18080/v1/responses`, then fell back to HTTP and completed
-  the turn.
+- Codex CLI uses the Responses WebSocket-capable shim path; the repo-owned
+  smoke now treats HTTP 405 from `ws://.../v1/responses` as a failure.
 - The smoke exercised the current Codex compatibility bridge with
   `exec_command`, not native `shell` / `apply_patch` declarations from the CLI.
+- A separate fallback-shell smoke runs Codex with
+  `features.unified_exec=false` and verifies the stored request uses the Codex
+  function tool named `shell`, without `exec_command` or `write_stdin`.
 - The deterministic devstack fixture returned a planned `exec_command`; Codex
   executed `pwd` and then received final assistant text `READY`.
-- The repo-owned coding-task smoke used the same real CLI path in a scratch
-  workspace; Codex executed a deterministic `exec_command`, changed
-  `smoke_target.txt`, and then received final assistant text `PATCHED`.
+- The repo-owned task matrix smoke uses the same real CLI path in scratch
+  workspaces; Codex executes deterministic `exec_command` calls, changes
+  scratch files, verifies a tiny Go bugfix, and receives final assistant text
+  for each matrix case.
 
 Status implication: this is enough evidence for practical Codex CLI bridge
 compatibility and for closing the shim-local coding-tools status as
@@ -106,9 +113,8 @@ compatibility and for closing the shim-local coding-tools status as
 uses the native `shell` and `apply_patch` tool declarations end to end.
 
 Follow-up: WebSocket transport support is tracked in
-[v3-websocket.md](v3-websocket.md). The later WebSocket work removes tolerated
-HTTP 405 fallback from the Codex CLI smoke before making a WebSocket
-compatibility claim.
+[v3-websocket.md](v3-websocket.md). The Codex CLI smoke no longer accepts
+WebSocket HTTP 405 as a successful path.
 
 ## Status Decision
 

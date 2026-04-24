@@ -56,10 +56,22 @@ Run the real Codex CLI smoke path:
 make codex-cli-devstack-smoke
 ```
 
+Run the real Codex CLI fallback-shell smoke path:
+
+```bash
+make codex-cli-shell-tool-smoke
+```
+
 Run the real Codex CLI coding-task smoke path:
 
 ```bash
 make codex-cli-coding-task-smoke
+```
+
+Run the real Codex CLI task matrix smoke path:
+
+```bash
+make codex-cli-task-matrix-smoke
 ```
 
 Stop the stack:
@@ -82,7 +94,9 @@ Equivalent individual commands:
 bash ./scripts/devstack-smoke.sh
 bash ./scripts/v3-coding-tools-smoke.sh
 bash ./scripts/codex-cli-devstack-smoke.sh
+bash ./scripts/codex-cli-shell-tool-smoke.sh
 bash ./scripts/codex-cli-coding-task-smoke.sh
+bash ./scripts/codex-cli-task-matrix-smoke.sh
 docker compose -f docker-compose.devstack.yml down --remove-orphans
 ```
 
@@ -103,7 +117,8 @@ smoke gate. It runs:
 - `make responses-websocket-smoke`
 - `make v3-coding-tools-smoke`
 - `make codex-cli-devstack-smoke`
-- `make codex-cli-coding-task-smoke`
+- `make codex-cli-shell-tool-smoke`
+- `make codex-cli-task-matrix-smoke`
 
 `scripts/devstack-smoke.sh` checks the following in one narrow run:
 
@@ -156,6 +171,16 @@ subset:
 - Codex executes one local `exec_command` and then receives a final `READY`
   assistant message
 
+`scripts/codex-cli-shell-tool-smoke.sh` checks the same real Codex CLI bridge
+with unified exec disabled:
+
+- the real `codex exec` binary targets the shim through `openai_base_url`
+- Codex runs with `features.unified_exec=false`
+- the stored request includes the fallback Codex function tool named `shell`
+- the stored request does not include `exec_command` or `write_stdin`
+- Codex executes one local command and then receives a final `READY` assistant
+  message
+
 `scripts/codex-cli-coding-task-smoke.sh` checks the same real Codex CLI bridge
 with a scratch coding task:
 
@@ -164,6 +189,16 @@ with a scratch coding task:
 - `smoke_target.txt` in `.tmp/codex-coding-task-smoke/workspace` changes from
   `status = TODO` to `status = patched-by-codex`
 - Codex receives a final `PATCHED` assistant message and the turn completes
+
+`scripts/codex-cli-task-matrix-smoke.sh` expands that same bridge check into a
+small deterministic task matrix:
+
+- `basic_patch`: updates one scratch text file and receives `PATCHED`
+- `bugfix_go`: fixes a tiny Go package, then verifies `go test ./...`
+- `plan_doc`: writes a deterministic `PLAN.md` checklist and receives
+  `PLANNED`
+- `multi_file`: updates two files under one scratch workspace and receives
+  `MULTIFILE`
 
 The goal is not to benchmark model quality. The goal is to prove that the
 stack is runnable, probeable, and reproducible.
@@ -177,8 +212,12 @@ stack is runnable, probeable, and reproducible.
   focused native coding-tools smoke path
 - [scripts/codex-cli-devstack-smoke.sh](../../scripts/codex-cli-devstack-smoke.sh):
   real Codex CLI smoke path
+- [scripts/codex-cli-shell-tool-smoke.sh](../../scripts/codex-cli-shell-tool-smoke.sh):
+  real Codex CLI fallback-shell smoke path
 - [scripts/codex-cli-coding-task-smoke.sh](../../scripts/codex-cli-coding-task-smoke.sh):
   real Codex CLI coding-task smoke path
+- [scripts/codex-cli-task-matrix-smoke.sh](../../scripts/codex-cli-task-matrix-smoke.sh):
+  real Codex CLI task matrix smoke path
 - [cmd/devstack-fixture/main.go](../../cmd/devstack-fixture/main.go): deterministic fixture service
 - [internal/devstackfixture/mcp.go](../../internal/devstackfixture/mcp.go): deterministic MCP fixture transport
 

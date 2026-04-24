@@ -134,8 +134,9 @@ implementation for this track as a `Broad subset`:
 - `shell_call` stored retrieve-stream remains conservative and generic through
   `response.output_item.*` because upstream background shell replay is still
   blocked
-- the repo-owned real Codex CLI coding-task smoke verifies an actual file edit
-  through the current `exec_command` compatibility bridge
+- the repo-owned real Codex CLI task matrix verifies actual scratch workspace
+  edits and a tiny Go bugfix through the current `exec_command` compatibility
+  bridge
 
 This is enough to mark the native local tool rows in the compatibility matrix
 as implemented broad subsets. It is not a full hosted parity claim, and the
@@ -174,25 +175,26 @@ replace the conservative status decision in
 ## Codex CLI Smoke
 
 The real Codex CLI smoke was exercised on April 24, 2026 with
-`codex-cli 0.124.0`, the built-in `openai_base_url` setting pointed at the
+`codex-cli 0.125.0`, the built-in `openai_base_url` setting pointed at the
 shim, and the deterministic devstack fixture behind the shim.
 
 Observed result:
 
-- At the time of the coding-tools smoke, Codex CLI first attempted Responses
-  WebSocket and received HTTP 405 from the shim, then fell back to HTTP and
-  completed successfully.
+- The Codex CLI smoke now treats HTTP 405 from `ws://.../v1/responses` as a
+  failure; the devstack run completed with the WebSocket-capable shim path.
 - The turn exercised the current Codex function-tool bridge with
   `exec_command`; Codex executed `pwd` and then received final assistant text
   `READY`.
-- A follow-up repo-owned coding-task smoke used the same real CLI path in a
-  scratch workspace and verified that Codex changed `smoke_target.txt` from
-  `status = TODO` to `status = patched-by-codex`, then emitted final assistant
-  text `PATCHED`.
+- A separate fallback-shell smoke runs Codex with
+  `features.unified_exec=false` and verifies that the stored request uses the
+  Codex function tool named `shell`, without `exec_command` or `write_stdin`.
+- A follow-up repo-owned task matrix smoke uses the same real CLI path in
+  scratch workspaces and verifies a single-file patch, a tiny Go bugfix,
+  deterministic `PLAN.md` creation, and a two-file update.
 
-This proved practical HTTP fallback compatibility for the current Codex CLI
-bridge path at that point. The later Responses WebSocket track is recorded in
-[v3-websocket.md](v3-websocket.md); this coding-tools note still does not prove
+This proves practical compatibility for the current Codex CLI bridge path with
+the Responses WebSocket-capable shim. The Responses WebSocket track is recorded
+in [v3-websocket.md](v3-websocket.md); this coding-tools note still does not prove
 that the public Codex CLI is sending native `shell` or `apply_patch` tool
 declarations.
 
@@ -345,8 +347,8 @@ The local slice is considered closed because coverage includes:
 - `make v3-coding-tools-smoke` against the deterministic dev stack
 - a repo-owned real Codex CLI smoke path that points Codex at the shim with
   `openai_base_url`
-- `make codex-cli-coding-task-smoke`, which verifies a real file edit in a
-  scratch workspace through Codex CLI
+- `make codex-cli-task-matrix-smoke`, which verifies real scratch workspace
+  edits, a tiny Go bugfix, and deterministic planning output through Codex CLI
 
 The current Codex bridge tests remain part of the baseline because current
 Codex CLI still uses the bridge instead of emitting native `shell` /
@@ -375,8 +377,8 @@ The implemented rollout is:
    `apply_patch_call_output`
 5. exposed the new local-vs-bridge state in `/debug/capabilities`
 6. added the focused repo-owned smoke path
-7. added real Codex CLI smoke paths, including a coding-task smoke that
-   changes a scratch workspace file
+7. added real Codex CLI smoke paths, including a task matrix smoke that
+   changes scratch workspace files and verifies a tiny Go bugfix
 
 That is the narrowest practical closure from the current Codex bridge to a real
 V3 native coding-tools broad-subset status.
