@@ -29,9 +29,8 @@ deeper compatibility fidelity.
 
 ### 1. Exact Responses WebSocket Hosted Parity
 
-V3 should implement WebSocket mode for the full current shim-local Responses
-subset. V5 can take on exact hosted transport fidelity once the practical path
-is stable.
+V3 implements WebSocket mode for the current shim-local Responses subset. V5
+can take on exact hosted transport fidelity once the practical path is stable.
 
 Candidate work:
 

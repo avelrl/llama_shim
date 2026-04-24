@@ -79,6 +79,8 @@ chat_completions:
   default_store_when_omitted: false
 responses:
   mode: prefer_upstream
+  websocket:
+    enabled: false
   web_search:
     backend: searxng
     base_url: http://127.0.0.1:8084
@@ -168,6 +170,7 @@ responses:
 	require.Equal(t, "snowflake-arctic-embed-l-v2.0", cfg.RetrievalEmbedderModel)
 	require.False(t, cfg.ChatCompletionsStoreWhenOmitted)
 	require.Equal(t, config.ResponsesModePreferUpstream, cfg.ResponsesMode)
+	require.False(t, cfg.ResponsesWebSocketEnabled)
 	require.Equal(t, "searxng", cfg.ResponsesWebSearchBackend)
 	require.Equal(t, "http://127.0.0.1:8084", cfg.ResponsesWebSearchBaseURL)
 	require.Equal(t, 9*time.Second, cfg.ResponsesWebSearchTimeout)

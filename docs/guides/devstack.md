@@ -100,6 +100,7 @@ The shim itself talks to the fixture backend over the Compose network as
 smoke gate. It runs:
 
 - `make devstack-smoke`
+- `make responses-websocket-smoke`
 - `make v3-coding-tools-smoke`
 - `make codex-cli-devstack-smoke`
 - `make codex-cli-coding-task-smoke`
@@ -120,6 +121,18 @@ smoke gate. It runs:
 - stored `tool_search` follow-up through `function_call_output`
 - streamed generic replay for `tool_search`
 
+`cmd/responses-websocket-smoke` checks the focused V3 Responses WebSocket
+transport:
+
+- connects to `ws://127.0.0.1:18080/v1/responses`
+- sends sequential `response.create` frames
+- verifies `previous_response_id` continuation
+- verifies native-local `shell` and `apply_patch` replay events over JSON text
+  frames
+- verifies WebSocket transport for local `file_search`, `web_search`,
+  `image_generation`, remote MCP, cached MCP follow-up, hosted/server
+  `tool_search`, and `tool_search` follow-up
+
 `scripts/v3-coding-tools-smoke.sh` checks the focused V3 native coding-tools
 subset:
 
@@ -136,12 +149,12 @@ subset:
 `scripts/codex-cli-devstack-smoke.sh` checks practical Codex CLI compatibility:
 
 - the real `codex exec` binary targets the shim through `openai_base_url`
+- Responses WebSocket transport must be available; HTTP 405 from
+  `ws://.../v1/responses` is now a failure
 - the Codex request stays on the shim-local tool loop despite Codex CLI request
   metadata such as `prompt_cache_key` and empty `include`
 - Codex executes one local `exec_command` and then receives a final `READY`
   assistant message
-- Codex CLI 0.124 WebSocket 405 logs are tolerated only if HTTP fallback
-  completes successfully
 
 `scripts/codex-cli-coding-task-smoke.sh` checks the same real Codex CLI bridge
 with a scratch coding task:

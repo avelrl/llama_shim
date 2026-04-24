@@ -23,6 +23,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/coder/websocket"
 	"github.com/stretchr/testify/require"
 
 	"llama_shim/internal/config"
@@ -405,6 +406,12 @@ func TestCapabilitiesEndpointReportsConfiguredRuntime(t *testing.T) {
 	require.Equal(t, true, responsesSurface["enabled"])
 	require.Equal(t, true, responsesSurface["compact"])
 	require.Equal(t, config.ResponsesModeLocalOnly, asStringAny(responsesSurface["mode"]))
+	responsesWebSocket := responsesSurface["websocket"].(map[string]any)
+	require.Equal(t, true, responsesWebSocket["enabled"])
+	require.Equal(t, "local_subset", asStringAny(responsesWebSocket["support"]))
+	require.Equal(t, "/v1/responses", asStringAny(responsesWebSocket["endpoint"]))
+	require.Equal(t, true, responsesWebSocket["sequential"])
+	require.Equal(t, false, responsesWebSocket["multiplexing"])
 
 	containersSurface := surfaces["containers"].(map[string]any)
 	require.Equal(t, true, containersSurface["enabled"])
@@ -6570,6 +6577,161 @@ func TestResponsesCreateLocalApplyPatchStreamReplaysDiffEvents(t *testing.T) {
 	require.Equal(t, diff, asStringAny(doneOperation["diff"]))
 }
 
+func TestResponsesWebSocketCreateAndContinue(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	status, payload := rawRequest(t, app, http.MethodGet, "/v1/responses", nil)
+	require.Equal(t, http.StatusMethodNotAllowed, status)
+	require.Equal(t, "invalid_request_error", asStringAny(payload["error"].(map[string]any)["type"]))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn := dialResponsesWebSocket(t, ctx, app)
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	firstEvents := sendWebSocketCreate(t, ctx, conn, map[string]any{
+		"model": "test-model",
+		"store": true,
+		"input": "Remember launch code 1234.",
+	})
+	require.Equal(t, "response.created", firstEvents[0].Event)
+	require.Contains(t, eventTypes(firstEvents), "response.in_progress")
+	require.Contains(t, eventTypes(firstEvents), "response.output_text.delta")
+	require.Contains(t, eventTypes(firstEvents), "response.completed")
+	firstCompleted := findEvent(t, firstEvents, "response.completed").Data
+	firstResponse := firstCompleted["response"].(map[string]any)
+	firstID := asStringAny(firstResponse["id"])
+	require.NotEmpty(t, firstID)
+
+	secondEvents := sendWebSocketCreate(t, ctx, conn, map[string]any{
+		"model":                "test-model",
+		"store":                true,
+		"previous_response_id": firstID,
+		"input":                "What launch code did I ask you to remember?",
+	})
+	require.Contains(t, eventTypes(secondEvents), "response.completed")
+	secondCompleted := findEvent(t, secondEvents, "response.completed").Data
+	secondResponse := secondCompleted["response"].(map[string]any)
+	require.Equal(t, firstID, asStringAny(secondResponse["previous_response_id"]))
+}
+
+func TestResponsesWebSocketErrorsStayOnConnection(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn := dialResponsesWebSocket(t, ctx, app)
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	require.NoError(t, conn.Write(ctx, websocket.MessageText, []byte(`{`)))
+	malformed := readWebSocketEvent(t, ctx, conn)
+	require.Equal(t, "error", malformed.Event)
+	require.EqualValues(t, http.StatusBadRequest, malformed.Data["status"])
+
+	require.NoError(t, conn.Write(ctx, websocket.MessageText, mustJSON(t, map[string]any{
+		"type": "session.update",
+	})))
+	unsupported := readWebSocketEvent(t, ctx, conn)
+	require.Equal(t, "error", unsupported.Event)
+	errorPayload := unsupported.Data["error"].(map[string]any)
+	require.Equal(t, "invalid_request_error", asStringAny(errorPayload["type"]))
+	require.Contains(t, asStringAny(errorPayload["message"]), "unsupported websocket message type")
+
+	events := sendWebSocketCreate(t, ctx, conn, map[string]any{
+		"model": "test-model",
+		"store": true,
+		"input": "Reply after the prior websocket errors.",
+	})
+	require.Contains(t, eventTypes(events), "response.completed")
+}
+
+func TestResponsesWebSocketGenerateFalseCanBeContinuedWithStoreFalse(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn := dialResponsesWebSocket(t, ctx, app)
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	warmupEvents := sendWebSocketCreate(t, ctx, conn, map[string]any{
+		"model":    "test-model",
+		"store":    false,
+		"generate": false,
+		"input":    "Warm the socket with repo path internal/httpapi.",
+	})
+	require.Contains(t, eventTypes(warmupEvents), "response.completed")
+	warmupCompleted := findEvent(t, warmupEvents, "response.completed").Data
+	warmupResponse := warmupCompleted["response"].(map[string]any)
+	warmupID := asStringAny(warmupResponse["id"])
+	require.NotEmpty(t, warmupID)
+	require.Empty(t, warmupResponse["output"])
+	require.Equal(t, false, warmupResponse["store"])
+
+	followUpEvents := sendWebSocketCreate(t, ctx, conn, map[string]any{
+		"model":                "test-model",
+		"store":                false,
+		"previous_response_id": warmupID,
+		"input":                "Continue after websocket warmup.",
+	})
+	require.Contains(t, eventTypes(followUpEvents), "response.completed")
+	followUpCompleted := findEvent(t, followUpEvents, "response.completed").Data
+	followUpResponse := followUpCompleted["response"].(map[string]any)
+	require.Equal(t, warmupID, asStringAny(followUpResponse["previous_response_id"]))
+	require.Equal(t, false, followUpResponse["store"])
+}
+
+func TestResponsesWebSocketLocalShellAndApplyPatchReplayEvents(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn := dialResponsesWebSocket(t, ctx, app)
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	shellEvents := sendWebSocketCreate(t, ctx, conn, map[string]any{
+		"model":       "test-model",
+		"store":       true,
+		"tool_choice": "required",
+		"input": []map[string]any{
+			{
+				"role":    "user",
+				"content": "Run the local shell command and do not answer directly.",
+			},
+		},
+		"tools": []map[string]any{
+			{
+				"type": "shell",
+				"environment": map[string]any{
+					"type": "local",
+				},
+			},
+		},
+	})
+	require.Contains(t, eventTypes(shellEvents), "response.shell_call_command.delta")
+	require.Contains(t, eventTypes(shellEvents), "response.shell_call_command.done")
+	require.Contains(t, eventTypes(shellEvents), "response.completed")
+
+	applyPatchEvents := sendWebSocketCreate(t, ctx, conn, map[string]any{
+		"model":       "test-model",
+		"store":       true,
+		"tool_choice": "required",
+		"input": []map[string]any{
+			{
+				"role":    "user",
+				"content": "Patch the code and do not answer directly.",
+			},
+		},
+		"tools": []map[string]any{
+			{
+				"type": "apply_patch",
+			},
+		},
+	})
+	require.Contains(t, eventTypes(applyPatchEvents), "response.apply_patch_call_operation_diff.delta")
+	require.Contains(t, eventTypes(applyPatchEvents), "response.apply_patch_call_operation_diff.done")
+	require.Contains(t, eventTypes(applyPatchEvents), "response.completed")
+}
+
 func TestResponsesRetrieveLocalApplyPatchStreamReplaysDiffEvents(t *testing.T) {
 	app := testutil.NewTestApp(t)
 
@@ -12578,6 +12740,63 @@ func asStringAny(value any) string {
 
 func payloadID(payload map[string]any) string {
 	return asStringAny(payload["id"])
+}
+
+func dialResponsesWebSocket(t *testing.T, ctx context.Context, app *testutil.TestApp) *websocket.Conn {
+	t.Helper()
+
+	wsURL, err := url.Parse(app.Server.URL)
+	require.NoError(t, err)
+	switch wsURL.Scheme {
+	case "http":
+		wsURL.Scheme = "ws"
+	case "https":
+		wsURL.Scheme = "wss"
+	default:
+		t.Fatalf("unexpected test server scheme %q", wsURL.Scheme)
+	}
+	wsURL.Path = "/v1/responses"
+
+	conn, _, err := websocket.Dial(ctx, wsURL.String(), nil)
+	require.NoError(t, err)
+	return conn
+}
+
+func sendWebSocketCreate(t *testing.T, ctx context.Context, conn *websocket.Conn, payload map[string]any) []sseEvent {
+	t.Helper()
+
+	body := make(map[string]any, len(payload)+1)
+	body["type"] = "response.create"
+	for key, value := range payload {
+		body[key] = value
+	}
+	require.NoError(t, conn.Write(ctx, websocket.MessageText, mustJSON(t, body)))
+
+	events := make([]sseEvent, 0, 8)
+	for {
+		event := readWebSocketEvent(t, ctx, conn)
+		events = append(events, event)
+		switch event.Event {
+		case "response.completed", "response.failed", "response.cancelled", "response.incomplete", "error":
+			return events
+		}
+	}
+}
+
+func readWebSocketEvent(t *testing.T, ctx context.Context, conn *websocket.Conn) sseEvent {
+	t.Helper()
+
+	messageType, raw, err := conn.Read(ctx)
+	require.NoError(t, err)
+	require.Equal(t, websocket.MessageText, messageType)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(raw, &payload))
+	return sseEvent{
+		Event: asStringAny(payload["type"]),
+		Data:  payload,
+		Raw:   string(raw),
+	}
 }
 
 func postStoredChatCompletion(t *testing.T, app *testutil.TestApp, payload map[string]any) string {

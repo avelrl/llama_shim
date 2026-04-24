@@ -108,6 +108,9 @@ curl http://127.0.0.1:8080/v1/responses \
 - `responses.mode=prefer_upstream` is a proxy-first escape hatch, not the main
   V2 behavior.
 - `responses.mode=local_only` never calls upstream.
+- `responses.websocket.enabled=true` exposes the V3 local-subset Responses
+  WebSocket transport at `GET /v1/responses`; HTTP `POST /v1/responses` and
+  SSE `stream=true` remain supported.
 - `GET /v1/responses/{id}/input_items` returns the effective item history used
   for generation, not just the current turn payload.
 - `/v1/responses/input_tokens` and `/v1/responses/compact` are pragmatic
@@ -124,6 +127,7 @@ curl http://127.0.0.1:8080/v1/responses \
 ## Related Docs
 
 - [Conversations](conversations.md)
+- [Codex CLI](codex-cli.md)
 - [Tools Overview](tools.md)
 - [Official migration guide](https://developers.openai.com/api/docs/guides/migrate-to-responses)
 - [Official conversation-state guide](https://developers.openai.com/api/docs/guides/conversation-state)

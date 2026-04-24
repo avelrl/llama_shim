@@ -183,6 +183,44 @@ paths:
         "405":
           $ref: "#/components/responses/ErrorResponse"
   /v1/responses:
+    get:
+      tags: [responses]
+      summary: Create responses over WebSocket
+      x-shim-status: partial
+      description: |
+        V3 local-subset Responses WebSocket transport.
+
+        A normal `GET /v1/responses` without WebSocket upgrade returns HTTP
+        405. With `Upgrade: websocket`, the shim accepts a persistent
+        connection when `responses.websocket.enabled=true`.
+
+        Client text frames must be JSON objects with
+        `type: "response.create"`. The rest of the object mirrors the normal
+        Responses create body, except transport-specific fields such as
+        `stream`, `stream_options`, and `background` are ignored. The shim
+        processes one `response.create` at a time per connection and does not
+        support multiplexing.
+
+        Server text frames are the same JSON event payloads that HTTP SSE
+        streaming places in `data:` for the current shim-local Responses
+        subset. Malformed JSON, unsupported message types, and request
+        validation failures are returned as WebSocket `error` events where the
+        connection can safely remain open.
+
+        This is not exact hosted transport parity: upstream WebSocket proxying,
+        exact hosted close codes, exact connection quota semantics, and
+        Realtime API WebSocket behavior are out of scope.
+      responses:
+        "101":
+          description: WebSocket upgrade accepted.
+        "400":
+          $ref: "#/components/responses/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/ErrorResponse"
+        "404":
+          $ref: "#/components/responses/ErrorResponse"
+        "405":
+          $ref: "#/components/responses/ErrorResponse"
     post:
       tags: [responses]
       summary: Create a response

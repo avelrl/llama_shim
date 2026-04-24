@@ -43,6 +43,7 @@ type CreateResponseInput struct {
 	Store              *bool
 	Stream             *bool
 	Background         *bool
+	ForceShadowStore   bool
 	PreviousResponseID string
 	ConversationID     string
 	Instructions       string
@@ -311,7 +312,7 @@ func (s *ResponseService) SaveExternalResponse(ctx context.Context, prepared Pre
 	}
 
 	publicStore := input.Store == nil || *input.Store
-	persistShadow := input.PreviousResponseID != "" || input.ConversationID != "" || publicStore
+	persistShadow := input.ForceShadowStore || input.PreviousResponseID != "" || input.ConversationID != "" || publicStore
 	responseJSON, err := marshalResponseJSON(response)
 	if err != nil {
 		return domain.Response{}, err
@@ -428,6 +429,83 @@ func (s *ResponseService) CreateStream(ctx context.Context, input CreateResponse
 	return s.completeCreate(ctx, prepared, generationContext, input, outputText)
 }
 
+func (s *ResponseService) CreateWarmup(ctx context.Context, input CreateResponseInput) (domain.Response, error) {
+	prepared, err := s.prepareCreate(ctx, input)
+	if err != nil {
+		return domain.Response{}, err
+	}
+	prepared, err = s.applyAutomaticCompaction(ctx, input, prepared)
+	if err != nil {
+		return domain.Response{}, err
+	}
+	metadata, err := domain.NormalizeResponseMetadata(input.Metadata)
+	if err != nil {
+		return domain.Response{}, err
+	}
+
+	now := domain.NowUTC()
+	store := input.Store == nil || *input.Store
+	response := domain.Response{
+		ID:                 prepared.ResponseID,
+		Object:             "response",
+		CreatedAt:          prepared.CreatedAt.Unix(),
+		Status:             "completed",
+		CompletedAt:        domain.Int64Ptr(now.Unix()),
+		Model:              input.Model,
+		Output:             []domain.Item{},
+		PreviousResponseID: input.PreviousResponseID,
+		Conversation:       domain.NewConversationReference(input.ConversationID),
+		Background:         domain.BoolPtr(false),
+		Store:              domain.BoolPtr(store),
+		Text:               domain.InferResponseTextConfigFromRequestJSON(input.RequestJSON),
+		Metadata:           metadata,
+		OutputText:         "",
+	}
+	response = domain.HydrateResponseRequestSurface(response, input.RequestJSON)
+
+	prepared.NormalizedInput, err = domain.EnsureItemIDs(prepared.NormalizedInput)
+	if err != nil {
+		return domain.Response{}, err
+	}
+	prepared.EffectiveInput, err = buildStoredEffectiveInputItems(prepared.EffectiveInput, prepared.NormalizedInput)
+	if err != nil {
+		return domain.Response{}, err
+	}
+	responseJSON, err := marshalResponseJSON(response)
+	if err != nil {
+		return domain.Response{}, err
+	}
+	stored := domain.StoredResponse{
+		ID:                   response.ID,
+		Model:                response.Model,
+		RequestJSON:          input.RequestJSON,
+		ResponseJSON:         responseJSON,
+		NormalizedInputItems: prepared.NormalizedInput,
+		EffectiveInputItems:  prepared.EffectiveInput,
+		Output:               response.Output,
+		OutputText:           response.OutputText,
+		PreviousResponseID:   response.PreviousResponseID,
+		ConversationID:       domain.ConversationReferenceID(response.Conversation),
+		Store:                store,
+		CreatedAt:            formatUnixTime(response.CreatedAt),
+		CompletedAt:          formatResponseCompletedAt(response),
+	}
+	persistShadow := input.ForceShadowStore || input.PreviousResponseID != "" || input.ConversationID != "" || store
+
+	switch {
+	case input.ConversationID != "":
+		if err := s.conversations.SaveResponseAndAppendConversation(ctx, prepared.Conversation, stored, prepared.NormalizedInput, response.Output); err != nil {
+			return domain.Response{}, err
+		}
+	case persistShadow:
+		if err := s.responses.SaveResponse(ctx, stored); err != nil {
+			return domain.Response{}, err
+		}
+	}
+
+	return response, nil
+}
+
 func (s *ResponseService) prepareCreate(ctx context.Context, input CreateResponseInput) (preparedResponse, error) {
 	preparedContext, err := s.PrepareCreateContext(ctx, input)
 	if err != nil {
@@ -498,7 +576,7 @@ func (s *ResponseService) completeCreate(ctx context.Context, prepared preparedR
 		CreatedAt:            formatUnixTime(response.CreatedAt),
 		CompletedAt:          formatResponseCompletedAt(response),
 	}
-	persistShadow := input.PreviousResponseID != "" || input.ConversationID != "" || stored.Store
+	persistShadow := input.ForceShadowStore || input.PreviousResponseID != "" || input.ConversationID != "" || stored.Store
 
 	switch {
 	case input.ConversationID != "":

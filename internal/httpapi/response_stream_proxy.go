@@ -459,16 +459,6 @@ func proxyResponsesStream(ctx context.Context, logger *slog.Logger, w http.Respo
 }
 
 func writeCompletedResponseAsSSE(ctx context.Context, logger *slog.Logger, w http.ResponseWriter, rawResponse []byte, plan customToolTransportPlan, includeObfuscation bool) error {
-	response, err := domain.ParseUpstreamResponse(rawResponse)
-	if err != nil {
-		return err
-	}
-	response = annotateResponseCustomToolMetadata(response, plan)
-	response, err = normalizeResponseForStreaming(response, nil)
-	if err != nil {
-		return err
-	}
-
 	headers := w.Header()
 	headers.Set("Content-Type", "text/event-stream")
 	headers.Set("Cache-Control", "no-cache")
@@ -481,14 +471,10 @@ func writeCompletedResponseAsSSE(ctx context.Context, logger *slog.Logger, w htt
 	if err != nil {
 		return err
 	}
-	eventCount := 0
-	lastEventType := ""
-	if err := forEachResponseReplayEvent(response, nil, includeObfuscation, completedResponseReplayProfile, func(event responseReplayEvent) error {
-		eventCount++
-		lastEventType = event.eventType
-		event.payload["sequence_number"] = eventCount
+	response, eventCount, lastEventType, err := forEachCompletedResponseReplayEvent(rawResponse, plan, includeObfuscation, func(event responseReplayEvent) error {
 		return emitter.write(event.eventType, event.payload)
-	}); err != nil {
+	})
+	if err != nil {
 		return err
 	}
 	if err := emitter.done(); err != nil {
@@ -504,6 +490,29 @@ func writeCompletedResponseAsSSE(ctx context.Context, logger *slog.Logger, w htt
 		)
 	}
 	return nil
+}
+
+func forEachCompletedResponseReplayEvent(rawResponse []byte, plan customToolTransportPlan, includeObfuscation bool, visit func(responseReplayEvent) error) (domain.Response, int, string, error) {
+	response, err := domain.ParseUpstreamResponse(rawResponse)
+	if err != nil {
+		return domain.Response{}, 0, "", err
+	}
+	response = annotateResponseCustomToolMetadata(response, plan)
+	response, err = normalizeResponseForStreaming(response, nil)
+	if err != nil {
+		return domain.Response{}, 0, "", err
+	}
+	eventCount := 0
+	lastEventType := ""
+	if err := forEachResponseReplayEvent(response, nil, includeObfuscation, completedResponseReplayProfile, func(event responseReplayEvent) error {
+		eventCount++
+		lastEventType = event.eventType
+		event.payload["sequence_number"] = eventCount
+		return visit(event)
+	}); err != nil {
+		return domain.Response{}, eventCount, lastEventType, err
+	}
+	return response, eventCount, lastEventType, nil
 }
 
 func shouldIgnoreStreamProxyError(err error) bool {

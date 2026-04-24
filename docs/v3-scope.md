@@ -124,8 +124,8 @@ frozen V2 contract.
   supported through HTTP/SSE
 - real Codex CLI smoke without HTTP fallback when WebSocket support is enabled
 
-See [v3-websocket.md](v3-websocket.md) for the design starting point and
-rollout assumptions.
+See [v3-websocket.md](v3-websocket.md) for the implementation status and
+remaining parity boundaries.
 
 This is a transport-quality track, not a reason to reopen the frozen V2 HTTP
 contract. Exact hosted close codes, upstream WebSocket proxying, hosted cache

@@ -47,6 +47,8 @@ chat_completions:
 
 responses:
   mode: prefer_local
+  websocket:
+    enabled: true
   web_search:
     backend: searxng
     base_url: http://fixture:8081

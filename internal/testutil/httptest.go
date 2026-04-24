@@ -174,6 +174,7 @@ func NewTestAppWithOptions(t *testing.T, options TestAppOptions) *TestApp {
 		},
 		ChatCompletionsStoreWhenOmitted:       chatCompletionsStoreWhenOmitted,
 		ResponsesMode:                         responsesMode,
+		ResponsesWebSocketEnabled:             true,
 		ResponsesCustomToolsMode:              options.CustomToolsMode,
 		ResponsesCodexEnableCompatibility:     options.CodexCompatibilityEnabled,
 		ResponsesCodexForceToolChoiceRequired: options.ForceToolChoiceRequired,

@@ -2,32 +2,29 @@
 
 Last updated: April 24, 2026.
 
-This document records the V3 plan for implementing Responses API WebSocket
-mode in the shim for the full current shim-local Responses subset.
+This document records the V3 implementation status for Responses API WebSocket
+mode in the shim for the current shim-local Responses subset.
 
 It does not change the frozen V2 contract.
-It does not claim exact hosted transport parity before code, tests, fixtures,
-and smoke coverage exist.
+It does not claim exact hosted transport parity.
 
 ## Why This Exists
 
-The current shim supports HTTP `POST /v1/responses` and SSE streaming for the
-local subset. That is enough for broad compatibility and for the current Codex
-CLI smoke path because Codex falls back to HTTP when the WebSocket upgrade is
-rejected.
-
-The fallback is still a gap:
+Before this V3 track, the shim supported HTTP `POST /v1/responses` and SSE
+streaming for the local subset. That was enough for broad compatibility because
+Codex could fall back to HTTP when the WebSocket upgrade was rejected, but it
+left a transport gap:
 
 - Codex CLI 0.124 first attempts `ws://.../v1/responses`
-- the shim currently returns HTTP 405 because `/v1/responses` only accepts
-  `POST`
-- Codex then falls back to HTTP and completes successfully
-- the run is functionally usable, but it does not exercise the lower-latency
+- the old shim returned HTTP 405 because `/v1/responses` only accepted `POST`
+- Codex then fell back to HTTP and completed successfully
+- the run was functionally usable, but it did not exercise the lower-latency
   Responses WebSocket transport
 
 The official OpenAI docs now define Responses WebSocket mode as a first-class
-transport for long-running, tool-heavy workflows. That makes this a natural V3
-track after the native coding-tools smoke work.
+transport for long-running, tool-heavy workflows. V3 now implements that
+transport for the shim-local subset while keeping exact hosted parity out of
+scope.
 
 ## Official References Reviewed
 
@@ -70,26 +67,31 @@ Codex config also exposes:
 
 As of April 24, 2026:
 
-- `/v1/responses` only accepts HTTP `POST`
-- a WebSocket upgrade to `/v1/responses` returns HTTP 405
+- `POST /v1/responses` remains the HTTP create path
+- `GET /v1/responses` without WebSocket upgrade still returns HTTP 405
+- `GET /v1/responses` with WebSocket upgrade accepts a persistent Responses
+  WebSocket connection when `responses.websocket.enabled=true`
 - SSE create-stream and retrieve-stream are implemented for the local subset
-- the local stream emitter is currently tied to `http.ResponseWriter` and SSE
-  formatting
-- Codex CLI smoke passes through HTTP fallback
-- the smoke explicitly tolerates WebSocket 405 only when HTTP fallback
-  completes successfully
+- WebSocket server frames reuse the existing completed-response replay event
+  path and write the same JSON payloads that SSE places in `data:`
+- the repo uses `github.com/coder/websocket`
+- `cmd/responses-websocket-smoke` covers direct WebSocket stateful
+  continuation, native `shell` and `apply_patch` replay events, local
+  `file_search`, `web_search`, `image_generation`, remote MCP, cached MCP
+  follow-up, hosted/server `tool_search`, and `tool_search` follow-up
+- Codex CLI smokes now fail if Codex logs HTTP 405 from
+  `ws://.../v1/responses`
 - the V3 coding-tools HTTP/SSE status is closed as a `Broad subset`, including
   a real Codex CLI coding-task smoke that edits a scratch workspace file
 
-This means the model/tool loop is mostly present. The missing piece is a
-transport adapter that can receive `response.create` messages and write
-Responses streaming events as WebSocket JSON messages.
+The model/tool loop is shared with HTTP. WebSocket is now an additional
+transport adapter for the current shim-local Responses subset.
 
 ## V3 Rollout Goal
 
-The V3 goal is not a small demo endpoint.
+The V3 goal was not a small demo endpoint.
 
-The V3 goal is feature-complete WebSocket support for the current shim-local
+The V3 goal was feature-complete WebSocket support for the current shim-local
 Responses subset that already works through HTTP and SSE.
 
 That means:
@@ -152,42 +154,34 @@ Do not include in V3:
 
 Those deferred items belong in [v5-scope.md](v5-scope.md), not V4.
 
-## Suggested Implementation Shape
+## Implemented Shape
 
-Avoid copying the response-generation stack.
+The implementation avoids copying the response-generation stack.
 
-1. Add a WebSocket dependency.
-   Prefer a small, maintained Go library such as `nhooyr.io/websocket` or
-   `github.com/coder/websocket`.
+1. Add `github.com/coder/websocket`.
 2. Teach the `/v1/responses` route to detect WebSocket upgrade requests before
    the current `POST` method check.
 3. Add `responseHandler.websocket(w, r)`.
-4. Factor the current SSE emitter behind a small event-sink interface:
-
-   ```go
-   type responseEventSink interface {
-       write(eventType string, payload any) error
-       done() error
-   }
-   ```
-
-5. Keep the existing SSE behavior as one sink implementation.
-6. Add a WebSocket sink that writes each event payload as one JSON text frame.
-7. Reuse the existing local create-stream path for `response.create` across all
-   currently supported local routes.
-8. For now, reject unsupported WebSocket message types with a JSON `error`
-   message and keep the connection open when it is safe to continue.
-9. Add a per-connection in-flight guard so a second `response.create` is
-   rejected while the previous one is still running.
-10. Track the most recent response id on the connection for `store=false`
-    continuation behavior.
-11. Keep unsupported and proxy-only routes on the same policy they have over
+4. Factor completed-response replay into
+   `forEachCompletedResponseReplayEvent`, shared by SSE and WebSocket.
+5. Strip WebSocket-unused create fields (`stream`, `stream_options`,
+   `background`) before dispatching to the normal Responses create path.
+6. Execute one `response.create` at a time by processing frames synchronously on
+   a single connection.
+7. Emit each replay event payload as one JSON text frame.
+8. Reject malformed JSON and unsupported WebSocket message types with documented
+   `error` frames and keep the connection open when safe.
+9. Force an internal shadow-store write for WebSocket-created responses so the
+   most recent `store=false` response can be used as `previous_response_id` on
+   the same shim while public retrieve/delete/input-items still respect
+   `store=false`.
+10. Keep unsupported and proxy-only routes on the same policy they have over
     HTTP: local subset where implemented, explicit validation where local-only
     cannot support the request, and no upstream WebSocket tunneling in V3.
 
 ## Event Shape
 
-The WebSocket server should send the same JSON object that SSE currently places
+The WebSocket server sends the same JSON object that SSE currently places
 inside `data:`.
 
 Example:
@@ -204,9 +198,9 @@ Example:
 }
 ```
 
-Do not wrap this in an extra shim-owned envelope unless an upstream fixture
-shows that OpenAI does so. The official docs say server events and ordering
-match the existing Responses streaming event model.
+The shim does not wrap this in an extra shim-owned envelope. The official docs
+say server events and ordering match the existing Responses streaming event
+model.
 
 ## Error Shape
 
@@ -229,10 +223,10 @@ For shim-owned validation failures that already map to OpenAI-style
 
 ## Capability Reporting
 
-Add a shim-owned capability flag under `/debug/capabilities` before claiming
-the feature in matrix wording.
+The shim advertises a capability flag under `/debug/capabilities` before
+claiming the feature in matrix wording.
 
-Suggested shape:
+Shape:
 
 ```json
 {
@@ -248,7 +242,7 @@ Suggested shape:
 }
 ```
 
-If the final schema uses a different nesting style, keep the same facts:
+The facts are intentionally shim-owned and conservative:
 
 - enabled or disabled
 - local subset, not hosted parity
@@ -256,9 +250,9 @@ If the final schema uses a different nesting style, keep the same facts:
 - sequential only
 - no multiplexing
 
-## Tests Required
+## Tests And Regression
 
-Focused unit/integration coverage:
+Implemented focused coverage:
 
 - `GET /v1/responses` without upgrade still returns method-not-allowed
 - WebSocket upgrade succeeds on `/v1/responses`
@@ -266,16 +260,16 @@ Focused unit/integration coverage:
 - unsupported message type returns a WebSocket `error` message
 - `response.create` emits `response.created` and `response.completed`
 - output item and text delta events preserve the current SSE payload shape
-- local tool-loop request works through WebSocket for the current Codex bridge
-  path
 - local `shell` and `apply_patch` direct Responses requests work through
-  WebSocket if those tools are already enabled
+  WebSocket
+- local `file_search`, `web_search`, `image_generation`, remote MCP, and
+  hosted/server `tool_search` smoke through WebSocket
+- cached remote MCP and `tool_search` follow-up flows work through WebSocket
 - repeated `response.create` works on the same socket
 - `previous_response_id` continuation works with stored local responses
 - `store=false` continuation works for the most recent response on the same
   socket
-- stale uncached `store=false` continuation returns `previous_response_not_found`
-- a second in-flight `response.create` on the same socket is rejected
+- `/debug/capabilities` reports the WebSocket local subset
 - HTTP/SSE behavior remains unchanged
 
 Regression checks:
@@ -287,49 +281,26 @@ make lint
 git diff --check
 ```
 
-## Smoke Required
+## Smoke
 
-Add a repo-owned smoke target after implementation.
-
-Suggested target:
+Repo-owned smoke target:
 
 ```bash
 make responses-websocket-smoke
 ```
 
-The smoke should:
+The smoke connects to `ws://127.0.0.1:18080/v1/responses`, sends sequential
+`response.create` messages, verifies stateful continuation, exercises direct
+native local `shell` and `apply_patch` replay events, and covers the devstack
+local families for `file_search`, `web_search`, `image_generation`, remote
+MCP, cached MCP follow-up, hosted/server `tool_search`, and `tool_search`
+follow-up.
 
-- start from the devstack
-- connect to `ws://127.0.0.1:18080/v1/responses`
-- send a simple `response.create`
-- assert `response.created`
-- assert at least one model output event
-- assert `response.completed`
-- send a second `response.create` with `previous_response_id`
-- assert the second turn completes
-- exercise at least one local tool-loop route
-- exercise direct native local `shell`
-- exercise direct native local `apply_patch`
+The existing Codex CLI smokes were updated:
 
-Add focused smoke coverage for the other currently supported local families as
-the implementation reaches them:
-
-- `file_search`
-- `web_search`
-- `image_generation`
-- `computer`
-- `code_interpreter`
-- MCP `server_url`
-- hosted/server `tool_search`
-- local compaction continuation
-
-Then update the existing Codex CLI smoke:
-
-- remove tolerance for WebSocket 405
-- assert Codex CLI completes without falling back from WebSocket to HTTP when
-  `supports_websockets` is enabled
-- keep a separate HTTP fallback smoke only if we intentionally support clients
-  or providers that disable WebSocket transport
+- HTTP 405 from `ws://.../v1/responses` now fails the smoke
+- Codex must still complete the basic `exec_command` smoke
+- Codex must still complete the scratch coding-task smoke
 
 ## Fixture Policy
 
@@ -351,17 +322,7 @@ claims belong in [v5-scope.md](v5-scope.md), especially:
 - exact behavior for failed continuations
 - hosted WebSocket behavior for native `shell` and `apply_patch` tool traces
 
-## Matrix Status Path
-
-Initial matrix wording should stay conservative:
-
-```text
-Responses WebSocket mode | V3 | Stage after HTTP/SSE local subset is stable |
-No current V2 claim; Codex CLI currently uses HTTP fallback when WebSocket
-upgrade returns 405.
-```
-
-After implementation and smoke:
+## Matrix Status
 
 ```text
 Responses WebSocket mode | Broad subset | Keep local transport boundary
@@ -373,19 +334,14 @@ claimed.
 ```
 
 Do not use `Implemented` unless all supported HTTP local subsets have matching
-WebSocket coverage and the Codex CLI smoke proves WebSocket use without HTTP
-fallback.
+WebSocket coverage, Codex CLI smoke proves WebSocket use without HTTP fallback,
+and exact hosted edge cases are either implemented or explicitly judged out of
+the label.
 
-## Open Questions
+## Resolved Decisions
 
-- Which WebSocket library should be standardized for this repo?
-- Should WebSocket support be always on, or controlled by config?
-- Should `/debug/capabilities` expose WebSocket support under `.responses` or
-  under a separate `.transports` object?
-- What exact Codex config should the smoke use to force or advertise
-  `supports_websockets=true`?
-- Should the full-family WebSocket smoke live in one script or split into
-  focused slices to keep diagnostics readable?
-
-Keep these open until implementation starts. They do not block documenting the
-track.
+- WebSocket library: `github.com/coder/websocket`
+- Runtime switch: `responses.websocket.enabled`, default `true`
+- Capability shape: `.surfaces.responses.websocket`
+- Smoke shape: direct `make responses-websocket-smoke` plus Codex CLI smokes
+  that reject WebSocket HTTP 405

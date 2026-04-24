@@ -29,17 +29,26 @@ type capabilitySurfaceSet struct {
 }
 
 type capabilityResponsesSurface struct {
-	Enabled        bool   `json:"enabled"`
-	Stateful       bool   `json:"stateful"`
-	Retrieve       bool   `json:"retrieve"`
-	Delete         bool   `json:"delete"`
-	Cancel         bool   `json:"cancel"`
-	InputItems     bool   `json:"input_items"`
-	CreateStream   bool   `json:"create_stream"`
-	RetrieveStream bool   `json:"retrieve_stream"`
-	InputTokens    bool   `json:"input_tokens"`
-	Compact        bool   `json:"compact"`
-	Mode           string `json:"mode"`
+	Enabled        bool                         `json:"enabled"`
+	Stateful       bool                         `json:"stateful"`
+	Retrieve       bool                         `json:"retrieve"`
+	Delete         bool                         `json:"delete"`
+	Cancel         bool                         `json:"cancel"`
+	InputItems     bool                         `json:"input_items"`
+	CreateStream   bool                         `json:"create_stream"`
+	RetrieveStream bool                         `json:"retrieve_stream"`
+	InputTokens    bool                         `json:"input_tokens"`
+	Compact        bool                         `json:"compact"`
+	WebSocket      capabilityResponsesWebSocket `json:"websocket"`
+	Mode           string                       `json:"mode"`
+}
+
+type capabilityResponsesWebSocket struct {
+	Enabled      bool   `json:"enabled"`
+	Support      string `json:"support"`
+	Endpoint     string `json:"endpoint"`
+	Sequential   bool   `json:"sequential"`
+	Multiplexing bool   `json:"multiplexing"`
 }
 
 type capabilityConversationsRoute struct {
@@ -176,7 +185,14 @@ func buildCapabilityManifest(ctx context.Context, deps RouterDeps) capabilityMan
 				RetrieveStream: true,
 				InputTokens:    true,
 				Compact:        true,
-				Mode:           deps.ResponsesMode,
+				WebSocket: capabilityResponsesWebSocket{
+					Enabled:      deps.ResponsesWebSocketEnabled,
+					Support:      "local_subset",
+					Endpoint:     "/v1/responses",
+					Sequential:   true,
+					Multiplexing: false,
+				},
+				Mode: deps.ResponsesMode,
 			},
 			Conversations: capabilityConversationsRoute{
 				Enabled:  true,

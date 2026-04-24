@@ -1,4 +1,4 @@
-.PHONY: run build lint test vet maint-cleanup maint-optimize maint-vacuum maint-backup docker-build compose-up compose-down devstack-up devstack-down devstack-smoke devstack-full-smoke v3-coding-tools-smoke codex-cli-devstack-smoke codex-cli-coding-task-smoke
+.PHONY: run build lint test vet maint-cleanup maint-optimize maint-vacuum maint-backup docker-build compose-up compose-down devstack-up devstack-down devstack-smoke devstack-full-smoke responses-websocket-smoke v3-coding-tools-smoke codex-cli-devstack-smoke codex-cli-coding-task-smoke
 
 CONFIG ?= config.yaml
 BACKUP ?= ./.data/shim-backup.db
@@ -27,7 +27,7 @@ run:
 
 build:
 	$(TOOL_PREP)
-	$(TOOL_ENV) $(GO) build ./cmd/shim ./cmd/shimctl ./cmd/upstream-sse-capture ./cmd/devstack-fixture
+	$(TOOL_ENV) $(GO) build ./cmd/shim ./cmd/shimctl ./cmd/upstream-sse-capture ./cmd/devstack-fixture ./cmd/responses-websocket-smoke
 
 lint:
 	$(TOOL_PREP)
@@ -75,7 +75,11 @@ devstack-down:
 devstack-smoke:
 	bash ./scripts/devstack-smoke.sh
 
-devstack-full-smoke: devstack-smoke v3-coding-tools-smoke codex-cli-devstack-smoke codex-cli-coding-task-smoke
+devstack-full-smoke: devstack-smoke responses-websocket-smoke v3-coding-tools-smoke codex-cli-devstack-smoke codex-cli-coding-task-smoke
+
+responses-websocket-smoke:
+	$(TOOL_PREP)
+	$(TOOL_ENV) $(GO) run ./cmd/responses-websocket-smoke
 
 v3-coding-tools-smoke:
 	bash ./scripts/v3-coding-tools-smoke.sh

@@ -22,9 +22,8 @@ Optional:
   OPENAI_BASE_URL=http://127.0.0.1:18080/v1
 
 This smoke runs the real Codex CLI against the shim using the built-in
-openai_base_url provider setting. Codex CLI 0.124 may first attempt the
-Responses WebSocket transport and log HTTP 405 before falling back to HTTP.
-The smoke accepts that as long as the turn completes and emits READY.
+openai_base_url provider setting. WebSocket support is expected to be
+available; HTTP 405 from ws://.../v1/responses is treated as a failure.
 EOF
 }
 
@@ -82,6 +81,11 @@ if ! env CODEX_HOME="${codex_home}" OPENAI_API_KEY="${api_key}" "${codex_bin}" e
 fi
 
 cat "${tmp_output}"
+
+if grep -Eiq 'ws://[^[:space:]]*/v1/responses.*405|405 Method Not Allowed' "${tmp_output}"; then
+  echo "Codex CLI hit WebSocket HTTP 405; Responses WebSocket transport is expected to work" >&2
+  exit 1
+fi
 
 json_lines="$(grep '^{' "${tmp_output}" || true)"
 if [[ -z "${json_lines}" ]]; then

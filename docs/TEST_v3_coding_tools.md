@@ -179,9 +179,9 @@ OPENAI_API_KEY=shim-dev-key \
 ```
 
 These use the real `codex exec` binary with the built-in `openai_base_url`
-setting pointed at the shim. Codex CLI 0.124 may first attempt the Responses
-WebSocket transport and log HTTP 405 for `ws://.../v1/responses`; the smokes
-accept that only if the CLI falls back to HTTP and exits successfully.
+setting pointed at the shim. Responses WebSocket transport is now expected to
+be available; HTTP 405 for `ws://.../v1/responses` is treated as a smoke
+failure.
 
 The basic smoke must execute `exec_command`, emit final `READY`, and complete.
 The coding-task smoke must also verify that Codex changed
@@ -189,9 +189,8 @@ The coding-task smoke must also verify that Codex changed
 `status = TODO` to `status = patched-by-codex`, emit final `PATCHED`, and
 complete.
 
-The WebSocket follow-up is tracked separately in
-[v3-websocket.md](v3-websocket.md). Once that track lands, these smokes should
-stop accepting WebSocket 405 as a successful path.
+The WebSocket follow-up is tracked in [v3-websocket.md](v3-websocket.md); the
+Codex smokes no longer accept WebSocket 405 as a successful path.
 
 ## 1. Deterministic Repo-Owned Checks
 

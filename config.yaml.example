@@ -127,6 +127,12 @@ responses:
   # prefer_upstream: preserve the legacy proxy-first behavior for standalone requests.
   # local_only: never call upstream /v1/responses; reject unsupported features instead.
   mode: prefer_local
+  websocket:
+    # Enables V3 local-subset Responses WebSocket mode at GET /v1/responses.
+    # Keep this enabled when using Codex providers configured with
+    # supports_websockets=true. HTTP POST /v1/responses and SSE stream=true
+    # remain available either way.
+    enabled: true
   web_search:
     # disabled: no shim-local web_search runtime
     # searxng: query a local or remote SearXNG-compatible backend

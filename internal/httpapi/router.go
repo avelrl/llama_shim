@@ -26,6 +26,7 @@ type RouterDeps struct {
 	ServiceLimits                         ServiceLimits
 	ChatCompletionsStoreWhenOmitted       bool
 	ResponsesMode                         string
+	ResponsesWebSocketEnabled             bool
 	ResponsesCustomToolsMode              string
 	ResponsesCodexEnableCompatibility     bool
 	ResponsesCodexForceToolChoiceRequired bool
@@ -142,6 +143,14 @@ func NewRouter(deps RouterDeps) http.Handler {
 		mux.Handle(metricsConfig.Path, deps.Metrics.Handler())
 	}
 	mux.HandleFunc("/v1/responses", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && isWebSocketUpgrade(r) {
+			if !deps.ResponsesWebSocketEnabled {
+				WriteError(w, http.StatusNotFound, "not_found_error", "Responses WebSocket transport is disabled", "")
+				return
+			}
+			responseHandler.websocket(w, r)
+			return
+		}
 		if r.Method != http.MethodPost {
 			WriteError(w, http.StatusMethodNotAllowed, "invalid_request_error", "method not allowed", "")
 			return

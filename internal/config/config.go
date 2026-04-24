@@ -79,6 +79,7 @@ type Config struct {
 	ResponsesComputerBackend                       string
 	ChatCompletionsStoreWhenOmitted                bool
 	ResponsesMode                                  string
+	ResponsesWebSocketEnabled                      bool
 	ResponsesCustomToolsMode                       string
 	ResponsesCodexEnableCompatibility              bool
 	ResponsesCodexForceToolChoiceRequired          bool
@@ -154,6 +155,7 @@ func Load(configPath string) (Config, error) {
 		ResponsesComputerBackend:                       strings.ToLower(strings.TrimSpace(v.GetString("responses.computer.backend"))),
 		ChatCompletionsStoreWhenOmitted:                v.GetBool("chat_completions.default_store_when_omitted"),
 		ResponsesMode:                                  strings.ToLower(strings.TrimSpace(v.GetString("responses.mode"))),
+		ResponsesWebSocketEnabled:                      v.GetBool("responses.websocket.enabled"),
 		ResponsesCustomToolsMode:                       strings.ToLower(strings.TrimSpace(v.GetString("responses.custom_tools.mode"))),
 		ResponsesCodexEnableCompatibility:              v.GetBool("responses.codex.enable_compatibility"),
 		ResponsesCodexForceToolChoiceRequired:          v.GetBool("responses.codex.force_tool_choice_required"),
@@ -482,6 +484,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("retrieval.embedder.model", "")
 	v.SetDefault("chat_completions.default_store_when_omitted", true)
 	v.SetDefault("responses.mode", ResponsesModePreferLocal)
+	v.SetDefault("responses.websocket.enabled", true)
 	v.SetDefault("responses.custom_tools.mode", "auto")
 	v.SetDefault("responses.codex.enable_compatibility", true)
 	v.SetDefault("responses.codex.force_tool_choice_required", true)

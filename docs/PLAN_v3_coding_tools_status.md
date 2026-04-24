@@ -88,9 +88,10 @@ Result: pass with the built-in `openai_base_url` setting pointed at the shim.
 
 Observed details:
 
-- Codex CLI first attempted the Responses WebSocket transport and received HTTP
-  405 from `ws://127.0.0.1:18080/v1/responses`.
-- Codex CLI then fell back to HTTP and completed the turn.
+- At the time of this coding-tools status check, Codex CLI first attempted the
+  Responses WebSocket transport, received HTTP 405 from
+  `ws://127.0.0.1:18080/v1/responses`, then fell back to HTTP and completed
+  the turn.
 - The smoke exercised the current Codex compatibility bridge with
   `exec_command`, not native `shell` / `apply_patch` declarations from the CLI.
 - The deterministic devstack fixture returned a planned `exec_command`; Codex
@@ -104,10 +105,10 @@ compatibility and for closing the shim-local coding-tools status as
 `Broad subset`, but it is not evidence that the current public Codex CLI build
 uses the native `shell` and `apply_patch` tool declarations end to end.
 
-Follow-up: WebSocket transport support is now tracked separately in
-[v3-websocket.md](v3-websocket.md). That work should remove the tolerated HTTP
-405 fallback from the Codex CLI smoke before any WebSocket compatibility claim
-is made.
+Follow-up: WebSocket transport support is tracked in
+[v3-websocket.md](v3-websocket.md). The later WebSocket work removes tolerated
+HTTP 405 fallback from the Codex CLI smoke before making a WebSocket
+compatibility claim.
 
 ## Status Decision
 

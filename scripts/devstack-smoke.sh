@@ -28,6 +28,7 @@ This smoke path checks:
   9. local /v1/responses hosted/server tool_search with namespace follow-up
   10. local /v1/responses stream replay for MCP
   11. local /v1/responses generic stream replay for tool_search
+  12. /debug/capabilities advertises Responses WebSocket local subset support
 EOF
 }
 
@@ -93,6 +94,7 @@ printf '%s\n' "${capabilities_json}" | jq '{
   object,
   ready,
   responses_mode: .runtime.responses_mode,
+  responses_websocket: .surfaces.responses.websocket,
   tools: {
     web_search: .tools.web_search.enabled,
     image_generation: .tools.image_generation.enabled,
@@ -110,6 +112,11 @@ printf '%s\n' "${capabilities_json}" | jq -e '
   .object == "shim.capabilities" and
   .ready == true and
   .runtime.responses_mode == "prefer_local" and
+  .surfaces.responses.websocket.enabled == true and
+  .surfaces.responses.websocket.support == "local_subset" and
+  .surfaces.responses.websocket.endpoint == "/v1/responses" and
+  .surfaces.responses.websocket.sequential == true and
+  .surfaces.responses.websocket.multiplexing == false and
   .tools.web_search.enabled == true and
   .tools.image_generation.enabled == true and
   .tools.shell.enabled == true and

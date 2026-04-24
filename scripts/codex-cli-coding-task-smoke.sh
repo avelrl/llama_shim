@@ -91,6 +91,11 @@ fi
 
 cat "${tmp_output}"
 
+if grep -Eiq 'ws://[^[:space:]]*/v1/responses.*405|405 Method Not Allowed' "${tmp_output}"; then
+  echo "Codex CLI hit WebSocket HTTP 405; Responses WebSocket transport is expected to work" >&2
+  exit 1
+fi
+
 actual_content="$(cat "${target_file}")"
 expected_content=$'name = llama_shim\nstatus = patched-by-codex'
 if [[ "${actual_content}" != "${expected_content}" ]]; then

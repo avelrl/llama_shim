@@ -179,9 +179,9 @@ shim, and the deterministic devstack fixture behind the shim.
 
 Observed result:
 
-- Codex CLI first attempted Responses WebSocket and received HTTP 405 from the
-  shim because this repo does not implement `/v1/responses` WebSocket mode.
-- Codex CLI fell back to HTTP and completed successfully.
+- At the time of the coding-tools smoke, Codex CLI first attempted Responses
+  WebSocket and received HTTP 405 from the shim, then fell back to HTTP and
+  completed successfully.
 - The turn exercised the current Codex function-tool bridge with
   `exec_command`; Codex executed `pwd` and then received final assistant text
   `READY`.
@@ -190,9 +190,11 @@ Observed result:
   `status = TODO` to `status = patched-by-codex`, then emitted final assistant
   text `PATCHED`.
 
-This proves practical HTTP fallback compatibility for the current Codex CLI
-bridge path. It does not prove that the public Codex CLI is already sending
-native `shell` or `apply_patch` tool declarations.
+This proved practical HTTP fallback compatibility for the current Codex CLI
+bridge path at that point. The later Responses WebSocket track is recorded in
+[v3-websocket.md](v3-websocket.md); this coding-tools note still does not prove
+that the public Codex CLI is sending native `shell` or `apply_patch` tool
+declarations.
 
 ## Current V2 Baseline
 
