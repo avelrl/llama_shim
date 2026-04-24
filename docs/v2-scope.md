@@ -9,7 +9,8 @@ release ledger and scope definition.
 For the live per-surface contract, use
 [compatibility-matrix.md](compatibility-matrix.md).
 
-For post-V2 work, use [v3-scope.md](v3-scope.md) and [v4-scope.md](v4-scope.md).
+For post-V2 work, use [v3-scope.md](v3-scope.md), [v4-scope.md](v4-scope.md),
+and [v5-scope.md](v5-scope.md).
 
 ## Official References Reviewed At Freeze
 
@@ -77,4 +78,5 @@ The freeze wording was re-checked on April 15, 2026 against:
 - Completed narrow V2 follow-up ledger: [v2-followups.md](v2-followups.md)
 - Post-V2 expansion parking lot: [v3-scope.md](v3-scope.md)
 - V4 extensions and plugin model: [v4-scope.md](v4-scope.md)
+- V5 hosted parity and advanced transports: [v5-scope.md](v5-scope.md)
 - Historical implementation detail: Git history before the V2 freeze refactor

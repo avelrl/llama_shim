@@ -331,6 +331,36 @@ func TestSupportsLocalShimStateAcceptsContextManagementCompactionPolicy(t *testi
 	require.True(t, supportsLocalShimState(rawFields))
 }
 
+func TestSupportsLocalToolLoopAcceptsCodexNoopRequestMetadata(t *testing.T) {
+	rawFields := map[string]json.RawMessage{
+		"model":               json.RawMessage(`"test-model"`),
+		"instructions":        json.RawMessage(`"You are a coding agent running in the Codex CLI, a terminal-based coding assistant."`),
+		"input":               json.RawMessage(`[{"role":"user","content":"Remember code 777. Reply READY."}]`),
+		"tools":               json.RawMessage(`[{"type":"function","name":"exec_command","parameters":{"type":"object","properties":{"cmd":{"type":"string"}},"required":["cmd"]}}]`),
+		"tool_choice":         json.RawMessage(`"auto"`),
+		"parallel_tool_calls": json.RawMessage(`false`),
+		"reasoning":           json.RawMessage(`null`),
+		"store":               json.RawMessage(`false`),
+		"stream":              json.RawMessage(`true`),
+		"include":             json.RawMessage(`[]`),
+		"prompt_cache_key":    json.RawMessage(`"thread_123"`),
+		"client_metadata":     json.RawMessage(`{"x-codex-installation-id":"install_123"}`),
+	}
+
+	require.True(t, supportsLocalToolLoop(rawFields))
+}
+
+func TestSupportsLocalToolLoopRejectsNonEmptyIncludeNoop(t *testing.T) {
+	rawFields := map[string]json.RawMessage{
+		"model":   json.RawMessage(`"test-model"`),
+		"input":   json.RawMessage(`[{"role":"user","content":"Remember code 777. Reply READY."}]`),
+		"tools":   json.RawMessage(`[{"type":"function","name":"exec_command","parameters":{"type":"object","properties":{"cmd":{"type":"string"}},"required":["cmd"]}}]`),
+		"include": json.RawMessage(`["file_search_call.results"]`),
+	}
+
+	require.False(t, supportsLocalToolLoop(rawFields))
+}
+
 func TestBuildResponsesCreateRouteInputsSuppressesLocalToolRoutesWhenContextManagementRequested(t *testing.T) {
 	inputs := buildResponsesCreateRouteInputs(
 		false,
@@ -575,6 +605,26 @@ func TestRemapCustomToolsPayloadForcesRequiredToolChoiceForCodexAuto(t *testing.
 	require.NoError(t, json.Unmarshal(body, &payload))
 	require.Equal(t, "required", payload["tool_choice"])
 	require.Equal(t, toolChoiceContractRequiredAny, plan.ToolChoiceContract.Mode)
+}
+
+func TestRemapCustomToolsPayloadKeepsAutoToolChoiceForCodexToolOutputFollowUp(t *testing.T) {
+	rawFields := map[string]json.RawMessage{
+		"instructions": json.RawMessage(`"You are a coding agent running in the Codex CLI, a terminal-based coding assistant."`),
+		"tool_choice":  json.RawMessage(`"auto"`),
+		"input":        json.RawMessage(`[{"type":"function_call_output","call_id":"call_123","output":"tool says hi"}]`),
+		"tools": json.RawMessage(`[
+			{"type":"function","name":"exec_command","parameters":{"type":"object","properties":{"cmd":{"type":"string"}},"required":["cmd"]}}
+		]`),
+	}
+
+	body, plan, err := remapCustomToolsPayload(rawFields, "bridge", true, true)
+
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(body, &payload))
+	require.Equal(t, "auto", payload["tool_choice"])
+	require.False(t, plan.ToolChoiceContract.Active())
 }
 
 func TestRemapCustomToolsPayloadKeepsAutoToolChoiceForNonCodexRequest(t *testing.T) {

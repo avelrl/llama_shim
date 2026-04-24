@@ -84,8 +84,8 @@ For this slice, a pass means all of the following are true:
 The following are intentionally out of scope right now:
 
 - hosted container semantics for shell
-- `/debug/capabilities` flags for native coding tools
-- the existing repo-owned `devstack-smoke` script covering shell/apply-patch
+- treating the general `devstack-smoke` path as the authoritative
+  shell/apply-patch proof; use `v3-coding-tools-smoke` for that slice
 - background-created `shell` retrieve-stream parity; upstream currently fails
   `background + local shell` before any `shell_call` item is emitted
 - chunk-for-chunk hosted parity beyond the current fixture-backed local subset
@@ -100,6 +100,72 @@ Run verification in this order:
 4. live stream smoke
 5. negative validation checks
 
+## Automated Smoke
+
+The repo-owned smoke wrapper for this runbook is:
+
+```bash
+make v3-coding-tools-smoke
+```
+
+By default it targets the deterministic dev stack:
+
+```bash
+make devstack-up
+make v3-coding-tools-smoke
+make devstack-down
+```
+
+Equivalent direct invocation:
+
+```bash
+SHIM_BASE_URL=http://127.0.0.1:18080 \
+MODEL=devstack-model \
+./scripts/v3-coding-tools-smoke.sh
+```
+
+For a manually started shim, override the same variables:
+
+```bash
+SHIM_BASE_URL=http://127.0.0.1:8080 \
+MODEL=gpt-5.4 \
+SHIM_AUTH_HEADER="Authorization: Bearer $AUTHORIZATION" \
+./scripts/v3-coding-tools-smoke.sh
+```
+
+The script verifies `/debug/capabilities`, non-stream tool loops, stored
+retrieves, `/input_items`, create-stream replay, and retrieve-stream replay.
+It intentionally accepts missing `response.apply_patch_call_operation_diff.delta`
+when the stored `operation.diff` is empty.
+
+## Real Codex CLI Smoke
+
+The repo-owned Codex CLI smoke wrapper is:
+
+```bash
+make codex-cli-devstack-smoke
+```
+
+Equivalent direct invocation:
+
+```bash
+SHIM_BASE_URL=http://127.0.0.1:18080 \
+MODEL=devstack-model \
+CODEX_HOME=.tmp/codex-smoke \
+OPENAI_API_KEY=shim-dev-key \
+./scripts/codex-cli-devstack-smoke.sh
+```
+
+This uses the real `codex exec` binary with the built-in `openai_base_url`
+setting pointed at the shim. Codex CLI 0.124 may first attempt the Responses
+WebSocket transport and log HTTP 405 for `ws://.../v1/responses`; the smoke
+accepts that only if the CLI falls back to HTTP, executes `exec_command`, emits
+the final `READY` message, and exits successfully.
+
+The WebSocket follow-up is tracked separately in
+[v3-websocket.md](v3-websocket.md). Once that track lands, this smoke should
+stop accepting WebSocket 405 as a successful path.
+
 ## 1. Deterministic Repo-Owned Checks
 
 These checks are the stable acceptance path inside this repository. Run them
@@ -108,11 +174,14 @@ first.
 ### Focused Tests
 
 ```bash
-go test ./internal/httpapi -run 'TestBuildLocalToolLoopTransportPlanConvertsShellToolChoiceToChatShape|TestParseLocalToolLoopChatCompletionRemapsLocalBuiltinShellTool|TestParseLocalToolLoopChatCompletionRemapsLocalBuiltinApplyPatchTool|TestNormalizeCompletedToolCallEventSynthesizesLocalShellReplayEvents|TestNormalizeCompletedToolCallEventSynthesizesLocalApplyPatchReplayEvents|TestResponsesNativeShellToolFollowUpUsesLocalToolLoop|TestResponsesNativeApplyPatchToolFollowUpUsesLocalToolLoop|TestResponsesCreateLocalShellStreamReplaysShellCommandEvents|TestResponsesCreateLocalApplyPatchStreamReplaysDiffEvents|TestResponsesRetrieveLocalApplyPatchStreamReplaysDiffEvents'
+go test ./internal/httpapi -run 'TestBuildLocalToolLoopTransportPlanConvertsShellToolChoiceToChatShape|TestParseLocalToolLoopChatCompletionRemapsLocalBuiltinShellTool|TestParseLocalToolLoopChatCompletionRemapsLocalBuiltinApplyPatchTool|TestRemapCustomToolsPayloadKeepsAutoToolChoiceForCodexToolOutputFollowUp|TestSupportsLocalToolLoopAcceptsCodexNoopRequestMetadata|TestNormalizeCompletedToolCallEventSynthesizesLocalShellReplayEvents|TestNormalizeCompletedToolCallEventSynthesizesLocalApplyPatchReplayEvents|TestResponsesNativeShellToolFollowUpUsesLocalToolLoop|TestResponsesNativeApplyPatchToolFollowUpUsesLocalToolLoop|TestResponsesCreateLocalShellStreamReplaysShellCommandEvents|TestResponsesCreateLocalApplyPatchStreamReplaysDiffEvents|TestResponsesRetrieveLocalApplyPatchStreamReplaysDiffEvents'
 ```
 
 What this covers:
 
+- Codex CLI request metadata no-ops keep the request on the local tool loop
+- Codex tool-output follow-up can finish with a final message instead of being
+  forced into another required tool call
 - `tool_choice: {"type":"shell"}` remaps into shim-local transport
 - backend function-call output remaps back into `shell_call`
 - backend function-call output remaps back into `apply_patch_call`

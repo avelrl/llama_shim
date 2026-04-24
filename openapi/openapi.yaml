@@ -2490,7 +2490,7 @@ components:
           type: string
     ShimCapabilityToolSet:
       type: object
-      required: [file_search, web_search, image_generation, computer, code_interpreter, mcp_server_url, mcp_connector_id, tool_search_hosted, tool_search_client]
+      required: [file_search, web_search, image_generation, computer, code_interpreter, shell, apply_patch, mcp_server_url, mcp_connector_id, tool_search_hosted, tool_search_client]
       properties:
         file_search:
           $ref: "#/components/schemas/ShimCapabilityTool"
@@ -2501,6 +2501,10 @@ components:
         computer:
           $ref: "#/components/schemas/ShimCapabilityTool"
         code_interpreter:
+          $ref: "#/components/schemas/ShimCapabilityTool"
+        shell:
+          $ref: "#/components/schemas/ShimCapabilityTool"
+        apply_patch:
           $ref: "#/components/schemas/ShimCapabilityTool"
         mcp_server_url:
           $ref: "#/components/schemas/ShimCapabilityTool"

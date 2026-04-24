@@ -12,6 +12,12 @@ const DefaultModel = "devstack-model"
 
 const fixtureImageBase64 = "ZmFrZS1pbWFnZQ=="
 
+const (
+	fixtureBuiltinShellToolName      = "__llama_shim_builtin_shell"
+	fixtureBuiltinApplyPatchToolName = "__llama_shim_builtin_apply_patch"
+	fixtureCodexExecCommandToolName  = "exec_command"
+)
+
 func NewHandler() http.Handler {
 	server := newFixtureServer()
 	mux := http.NewServeMux()
@@ -348,6 +354,36 @@ func chatCompletionReply(request chatCompletionRequest) (string, []map[string]an
 	if output, ok := fixtureMCPFinalOutput(request); ok {
 		return output, nil, "stop"
 	}
+	if output, ok := fixtureCodexFunctionFinalOutput(request); ok {
+		return output, nil, "stop"
+	}
+	if name, arguments, ok := fixtureCodexFunctionPlannedCall(request); ok {
+		return "", []map[string]any{
+			{
+				"id":   "call_devstack_codex_1",
+				"type": "function",
+				"function": map[string]any{
+					"name":      name,
+					"arguments": arguments,
+				},
+			},
+		}, "tool_calls"
+	}
+	if output, ok := fixtureBuiltinCodingToolFinalOutput(request); ok {
+		return output, nil, "stop"
+	}
+	if name, arguments, ok := fixtureBuiltinCodingToolPlannedCall(request); ok {
+		return "", []map[string]any{
+			{
+				"id":   "call_devstack_builtin_1",
+				"type": "function",
+				"function": map[string]any{
+					"name":      name,
+					"arguments": arguments,
+				},
+			},
+		}, "tool_calls"
+	}
 	if name, arguments, ok := fixtureToolSearchPlannedToolCall(request); ok {
 		return "", []map[string]any{
 			{
@@ -373,6 +409,62 @@ func chatCompletionReply(request chatCompletionRequest) (string, []map[string]an
 		}, "tool_calls"
 	}
 	return assistantTextForMessages(request.Messages), nil, "stop"
+}
+
+func fixtureCodexFunctionFinalOutput(request chatCompletionRequest) (string, bool) {
+	if fixtureFunctionToolName(request.Tools, fixtureCodexExecCommandToolName) == "" {
+		return "", false
+	}
+	message, ok := lastNonEmptyMessage(request.Messages)
+	if !ok || !strings.EqualFold(strings.TrimSpace(message.Role), "tool") {
+		return "", false
+	}
+	joined := strings.ToLower(strings.TrimSpace(joinMessageContent(request.Messages)))
+	if containsAny(joined, "reply ready", "remember code 777") {
+		return "READY", true
+	}
+	return strings.TrimSpace(message.Content), true
+}
+
+func fixtureCodexFunctionPlannedCall(request chatCompletionRequest) (string, string, bool) {
+	name := fixtureFunctionToolName(request.Tools, fixtureCodexExecCommandToolName)
+	if name == "" {
+		return "", "", false
+	}
+	joined := strings.ToLower(strings.TrimSpace(joinMessageContent(request.Messages)))
+	if !containsAny(joined, "exec_command", "run command", " run ", "pwd", "remember code 777") {
+		return "", "", false
+	}
+	return name, `{"cmd":"pwd","yield_time_ms":1000,"max_output_tokens":12000}`, true
+}
+
+func fixtureBuiltinCodingToolFinalOutput(request chatCompletionRequest) (string, bool) {
+	if fixtureFunctionToolName(request.Tools, fixtureBuiltinShellToolName) == "" &&
+		fixtureFunctionToolName(request.Tools, fixtureBuiltinApplyPatchToolName) == "" {
+		return "", false
+	}
+	message, ok := lastNonEmptyMessage(request.Messages)
+	if !ok || !strings.EqualFold(strings.TrimSpace(message.Role), "tool") {
+		return "", false
+	}
+	return strings.TrimSpace(message.Content), true
+}
+
+func fixtureBuiltinCodingToolPlannedCall(request chatCompletionRequest) (string, string, bool) {
+	lastUser := strings.ToLower(strings.TrimSpace(lastUserContent(request.Messages)))
+	joined := strings.ToLower(strings.TrimSpace(joinMessageContent(request.Messages)))
+
+	if name := fixtureFunctionToolName(request.Tools, fixtureBuiltinShellToolName); name != "" &&
+		containsAny(lastUser, "shell", "pwd", "command") {
+		return name, `{"action":{"commands":["pwd"],"timeout_ms":30000,"max_output_length":12000}}`, true
+	}
+
+	if name := fixtureFunctionToolName(request.Tools, fixtureBuiltinApplyPatchToolName); name != "" &&
+		containsAny(joined, "apply_patch", "patch", "game/main.go", "answer from 1 to 2") {
+		return name, `{"operation":{"type":"update_file","path":"game/main.go","diff":"*** Begin Patch\n*** Update File: game/main.go\n@@\n-const answer = 1\n+const answer = 2\n*** End Patch\n"}}`, true
+	}
+
+	return "", "", false
 }
 
 func fixtureToolSearchFinalOutput(request chatCompletionRequest) (string, bool) {
@@ -438,12 +530,16 @@ func fixtureMCPRollToolName(tools []chatTool) string {
 }
 
 func fixtureShippingToolName(tools []chatTool) string {
+	return fixtureFunctionToolName(tools, "get_shipping_eta")
+}
+
+func fixtureFunctionToolName(tools []chatTool, wanted string) string {
 	for _, tool := range tools {
 		if !strings.EqualFold(strings.TrimSpace(tool.Type), "function") {
 			continue
 		}
 		name := strings.TrimSpace(tool.Function.Name)
-		if name == "get_shipping_eta" {
+		if name == wanted {
 			return name
 		}
 	}

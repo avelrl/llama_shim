@@ -32,6 +32,8 @@ v1 supports:
 - post-V2 capability expansion parking lot: [docs/v3-scope.md](docs/v3-scope.md)
 - extension and plugin directions after the compatibility core:
   [docs/v4-scope.md](docs/v4-scope.md)
+- exact hosted-parity and advanced transport backlog:
+  [docs/v5-scope.md](docs/v5-scope.md)
 
 ## Documentation
 
@@ -44,6 +46,7 @@ v1 supports:
 - deterministic dev stack and smoke path: [docs/guides/devstack.md](docs/guides/devstack.md)
 - V3 expansion staging: [docs/v3-scope.md](docs/v3-scope.md)
 - V4 extensions and plugin model: [docs/v4-scope.md](docs/v4-scope.md)
+- V5 hosted parity and advanced transports: [docs/v5-scope.md](docs/v5-scope.md)
 - OpenAPI spec: [openapi/openapi.yaml](openapi/openapi.yaml)
 
 ## Architecture

@@ -1,6 +1,6 @@
 # V3 Expansion Staging
 
-Last updated: April 23, 2026.
+Last updated: April 24, 2026.
 
 This document is the parking lot for work that did not make the V2 ship bar
 and should not be reintroduced into the frozen V2 scope.
@@ -12,8 +12,11 @@ runtime work without muddying the V2 release contract.
 V3 now starts from the completed shim-owned automation and dev-stack substrate
 documented in [v3-preflight.md](v3-preflight.md).
 
-For work that goes beyond compatibility and into opinionated memory or plugin
-architecture, see [v4-scope.md](v4-scope.md).
+For work that goes beyond compatibility and into opinionated memory, plugin
+architecture, or hardening, see [v4-scope.md](v4-scope.md).
+
+For exact hosted-parity and advanced transport behavior that should not slow
+down practical V3 rollout, see [v5-scope.md](v5-scope.md).
 
 ## V3 Entry Criteria
 
@@ -110,7 +113,26 @@ rollout assumptions.
 This is a runtime-expansion and quality track, not a reason to reopen the
 frozen V2 contract.
 
-### 7. Ops and deployment expansion
+### 7. Responses WebSocket mode
+
+- WebSocket upgrade support on `/v1/responses`
+- sequential `response.create` messages over one persistent socket
+- Responses streaming events emitted as WebSocket JSON messages
+- `previous_response_id` continuation over the socket, including a
+  connection-local cache for the most recent `store=false` response
+- WebSocket support for the full current shim-local Responses subset already
+  supported through HTTP/SSE
+- real Codex CLI smoke without HTTP fallback when WebSocket support is enabled
+
+See [v3-websocket.md](v3-websocket.md) for the design starting point and
+rollout assumptions.
+
+This is a transport-quality track, not a reason to reopen the frozen V2 HTTP
+contract. Exact hosted close codes, upstream WebSocket proxying, hosted cache
+edge cases, and Realtime API WebSocket compatibility are deferred to
+[v5-scope.md](v5-scope.md).
+
+### 8. Ops and deployment expansion
 
 - multi-tenant authz / tenant isolation
 - richer exporters and dashboards

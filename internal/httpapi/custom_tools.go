@@ -344,7 +344,23 @@ func shouldForceRequiredToolChoice(rawFields map[string]json.RawMessage, tools [
 	if !enabled || len(tools) == 0 {
 		return false
 	}
+	if rawInput, ok := rawFields["input"]; ok && inputContainsToolOutput(rawInput) {
+		return false
+	}
 	return isCodexCLIRequest(rawFields) && hasFunctionToolNamed(tools, "exec_command")
+}
+
+func inputContainsToolOutput(raw json.RawMessage) bool {
+	items, err := domain.NormalizeInput(raw)
+	if err != nil {
+		return false
+	}
+	for _, item := range items {
+		if item.Type == "function_call_output" || item.Type == "custom_tool_call_output" || isLocalBuiltinToolOutputType(item.Type) {
+			return true
+		}
+	}
+	return false
 }
 
 func isCodexCLIRequest(rawFields map[string]json.RawMessage) bool {

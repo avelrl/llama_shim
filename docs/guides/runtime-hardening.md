@@ -30,7 +30,7 @@ This guide is explicitly not:
 ## What Does Not Belong Here
 
 - new API routes
-- widening V2, V3, or V4 scope claims
+- widening V2, V3, V4, or V5 scope claims
 - undocumented request validation added to public OpenAI-compatible endpoints
 - parity claims that still need fixture-backed or docs-backed validation
 - work that belongs in the compatibility matrix or OpenAPI

@@ -26,6 +26,13 @@ var shimLocalToolLoopFields = map[string]struct{}{
 	"parallel_tool_calls":  {},
 }
 
+var shimLocalToolLoopNoopFields = map[string]struct{}{
+	// Codex CLI request metadata. These fields do not affect the shim-local
+	// Chat Completions tool loop and are intentionally not forwarded upstream.
+	"client_metadata":  {},
+	"prompt_cache_key": {},
+}
+
 type localChatCompletionResponse struct {
 	Choices []localChatCompletionChoice `json:"choices"`
 }
@@ -51,8 +58,14 @@ type localChatToolFunction struct {
 }
 
 func supportsLocalToolLoop(rawFields map[string]json.RawMessage) bool {
-	for key := range rawFields {
+	for key, raw := range rawFields {
 		if _, ok := shimLocalToolLoopFields[key]; ok {
+			continue
+		}
+		if _, ok := shimLocalToolLoopNoopFields[key]; ok {
+			continue
+		}
+		if key == "include" && isEmptyJSONArray(raw) {
 			continue
 		}
 		if _, ok := shimLocalGenerationFields[key]; ok {
@@ -70,6 +83,14 @@ func supportsLocalToolLoop(rawFields map[string]json.RawMessage) bool {
 		return false
 	}
 	return supportsLocalToolReplayInput(rawInput)
+}
+
+func isEmptyJSONArray(raw json.RawMessage) bool {
+	var values []json.RawMessage
+	if err := json.Unmarshal(raw, &values); err != nil {
+		return false
+	}
+	return len(values) == 0
 }
 
 func supportsLocalToolDefinitions(tools []map[string]any) bool {

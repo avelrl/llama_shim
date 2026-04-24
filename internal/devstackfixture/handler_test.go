@@ -147,6 +147,191 @@ func TestHandlerChatCompletionsPlansAndCompletesMCPToolCalls(t *testing.T) {
 	require.False(t, hasToolCalls)
 }
 
+func TestHandlerChatCompletionsPlansAndCompletesBuiltinShellToolCalls(t *testing.T) {
+	server := httptest.NewServer(NewHandler())
+	defer server.Close()
+
+	payload := map[string]any{
+		"model": DefaultModel,
+		"messages": []map[string]any{
+			{"role": "user", "content": "Use the shell tool to run exactly this command: pwd"},
+		},
+		"tools": []map[string]any{
+			{
+				"type": "function",
+				"function": map[string]any{
+					"name": "__llama_shim_builtin_shell",
+				},
+			},
+		},
+	}
+
+	body, err := json.Marshal(payload)
+	require.NoError(t, err)
+
+	resp, err := server.Client().Post(server.URL+"/v1/chat/completions", "application/json", bytes.NewReader(body))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var response map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&response))
+	choices := response["choices"].([]any)
+	firstChoice := choices[0].(map[string]any)
+	require.Equal(t, "tool_calls", firstChoice["finish_reason"])
+	message := firstChoice["message"].(map[string]any)
+	toolCalls := message["tool_calls"].([]any)
+	require.Len(t, toolCalls, 1)
+	function := toolCalls[0].(map[string]any)["function"].(map[string]any)
+	require.Equal(t, "__llama_shim_builtin_shell", function["name"])
+	require.JSONEq(t, `{"action":{"commands":["pwd"],"timeout_ms":30000,"max_output_length":12000}}`, function["arguments"].(string))
+
+	payload["messages"] = []map[string]any{
+		{"role": "user", "content": "Use the shell tool to run exactly this command: pwd"},
+		{"role": "tool", "tool_call_id": "call_devstack_builtin_1", "content": "tool says hi"},
+	}
+	body, err = json.Marshal(payload)
+	require.NoError(t, err)
+
+	resp, err = server.Client().Post(server.URL+"/v1/chat/completions", "application/json", bytes.NewReader(body))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&response))
+	choices = response["choices"].([]any)
+	firstChoice = choices[0].(map[string]any)
+	require.Equal(t, "stop", firstChoice["finish_reason"])
+	message = firstChoice["message"].(map[string]any)
+	require.Equal(t, "tool says hi", message["content"])
+	_, hasToolCalls := message["tool_calls"]
+	require.False(t, hasToolCalls)
+}
+
+func TestHandlerChatCompletionsPlansAndCompletesBuiltinApplyPatchToolCalls(t *testing.T) {
+	server := httptest.NewServer(NewHandler())
+	defer server.Close()
+
+	payload := map[string]any{
+		"model": DefaultModel,
+		"messages": []map[string]any{
+			{"role": "user", "content": "Use apply_patch to change answer from 1 to 2 in game/main.go."},
+		},
+		"tools": []map[string]any{
+			{
+				"type": "function",
+				"function": map[string]any{
+					"name": "__llama_shim_builtin_apply_patch",
+				},
+			},
+		},
+	}
+
+	body, err := json.Marshal(payload)
+	require.NoError(t, err)
+
+	resp, err := server.Client().Post(server.URL+"/v1/chat/completions", "application/json", bytes.NewReader(body))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var response map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&response))
+	choices := response["choices"].([]any)
+	firstChoice := choices[0].(map[string]any)
+	require.Equal(t, "tool_calls", firstChoice["finish_reason"])
+	message := firstChoice["message"].(map[string]any)
+	toolCalls := message["tool_calls"].([]any)
+	require.Len(t, toolCalls, 1)
+	function := toolCalls[0].(map[string]any)["function"].(map[string]any)
+	require.Equal(t, "__llama_shim_builtin_apply_patch", function["name"])
+	require.JSONEq(t, `{"operation":{"type":"update_file","path":"game/main.go","diff":"*** Begin Patch\n*** Update File: game/main.go\n@@\n-const answer = 1\n+const answer = 2\n*** End Patch\n"}}`, function["arguments"].(string))
+
+	payload["messages"] = []map[string]any{
+		{"role": "user", "content": "Use apply_patch to change answer from 1 to 2 in game/main.go."},
+		{"role": "tool", "tool_call_id": "call_devstack_builtin_1", "content": "patched cleanly"},
+	}
+	body, err = json.Marshal(payload)
+	require.NoError(t, err)
+
+	resp, err = server.Client().Post(server.URL+"/v1/chat/completions", "application/json", bytes.NewReader(body))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&response))
+	choices = response["choices"].([]any)
+	firstChoice = choices[0].(map[string]any)
+	require.Equal(t, "stop", firstChoice["finish_reason"])
+	message = firstChoice["message"].(map[string]any)
+	require.Equal(t, "patched cleanly", message["content"])
+	_, hasToolCalls := message["tool_calls"]
+	require.False(t, hasToolCalls)
+}
+
+func TestHandlerChatCompletionsPlansAndCompletesCodexExecCommandToolCalls(t *testing.T) {
+	server := httptest.NewServer(NewHandler())
+	defer server.Close()
+
+	payload := map[string]any{
+		"model": DefaultModel,
+		"messages": []map[string]any{
+			{"role": "system", "content": "You are a coding agent running in the Codex CLI, a terminal-based coding assistant."},
+			{"role": "user", "content": "Use exec_command to run pwd, then reply READY."},
+		},
+		"tools": []map[string]any{
+			{
+				"type": "function",
+				"function": map[string]any{
+					"name": "exec_command",
+				},
+			},
+		},
+	}
+
+	body, err := json.Marshal(payload)
+	require.NoError(t, err)
+
+	resp, err := server.Client().Post(server.URL+"/v1/chat/completions", "application/json", bytes.NewReader(body))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var response map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&response))
+	choices := response["choices"].([]any)
+	firstChoice := choices[0].(map[string]any)
+	require.Equal(t, "tool_calls", firstChoice["finish_reason"])
+	message := firstChoice["message"].(map[string]any)
+	toolCalls := message["tool_calls"].([]any)
+	require.Len(t, toolCalls, 1)
+	function := toolCalls[0].(map[string]any)["function"].(map[string]any)
+	require.Equal(t, "exec_command", function["name"])
+	require.JSONEq(t, `{"cmd":"pwd","yield_time_ms":1000,"max_output_tokens":12000}`, function["arguments"].(string))
+
+	payload["messages"] = []map[string]any{
+		{"role": "system", "content": "You are a coding agent running in the Codex CLI, a terminal-based coding assistant."},
+		{"role": "user", "content": "Use exec_command to run pwd, then reply READY."},
+		{"role": "tool", "tool_call_id": "call_devstack_codex_1", "content": "/workdir"},
+	}
+	body, err = json.Marshal(payload)
+	require.NoError(t, err)
+
+	resp, err = server.Client().Post(server.URL+"/v1/chat/completions", "application/json", bytes.NewReader(body))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&response))
+	choices = response["choices"].([]any)
+	firstChoice = choices[0].(map[string]any)
+	require.Equal(t, "stop", firstChoice["finish_reason"])
+	message = firstChoice["message"].(map[string]any)
+	require.Equal(t, "READY", message["content"])
+	_, hasToolCalls := message["tool_calls"]
+	require.False(t, hasToolCalls)
+}
+
 func TestHandlerChatCompletionsPlansAndCompletesToolSearchFunctionCalls(t *testing.T) {
 	server := httptest.NewServer(NewHandler())
 	defer server.Close()

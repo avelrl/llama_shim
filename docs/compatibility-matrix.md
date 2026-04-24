@@ -45,6 +45,7 @@ Practical usage guides live in [guides/README.md](guides/README.md).
 | `DELETE /v1/responses/{id}` and `POST /v1/responses/{id}/cancel` | Implemented | Keep lifecycle semantics honest | No known V2 blocker beyond lifecycle wording |
 | `GET /v1/responses/{id}/input_items` | Implemented | Keep item-history semantics stable | Effective input snapshot is already persisted |
 | create-stream and retrieve-stream | Broad subset | Keep core SSE stable; do not overclaim exact hosted choreography | Generic replay is accepted where docs or fixtures do not lock down tool-specific event families |
+| Responses WebSocket mode | V3 | Stage the full current shim-local HTTP/SSE subset before stronger parity claims | The official transport is tracked in [v3-websocket.md](v3-websocket.md). Current Codex CLI 0.124 smoke still succeeds through HTTP fallback after `/v1/responses` WebSocket returns HTTP 405. Exact hosted transport parity and upstream WebSocket proxying are deferred to [v5-scope.md](v5-scope.md). |
 | `responses.mode=prefer_local|prefer_upstream|local_only` | Broad subset | Keep the per-tool matrix aligned with implementation | Per-tool matrix and integration coverage now span the supported hosted/native tool families; exact hosted choreography stays out of scope |
 | `POST /v1/conversations` | Implemented | Keep aligned with Responses state model | Durable conversation ids are already part of the baseline |
 | `GET /v1/conversations/{id}` | Implemented | Keep read-model honest | |
@@ -83,8 +84,8 @@ Practical usage guides live in [guides/README.md](guides/README.md).
 | local `image_generation` | Broad subset | Keep separate image-backend contract explicit | Current subset is docs-aligned, not exact hosted planner parity |
 | local `computer` | Broad subset | Keep external-loop contract explicit | Current subset is screenshot-first and intentionally generic on replay |
 | local `code_interpreter` | Broad subset | Keep dev-only/local boundary explicit | Current contract is useful but not hosted-equivalent |
-| native local `shell` tool contract | V3 | Keep the current bridge-vs-native boundary explicit until code, tests, and capabilities exist | Current Codex support remains compatibility-oriented; official `shell` local subset is staged in [v3-coding-tools.md](v3-coding-tools.md) |
-| native local `apply_patch` tool contract | V3 | Keep the current bridge-vs-native boundary explicit until code, tests, and capabilities exist | Current Codex support remains compatibility-oriented; official `apply_patch` local subset is staged in [v3-coding-tools.md](v3-coding-tools.md) |
+| native local `shell` tool contract | Broad subset | Keep the local-only boundary explicit and do not claim hosted/container parity | Shim-local Responses accepts `shell` with `environment.type="local"`, preserves `shell_call` / `shell_call_output`, supports stored follow-up and input-items history, and exposes capability flags. Create-stream replays first-turn `response.shell_call_command.*`; retrieve-stream remains generic. Current Codex CLI 0.124 smoke passes through the existing `exec_command` bridge, not through native `shell` declarations emitted by the CLI. |
+| native local `apply_patch` tool contract | Broad subset | Keep the local-only boundary explicit and do not claim hosted/container parity | Shim-local Responses accepts `apply_patch`, preserves `apply_patch_call` / `apply_patch_call_output`, supports stored follow-up and input-items history, and exposes capability flags. Create-stream and retrieve-stream replay `response.apply_patch_call_operation_diff.done`, with `operation_diff.delta` only when the operation diff is non-empty. Current Codex CLI 0.124 smoke passes through the existing function-tool bridge, not through native `apply_patch` declarations emitted by the CLI. |
 | remote MCP | Broad subset | Keep `server_url` vs `connector_id` boundary explicit | `server_url` subset is implemented; connectors remain a stricter compatibility boundary |
 | `tool_search` | Broad subset | Keep runtime and passthrough boundaries explicit | Current subset is already docs-backed |
 | hosted/native tool-specific SSE beyond current core traces | V3 | Only take on exact replay work when docs or fixtures make it necessary | Current V3 code now replays `response.shell_call_command.*` for first-turn shim-local `shell_call` create-stream and `response.apply_patch_call_operation_diff.done` for shim-local `apply_patch_call` create/retrieve replay, with `operation_diff.delta` only when `operation.diff` is non-empty. Shell retrieve-stream remains generic because upstream background shell replay is still blocked, and the narrower April 23 diagnostics suggest a broader upstream `background + local shell` blocker rather than a problem isolated to stream replay. The April 24 manual live smoke is recorded in [TEST_v3_coding_tools.md](TEST_v3_coding_tools.md). |
@@ -92,7 +93,7 @@ Practical usage guides live in [guides/README.md](guides/README.md).
 ## Current Mode Matrix
 
 This is the current V2-facing routing contract for `POST /v1/responses` as of
-April 23, 2026. It is intentionally conservative: `prefer_upstream` remains a
+April 24, 2026. It is intentionally conservative: `prefer_upstream` remains a
 proxy-first escape hatch for standalone hosted/native requests, while
 `prefer_local` is the default mode for the shim facade.
 
@@ -104,6 +105,8 @@ proxy-first escape hatch for standalone hosted/native requests, while
 | local `image_generation` | local subset when backend is configured; fallback upstream before local dispatch when runtime/subset is unavailable | proxy first | local subset or explicit disabled-runtime error | `prefer_upstream` does not silently reroute to local image generation if upstream rejects the tool type |
 | local `computer` | local subset when backend is configured | proxy first | local subset or explicit disabled-runtime error | `prefer_upstream` stays raw-proxy; current local subset is screenshot-first external-loop planning |
 | local `code_interpreter` | local subset when backend is configured | proxy first | local subset or explicit disabled-runtime error | `prefer_upstream` stays raw-proxy; current subset stays explicitly dev-only/local |
+| native local `shell` | local subset for `environment.type="local"` | proxy first | local subset or validation error | Hosted containers, remote environments, and exact hosted orchestration are not claimed; retrieve-stream remains generic for shell calls |
+| native local `apply_patch` | local subset | proxy first | local subset | Exact hosted orchestration is not claimed; typed operation-diff replay is limited to the shim-owned stored trace |
 | remote MCP `server_url` | local subset | proxy first | local subset, or reject requests outside the local subset | Connector semantics remain separate from `server_url` semantics |
 | remote MCP `connector_id` | proxy-only compatibility bridge | proxy-only compatibility bridge | reject with MCP-specific validation error | The shim validates/sanitizes connector-aware requests, but does not claim a local connector runtime |
 | `tool_search` hosted/server subset | local subset | proxy first | local subset | Client execution remains proxy-only |
@@ -122,9 +125,10 @@ proxy-first escape hatch for standalone hosted/native requests, while
 
 - Exact hosted tool choreography is not claimed where docs or fixtures do not
   pin down the wire contract.
-- Official native local `shell` and `apply_patch` tool contracts are not part
-  of the current V2 surface; current Codex support remains a compatibility
-  bridge.
+- Official native local `shell` and `apply_patch` are implemented as
+  shim-local broad subsets, not hosted parity. Current public Codex CLI smoke
+  still exercises the bridge path rather than native tool declarations from
+  the CLI.
 - `prefer_upstream` remains a proxy-first mode, not a hosted parity guarantee.
 - Retrieval ranking is docs-backed and usable, but not presented as exact
   hosted reranker equivalence.

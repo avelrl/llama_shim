@@ -38,6 +38,18 @@ Run the smoke path:
 make devstack-smoke
 ```
 
+Run the focused V3 native coding-tools smoke path:
+
+```bash
+make v3-coding-tools-smoke
+```
+
+Run the real Codex CLI smoke path:
+
+```bash
+make codex-cli-devstack-smoke
+```
+
 Stop the stack:
 
 ```bash
@@ -49,6 +61,8 @@ Equivalent raw Compose commands:
 ```bash
 docker compose -f docker-compose.devstack.yml up -d --build
 bash ./scripts/devstack-smoke.sh
+bash ./scripts/v3-coding-tools-smoke.sh
+bash ./scripts/codex-cli-devstack-smoke.sh
 docker compose -f docker-compose.devstack.yml down --remove-orphans
 ```
 
@@ -78,6 +92,29 @@ The shim itself talks to the fixture backend over the Compose network as
 - stored `tool_search` follow-up through `function_call_output`
 - streamed generic replay for `tool_search`
 
+`scripts/v3-coding-tools-smoke.sh` checks the focused V3 native coding-tools
+subset:
+
+- `/debug/capabilities` exposes native-local `shell` and `apply_patch` flags
+- non-stream `shell_call` plus `shell_call_output` follow-up
+- non-stream `apply_patch_call` plus `apply_patch_call_output` follow-up
+- stored retrieve and `/input_items` for both families
+- shell create-stream emits `response.shell_call_command.*`
+- shell retrieve-stream preserves `shell_call` through generic
+  `response.output_item.*`
+- apply-patch create/retrieve-stream emit
+  `response.apply_patch_call_operation_diff.done`
+
+`scripts/codex-cli-devstack-smoke.sh` checks practical Codex CLI compatibility:
+
+- the real `codex exec` binary targets the shim through `openai_base_url`
+- the Codex request stays on the shim-local tool loop despite Codex CLI request
+  metadata such as `prompt_cache_key` and empty `include`
+- Codex executes one local `exec_command` and then receives a final `READY`
+  assistant message
+- Codex CLI 0.124 WebSocket 405 logs are tolerated only if HTTP fallback
+  completes successfully
+
 The goal is not to benchmark model quality. The goal is to prove that the
 stack is runnable, probeable, and reproducible.
 
@@ -86,6 +123,10 @@ stack is runnable, probeable, and reproducible.
 - [config.devstack.yaml](../../config.devstack.yaml): shim config used by the stack
 - [docker-compose.devstack.yml](../../docker-compose.devstack.yml): Compose wiring
 - [scripts/devstack-smoke.sh](../../scripts/devstack-smoke.sh): repo-owned smoke path
+- [scripts/v3-coding-tools-smoke.sh](../../scripts/v3-coding-tools-smoke.sh):
+  focused native coding-tools smoke path
+- [scripts/codex-cli-devstack-smoke.sh](../../scripts/codex-cli-devstack-smoke.sh):
+  real Codex CLI smoke path
 - [cmd/devstack-fixture/main.go](../../cmd/devstack-fixture/main.go): deterministic fixture service
 - [internal/devstackfixture/mcp.go](../../internal/devstackfixture/mcp.go): deterministic MCP fixture transport
 

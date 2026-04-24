@@ -96,6 +96,8 @@ printf '%s\n' "${capabilities_json}" | jq '{
   tools: {
     web_search: .tools.web_search.enabled,
     image_generation: .tools.image_generation.enabled,
+    shell: .tools.shell.enabled,
+    apply_patch: .tools.apply_patch.enabled,
     mcp_server_url: .tools.mcp_server_url.enabled,
     tool_search_hosted: .tools.tool_search_hosted.enabled
   },
@@ -110,6 +112,10 @@ printf '%s\n' "${capabilities_json}" | jq -e '
   .runtime.responses_mode == "prefer_local" and
   .tools.web_search.enabled == true and
   .tools.image_generation.enabled == true and
+  .tools.shell.enabled == true and
+  .tools.apply_patch.enabled == true and
+  .tools.shell.support == "native_local_subset" and
+  .tools.apply_patch.support == "native_local_subset" and
   .tools.mcp_server_url.enabled == true and
   .tools.tool_search_hosted.enabled == true and
   .probes.web_search_backend.ready == true and

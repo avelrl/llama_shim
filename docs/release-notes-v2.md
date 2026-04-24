@@ -44,6 +44,7 @@ with explicit boundaries.
 - [V2 scope](v2-scope.md)
 - [V3 scope](v3-scope.md)
 - [V4 extensions and plugin model](v4-scope.md)
+- [V5 hosted parity and advanced transports](v5-scope.md)
 
 ## Practical Summary
 

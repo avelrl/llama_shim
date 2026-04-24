@@ -106,10 +106,17 @@ remains a separate capture problem.
 
 ## Current Code Status
 
-As of April 23, 2026, the repo now has a partial implementation of this track:
+As of April 24, 2026, the repo now has a partial implementation of this track:
 
 - shim-local `/v1/responses` accepts official local `shell` and `apply_patch`
   tool declarations
+- `/debug/capabilities` exposes `shell` and `apply_patch` as
+  `native_local_subset`
+- the local tool loop accepts current Codex CLI no-op request metadata such as
+  empty `include`, `prompt_cache_key`, and `client_metadata` without falling
+  through to upstream proxy
+- Codex tool-output follow-up can finish with a final assistant message instead
+  of being forced into another required tool call
 - first-turn create-stream replay for local `shell_call` now emits:
   - `response.shell_call_command.added`
   - `response.shell_call_command.delta`
@@ -127,9 +134,10 @@ As of April 23, 2026, the repo now has a partial implementation of this track:
   `response.output_item.*` because upstream background shell replay is still
   blocked
 
-This is enough to tighten the local replay contract, but it is not yet enough
-to mark the whole coding-tools track as finished. Capabilities, OpenAPI/docs
-alignment, and a real Codex smoke still remain on the path to closure.
+This is enough to tighten the local replay contract and run deterministic
+smoke. It is not a full hosted parity claim, and the current public Codex CLI
+smoke still exercises the compatibility bridge rather than native `shell` /
+`apply_patch` declarations end to end.
 
 ## Manual Live Smoke
 
@@ -157,8 +165,27 @@ The Qwen-compatible live run also confirmed two practical boundaries:
   diff should still emit `response.apply_patch_call_operation_diff.done`
 
 This live smoke improves confidence in the shim-local subset, but it does not
-replace the remaining closure work: `/debug/capabilities`, a repo-owned
-dev-stack smoke, and a real Codex CLI smoke against `openai_base_url`.
+replace the conservative status decision in
+[PLAN_v3_coding_tools_status.md](PLAN_v3_coding_tools_status.md).
+
+## Codex CLI Smoke
+
+The real Codex CLI smoke was exercised on April 24, 2026 with
+`codex-cli 0.124.0`, the built-in `openai_base_url` setting pointed at the
+shim, and the deterministic devstack fixture behind the shim.
+
+Observed result:
+
+- Codex CLI first attempted Responses WebSocket and received HTTP 405 from the
+  shim because this repo does not implement `/v1/responses` WebSocket mode.
+- Codex CLI fell back to HTTP and completed successfully.
+- The turn exercised the current Codex function-tool bridge with
+  `exec_command`; Codex executed `pwd` and then received final assistant text
+  `READY`.
+
+This proves practical HTTP fallback compatibility for the current Codex CLI
+bridge path. It does not prove that the public Codex CLI is already sending
+native `shell` or `apply_patch` tool declarations.
 
 ## Current V2 Baseline
 
@@ -284,6 +311,15 @@ toggle and answer:
 
 This keeps the V3 work visible to operators, testers, and autonomous clients.
 
+The current manifest exposes this under:
+
+- `.tools.shell`
+- `.tools.apply_patch`
+
+Both entries use `support: "native_local_subset"` and
+`backend: "chat_completions_tool_loop"` to make the bridge-vs-native boundary
+visible without claiming hosted container parity.
+
 ## Test Expectations
 
 Before the first native coding-tools slice is called done, coverage should
@@ -295,6 +331,8 @@ include:
 - stored follow-up coverage through `previous_response_id`
 - `/input_items` coverage for the new typed item families
 - mode coverage for `prefer_local`, `prefer_upstream`, and `local_only`
+- `/debug/capabilities` coverage for `.tools.shell` and `.tools.apply_patch`
+- `make v3-coding-tools-smoke` against the deterministic dev stack
 - a repo-owned real Codex CLI smoke path that points Codex at the shim with
   `openai_base_url`
 
@@ -323,7 +361,8 @@ The expected first rollout is:
 4. add follow-up handling for `shell_call_output` and
    `apply_patch_call_output`
 5. expose the new local-vs-bridge state in `/debug/capabilities`
-6. add a real Codex CLI smoke path before any broader compatibility claims
+6. add the focused repo-owned smoke path
+7. add a real Codex CLI smoke path before any broader compatibility claims
 
 That is the narrowest practical path from the current Codex bridge to a real V3
 native coding-tools track.

@@ -118,6 +118,8 @@ curl http://127.0.0.1:8080/v1/responses \
 - Client `tool_search` is also proxy-only in V2; hosted/server `tool_search`
   is the local practical subset.
 - The V3 coding-tools lane now has a narrower replay contract:
+  - `/debug/capabilities` reports native-local `shell` and `apply_patch`
+    support under `.tools.shell` and `.tools.apply_patch`
   - shim-local `shell_call` create-stream emits
     `response.shell_call_command.*`
   - shim-local `apply_patch_call` create-stream and retrieve-stream emit

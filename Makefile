@@ -1,4 +1,4 @@
-.PHONY: run build lint test vet maint-cleanup maint-optimize maint-vacuum maint-backup docker-build compose-up compose-down devstack-up devstack-down devstack-smoke
+.PHONY: run build lint test vet maint-cleanup maint-optimize maint-vacuum maint-backup docker-build compose-up compose-down devstack-up devstack-down devstack-smoke v3-coding-tools-smoke codex-cli-devstack-smoke
 
 CONFIG ?= config.yaml
 BACKUP ?= ./.data/shim-backup.db
@@ -74,3 +74,9 @@ devstack-down:
 
 devstack-smoke:
 	bash ./scripts/devstack-smoke.sh
+
+v3-coding-tools-smoke:
+	bash ./scripts/v3-coding-tools-smoke.sh
+
+codex-cli-devstack-smoke:
+	bash ./scripts/codex-cli-devstack-smoke.sh

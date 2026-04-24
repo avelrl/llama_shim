@@ -113,6 +113,8 @@ type capabilityToolSet struct {
 	ImageGeneration  capabilityTool `json:"image_generation"`
 	Computer         capabilityTool `json:"computer"`
 	CodeInterpreter  capabilityTool `json:"code_interpreter"`
+	Shell            capabilityTool `json:"shell"`
+	ApplyPatch       capabilityTool `json:"apply_patch"`
 	MCPServerURL     capabilityTool `json:"mcp_server_url"`
 	MCPConnectorID   capabilityTool `json:"mcp_connector_id"`
 	ToolSearchHosted capabilityTool `json:"tool_search_hosted"`
@@ -272,6 +274,26 @@ func buildCapabilityManifest(ctx context.Context, deps RouterDeps) capabilityMan
 					PreferLocal:    "local_subset",
 					PreferUpstream: "proxy_first",
 					LocalOnly:      "local_subset_or_explicit_disabled_runtime_error",
+				},
+			},
+			Shell: capabilityTool{
+				Support: "native_local_subset",
+				Backend: "chat_completions_tool_loop",
+				Enabled: true,
+				Routing: capabilityRouting{
+					PreferLocal:    "local_subset_or_validation_error",
+					PreferUpstream: "proxy_first",
+					LocalOnly:      "local_subset_or_validation_error",
+				},
+			},
+			ApplyPatch: capabilityTool{
+				Support: "native_local_subset",
+				Backend: "chat_completions_tool_loop",
+				Enabled: true,
+				Routing: capabilityRouting{
+					PreferLocal:    "local_subset",
+					PreferUpstream: "proxy_first",
+					LocalOnly:      "local_subset",
 				},
 			},
 			MCPServerURL: capabilityTool{
