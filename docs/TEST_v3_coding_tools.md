@@ -118,10 +118,13 @@ By default it targets the deterministic dev stack:
 
 ```bash
 make devstack-up
-make v3-coding-tools-smoke
-make codex-cli-coding-task-smoke
+make devstack-full-smoke
 make devstack-down
 ```
+
+`make devstack-full-smoke` is an orchestrator. It runs the general devstack
+smoke, focused V3 native coding-tools smoke, basic real Codex CLI smoke, and
+real Codex coding-task smoke in sequence.
 
 Equivalent direct invocation:
 
