@@ -2,8 +2,8 @@
 
 Last updated: April 24, 2026.
 
-This document records the V3 coding-tools design and the current partial
-implementation state.
+This document records the V3 coding-tools design and the implemented
+shim-local status for the current HTTP/SSE track.
 
 It does not change the frozen V2 contract.
 It does not claim new OpenAI-surface parity before code, tests, and
@@ -106,7 +106,8 @@ remains a separate capture problem.
 
 ## Current Code Status
 
-As of April 24, 2026, the repo now has a partial implementation of this track:
+As of April 24, 2026, the repo has closed the shim-local HTTP/SSE
+implementation for this track as a `Broad subset`:
 
 - shim-local `/v1/responses` accepts official local `shell` and `apply_patch`
   tool declarations
@@ -133,11 +134,13 @@ As of April 24, 2026, the repo now has a partial implementation of this track:
 - `shell_call` stored retrieve-stream remains conservative and generic through
   `response.output_item.*` because upstream background shell replay is still
   blocked
+- the repo-owned real Codex CLI coding-task smoke verifies an actual file edit
+  through the current `exec_command` compatibility bridge
 
-This is enough to tighten the local replay contract and run deterministic
-smoke. It is not a full hosted parity claim, and the current public Codex CLI
-smoke still exercises the compatibility bridge rather than native `shell` /
-`apply_patch` declarations end to end.
+This is enough to mark the native local tool rows in the compatibility matrix
+as implemented broad subsets. It is not a full hosted parity claim, and the
+current public Codex CLI smoke still exercises the compatibility bridge rather
+than native `shell` / `apply_patch` declarations end to end.
 
 ## Manual Live Smoke
 
@@ -182,6 +185,10 @@ Observed result:
 - The turn exercised the current Codex function-tool bridge with
   `exec_command`; Codex executed `pwd` and then received final assistant text
   `READY`.
+- A follow-up repo-owned coding-task smoke used the same real CLI path in a
+  scratch workspace and verified that Codex changed `smoke_target.txt` from
+  `status = TODO` to `status = patched-by-codex`, then emitted final assistant
+  text `PATCHED`.
 
 This proves practical HTTP fallback compatibility for the current Codex CLI
 bridge path. It does not prove that the public Codex CLI is already sending
@@ -201,13 +208,13 @@ The frozen V2 truth remains:
 
 This document does not reopen those claims.
 
-## First-Cut Scope
+## Implemented Local Scope
 
-The first V3 coding-tools rollout should stay narrow.
+The closed V3 coding-tools rollout is intentionally narrow.
 
 ### `shell`
 
-Support the local subset of the official Responses shell contract:
+The shim supports the local subset of the official Responses shell contract:
 
 - accept `tools: [{"type":"shell","environment":{"type":"local"}}]`
 - preserve `shell_call` typed output items
@@ -216,7 +223,8 @@ Support the local subset of the official Responses shell contract:
 
 ### `apply_patch`
 
-Support the local subset of the official Responses apply-patch contract:
+The shim supports the local subset of the official Responses apply-patch
+contract:
 
 - accept `tools: [{"type":"apply_patch"}]`
 - preserve `apply_patch_call` typed output items
@@ -225,7 +233,7 @@ Support the local subset of the official Responses apply-patch contract:
 
 ### Stateful Surfaces Included In Scope
 
-Before either tool is called done, the first cut should cover all of:
+The implemented local subset covers all of:
 
 - non-stream `POST /v1/responses`
 - create-stream
@@ -234,8 +242,8 @@ Before either tool is called done, the first cut should cover all of:
 - `GET /v1/responses/{id}/input_items`
 - stored follow-up through `previous_response_id`
 
-The existing shim-owned conversation/state substrate may be reused, but the
-first acceptance bar should stay anchored to the Responses surfaces above.
+The existing shim-owned conversation/state substrate is reused, and the
+compatibility claim stays anchored to the Responses surfaces above.
 
 ## Working Assumptions
 
@@ -282,7 +290,8 @@ V3 should refine runtime routing without rewriting the public mode model.
 
 ## Output And Replay Policy
 
-The first cut should keep the replay story conservative and observable:
+The implemented local subset keeps the replay story conservative and
+observable:
 
 - store `shell_call`, `shell_call_output`, `apply_patch_call`, and
   `apply_patch_call_output` as typed items
@@ -320,10 +329,9 @@ Both entries use `support: "native_local_subset"` and
 `backend: "chat_completions_tool_loop"` to make the bridge-vs-native boundary
 visible without claiming hosted container parity.
 
-## Test Expectations
+## Closure Evidence
 
-Before the first native coding-tools slice is called done, coverage should
-include:
+The local slice is considered closed because coverage includes:
 
 - request-shape and validation tests for `shell` and `apply_patch`
 - integration tests for non-stream local tool loops
@@ -335,14 +343,17 @@ include:
 - `make v3-coding-tools-smoke` against the deterministic dev stack
 - a repo-owned real Codex CLI smoke path that points Codex at the shim with
   `openai_base_url`
+- `make codex-cli-coding-task-smoke`, which verifies a real file edit in a
+  scratch workspace through Codex CLI
 
-The current Codex bridge tests remain part of the baseline until the new path is
-implemented and proven.
+The current Codex bridge tests remain part of the baseline because current
+Codex CLI still uses the bridge instead of emitting native `shell` /
+`apply_patch` tool declarations end to end.
 
-## Non-Goals For The First Cut
+## Non-Goals For The Local Subset
 
-The first V3 coding-tools slice should not try to do all of the following at
-once:
+The closed V3 coding-tools local subset does not try to do all of the
+following at once:
 
 - implement hosted shell container parity
 - implement `container_auto` or `container_reference`
@@ -351,18 +362,19 @@ once:
 - replace the current Codex bridge before the native path is proven
 - widen compatibility wording before code, tests, and capabilities are aligned
 
-## Initial Rollout Shape
+## Completed Rollout Shape
 
-The expected first rollout is:
+The implemented rollout is:
 
-1. keep the current bridge path and V2 wording intact
-2. add local `shell` request parsing and typed item storage
-3. add local `apply_patch` request parsing and typed item storage
-4. add follow-up handling for `shell_call_output` and
+1. kept the current bridge path and V2 wording intact
+2. added local `shell` request parsing and typed item storage
+3. added local `apply_patch` request parsing and typed item storage
+4. added follow-up handling for `shell_call_output` and
    `apply_patch_call_output`
-5. expose the new local-vs-bridge state in `/debug/capabilities`
-6. add the focused repo-owned smoke path
-7. add a real Codex CLI smoke path before any broader compatibility claims
+5. exposed the new local-vs-bridge state in `/debug/capabilities`
+6. added the focused repo-owned smoke path
+7. added real Codex CLI smoke paths, including a coding-task smoke that
+   changes a scratch workspace file
 
-That is the narrowest practical path from the current Codex bridge to a real V3
-native coding-tools track.
+That is the narrowest practical closure from the current Codex bridge to a real
+V3 native coding-tools broad-subset status.

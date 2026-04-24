@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+require_cmd() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "missing required command: $1" >&2
+    exit 1
+  fi
+}
+
+usage() {
+  cat <<'EOF'
+Usage:
+  SHIM_BASE_URL=http://127.0.0.1:18080 \
+  MODEL=devstack-model \
+  ./scripts/codex-cli-coding-task-smoke.sh
+
+Optional:
+  CODEX_BIN=codex
+  CODEX_HOME=.tmp/codex-coding-task-smoke/codex-home
+  CODEX_CODING_SMOKE_WORKDIR=.tmp/codex-coding-task-smoke/workspace
+  OPENAI_API_KEY=shim-dev-key
+  OPENAI_BASE_URL=http://127.0.0.1:18080/v1
+
+This smoke runs the real Codex CLI against the shim using openai_base_url,
+asks Codex to perform a small local coding task, and verifies that the file in
+the smoke workspace was actually changed.
+EOF
+}
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  usage
+  exit 0
+fi
+
+require_cmd curl
+require_cmd jq
+require_cmd mktemp
+require_cmd python3
+
+codex_bin="${CODEX_BIN:-codex}"
+require_cmd "${codex_bin}"
+
+shim_base_url="${SHIM_BASE_URL:-http://127.0.0.1:18080}"
+model="${MODEL:-devstack-model}"
+workspace="${CODEX_CODING_SMOKE_WORKDIR:-.tmp/codex-coding-task-smoke/workspace}"
+codex_home="${CODEX_HOME:-.tmp/codex-coding-task-smoke/codex-home}"
+api_key="${OPENAI_API_KEY:-shim-dev-key}"
+
+if [[ -n "${OPENAI_BASE_URL:-}" ]]; then
+  openai_base_url="${OPENAI_BASE_URL%/}"
+else
+  openai_base_url="${shim_base_url%/}/v1"
+fi
+
+tmp_output="$(mktemp)"
+trap 'rm -f "${tmp_output}"' EXIT
+
+echo "==> waiting for shim readiness: ${shim_base_url%/}/readyz"
+for _ in $(seq 1 60); do
+  if curl -fsS "${shim_base_url%/}/readyz" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
+curl -fsS "${shim_base_url%/}/readyz" >/dev/null
+
+mkdir -p "${workspace}" "${codex_home}"
+workspace_abs="$(cd "${workspace}" && pwd)"
+target_file="${workspace_abs}/smoke_target.txt"
+printf 'name = llama_shim\nstatus = TODO\n' >"${target_file}"
+
+echo "==> running Codex CLI coding task through openai_base_url: ${openai_base_url}"
+if ! env CODEX_HOME="${codex_home}" OPENAI_API_KEY="${api_key}" LLAMA_SHIM_CODEX_SMOKE_TARGET="${target_file}" "${codex_bin}" exec \
+  --ephemeral \
+  --ignore-user-config \
+  --ignore-rules \
+  --json \
+  -C "${workspace_abs}" \
+  -m "${model}" \
+  -c "openai_base_url=\"${openai_base_url}\"" \
+  -c 'approval_policy="never"' \
+  -c 'sandbox_mode="workspace-write"' \
+  -c 'model_reasoning_effort="minimal"' \
+  -c 'model_reasoning_summary="none"' \
+  -c 'shell_environment_policy.inherit="all"' \
+  'This is the Codex coding task smoke. Use exec_command to update smoke_target.txt by replacing `status = TODO` with `status = patched-by-codex`. Then reply PATCHED.' >"${tmp_output}" 2>&1; then
+  cat "${tmp_output}" >&2
+  exit 1
+fi
+
+cat "${tmp_output}"
+
+actual_content="$(cat "${target_file}")"
+expected_content=$'name = llama_shim\nstatus = patched-by-codex'
+if [[ "${actual_content}" != "${expected_content}" ]]; then
+  echo "Codex CLI coding task did not update ${target_file} as expected" >&2
+  echo "expected:" >&2
+  printf '%s\n' "${expected_content}" >&2
+  echo "actual:" >&2
+  printf '%s\n' "${actual_content}" >&2
+  exit 1
+fi
+
+json_lines="$(grep '^{' "${tmp_output}" || true)"
+if [[ -z "${json_lines}" ]]; then
+  echo "Codex CLI coding task smoke did not emit JSON events" >&2
+  exit 1
+fi
+
+printf '%s\n' "${json_lines}" | jq -e 'select(.type == "item.started" and .item.type == "command_execution")' >/dev/null
+printf '%s\n' "${json_lines}" | jq -e 'select(.type == "item.completed" and .item.type == "agent_message" and .item.text == "PATCHED")' >/dev/null
+printf '%s\n' "${json_lines}" | jq -e 'select(.type == "turn.completed")' >/dev/null
+
+echo "codex cli coding task smoke passed"

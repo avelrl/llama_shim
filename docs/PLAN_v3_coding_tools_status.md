@@ -1,21 +1,21 @@
-# Plan V3 Coding Tools Status
+# V3 Coding Tools Status Decision
 
 Last updated: April 24, 2026.
 
-This document defines the decision path for moving native local `shell` and
-`apply_patch` out of a purely staged V3 label in
+This document records the completed decision for moving native local `shell`
+and `apply_patch` out of a purely staged V3 label in
 [compatibility-matrix.md](compatibility-matrix.md).
 
 It is intentionally conservative. It does not change the V2 contract and does
 not claim hosted shell/container parity.
 
-## Current Candidate Status
+## Current Status
 
-Candidate label:
+Current label:
 
-- `Broad subset` or `Implemented local subset`
+- `Broad subset`
 
-Candidate wording must say:
+Current wording says:
 
 - native local `shell` and `apply_patch` are implemented only for the
   shim-local Responses subset
@@ -28,9 +28,9 @@ Candidate wording must say:
   `response.apply_patch_call_operation_diff.done`; `delta` is present only
   when the stored `operation.diff` is non-empty
 
-## Evidence Required Before Status Change
+## Closure Evidence
 
-Do not strengthen the matrix label until all of these are true:
+The matrix label was strengthened because all of these are true:
 
 1. Official docs were rechecked on the day of the change:
    - [Shell](https://developers.openai.com/api/docs/guides/tools-shell)
@@ -50,23 +50,27 @@ Do not strengthen the matrix label until all of these are true:
    - `make devstack-up`
    - `make v3-coding-tools-smoke`
    - `make codex-cli-devstack-smoke`
+   - `make codex-cli-coding-task-smoke`
    - `make devstack-down`
 5. A real Codex CLI smoke against the shim passes with `openai_base_url`
-   pointing at the shim.
+   pointing at the shim, including a coding-task smoke that changes a scratch
+   workspace file.
 
 ## Codex CLI Smoke Acceptance
 
 The Codex smoke should prove practical client compatibility, not just route
 existence.
 
-Minimum pass:
+Minimum pass for this combined status gate:
 
-- Codex is configured to use the shim as its OpenAI-compatible base URL.
-- The model can request at least one local command through the shim-native
-  `shell` path.
-- The model can request at least one file edit through the shim-native
-  `apply_patch` path, or through the current Codex compatibility bridge if the
-  public Codex CLI build has not switched to the native tool declarations yet.
+- Direct Responses smoke covers at least one native local `shell` request and
+  one native local `apply_patch` request.
+- Codex CLI is configured to use the shim as its OpenAI-compatible base URL.
+- Codex CLI can request at least one local command through the current
+  compatibility bridge.
+- Codex CLI can perform at least one file edit through native `apply_patch` if
+  the public CLI emits that declaration, or through the current compatibility
+  bridge if it has not switched yet.
 - Stored follow-up still works through `previous_response_id`.
 - The shim log shows successful `/v1/responses` requests without upstream
   fallback being mistaken for local native support.
@@ -91,9 +95,13 @@ Observed details:
   `exec_command`, not native `shell` / `apply_patch` declarations from the CLI.
 - The deterministic devstack fixture returned a planned `exec_command`; Codex
   executed `pwd` and then received final assistant text `READY`.
+- The repo-owned coding-task smoke used the same real CLI path in a scratch
+  workspace; Codex executed a deterministic `exec_command`, changed
+  `smoke_target.txt`, and then received final assistant text `PATCHED`.
 
 Status implication: this is enough evidence for practical Codex CLI bridge
-compatibility, but it is not evidence that the current public Codex CLI build
+compatibility and for closing the shim-local coding-tools status as
+`Broad subset`, but it is not evidence that the current public Codex CLI build
 uses the native `shell` and `apply_patch` tool declarations end to end.
 
 Follow-up: WebSocket transport support is now tracked separately in
@@ -103,8 +111,10 @@ is made.
 
 ## Status Decision
 
-After the evidence above is collected, update the matrix only if the wording can
-answer these questions without ambiguity:
+Decision: native local `shell` and native local `apply_patch` are closed as
+`Broad subset` rows in the compatibility matrix.
+
+The matrix wording answers these questions without ambiguity:
 
 - What exact local subset is implemented?
 - Which modes use the local subset?
@@ -114,12 +124,12 @@ answer these questions without ambiguity:
 - Did the real Codex CLI smoke exercise native tools or only the compatibility
   bridge?
 
-If any answer is uncertain, keep the status as `V3` and record the gap here
-instead of widening the compatibility claim.
+Any future widening beyond this status requires new docs/fixture evidence and a
+new status decision.
 
-## Suggested Matrix Wording
+## Matrix Wording
 
-Use wording shaped like this if all required evidence is present:
+The active wording is:
 
 ```text
 native local `shell` tool contract | Broad subset | Keep local-only boundary

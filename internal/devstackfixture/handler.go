@@ -420,6 +420,12 @@ func fixtureCodexFunctionFinalOutput(request chatCompletionRequest) (string, boo
 		return "", false
 	}
 	joined := strings.ToLower(strings.TrimSpace(joinMessageContent(request.Messages)))
+	if containsAny(joined, "reply patched", "codex coding task smoke", "patched-by-codex") {
+		if !strings.Contains(joined, "patched smoke_target.txt") {
+			return "command did not report patch completion: " + strings.TrimSpace(message.Content), true
+		}
+		return "PATCHED", true
+	}
 	if containsAny(joined, "reply ready", "remember code 777") {
 		return "READY", true
 	}
@@ -434,6 +440,9 @@ func fixtureCodexFunctionPlannedCall(request chatCompletionRequest) (string, str
 	joined := strings.ToLower(strings.TrimSpace(joinMessageContent(request.Messages)))
 	if !containsAny(joined, "exec_command", "run command", " run ", "pwd", "remember code 777") {
 		return "", "", false
+	}
+	if containsAny(joined, "codex coding task smoke", "smoke_target.txt", "patched-by-codex") {
+		return name, `{"cmd":"python3 -c \"import os; from pathlib import Path; p=Path(os.environ['LLAMA_SHIM_CODEX_SMOKE_TARGET']); p.write_text(p.read_text().replace('status = TODO', 'status = patched-by-codex')); print('patched smoke_target.txt')\"","yield_time_ms":5000,"max_output_tokens":12000}`, true
 	}
 	return name, `{"cmd":"pwd","yield_time_ms":1000,"max_output_tokens":12000}`, true
 }

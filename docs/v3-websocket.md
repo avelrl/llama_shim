@@ -78,6 +78,8 @@ As of April 24, 2026:
 - Codex CLI smoke passes through HTTP fallback
 - the smoke explicitly tolerates WebSocket 405 only when HTTP fallback
   completes successfully
+- the V3 coding-tools HTTP/SSE status is closed as a `Broad subset`, including
+  a real Codex CLI coding-task smoke that edits a scratch workspace file
 
 This means the model/tool loop is mostly present. The missing piece is a
 transport adapter that can receive `response.create` messages and write

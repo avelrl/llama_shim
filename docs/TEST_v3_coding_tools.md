@@ -108,11 +108,18 @@ The repo-owned smoke wrapper for this runbook is:
 make v3-coding-tools-smoke
 ```
 
+The real Codex coding-task smoke wrapper is:
+
+```bash
+make codex-cli-coding-task-smoke
+```
+
 By default it targets the deterministic dev stack:
 
 ```bash
 make devstack-up
 make v3-coding-tools-smoke
+make codex-cli-coding-task-smoke
 make devstack-down
 ```
 
@@ -140,10 +147,11 @@ when the stored `operation.diff` is empty.
 
 ## Real Codex CLI Smoke
 
-The repo-owned Codex CLI smoke wrapper is:
+The repo-owned Codex CLI smoke wrappers are:
 
 ```bash
 make codex-cli-devstack-smoke
+make codex-cli-coding-task-smoke
 ```
 
 Equivalent direct invocation:
@@ -156,14 +164,30 @@ OPENAI_API_KEY=shim-dev-key \
 ./scripts/codex-cli-devstack-smoke.sh
 ```
 
-This uses the real `codex exec` binary with the built-in `openai_base_url`
+Coding-task equivalent:
+
+```bash
+SHIM_BASE_URL=http://127.0.0.1:18080 \
+MODEL=devstack-model \
+CODEX_HOME=.tmp/codex-coding-task-smoke/codex-home \
+CODEX_CODING_SMOKE_WORKDIR=.tmp/codex-coding-task-smoke/workspace \
+OPENAI_API_KEY=shim-dev-key \
+./scripts/codex-cli-coding-task-smoke.sh
+```
+
+These use the real `codex exec` binary with the built-in `openai_base_url`
 setting pointed at the shim. Codex CLI 0.124 may first attempt the Responses
-WebSocket transport and log HTTP 405 for `ws://.../v1/responses`; the smoke
-accepts that only if the CLI falls back to HTTP, executes `exec_command`, emits
-the final `READY` message, and exits successfully.
+WebSocket transport and log HTTP 405 for `ws://.../v1/responses`; the smokes
+accept that only if the CLI falls back to HTTP and exits successfully.
+
+The basic smoke must execute `exec_command`, emit final `READY`, and complete.
+The coding-task smoke must also verify that Codex changed
+`.tmp/codex-coding-task-smoke/workspace/smoke_target.txt` from
+`status = TODO` to `status = patched-by-codex`, emit final `PATCHED`, and
+complete.
 
 The WebSocket follow-up is tracked separately in
-[v3-websocket.md](v3-websocket.md). Once that track lands, this smoke should
+[v3-websocket.md](v3-websocket.md). Once that track lands, these smokes should
 stop accepting WebSocket 405 as a successful path.
 
 ## 1. Deterministic Repo-Owned Checks

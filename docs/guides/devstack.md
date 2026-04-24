@@ -50,6 +50,12 @@ Run the real Codex CLI smoke path:
 make codex-cli-devstack-smoke
 ```
 
+Run the real Codex CLI coding-task smoke path:
+
+```bash
+make codex-cli-coding-task-smoke
+```
+
 Stop the stack:
 
 ```bash
@@ -63,6 +69,7 @@ docker compose -f docker-compose.devstack.yml up -d --build
 bash ./scripts/devstack-smoke.sh
 bash ./scripts/v3-coding-tools-smoke.sh
 bash ./scripts/codex-cli-devstack-smoke.sh
+bash ./scripts/codex-cli-coding-task-smoke.sh
 docker compose -f docker-compose.devstack.yml down --remove-orphans
 ```
 
@@ -115,6 +122,15 @@ subset:
 - Codex CLI 0.124 WebSocket 405 logs are tolerated only if HTTP fallback
   completes successfully
 
+`scripts/codex-cli-coding-task-smoke.sh` checks the same real Codex CLI bridge
+with a scratch coding task:
+
+- the real `codex exec` binary targets the shim through `openai_base_url`
+- Codex executes a deterministic local `exec_command`
+- `smoke_target.txt` in `.tmp/codex-coding-task-smoke/workspace` changes from
+  `status = TODO` to `status = patched-by-codex`
+- Codex receives a final `PATCHED` assistant message and the turn completes
+
 The goal is not to benchmark model quality. The goal is to prove that the
 stack is runnable, probeable, and reproducible.
 
@@ -127,6 +143,8 @@ stack is runnable, probeable, and reproducible.
   focused native coding-tools smoke path
 - [scripts/codex-cli-devstack-smoke.sh](../../scripts/codex-cli-devstack-smoke.sh):
   real Codex CLI smoke path
+- [scripts/codex-cli-coding-task-smoke.sh](../../scripts/codex-cli-coding-task-smoke.sh):
+  real Codex CLI coding-task smoke path
 - [cmd/devstack-fixture/main.go](../../cmd/devstack-fixture/main.go): deterministic fixture service
 - [internal/devstackfixture/mcp.go](../../internal/devstackfixture/mcp.go): deterministic MCP fixture transport
 

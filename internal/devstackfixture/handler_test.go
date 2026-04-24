@@ -332,6 +332,69 @@ func TestHandlerChatCompletionsPlansAndCompletesCodexExecCommandToolCalls(t *tes
 	require.False(t, hasToolCalls)
 }
 
+func TestHandlerChatCompletionsPlansAndCompletesCodexCodingTaskToolCall(t *testing.T) {
+	server := httptest.NewServer(NewHandler())
+	defer server.Close()
+
+	payload := map[string]any{
+		"model": DefaultModel,
+		"messages": []map[string]any{
+			{"role": "system", "content": "You are a coding agent running in the Codex CLI, a terminal-based coding assistant."},
+			{"role": "user", "content": "This is the Codex coding task smoke. Use exec_command to update smoke_target.txt by replacing `status = TODO` with `status = patched-by-codex`. Then reply PATCHED."},
+		},
+		"tools": []map[string]any{
+			{
+				"type": "function",
+				"function": map[string]any{
+					"name": "exec_command",
+				},
+			},
+		},
+	}
+
+	body, err := json.Marshal(payload)
+	require.NoError(t, err)
+
+	resp, err := server.Client().Post(server.URL+"/v1/chat/completions", "application/json", bytes.NewReader(body))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var response map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&response))
+	choices := response["choices"].([]any)
+	firstChoice := choices[0].(map[string]any)
+	require.Equal(t, "tool_calls", firstChoice["finish_reason"])
+	message := firstChoice["message"].(map[string]any)
+	toolCalls := message["tool_calls"].([]any)
+	require.Len(t, toolCalls, 1)
+	function := toolCalls[0].(map[string]any)["function"].(map[string]any)
+	require.Equal(t, "exec_command", function["name"])
+	require.JSONEq(t, `{"cmd":"python3 -c \"import os; from pathlib import Path; p=Path(os.environ['LLAMA_SHIM_CODEX_SMOKE_TARGET']); p.write_text(p.read_text().replace('status = TODO', 'status = patched-by-codex')); print('patched smoke_target.txt')\"","yield_time_ms":5000,"max_output_tokens":12000}`, function["arguments"].(string))
+
+	payload["messages"] = []map[string]any{
+		{"role": "system", "content": "You are a coding agent running in the Codex CLI, a terminal-based coding assistant."},
+		{"role": "user", "content": "This is the Codex coding task smoke. Use exec_command to update smoke_target.txt by replacing `status = TODO` with `status = patched-by-codex`. Then reply PATCHED."},
+		{"role": "tool", "tool_call_id": "call_devstack_codex_1", "content": "patched smoke_target.txt"},
+	}
+	body, err = json.Marshal(payload)
+	require.NoError(t, err)
+
+	resp, err = server.Client().Post(server.URL+"/v1/chat/completions", "application/json", bytes.NewReader(body))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&response))
+	choices = response["choices"].([]any)
+	firstChoice = choices[0].(map[string]any)
+	require.Equal(t, "stop", firstChoice["finish_reason"])
+	message = firstChoice["message"].(map[string]any)
+	require.Equal(t, "PATCHED", message["content"])
+	_, hasToolCalls := message["tool_calls"]
+	require.False(t, hasToolCalls)
+}
+
 func TestHandlerChatCompletionsPlansAndCompletesToolSearchFunctionCalls(t *testing.T) {
 	server := httptest.NewServer(NewHandler())
 	defer server.Close()
