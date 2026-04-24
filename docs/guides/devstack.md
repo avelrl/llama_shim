@@ -38,7 +38,13 @@ Run the smoke path:
 make devstack-smoke
 ```
 
-Run the full local smoke gate:
+Run the CI-compatible smoke gate:
+
+```bash
+make devstack-ci-smoke
+```
+
+Run the full local smoke gate, including real Codex CLI checks:
 
 ```bash
 make devstack-full-smoke
@@ -84,7 +90,7 @@ Equivalent raw Compose commands:
 
 ```bash
 docker compose -f docker-compose.devstack.yml up -d --build
-make devstack-full-smoke
+make devstack-ci-smoke
 docker compose -f docker-compose.devstack.yml down --remove-orphans
 ```
 
@@ -110,8 +116,16 @@ The shim itself talks to the fixture backend over the Compose network as
 
 ## What The Smoke Path Verifies
 
-`make devstack-full-smoke` is a thin orchestrator for the repo-owned local
-smoke gate. It runs:
+`make devstack-ci-smoke` is the repo-owned CI-compatible smoke gate. It runs:
+
+- `make devstack-smoke`
+- `make responses-websocket-smoke`
+- `make v3-coding-tools-smoke`
+
+It intentionally does not require the real `codex` binary.
+
+`make devstack-full-smoke` is the local heavy smoke gate. It runs the
+CI-compatible gate plus real Codex CLI checks:
 
 - `make devstack-smoke`
 - `make responses-websocket-smoke`

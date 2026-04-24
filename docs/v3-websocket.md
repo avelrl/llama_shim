@@ -291,6 +291,12 @@ Repo-owned smoke target:
 make responses-websocket-smoke
 ```
 
+CI-compatible devstack gate:
+
+```bash
+make devstack-ci-smoke
+```
+
 The smoke connects to `ws://127.0.0.1:18080/v1/responses`, sends sequential
 `response.create` messages, verifies stateful continuation, exercises direct
 native local `shell` and `apply_patch` replay events, and covers the devstack

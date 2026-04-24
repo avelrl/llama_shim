@@ -26,6 +26,12 @@ Run tests:
 make test
 ```
 
+Run the local fast gate:
+
+```bash
+make ci-check
+```
+
 Build binaries:
 
 ```bash
@@ -36,6 +42,22 @@ Run in Docker:
 
 ```bash
 docker compose up --build
+```
+
+Run the deterministic devstack CI-compatible smoke gate:
+
+```bash
+make devstack-up
+make devstack-ci-smoke
+make devstack-down
+```
+
+Run the full local smoke gate when the Codex CLI is installed:
+
+```bash
+make devstack-up
+make devstack-full-smoke
+make devstack-down
 ```
 
 ## Probes

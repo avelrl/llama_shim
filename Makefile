@@ -1,4 +1,4 @@
-.PHONY: run build lint test vet maint-cleanup maint-optimize maint-vacuum maint-backup docker-build compose-up compose-down devstack-up devstack-down devstack-smoke devstack-full-smoke responses-websocket-smoke v3-coding-tools-smoke codex-cli-devstack-smoke codex-cli-shell-tool-smoke codex-cli-coding-task-smoke codex-cli-task-matrix-smoke
+.PHONY: run build lint test vet diff-check ci-check maint-cleanup maint-optimize maint-vacuum maint-backup docker-build compose-up compose-down devstack-up devstack-down devstack-smoke devstack-ci-smoke devstack-full-smoke responses-websocket-smoke v3-coding-tools-smoke codex-cli-devstack-smoke codex-cli-shell-tool-smoke codex-cli-coding-task-smoke codex-cli-task-matrix-smoke
 
 CONFIG ?= config.yaml
 BACKUP ?= ./.data/shim-backup.db
@@ -41,6 +41,11 @@ test:
 	$(TOOL_PREP)
 	$(TOOL_ENV) $(GO) test ./...
 
+diff-check:
+	git diff --check
+
+ci-check: lint vet test build diff-check
+
 maint-cleanup:
 	$(TOOL_PREP)
 	$(TOOL_ENV) $(GO) run ./cmd/shimctl -config $(CONFIG) cleanup
@@ -75,7 +80,9 @@ devstack-down:
 devstack-smoke:
 	bash ./scripts/devstack-smoke.sh
 
-devstack-full-smoke: devstack-smoke responses-websocket-smoke v3-coding-tools-smoke codex-cli-devstack-smoke codex-cli-shell-tool-smoke codex-cli-task-matrix-smoke
+devstack-ci-smoke: devstack-smoke responses-websocket-smoke v3-coding-tools-smoke
+
+devstack-full-smoke: devstack-ci-smoke codex-cli-devstack-smoke codex-cli-shell-tool-smoke codex-cli-task-matrix-smoke
 
 responses-websocket-smoke:
 	$(TOOL_PREP)

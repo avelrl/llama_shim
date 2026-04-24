@@ -52,6 +52,9 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Diff check
+        run: make diff-check
+
       - name: Vet
         run: make vet
 
@@ -78,7 +81,7 @@ jobs:
   devstack-smoke:
     name: devstack-smoke
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     needs:
       - lint
       - test
@@ -98,7 +101,7 @@ jobs:
         run: make devstack-up
 
       - name: Run smoke
-        run: make devstack-smoke
+        run: make devstack-ci-smoke
 
       - name: Stop devstack
         if: always()

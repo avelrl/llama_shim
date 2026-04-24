@@ -48,6 +48,7 @@ The matrix label was strengthened because all of these are true:
    - `.tools.apply_patch.support == "native_local_subset"`
 4. Repo-owned smoke passes:
    - `make devstack-up`
+   - `make devstack-ci-smoke`
    - `make v3-coding-tools-smoke`
    - `make codex-cli-devstack-smoke`
    - `make codex-cli-shell-tool-smoke`

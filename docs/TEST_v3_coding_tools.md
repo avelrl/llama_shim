@@ -130,13 +130,18 @@ By default it targets the deterministic dev stack:
 
 ```bash
 make devstack-up
+make devstack-ci-smoke
 make devstack-full-smoke
 make devstack-down
 ```
 
-`make devstack-full-smoke` is an orchestrator. It runs the general devstack
-smoke, focused V3 native coding-tools smoke, basic real Codex CLI smoke,
-fallback-shell Codex CLI smoke, and real Codex task matrix smoke in sequence.
+`make devstack-ci-smoke` is the CI-compatible gate. It runs the general
+devstack smoke, focused Responses WebSocket smoke, and focused V3 native
+coding-tools smoke without requiring the local `codex` binary.
+
+`make devstack-full-smoke` is the local heavy gate. It includes the
+CI-compatible gate plus basic real Codex CLI smoke, fallback-shell Codex CLI
+smoke, and real Codex task matrix smoke in sequence.
 
 Equivalent direct invocation:
 

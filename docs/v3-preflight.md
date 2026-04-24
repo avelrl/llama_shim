@@ -1,6 +1,6 @@
 # V3 Preflight
 
-Last updated: April 16, 2026.
+Last updated: April 25, 2026.
 
 This document fixes the next logical step after the V2 freeze and before the
 project takes on new V3 backends or richer local-only runtime work.
@@ -153,6 +153,8 @@ This now ships as:
 - `make devstack-up`
 - `make devstack-down`
 - `make devstack-smoke`
+- `make devstack-ci-smoke`
+- `make devstack-full-smoke`
 
 ### 4. One real end-to-end smoke path
 
@@ -175,6 +177,8 @@ grows.
 This now ships as:
 
 - `scripts/devstack-smoke.sh`
+- `cmd/responses-websocket-smoke`
+- `scripts/v3-coding-tools-smoke.sh`
 
 The current smoke path verifies:
 
@@ -191,6 +195,16 @@ The current smoke path verifies:
 - hosted/server `tool_search` with namespace loading
 - stored `tool_search` follow-up through `function_call_output`
 - streamed generic replay for `tool_search`
+
+`make devstack-ci-smoke` is the CI-compatible gate on top of the stack. It
+combines the general devstack smoke, direct Responses WebSocket smoke, and V3
+native coding-tools smoke. It deliberately avoids real Codex CLI checks because
+CI runners should not need a locally installed `codex` binary.
+
+`make devstack-full-smoke` is the local heavy gate. It includes
+`make devstack-ci-smoke` plus real Codex CLI smoke paths that verify the
+current `openai_base_url` bridge, the fallback Codex function tool named
+`shell` when `features.unified_exec=false`, and the deterministic task matrix.
 
 ## Non-Goals
 
@@ -234,7 +248,10 @@ Treat V3 preflight as complete when all of the following are true:
 - new V3 backend or runtime work no longer has to invent ad hoc setup every
   time
 
-As of April 16, 2026, the repository satisfies that preflight bar.
+As of April 25, 2026, the repository satisfies that preflight bar. The GitHub
+Actions devstack job uses `make devstack-ci-smoke`; local release or merge
+readiness can additionally run `make devstack-full-smoke` when the Codex CLI is
+installed.
 
 ## Working Rule
 

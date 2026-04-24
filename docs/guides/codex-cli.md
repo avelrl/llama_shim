@@ -235,12 +235,16 @@ For the dev stack:
 
 ```bash
 make devstack-up
-make responses-websocket-smoke
+make devstack-ci-smoke
 make codex-cli-devstack-smoke
 make codex-cli-shell-tool-smoke
 make codex-cli-coding-task-smoke
 make codex-cli-task-matrix-smoke
 ```
+
+`make devstack-ci-smoke` is safe for CI because it avoids the local Codex CLI
+binary. `make devstack-full-smoke` is the local heavy gate that includes the
+real Codex CLI smoke paths.
 
 The Codex smoke scripts now fail if Codex hits HTTP 405 from
 `ws://.../v1/responses`, because WebSocket support is expected for this shim

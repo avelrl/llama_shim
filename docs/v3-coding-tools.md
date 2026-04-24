@@ -347,6 +347,8 @@ The local slice is considered closed because coverage includes:
 - `make v3-coding-tools-smoke` against the deterministic dev stack
 - a repo-owned real Codex CLI smoke path that points Codex at the shim with
   `openai_base_url`
+- `make codex-cli-shell-tool-smoke`, which verifies the Codex fallback function
+  tool named `shell` when `features.unified_exec=false`
 - `make codex-cli-task-matrix-smoke`, which verifies real scratch workspace
   edits, a tiny Go bugfix, and deterministic planning output through Codex CLI
 

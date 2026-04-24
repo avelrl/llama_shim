@@ -1,6 +1,6 @@
 # V3 Expansion Staging
 
-Last updated: April 24, 2026.
+Last updated: April 25, 2026.
 
 This document is the parking lot for work that did not make the V2 ship bar
 and should not be reintroduced into the frozen V2 scope.
@@ -71,14 +71,24 @@ The tracks below assume the small preflight substrate in
 
 ### 4. Native coding tools for local execution
 
-- official local `shell` subset for `/v1/responses`
-- official local `apply_patch` subset for `/v1/responses`
-- typed item persistence and replay for `shell_call`, `shell_call_output`,
+Status: closed as a `Broad subset` in
+[compatibility-matrix.md](compatibility-matrix.md), with remaining exact hosted
+choreography deferred to V5.
+
+Implemented local scope:
+
+- native local `shell` subset for `/v1/responses`
+- native local `apply_patch` subset for `/v1/responses`
+- typed item persistence for `shell_call`, `shell_call_output`,
   `apply_patch_call`, and `apply_patch_call_output`
-- real `openai/codex` smoke coverage against the shim via `openai_base_url`
+- focused create/retrieve replay for the shim-owned traces documented in
+  [v3-coding-tools.md](v3-coding-tools.md)
+- real `openai/codex` smoke coverage against the shim via `openai_base_url`,
+  including default `exec_command` bridge, fallback Codex function `shell`
+  bridge, and deterministic task matrix coverage
 
 See [v3-coding-tools.md](v3-coding-tools.md) for the design starting point and
-rollout assumptions.
+implemented status.
 
 This is a compatibility-quality and runtime-expansion track, not a reason to
 reopen the frozen V2 contract before code, tests, and capabilities exist.
@@ -114,6 +124,12 @@ This is a runtime-expansion and quality track, not a reason to reopen the
 frozen V2 contract.
 
 ### 7. Responses WebSocket mode
+
+Status: closed as a `Broad subset` in
+[compatibility-matrix.md](compatibility-matrix.md), with exact hosted close
+codes, quotas, cache edges, and upstream WebSocket proxying deferred to V5.
+
+Implemented local scope:
 
 - WebSocket upgrade support on `/v1/responses`
 - sequential `response.create` messages over one persistent socket
