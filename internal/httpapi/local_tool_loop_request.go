@@ -149,6 +149,16 @@ func buildLocalToolLoopTransportPlan(rawFields map[string]json.RawMessage, tools
 			}
 			usedNames[name] = struct{}{}
 			localTools = append(localTools, definition)
+		case isLocalBuiltinToolType(toolType):
+			definition, name, err := buildLocalBuiltinToolDefinition(tool)
+			if err != nil {
+				return nil, customToolTransportPlan{}, nil, "", err
+			}
+			if _, exists := usedNames[name]; exists {
+				return nil, customToolTransportPlan{}, nil, "", domain.NewValidationError("tools", "tool names must be unique in shim-local tool loop")
+			}
+			usedNames[name] = struct{}{}
+			localTools = append(localTools, definition)
 		case isCustomToolType(toolType):
 			descriptor, definition, err := buildLocalCustomToolDefinition(tool, serviceLimits)
 			if err != nil {
@@ -277,6 +287,8 @@ func allowedToolChoiceKey(payload map[string]any) (string, error) {
 			return "", domain.NewValidationError("tool_choice", "allowed_tools function entries require a name")
 		}
 		return "function:" + name, nil
+	case localBuiltinShellToolType, localBuiltinApplyPatchToolType:
+		return localBuiltinToolChoiceKey(asString(payload["type"])), nil
 	case "custom", "custom_tool":
 		name, namespace := customToolIdentity(payload)
 		if name == "" {
@@ -284,7 +296,7 @@ func allowedToolChoiceKey(payload map[string]any) (string, error) {
 		}
 		return "custom:" + canonicalCustomToolKey(namespace, name), nil
 	default:
-		return "", domain.NewValidationError("tool_choice", "allowed_tools currently supports only function and custom tool entries in shim-local mode")
+		return "", domain.NewValidationError("tool_choice", "allowed_tools currently supports function, custom, shell, and apply_patch tool entries in shim-local mode")
 	}
 }
 
@@ -296,6 +308,8 @@ func localToolChoiceKey(tool map[string]any) (string, bool) {
 			return "", false
 		}
 		return "function:" + name, true
+	case localBuiltinShellToolType, localBuiltinApplyPatchToolType:
+		return localBuiltinToolChoiceKey(asString(tool["type"])), true
 	case "custom", "custom_tool":
 		name, namespace := customToolIdentity(tool)
 		if name == "" {

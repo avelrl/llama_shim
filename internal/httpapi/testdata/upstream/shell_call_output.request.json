@@ -1,0 +1,31 @@
+{
+  "model": "gpt-5.4",
+  "stream": true,
+  "store": true,
+  "previous_response_id": "${OPENAI_PREVIOUS_RESPONSE_ID}",
+  "tools": [
+    {
+      "type": "shell",
+      "environment": {
+        "type": "local"
+      }
+    }
+  ],
+  "input": [
+    {
+      "type": "shell_call_output",
+      "call_id": "${OPENAI_SHELL_CALL_ID}",
+      "max_output_length": ${OPENAI_SHELL_MAX_OUTPUT_LENGTH},
+      "output": [
+        {
+          "stdout": "/tmp\n",
+          "stderr": "",
+          "outcome": {
+            "type": "exit",
+            "exit_code": 0
+          }
+        }
+      ]
+    }
+  ]
+}

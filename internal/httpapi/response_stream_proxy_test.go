@@ -353,6 +353,160 @@ func TestNormalizeCompletedToolCallEventSynthesizesMCPReplayEvents(t *testing.T)
 	require.Equal(t, "item_proxy_mcp_0", asString(finalItem["id"]))
 }
 
+func TestNormalizeCompletedToolCallEventSynthesizesLocalShellReplayEvents(t *testing.T) {
+	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, "", nil)
+
+	before, eventType, payload := proxy.normalizeCompletedToolCallEvent("response.completed", map[string]any{
+		"type": "response.completed",
+		"response": map[string]any{
+			"id":     "resp_proxy_shell",
+			"object": "response",
+			"model":  "test-model",
+			"output": []any{
+				map[string]any{
+					"type":    localBuiltinShellCallType,
+					"call_id": "call_shell",
+					"action": map[string]any{
+						"commands":          []any{"pwd"},
+						"timeout_ms":        10000,
+						"max_output_length": 12000,
+					},
+					"status": "completed",
+				},
+			},
+			"output_text": "",
+		},
+	})
+
+	require.Equal(t, "response.completed", eventType)
+	require.Len(t, before, 6)
+	require.Equal(t, "response.created", before[0].eventType)
+	require.Equal(t, "response.output_item.added", before[1].eventType)
+	require.Equal(t, "response.shell_call_command.added", before[2].eventType)
+	require.Equal(t, "response.shell_call_command.delta", before[3].eventType)
+	require.Equal(t, "response.shell_call_command.done", before[4].eventType)
+	require.Equal(t, "response.output_item.done", before[5].eventType)
+
+	addedItem, ok := before[1].payload["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, localBuiltinShellCallType, addedItem["type"])
+	action, ok := addedItem["action"].(map[string]any)
+	require.True(t, ok)
+	commands, ok := action["commands"].([]any)
+	require.True(t, ok)
+	require.Empty(t, commands)
+	require.Nil(t, action["timeout_ms"])
+	require.Nil(t, action["max_output_length"])
+	require.Equal(t, "in_progress", asString(addedItem["status"]))
+
+	commandAdded := before[2].payload
+	require.EqualValues(t, 0, commandAdded["command_index"])
+	require.EqualValues(t, 0, commandAdded["output_index"])
+	require.Equal(t, "", asString(commandAdded["command"]))
+	_, hasItemID := commandAdded["item_id"]
+	require.False(t, hasItemID)
+
+	commandDelta := before[3].payload
+	require.Equal(t, "pwd", asString(commandDelta["delta"]))
+	_, hasResponseID := commandDelta["response_id"]
+	require.False(t, hasResponseID)
+
+	commandDone := before[4].payload
+	require.Equal(t, "pwd", asString(commandDone["command"]))
+
+	doneItem, ok := before[5].payload["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, localBuiltinShellCallType, doneItem["type"])
+	require.Equal(t, "call_shell", asString(doneItem["id"]))
+	doneAction, ok := doneItem["action"].(map[string]any)
+	require.True(t, ok)
+	doneCommands, ok := doneAction["commands"].([]any)
+	require.True(t, ok)
+	require.Len(t, doneCommands, 1)
+	require.Equal(t, "pwd", doneCommands[0])
+	require.EqualValues(t, 10000, doneAction["timeout_ms"])
+	require.EqualValues(t, 12000, doneAction["max_output_length"])
+
+	completedResponse, ok := payload["response"].(map[string]any)
+	require.True(t, ok)
+	output, ok := completedResponse["output"].([]any)
+	require.True(t, ok)
+	require.Len(t, output, 1)
+	finalItem, ok := output[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "call_shell", asString(finalItem["id"]))
+}
+
+func TestNormalizeCompletedToolCallEventSynthesizesLocalApplyPatchReplayEvents(t *testing.T) {
+	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, "", nil)
+
+	diff := "@@\n-old\n+new\n"
+	before, eventType, payload := proxy.normalizeCompletedToolCallEvent("response.completed", map[string]any{
+		"type": "response.completed",
+		"response": map[string]any{
+			"id":     "resp_proxy_apply_patch",
+			"object": "response",
+			"model":  "test-model",
+			"output": []any{
+				map[string]any{
+					"type":    localBuiltinApplyPatchCallType,
+					"call_id": "call_patch",
+					"operation": map[string]any{
+						"type": "update_file",
+						"path": "main.go",
+						"diff": diff,
+					},
+					"status": "completed",
+				},
+			},
+			"output_text": "",
+		},
+	})
+
+	require.Equal(t, "response.completed", eventType)
+	require.Len(t, before, 5)
+	require.Equal(t, "response.created", before[0].eventType)
+	require.Equal(t, "response.output_item.added", before[1].eventType)
+	require.Equal(t, "response.apply_patch_call_operation_diff.delta", before[2].eventType)
+	require.Equal(t, "response.apply_patch_call_operation_diff.done", before[3].eventType)
+	require.Equal(t, "response.output_item.done", before[4].eventType)
+
+	addedItem, ok := before[1].payload["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, localBuiltinApplyPatchCallType, addedItem["type"])
+	operation, ok := addedItem["operation"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "update_file", asString(operation["type"]))
+	require.Equal(t, "main.go", asString(operation["path"]))
+	require.Equal(t, "", asString(operation["diff"]))
+	require.Equal(t, "in_progress", asString(addedItem["status"]))
+
+	delta := before[2].payload
+	require.Equal(t, "call_patch", asString(delta["item_id"]))
+	require.Equal(t, diff, asString(delta["delta"]))
+
+	done := before[3].payload
+	require.Equal(t, "call_patch", asString(done["item_id"]))
+	require.Equal(t, diff, asString(done["diff"]))
+
+	doneItem, ok := before[4].payload["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, localBuiltinApplyPatchCallType, doneItem["type"])
+	require.Equal(t, "call_patch", asString(doneItem["id"]))
+	doneOperation, ok := doneItem["operation"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, diff, asString(doneOperation["diff"]))
+
+	completedResponse, ok := payload["response"].(map[string]any)
+	require.True(t, ok)
+	output, ok := completedResponse["output"].([]any)
+	require.True(t, ok)
+	require.Len(t, output, 1)
+	finalItem, ok := output[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "call_patch", asString(finalItem["id"]))
+}
+
 func TestNormalizeTextStreamEventSynthesizesAnnotationReplayFromCompletedResponse(t *testing.T) {
 	proxy := newResponseStreamEventProxy(context.Background(), nil, customToolTransportPlan{}, "", nil)
 

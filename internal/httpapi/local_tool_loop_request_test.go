@@ -42,3 +42,31 @@ func TestBuildLocalToolLoopTransportPlanConvertsNamedFunctionToolChoiceToChatSha
 	require.Equal(t, "add", function["name"])
 	require.NotContains(t, payload, "name")
 }
+
+func TestBuildLocalToolLoopTransportPlanConvertsShellToolChoiceToChatShape(t *testing.T) {
+	rawFields := map[string]json.RawMessage{
+		"tool_choice": json.RawMessage(`{"type":"shell"}`),
+	}
+	tools := []map[string]any{
+		{
+			"type": "shell",
+			"environment": map[string]any{
+				"type": "local",
+			},
+		},
+	}
+
+	_, plan, toolChoice, _, err := buildLocalToolLoopTransportPlan(rawFields, tools, ServiceLimits{}, false)
+
+	require.NoError(t, err)
+	require.Equal(t, toolChoiceContractRequiredNamedFunction, plan.ToolChoiceContract.Mode)
+	require.Equal(t, localBuiltinShellToolType, plan.ToolChoiceContract.Name)
+
+	payload, ok := toolChoice.(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "function", payload["type"])
+
+	function, ok := payload["function"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, localBuiltinShellSyntheticName, function["name"])
+}

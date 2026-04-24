@@ -376,6 +376,16 @@ paths:
           `response.output_text.annotation.added` events when the final
           assistant message contains annotations; this is a pragmatic replay
           subset, not a claim of exact hosted annotation placement parity
+        - shim-local native coding-tool replay now synthesizes dedicated SSE
+          families for the current fixture-backed subset:
+          `shell_call` create-stream emits
+          `response.shell_call_command.added`,
+          `response.shell_call_command.delta`, and
+          `response.shell_call_command.done`; `apply_patch_call`
+          create-stream emits
+          `response.apply_patch_call_operation_diff.delta` and
+          `response.apply_patch_call_operation_diff.done`; exact hosted chunk
+          boundaries are not claimed
         - docs-backed proxy/upstream contract accepts hosted and client
           `tool_search`; client follow-up may send `tool_search_output`
           items in `input`, upstream-returned `tool_search_call` /
@@ -863,6 +873,16 @@ paths:
           loaded `tools`, does not invent a dedicated
           `response.tool_search.*` SSE family, and replays `status` as
           synthetic `in_progress` only on `response.output_item.added`
+        - stored `apply_patch_call` items replay
+          `response.apply_patch_call_operation_diff.delta`,
+          `response.apply_patch_call_operation_diff.done`, and terminal
+          `response.output_item.done`; synthetic
+          `response.output_item.added` keeps `operation.diff` blank until the
+          terminal item
+        - stored `shell_call` items currently remain generic through
+          `response.output_item.*`; current upstream background shell replay
+          is blocked, so shim does not yet claim `response.shell_call_command.*`
+          parity on retrieve-stream
         - other hosted/native tool item families may still fall back to
           generic `response.output_item.*` replay
       parameters:

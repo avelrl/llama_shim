@@ -1,12 +1,11 @@
 # V3 Coding Tools
 
-Last updated: April 23, 2026.
+Last updated: April 24, 2026.
 
-This document fixes the design starting point for the V3 coding-tools track
-before implementation begins.
+This document records the V3 coding-tools design and the current partial
+implementation state.
 
 It does not change the frozen V2 contract.
-It does not change OpenAPI.
 It does not claim new OpenAI-surface parity before code, tests, and
 capabilities exist.
 
@@ -44,7 +43,7 @@ reopen the frozen V2 ledger.
 
 ## Official References Reviewed
 
-This design note was re-checked on April 23, 2026 against:
+This design note was re-checked on April 24, 2026 against:
 
 - local official-docs index: `openapi/llms.txt`
 - OpenAI docs:
@@ -61,6 +60,105 @@ The practical takeaway from the current official docs is:
 - `apply_patch` is a current Responses tool for structured diffs
 - apply-patch follow-up uses `apply_patch_call_output`
 - Codex can target an OpenAI-compatible proxy by setting `openai_base_url`
+
+## Current Fixture Findings
+
+The upstream captures recorded on April 23, 2026 narrowed the open questions
+for this V3 track:
+
+- first-turn `shell_call` create-stream uses shell-specific SSE:
+  - `response.shell_call_command.added`
+  - `response.shell_call_command.delta`
+  - `response.shell_call_command.done`
+- first-turn `apply_patch_call` create-stream uses patch-specific SSE:
+  - `response.apply_patch_call_operation_diff.delta`
+  - `response.apply_patch_call_operation_diff.done`
+- background-created `apply_patch_call` retrieve-stream replays the same
+  patch-specific SSE family rather than collapsing to generic
+  `response.output_item.*` only
+- both first-turn traces start with an incomplete item in
+  `response.output_item.added` and only expose the finalized item in
+  `response.output_item.done`
+- follow-up traces for `shell_call_output` and `apply_patch_call_output`
+  currently behave like ordinary assistant-message streams rather than
+  introducing a second tool-specific SSE family
+- upstream validates `shell_call_output.max_output_length` against the original
+  `shell_call.action.max_output_length`
+- upstream `GET /v1/responses/{id}?stream=true` currently rejects non-background
+  responses, so retrieve-stream parity for these tool families requires a
+  separate background-created fixture lane
+- current background `shell_call` attempts are still blocked by upstream
+  `response.failed` / `server_error` before any `shell_call` item is emitted;
+  this has now been reproduced on both `gpt-5.4` and `gpt-5.3-codex`, so shell
+  retrieve-stream parity remains unresolved and should be treated as an
+  upstream blocker rather than a single-model mismatch
+- the follow-up diagnostics narrowed that further: a docs-literal minimal
+  `background + stream + local shell` request still fails with the same
+  `server_error`, and a non-streaming `background + local shell` request moves
+  from `queued` to `failed` with the same `server_error`; this no longer looks
+  like an issue with our extra `instructions` field or with background
+  streaming alone
+
+That means exact create-stream choreography for the first tool turn is no
+longer docs-thin; it is now fixture-backed. Retrieve-stream parity is now
+fixture-backed for `apply_patch_call`, while `shell_call` retrieve parity
+remains a separate capture problem.
+
+## Current Code Status
+
+As of April 23, 2026, the repo now has a partial implementation of this track:
+
+- shim-local `/v1/responses` accepts official local `shell` and `apply_patch`
+  tool declarations
+- first-turn create-stream replay for local `shell_call` now emits:
+  - `response.shell_call_command.added`
+  - `response.shell_call_command.delta`
+  - `response.shell_call_command.done`
+- create-stream and stored retrieve-stream replay for local
+  `apply_patch_call` now emit:
+  - `response.apply_patch_call_operation_diff.delta`
+  - `response.apply_patch_call_operation_diff.done`
+- synthetic `response.output_item.added` snapshots match the current
+  fixture-backed local subset:
+  - `shell_call` starts with empty `action.commands` plus `null`
+    `timeout_ms` / `max_output_length`
+  - `apply_patch_call` starts with empty `operation.diff`
+- `shell_call` stored retrieve-stream remains conservative and generic through
+  `response.output_item.*` because upstream background shell replay is still
+  blocked
+
+This is enough to tighten the local replay contract, but it is not yet enough
+to mark the whole coding-tools track as finished. Capabilities, OpenAPI/docs
+alignment, and a real Codex smoke still remain on the path to closure.
+
+## Manual Live Smoke
+
+The shim-local V3 coding-tools runbook was manually exercised on April 24,
+2026 with a Qwen-compatible upstream model behind the shim. The run covered:
+
+- non-stream `shell_call` creation and `shell_call_output` follow-up
+- stored shell retrieve and `/input_items`
+- non-stream `apply_patch_call` creation and `apply_patch_call_output`
+  follow-up
+- stored apply-patch retrieve and `/input_items`
+- shell create-stream replay with `response.shell_call_command.*`
+- shell retrieve-stream preserving `shell_call` through generic
+  `response.output_item.*`
+- apply-patch create-stream and retrieve-stream replay with
+  `response.apply_patch_call_operation_diff.done`
+
+The Qwen-compatible live run also confirmed two practical boundaries:
+
+- prompts for the local shell smoke should ask for an explicit command; vague
+  forced-tool wording can stall or time out on non-OpenAI upstreams even when
+  the upstream supports tool calls
+- `response.apply_patch_call_operation_diff.delta` is only expected when the
+  stored `operation.diff` is non-empty; a structured operation with an empty
+  diff should still emit `response.apply_patch_call_operation_diff.done`
+
+This live smoke improves confidence in the shim-local subset, but it does not
+replace the remaining closure work: `/debug/capabilities`, a repo-owned
+dev-stack smoke, and a real Codex CLI smoke against `openai_base_url`.
 
 ## Current V2 Baseline
 
@@ -123,7 +221,8 @@ The coding-tools track starts from the following assumptions:
 - hosted container semantics are a separate problem from local shell execution
 - typed item preservation matters more than clever prompt-based normalization
 - exact hosted SSE choreography should stay out of scope until docs or fixtures
-  pin it down
+  pin it down; the first-turn `shell` and `apply_patch` create-stream families
+  are now fixture-backed, while retrieve-stream still needs background traces
 
 ## Routing Policy
 
@@ -161,10 +260,16 @@ The first cut should keep the replay story conservative and observable:
 - store `shell_call`, `shell_call_output`, `apply_patch_call`, and
   `apply_patch_call_output` as typed items
 - preserve those item families in retrieve and input-items reads
-- allow generic `response.output_item.*` replay where official docs do not pin
-  down a stricter tool-specific SSE contract
-- avoid claims of exact hosted `response.shell.*` or
-  `response.apply_patch.*` choreography without fixture-backed evidence
+- first-turn create-stream for local `shell_call` replays the dedicated
+  `response.shell_call_command.*` family with collapsed deltas from stored
+  final state
+- create-stream and stored retrieve-stream for local `apply_patch_call`
+  replay the dedicated `response.apply_patch_call_operation_diff.*` family
+  with collapsed deltas from stored final state
+- stored `shell_call` replay stays generic through `response.output_item.*`
+  until upstream background shell replay is fixture-backed
+- avoid claims of exact hosted chunk boundaries or full hosted retrieve-stream
+  choreography beyond the fixture-backed local subset
 
 ## `/debug/capabilities` Direction
 
@@ -204,7 +309,7 @@ once:
 - implement hosted shell container parity
 - implement `container_auto` or `container_reference`
 - implement hosted shell `network_policy` or `domain_secrets`
-- claim exact hosted SSE choreography for shell or apply patch
+- claim full hosted chunk-for-chunk SSE choreography for shell or apply patch
 - replace the current Codex bridge before the native path is proven
 - widen compatibility wording before code, tests, and capabilities are aligned
 

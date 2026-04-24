@@ -31,6 +31,8 @@ type CaptureFixture struct {
 	URL             string              `json:"url"`
 	StatusCode      int                 `json:"status_code"`
 	ContentType     string              `json:"content_type,omitempty"`
+	ReadError       string              `json:"read_error,omitempty"`
+	Partial         bool                `json:"partial,omitempty"`
 	Request         any                 `json:"request,omitempty"`
 	ResponseHeaders map[string][]string `json:"response_headers,omitempty"`
 	Stream          Stream              `json:"stream"`

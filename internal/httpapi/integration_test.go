@@ -6265,6 +6265,353 @@ func TestResponsesCodexToolOutputFollowUpUsesLocalToolLoop(t *testing.T) {
 	require.Equal(t, "tool says hi", got.OutputText)
 }
 
+func TestResponsesNativeShellToolFollowUpUsesLocalToolLoop(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	first := postResponse(t, app, map[string]any{
+		"model":       "test-model",
+		"store":       true,
+		"tool_choice": "required",
+		"input": []map[string]any{
+			{
+				"role":    "user",
+				"content": "Run the local shell command and do not answer directly.",
+			},
+		},
+		"tools": []map[string]any{
+			{
+				"type": "shell",
+				"environment": map[string]any{
+					"type": "local",
+				},
+			},
+		},
+	})
+	require.Len(t, first.Output, 1)
+	require.Equal(t, "shell_call", first.Output[0].Type)
+	action, ok := first.Output[0].Map()["action"].(map[string]any)
+	require.True(t, ok)
+	commands, ok := action["commands"].([]any)
+	require.True(t, ok)
+	require.Len(t, commands, 1)
+	require.Equal(t, "cd /tmp/snake_test && go test ./game -v 2>&1", commands[0])
+	callID := first.Output[0].CallID()
+	require.NotEmpty(t, callID)
+
+	second := postResponse(t, app, map[string]any{
+		"model":                "test-model",
+		"store":                true,
+		"previous_response_id": first.ID,
+		"input": []map[string]any{
+			{
+				"type":              "shell_call_output",
+				"call_id":           callID,
+				"max_output_length": 12000,
+				"output": []map[string]any{
+					{
+						"stdout": "tool says hi",
+						"stderr": "",
+						"outcome": map[string]any{
+							"type":      "exit",
+							"exit_code": 0,
+						},
+					},
+				},
+			},
+		},
+		"tools": []map[string]any{
+			{
+				"type": "shell",
+				"environment": map[string]any{
+					"type": "local",
+				},
+			},
+		},
+	})
+
+	require.NotEmpty(t, second.ID)
+	require.NotEqual(t, "upstream_resp_2", second.ID)
+	require.Equal(t, first.ID, second.PreviousResponseID)
+	require.Contains(t, second.OutputText, "tool says hi")
+
+	got := getResponse(t, app, second.ID)
+	require.Equal(t, second.ID, got.ID)
+	require.Equal(t, first.ID, got.PreviousResponseID)
+	require.Contains(t, got.OutputText, "tool says hi")
+
+	inputItems := getResponseInputItems(t, app, second.ID)
+	require.Len(t, inputItems.Data, 3)
+	require.Equal(t, "shell_call_output", asStringAny(inputItems.Data[0]["type"]))
+	outputEntries, ok := inputItems.Data[0]["output"].([]any)
+	require.True(t, ok)
+	require.Len(t, outputEntries, 1)
+	entry, ok := outputEntries[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "tool says hi", entry["stdout"])
+	outcome, ok := entry["outcome"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "exit", outcome["type"])
+}
+
+func TestResponsesNativeApplyPatchToolFollowUpUsesLocalToolLoop(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	first := postResponse(t, app, map[string]any{
+		"model":       "test-model",
+		"store":       true,
+		"tool_choice": "required",
+		"input": []map[string]any{
+			{
+				"role":    "user",
+				"content": "Patch the code and do not answer directly.",
+			},
+		},
+		"tools": []map[string]any{
+			{
+				"type": "apply_patch",
+			},
+		},
+	})
+	require.Len(t, first.Output, 1)
+	require.Equal(t, "apply_patch_call", first.Output[0].Type)
+	operation, ok := first.Output[0].Map()["operation"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "update_file", operation["type"])
+	require.Equal(t, "game/main.go", operation["path"])
+	callID := first.Output[0].CallID()
+	require.NotEmpty(t, callID)
+
+	second := postResponse(t, app, map[string]any{
+		"model":                "test-model",
+		"store":                true,
+		"previous_response_id": first.ID,
+		"input": []map[string]any{
+			{
+				"type":    "apply_patch_call_output",
+				"call_id": callID,
+				"status":  "completed",
+				"output":  "patched cleanly",
+			},
+		},
+		"tools": []map[string]any{
+			{
+				"type": "apply_patch",
+			},
+		},
+	})
+
+	require.NotEmpty(t, second.ID)
+	require.NotEqual(t, "upstream_resp_2", second.ID)
+	require.Equal(t, first.ID, second.PreviousResponseID)
+	require.Contains(t, second.OutputText, "patched cleanly")
+
+	got := getResponse(t, app, second.ID)
+	require.Equal(t, second.ID, got.ID)
+	require.Equal(t, first.ID, got.PreviousResponseID)
+	require.Contains(t, got.OutputText, "patched cleanly")
+
+	inputItems := getResponseInputItems(t, app, second.ID)
+	require.Len(t, inputItems.Data, 3)
+	require.Equal(t, "apply_patch_call_output", asStringAny(inputItems.Data[0]["type"]))
+	require.Equal(t, "completed", asStringAny(inputItems.Data[0]["status"]))
+	require.Equal(t, "patched cleanly", asStringAny(inputItems.Data[0]["output"]))
+}
+
+func TestResponsesCreateLocalShellStreamReplaysShellCommandEvents(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	req, err := http.NewRequest(http.MethodPost, app.Server.URL+"/v1/responses", bytes.NewReader(mustJSON(t, map[string]any{
+		"model":       "test-model",
+		"store":       true,
+		"stream":      true,
+		"tool_choice": "required",
+		"input": []map[string]any{
+			{
+				"role":    "user",
+				"content": "Run the local shell command and do not answer directly.",
+			},
+		},
+		"tools": []map[string]any{
+			{
+				"type": "shell",
+				"environment": map[string]any{
+					"type": "local",
+				},
+			},
+		},
+	})))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	events := readSSEEvents(t, resp.Body)
+	require.Contains(t, eventTypes(events), "response.shell_call_command.added")
+	require.Contains(t, eventTypes(events), "response.shell_call_command.delta")
+	require.Contains(t, eventTypes(events), "response.shell_call_command.done")
+
+	added := findEvent(t, events, "response.output_item.added").Data
+	addedItem, ok := added["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "shell_call", asStringAny(addedItem["type"]))
+	require.Equal(t, "in_progress", asStringAny(addedItem["status"]))
+	action, ok := addedItem["action"].(map[string]any)
+	require.True(t, ok)
+	commands, ok := action["commands"].([]any)
+	require.True(t, ok)
+	require.Empty(t, commands)
+	require.Nil(t, action["timeout_ms"])
+	require.Nil(t, action["max_output_length"])
+
+	commandAdded := findEvent(t, events, "response.shell_call_command.added").Data
+	require.EqualValues(t, 0, commandAdded["command_index"])
+	require.Equal(t, "", asStringAny(commandAdded["command"]))
+
+	commandDelta := findEvent(t, events, "response.shell_call_command.delta").Data
+	require.Equal(t, "cd /tmp/snake_test && go test ./game -v 2>&1", asStringAny(commandDelta["delta"]))
+
+	commandDone := findEvent(t, events, "response.shell_call_command.done").Data
+	require.Equal(t, "cd /tmp/snake_test && go test ./game -v 2>&1", asStringAny(commandDone["command"]))
+
+	done := findEvent(t, events, "response.output_item.done").Data
+	doneItem, ok := done["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "shell_call", asStringAny(doneItem["type"]))
+	require.NotEmpty(t, asStringAny(doneItem["id"]))
+	doneAction, ok := doneItem["action"].(map[string]any)
+	require.True(t, ok)
+	doneCommands, ok := doneAction["commands"].([]any)
+	require.True(t, ok)
+	require.Len(t, doneCommands, 1)
+	require.Equal(t, "cd /tmp/snake_test && go test ./game -v 2>&1", doneCommands[0])
+	require.EqualValues(t, 30000, doneAction["timeout_ms"])
+	require.EqualValues(t, 12000, doneAction["max_output_length"])
+}
+
+func TestResponsesCreateLocalApplyPatchStreamReplaysDiffEvents(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	req, err := http.NewRequest(http.MethodPost, app.Server.URL+"/v1/responses", bytes.NewReader(mustJSON(t, map[string]any{
+		"model":       "test-model",
+		"store":       true,
+		"stream":      true,
+		"tool_choice": "required",
+		"input": []map[string]any{
+			{
+				"role":    "user",
+				"content": "Patch the code and do not answer directly.",
+			},
+		},
+		"tools": []map[string]any{
+			{
+				"type": "apply_patch",
+			},
+		},
+	})))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	events := readSSEEvents(t, resp.Body)
+	require.Contains(t, eventTypes(events), "response.apply_patch_call_operation_diff.delta")
+	require.Contains(t, eventTypes(events), "response.apply_patch_call_operation_diff.done")
+
+	diff := "*** Begin Patch\n*** Update File: game/main.go\n@@\n-const answer = 1\n+const answer = 2\n*** End Patch\n"
+
+	added := findEvent(t, events, "response.output_item.added").Data
+	addedItem, ok := added["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "apply_patch_call", asStringAny(addedItem["type"]))
+	require.Equal(t, "in_progress", asStringAny(addedItem["status"]))
+	operation, ok := addedItem["operation"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "update_file", asStringAny(operation["type"]))
+	require.Equal(t, "game/main.go", asStringAny(operation["path"]))
+	require.Equal(t, "", asStringAny(operation["diff"]))
+
+	delta := findEvent(t, events, "response.apply_patch_call_operation_diff.delta").Data
+	require.NotEmpty(t, asStringAny(delta["item_id"]))
+	require.Equal(t, diff, asStringAny(delta["delta"]))
+
+	diffDone := findEvent(t, events, "response.apply_patch_call_operation_diff.done").Data
+	require.Equal(t, asStringAny(delta["item_id"]), asStringAny(diffDone["item_id"]))
+	require.Equal(t, diff, asStringAny(diffDone["diff"]))
+
+	done := findEvent(t, events, "response.output_item.done").Data
+	doneItem, ok := done["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "apply_patch_call", asStringAny(doneItem["type"]))
+	require.NotEmpty(t, asStringAny(doneItem["id"]))
+	doneOperation, ok := doneItem["operation"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, diff, asStringAny(doneOperation["diff"]))
+}
+
+func TestResponsesRetrieveLocalApplyPatchStreamReplaysDiffEvents(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	first := postResponse(t, app, map[string]any{
+		"model":       "test-model",
+		"store":       true,
+		"tool_choice": "required",
+		"input": []map[string]any{
+			{
+				"role":    "user",
+				"content": "Patch the code and do not answer directly.",
+			},
+		},
+		"tools": []map[string]any{
+			{
+				"type": "apply_patch",
+			},
+		},
+	})
+	require.Equal(t, "apply_patch_call", first.Output[0].Type)
+
+	req, err := http.NewRequest(http.MethodGet, app.Server.URL+"/v1/responses/"+first.ID+"?stream=true&include_obfuscation=false", nil)
+	require.NoError(t, err)
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	events := readSSEEvents(t, resp.Body)
+	require.Contains(t, eventTypes(events), "response.apply_patch_call_operation_diff.delta")
+	require.Contains(t, eventTypes(events), "response.apply_patch_call_operation_diff.done")
+
+	diff := "*** Begin Patch\n*** Update File: game/main.go\n@@\n-const answer = 1\n+const answer = 2\n*** End Patch\n"
+
+	added := findEvent(t, events, "response.output_item.added").Data
+	addedItem, ok := added["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "apply_patch_call", asStringAny(addedItem["type"]))
+	operation, ok := addedItem["operation"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "", asStringAny(operation["diff"]))
+
+	delta := findEvent(t, events, "response.apply_patch_call_operation_diff.delta").Data
+	require.NotEmpty(t, asStringAny(delta["item_id"]))
+	require.Equal(t, diff, asStringAny(delta["delta"]))
+	_, hasObfuscation := delta["obfuscation"]
+	require.False(t, hasObfuscation)
+
+	diffDone := findEvent(t, events, "response.apply_patch_call_operation_diff.done").Data
+	require.Equal(t, diff, asStringAny(diffDone["diff"]))
+	require.Equal(t, asStringAny(delta["item_id"]), asStringAny(diffDone["item_id"]))
+
+	done := findEvent(t, events, "response.output_item.done").Data
+	doneItem, ok := done["item"].(map[string]any)
+	require.True(t, ok)
+	doneOperation, ok := doneItem["operation"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, diff, asStringAny(doneOperation["diff"]))
+}
+
 func TestResponsesStreamKeepsSafeExecCommandEscalationByDefault(t *testing.T) {
 	app := testutil.NewTestApp(t)
 

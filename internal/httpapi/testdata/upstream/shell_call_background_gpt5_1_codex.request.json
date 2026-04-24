@@ -1,0 +1,17 @@
+{
+  "model": "gpt-5.1-codex",
+  "background": true,
+  "stream": true,
+  "store": true,
+  "tool_choice": "required",
+  "tools": [
+    {
+      "type": "shell",
+      "environment": {
+        "type": "local"
+      }
+    }
+  ],
+  "instructions": "Use the shell tool when the task requires command execution. Emit exactly one shell call when one command is enough, and wait for shell_call_output before answering in natural language.",
+  "input": "Use the shell tool to run exactly one non-interactive command: pwd. Do not explain anything yet."
+}

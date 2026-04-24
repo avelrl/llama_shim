@@ -27,6 +27,8 @@ configured to do so.
 | `image_generation` | local subset when configured |
 | `computer` | local screenshot-first subset when configured |
 | `code_interpreter` | local dev-oriented subset when configured |
+| native local `shell` | V3 partial subset in shim-local mode |
+| native local `apply_patch` | V3 partial subset in shim-local mode |
 | remote `mcp` with `server_url` | local subset |
 | `mcp` with `connector_id` | proxy-only compatibility bridge |
 | `tool_search` hosted/server subset | local subset |
@@ -115,9 +117,16 @@ curl http://127.0.0.1:8080/v1/responses \
 - `connector_id` is not a local runtime in V2. It remains a proxy-only bridge.
 - Client `tool_search` is also proxy-only in V2; hosted/server `tool_search`
   is the local practical subset.
-- Tool-heavy create-stream and retrieve-stream flows may use generic
-  `response.output_item.*` replay where no exact hosted tool-specific SSE
-  family is claimed.
+- The V3 coding-tools lane now has a narrower replay contract:
+  - shim-local `shell_call` create-stream emits
+    `response.shell_call_command.*`
+  - shim-local `apply_patch_call` create-stream and retrieve-stream emit
+    `response.apply_patch_call_operation_diff.done`; a
+    `response.apply_patch_call_operation_diff.delta` event is expected only
+    when the stored `operation.diff` is non-empty
+  - shim-local `shell_call` retrieve-stream still stays generic through
+    `response.output_item.*` because upstream background shell replay is
+    currently blocked
 
 ## Gotchas
 

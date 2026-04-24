@@ -1,6 +1,6 @@
 # V2 Compatibility Matrix
 
-Last updated: April 23, 2026.
+Last updated: April 24, 2026.
 
 This document is the source of truth for the current V2-compatible surface of
 `llama_shim`.
@@ -87,7 +87,7 @@ Practical usage guides live in [guides/README.md](guides/README.md).
 | native local `apply_patch` tool contract | V3 | Keep the current bridge-vs-native boundary explicit until code, tests, and capabilities exist | Current Codex support remains compatibility-oriented; official `apply_patch` local subset is staged in [v3-coding-tools.md](v3-coding-tools.md) |
 | remote MCP | Broad subset | Keep `server_url` vs `connector_id` boundary explicit | `server_url` subset is implemented; connectors remain a stricter compatibility boundary |
 | `tool_search` | Broad subset | Keep runtime and passthrough boundaries explicit | Current subset is already docs-backed |
-| hosted/native tool-specific SSE beyond current core traces | V3 | Only take on exact replay work when docs or fixtures make it necessary | Not a V2 ship blocker anymore |
+| hosted/native tool-specific SSE beyond current core traces | V3 | Only take on exact replay work when docs or fixtures make it necessary | Current V3 code now replays `response.shell_call_command.*` for first-turn shim-local `shell_call` create-stream and `response.apply_patch_call_operation_diff.done` for shim-local `apply_patch_call` create/retrieve replay, with `operation_diff.delta` only when `operation.diff` is non-empty. Shell retrieve-stream remains generic because upstream background shell replay is still blocked, and the narrower April 23 diagnostics suggest a broader upstream `background + local shell` blocker rather than a problem isolated to stream replay. The April 24 manual live smoke is recorded in [TEST_v3_coding_tools.md](TEST_v3_coding_tools.md). |
 
 ## Current Mode Matrix
 

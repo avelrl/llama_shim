@@ -91,20 +91,20 @@ func main() {
 	}
 	defer resp.Body.Close()
 
-	rawBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		exitf("read response body: %v", err)
+	rawBody, readErr := io.ReadAll(resp.Body)
+
+	stream, parseErr := ssetrace.Parse(rawBody)
+	if parseErr != nil {
+		exitf("parse SSE body: %v", parseErr)
 	}
+
+	partialCapture := readErr != nil && len(rawBody) > 0
+	terminalCapture := stream.Done || streamHasTerminalEvent(stream)
 
 	if *rawOut != "" {
 		if err := writeFile(*rawOut, rawBody); err != nil {
 			exitf("write raw SSE file: %v", err)
 		}
-	}
-
-	stream, err := ssetrace.Parse(rawBody)
-	if err != nil {
-		exitf("parse SSE body: %v", err)
 	}
 
 	if *fixtureOut != "" {
@@ -115,6 +115,8 @@ func main() {
 			URL:             url,
 			StatusCode:      resp.StatusCode,
 			ContentType:     resp.Header.Get("Content-Type"),
+			ReadError:       errorString(readErr),
+			Partial:         partialCapture,
 			Request:         decodeJSONOrString(requestBody),
 			ResponseHeaders: cloneHeaders(resp.Header),
 			Stream:          stream,
@@ -141,8 +143,14 @@ func main() {
 	if *fixtureOut != "" {
 		fmt.Fprintf(os.Stdout, "fixture: %s\n", *fixtureOut)
 	}
+	if readErr != nil {
+		fmt.Fprintf(os.Stdout, "read error: %v\n", readErr)
+	}
 	if resp.StatusCode >= http.StatusBadRequest {
 		os.Exit(2)
+	}
+	if readErr != nil && !terminalCapture {
+		os.Exit(3)
 	}
 }
 
@@ -238,6 +246,23 @@ func cloneHeaders(header http.Header) map[string][]string {
 		return nil
 	}
 	return cloned
+}
+
+func errorString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}
+
+func streamHasTerminalEvent(stream ssetrace.Stream) bool {
+	for _, event := range stream.Events {
+		switch event.Event {
+		case "response.completed", "response.failed", "response.incomplete":
+			return true
+		}
+	}
+	return false
 }
 
 func writeFile(path string, body []byte) error {

@@ -82,6 +82,8 @@ func supportsLocalToolDefinitions(tools []map[string]any) bool {
 		switch {
 		case toolType == "function":
 			supported = true
+		case isLocalBuiltinToolType(toolType):
+			supported = true
 		case isCustomToolType(toolType):
 			supported = true
 		default:
@@ -98,7 +100,7 @@ func supportsLocalToolReplayInput(raw json.RawMessage) bool {
 	}
 	for _, item := range items {
 		switch item.Type {
-		case "function_call", "custom_tool_call", "function_call_output", "custom_tool_call_output":
+		case "function_call", "custom_tool_call", "function_call_output", "custom_tool_call_output", localBuiltinShellCallType, localBuiltinApplyPatchCallType, localBuiltinShellCallOutputType, localBuiltinApplyPatchCallOutputType:
 			return true
 		}
 	}
@@ -272,18 +274,29 @@ func buildChatCompletionMessagesFromItems(items []domain.Item) ([]map[string]any
 				"content": content,
 			})
 			lastTextMessage = len(messages) - 1
-		case "function_call", "custom_tool_call":
+		case "function_call", "custom_tool_call", localBuiltinShellCallType, localBuiltinApplyPatchCallType:
 			name := strings.TrimSpace(item.Name())
+			arguments := item.RawField("arguments")
+			switch item.Type {
+			case "custom_tool_call":
+				arguments = json.RawMessage(encodeCustomToolArguments(item.RawField("input")))
+			case localBuiltinShellCallType, localBuiltinApplyPatchCallType:
+				name = localBuiltinToolCallName(item)
+				if name == "" {
+					return nil, domain.ErrUnsupportedShape
+				}
+				encodedArguments, err := localBuiltinToolArgumentsJSON(item)
+				if err != nil {
+					return nil, err
+				}
+				arguments = encodedArguments
+			}
 			if name == "" {
 				return nil, domain.ErrUnsupportedShape
 			}
 			callID, err := ensureLocalToolCallID(localChatToolCallID(item))
 			if err != nil {
 				return nil, err
-			}
-			arguments := item.RawField("arguments")
-			if item.Type == "custom_tool_call" {
-				arguments = json.RawMessage(encodeCustomToolArguments(item.RawField("input")))
 			}
 			messages = append(messages, map[string]any{
 				"role":    "assistant",
@@ -300,12 +313,19 @@ func buildChatCompletionMessagesFromItems(items []domain.Item) ([]map[string]any
 				},
 			})
 			lastTextMessage = -1
-		case "function_call_output", "custom_tool_call_output":
+		case "function_call_output", "custom_tool_call_output", localBuiltinShellCallOutputType, localBuiltinApplyPatchCallOutputType:
 			callID := strings.TrimSpace(item.CallID())
 			if callID == "" {
 				return nil, domain.ErrUnsupportedShape
 			}
-			output, err := stringifyToolOutput(item.OutputRaw())
+			var output string
+			var err error
+			switch item.Type {
+			case localBuiltinShellCallOutputType, localBuiltinApplyPatchCallOutputType:
+				output, err = stringifyLocalBuiltinToolOutput(item)
+			default:
+				output, err = stringifyToolOutput(item.OutputRaw())
+			}
 			if err != nil {
 				return nil, err
 			}
@@ -451,26 +471,34 @@ func decodeChatToolDefinitions(raw json.RawMessage) ([]map[string]any, error) {
 
 	out := make([]map[string]any, 0, len(tools))
 	for _, tool := range tools {
-		if !strings.EqualFold(strings.TrimSpace(asString(tool["type"])), "function") {
+		switch strings.ToLower(strings.TrimSpace(asString(tool["type"]))) {
+		case "function":
+			name := strings.TrimSpace(asString(tool["name"]))
+			if name == "" {
+				return nil, domain.ErrUnsupportedShape
+			}
+			function := map[string]any{
+				"name": name,
+			}
+			if description := strings.TrimSpace(asString(tool["description"])); description != "" {
+				function["description"] = description
+			}
+			if parameters, ok := tool["parameters"]; ok {
+				function["parameters"] = parameters
+			}
+			out = append(out, map[string]any{
+				"type":     "function",
+				"function": function,
+			})
+		case localBuiltinShellToolType, localBuiltinApplyPatchToolType:
+			definition, _, err := buildLocalBuiltinToolDefinition(tool)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, definition)
+		default:
 			return nil, domain.ErrUnsupportedShape
 		}
-		name := strings.TrimSpace(asString(tool["name"]))
-		if name == "" {
-			return nil, domain.ErrUnsupportedShape
-		}
-		function := map[string]any{
-			"name": name,
-		}
-		if description := strings.TrimSpace(asString(tool["description"])); description != "" {
-			function["description"] = description
-		}
-		if parameters, ok := tool["parameters"]; ok {
-			function["parameters"] = parameters
-		}
-		out = append(out, map[string]any{
-			"type":     "function",
-			"function": function,
-		})
 	}
 	return out, nil
 }
@@ -485,23 +513,35 @@ func decodeChatToolChoice(raw json.RawMessage) (any, error) {
 	if err := json.Unmarshal(raw, &choice); err != nil {
 		return nil, domain.ErrUnsupportedShape
 	}
-	if !strings.EqualFold(strings.TrimSpace(asString(choice["type"])), "function") {
-		return nil, domain.ErrUnsupportedShape
-	}
-
-	name := strings.TrimSpace(asString(choice["name"]))
-	if name == "" {
-		if _, ok := choice["function"]; ok {
-			return choice, nil
+	switch strings.ToLower(strings.TrimSpace(asString(choice["type"]))) {
+	case "function":
+		name := strings.TrimSpace(asString(choice["name"]))
+		if name == "" {
+			if _, ok := choice["function"]; ok {
+				return choice, nil
+			}
+			return nil, domain.ErrUnsupportedShape
 		}
+		return map[string]any{
+			"type": "function",
+			"function": map[string]any{
+				"name": name,
+			},
+		}, nil
+	case localBuiltinShellToolType, localBuiltinApplyPatchToolType:
+		descriptor, ok := localBuiltinToolDescriptorForType(asString(choice["type"]))
+		if !ok {
+			return nil, domain.ErrUnsupportedShape
+		}
+		return map[string]any{
+			"type": "function",
+			"function": map[string]any{
+				"name": descriptor.SyntheticName,
+			},
+		}, nil
+	default:
 		return nil, domain.ErrUnsupportedShape
 	}
-	return map[string]any{
-		"type": "function",
-		"function": map[string]any{
-			"name": name,
-		},
-	}, nil
 }
 
 func parseLocalToolLoopChatCompletion(raw []byte, responseID string, model string, previousResponseID string, conversationID string, plan customToolTransportPlan) (domain.Response, error) {
@@ -544,6 +584,13 @@ func parseLocalToolLoopChatCompletion(raw []byte, responseID string, model strin
 			"arguments": normalizeJSONStringField(call.Function.Arguments),
 			"status":    "completed",
 		}
+		var builtinMeta *domain.ItemMeta
+		if rewritten, meta, changed, err := remapFunctionCallItemToLocalBuiltin(itemPayload); err != nil {
+			return domain.Response{}, err
+		} else if changed {
+			itemPayload = rewritten
+			builtinMeta = meta
+		}
 		if rewritten, changed := remapFunctionCallItemToCustom(itemPayload, plan.Bridge); changed {
 			itemPayload = rewritten
 		}
@@ -555,6 +602,9 @@ func parseLocalToolLoopChatCompletion(raw []byte, responseID string, model strin
 		item, err := domain.NewItem(rawItem)
 		if err != nil {
 			return domain.Response{}, err
+		}
+		if builtinMeta != nil {
+			item.Meta = builtinMeta
 		}
 		if err := validateLocalConstrainedToolCall(item, plan.Bridge, toolCalls); err != nil {
 			return domain.Response{}, err

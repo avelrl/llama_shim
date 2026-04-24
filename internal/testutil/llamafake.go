@@ -1323,6 +1323,10 @@ func fakeToolArguments(name string) string {
 		return `{"diceRollExpression":"2d4 + 1"}`
 	case "exec_command":
 		return `{"cmd":"cd /tmp/snake_test && go test ./game -v 2>&1","sandbox_permissions":"require_escalated","justification":"Need approval to run tests"}`
+	case "__llama_shim_builtin_shell":
+		return `{"action":{"commands":["cd /tmp/snake_test && go test ./game -v 2>&1"],"timeout_ms":30000,"max_output_length":12000}}`
+	case "__llama_shim_builtin_apply_patch":
+		return `{"operation":{"type":"update_file","path":"game/main.go","diff":"*** Begin Patch\n*** Update File: game/main.go\n@@\n-const answer = 1\n+const answer = 2\n*** End Patch\n"}}`
 	case "add":
 		return `{"a":1,"b":2}`
 	default:
@@ -1729,7 +1733,7 @@ func requestHasToolOutput(input any) bool {
 			continue
 		}
 		switch strings.TrimSpace(asString(item["type"])) {
-		case "function_call_output", "custom_tool_call_output":
+		case "function_call_output", "custom_tool_call_output", "shell_call_output", "apply_patch_call_output":
 			return true
 		}
 	}
@@ -1780,6 +1784,36 @@ func fakeToolOutputReply(input any) string {
 				if builder.Len() > 0 {
 					return builder.String()
 				}
+			}
+		case "shell_call_output":
+			if output, ok := item["output"].([]any); ok {
+				for _, rawEntry := range output {
+					entry, ok := rawEntry.(map[string]any)
+					if !ok {
+						continue
+					}
+					if stdout := strings.TrimSpace(asString(entry["stdout"])); stdout != "" {
+						return stdout
+					}
+					if stderr := strings.TrimSpace(asString(entry["stderr"])); stderr != "" {
+						return stderr
+					}
+					if outcome, ok := entry["outcome"].(map[string]any); ok {
+						if outcomeType := strings.TrimSpace(asString(outcome["type"])); outcomeType != "" {
+							return outcomeType
+						}
+					}
+				}
+			}
+			if output := strings.TrimSpace(asString(item["output"])); output != "" {
+				return output
+			}
+		case "apply_patch_call_output":
+			if output := strings.TrimSpace(asString(item["output"])); output != "" {
+				return output
+			}
+			if status := strings.TrimSpace(asString(item["status"])); status != "" {
+				return status
 			}
 		}
 	}

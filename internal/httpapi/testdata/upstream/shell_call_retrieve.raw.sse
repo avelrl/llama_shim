@@ -1,0 +1,8 @@
+{
+  "error": {
+    "message": "This response cannot be streamed because it was not created with background=true.",
+    "type": "invalid_request_error",
+    "param": "stream",
+    "code": "invalid_request_error"
+  }
+}

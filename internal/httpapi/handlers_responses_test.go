@@ -799,6 +799,66 @@ func TestParseLocalToolLoopChatCompletionUnwrapsNestedCustomToolInput(t *testing
 	require.Equal(t, `print("hello world")`, asString(response.Output[0].Map()["input"]))
 }
 
+func TestParseLocalToolLoopChatCompletionRemapsLocalBuiltinShellTool(t *testing.T) {
+	raw := []byte(`{
+		"choices": [{
+			"message": {
+				"tool_calls": [{
+					"id": "call_123",
+					"type": "function",
+					"function": {
+						"name": "__llama_shim_builtin_shell",
+						"arguments": "{\"action\":{\"commands\":[\"pwd\"],\"timeout_ms\":30000,\"max_output_length\":12000}}"
+					}
+				}]
+			}
+		}]
+	}`)
+
+	response, err := parseLocalToolLoopChatCompletion(raw, "resp_test", "test-model", "", "", customToolTransportPlan{})
+	require.NoError(t, err)
+	require.Len(t, response.Output, 1)
+	require.Equal(t, localBuiltinShellCallType, response.Output[0].Type)
+	action, ok := response.Output[0].Map()["action"].(map[string]any)
+	require.True(t, ok)
+	commands, ok := action["commands"].([]any)
+	require.True(t, ok)
+	require.Len(t, commands, 1)
+	require.Equal(t, "pwd", commands[0])
+	require.Equal(t, float64(30000), action["timeout_ms"])
+	require.Equal(t, float64(12000), action["max_output_length"])
+	require.NotNil(t, response.Output[0].Meta)
+	require.Equal(t, localBuiltinShellSyntheticName, response.Output[0].Meta.SyntheticName)
+}
+
+func TestParseLocalToolLoopChatCompletionRemapsLocalBuiltinApplyPatchTool(t *testing.T) {
+	raw := []byte(`{
+		"choices": [{
+			"message": {
+				"tool_calls": [{
+					"id": "call_456",
+					"type": "function",
+					"function": {
+						"name": "__llama_shim_builtin_apply_patch",
+						"arguments": "{\"operation\":{\"type\":\"update_file\",\"path\":\"main.go\",\"diff\":\"*** Begin Patch\\n*** Update File: main.go\\n@@\\n-old\\n+new\\n*** End Patch\\n\"}}"
+					}
+				}]
+			}
+		}]
+	}`)
+
+	response, err := parseLocalToolLoopChatCompletion(raw, "resp_test", "test-model", "", "", customToolTransportPlan{})
+	require.NoError(t, err)
+	require.Len(t, response.Output, 1)
+	require.Equal(t, localBuiltinApplyPatchCallType, response.Output[0].Type)
+	operation, ok := response.Output[0].Map()["operation"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "update_file", operation["type"])
+	require.Equal(t, "main.go", operation["path"])
+	require.NotNil(t, response.Output[0].Meta)
+	require.Equal(t, localBuiltinApplyPatchSyntheticName, response.Output[0].Meta.SyntheticName)
+}
+
 func TestRemapCustomToolsPayloadAppendsCodexCompatibilityHint(t *testing.T) {
 	rawFields := map[string]json.RawMessage{
 		"instructions": json.RawMessage(`"You are a coding agent running in the Codex CLI, a terminal-based coding assistant."`),

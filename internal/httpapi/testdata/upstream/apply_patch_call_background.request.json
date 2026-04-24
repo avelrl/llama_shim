@@ -1,0 +1,13 @@
+{
+  "model": "gpt-5.4",
+  "background": true,
+  "stream": true,
+  "store": true,
+  "tool_choice": "required",
+  "tools": [
+    {
+      "type": "apply_patch"
+    }
+  ],
+  "input": "The user has the following files:\n<BEGIN_FILES>\n===== game/main.go\npackage game\n\nconst answer = 1\n\nfunc Value() int {\n    return answer\n}\n<END_FILES>\n\nUse apply_patch to change answer from 1 to 2 in game/main.go. Emit patch operations only and do not explain the change yet."
+}

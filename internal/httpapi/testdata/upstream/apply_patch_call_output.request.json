@@ -1,0 +1,19 @@
+{
+  "model": "gpt-5.4",
+  "stream": true,
+  "store": true,
+  "previous_response_id": "${OPENAI_PREVIOUS_RESPONSE_ID}",
+  "tools": [
+    {
+      "type": "apply_patch"
+    }
+  ],
+  "input": [
+    {
+      "type": "apply_patch_call_output",
+      "call_id": "${OPENAI_APPLY_PATCH_CALL_ID}",
+      "status": "completed",
+      "output": "patched cleanly"
+    }
+  ]
+}

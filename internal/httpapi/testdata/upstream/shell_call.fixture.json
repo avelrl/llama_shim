@@ -1,0 +1,354 @@
+{
+  "captured_at": "2026-04-23T18:28:50Z",
+  "label": "shell_call",
+  "method": "POST",
+  "url": "https://api.openai.com/v1/responses",
+  "status_code": 200,
+  "content_type": "text/event-stream; charset=utf-8",
+  "request": {
+    "input": "Use the shell tool to run exactly one non-interactive command: pwd. Do not explain anything yet.",
+    "instructions": "Use the shell tool when the task requires command execution. Emit exactly one shell call when one command is enough, and wait for shell_call_output before answering in natural language.",
+    "model": "gpt-5.4",
+    "store": true,
+    "stream": true,
+    "tool_choice": "required",
+    "tools": [
+      {
+        "environment": {
+          "type": "local"
+        },
+        "type": "shell"
+      }
+    ]
+  },
+  "response_headers": {
+    "Alt-Svc": [
+      "h3=\":443\"; ma=86400"
+    ],
+    "Cf-Cache-Status": [
+      "DYNAMIC"
+    ],
+    "Content-Type": [
+      "text/event-stream; charset=utf-8"
+    ],
+    "Date": [
+      "Thu, 23 Apr 2026 18:28:50 GMT"
+    ],
+    "Openai-Processing-Ms": [
+      "476"
+    ],
+    "Openai-Version": [
+      "2020-10-01"
+    ],
+    "Server": [
+      "cloudflare"
+    ],
+    "X-Content-Type-Options": [
+      "nosniff"
+    ],
+    "X-Ratelimit-Limit-Requests": [
+      "500"
+    ],
+    "X-Ratelimit-Limit-Tokens": [
+      "500000"
+    ],
+    "X-Ratelimit-Remaining-Requests": [
+      "499"
+    ],
+    "X-Ratelimit-Remaining-Tokens": [
+      "499130"
+    ],
+    "X-Ratelimit-Reset-Requests": [
+      "120ms"
+    ],
+    "X-Ratelimit-Reset-Tokens": [
+      "104ms"
+    ]
+  },
+  "stream": {
+    "event_count": 8,
+    "done": false,
+    "events": [
+      {
+        "event": "response.created",
+        "data": "{\"type\":\"response.created\",\"response\":{\"id\":\"resp_0fba6f091975ad900069ea64e196d0819cab320b6da3450634\",\"object\":\"response\",\"created_at\":1776968929,\"status\":\"in_progress\",\"background\":false,\"completed_at\":null,\"error\":null,\"frequency_penalty\":0.0,\"incomplete_details\":null,\"instructions\":\"Use the shell tool when the task requires command execution. Emit exactly one shell call when one command is enough, and wait for shell_call_output before answering in natural language.\",\"max_output_tokens\":null,\"max_tool_calls\":null,\"model\":\"gpt-5.4-2026-03-05\",\"moderation\":null,\"output\":[],\"parallel_tool_calls\":true,\"presence_penalty\":0.0,\"previous_response_id\":null,\"prompt_cache_key\":null,\"prompt_cache_retention\":\"in_memory\",\"reasoning\":{\"effort\":\"none\",\"summary\":null},\"safety_identifier\":null,\"service_tier\":\"auto\",\"store\":true,\"temperature\":1.0,\"text\":{\"format\":{\"type\":\"text\"},\"verbosity\":\"medium\"},\"tool_choice\":\"required\",\"tools\":[{\"type\":\"shell\",\"environment\":{\"type\":\"local\"}}],\"top_logprobs\":0,\"top_p\":0.98,\"truncation\":\"disabled\",\"usage\":null,\"user\":null,\"metadata\":{}},\"sequence_number\":0}",
+        "json": {
+          "response": {
+            "background": false,
+            "completed_at": null,
+            "created_at": 1776968929,
+            "error": null,
+            "frequency_penalty": 0,
+            "id": "resp_0fba6f091975ad900069ea64e196d0819cab320b6da3450634",
+            "incomplete_details": null,
+            "instructions": "Use the shell tool when the task requires command execution. Emit exactly one shell call when one command is enough, and wait for shell_call_output before answering in natural language.",
+            "max_output_tokens": null,
+            "max_tool_calls": null,
+            "metadata": {},
+            "model": "gpt-5.4-2026-03-05",
+            "moderation": null,
+            "object": "response",
+            "output": [],
+            "parallel_tool_calls": true,
+            "presence_penalty": 0,
+            "previous_response_id": null,
+            "prompt_cache_key": null,
+            "prompt_cache_retention": "in_memory",
+            "reasoning": {
+              "effort": "none",
+              "summary": null
+            },
+            "safety_identifier": null,
+            "service_tier": "auto",
+            "status": "in_progress",
+            "store": true,
+            "temperature": 1,
+            "text": {
+              "format": {
+                "type": "text"
+              },
+              "verbosity": "medium"
+            },
+            "tool_choice": "required",
+            "tools": [
+              {
+                "environment": {
+                  "type": "local"
+                },
+                "type": "shell"
+              }
+            ],
+            "top_logprobs": 0,
+            "top_p": 0.98,
+            "truncation": "disabled",
+            "usage": null,
+            "user": null
+          },
+          "sequence_number": 0,
+          "type": "response.created"
+        }
+      },
+      {
+        "event": "response.in_progress",
+        "data": "{\"type\":\"response.in_progress\",\"response\":{\"id\":\"resp_0fba6f091975ad900069ea64e196d0819cab320b6da3450634\",\"object\":\"response\",\"created_at\":1776968929,\"status\":\"in_progress\",\"background\":false,\"completed_at\":null,\"error\":null,\"frequency_penalty\":0.0,\"incomplete_details\":null,\"instructions\":\"Use the shell tool when the task requires command execution. Emit exactly one shell call when one command is enough, and wait for shell_call_output before answering in natural language.\",\"max_output_tokens\":null,\"max_tool_calls\":null,\"model\":\"gpt-5.4-2026-03-05\",\"moderation\":null,\"output\":[],\"parallel_tool_calls\":true,\"presence_penalty\":0.0,\"previous_response_id\":null,\"prompt_cache_key\":null,\"prompt_cache_retention\":\"in_memory\",\"reasoning\":{\"effort\":\"none\",\"summary\":null},\"safety_identifier\":null,\"service_tier\":\"auto\",\"store\":true,\"temperature\":1.0,\"text\":{\"format\":{\"type\":\"text\"},\"verbosity\":\"medium\"},\"tool_choice\":\"required\",\"tools\":[{\"type\":\"shell\",\"environment\":{\"type\":\"local\"}}],\"top_logprobs\":0,\"top_p\":0.98,\"truncation\":\"disabled\",\"usage\":null,\"user\":null,\"metadata\":{}},\"sequence_number\":1}",
+        "json": {
+          "response": {
+            "background": false,
+            "completed_at": null,
+            "created_at": 1776968929,
+            "error": null,
+            "frequency_penalty": 0,
+            "id": "resp_0fba6f091975ad900069ea64e196d0819cab320b6da3450634",
+            "incomplete_details": null,
+            "instructions": "Use the shell tool when the task requires command execution. Emit exactly one shell call when one command is enough, and wait for shell_call_output before answering in natural language.",
+            "max_output_tokens": null,
+            "max_tool_calls": null,
+            "metadata": {},
+            "model": "gpt-5.4-2026-03-05",
+            "moderation": null,
+            "object": "response",
+            "output": [],
+            "parallel_tool_calls": true,
+            "presence_penalty": 0,
+            "previous_response_id": null,
+            "prompt_cache_key": null,
+            "prompt_cache_retention": "in_memory",
+            "reasoning": {
+              "effort": "none",
+              "summary": null
+            },
+            "safety_identifier": null,
+            "service_tier": "auto",
+            "status": "in_progress",
+            "store": true,
+            "temperature": 1,
+            "text": {
+              "format": {
+                "type": "text"
+              },
+              "verbosity": "medium"
+            },
+            "tool_choice": "required",
+            "tools": [
+              {
+                "environment": {
+                  "type": "local"
+                },
+                "type": "shell"
+              }
+            ],
+            "top_logprobs": 0,
+            "top_p": 0.98,
+            "truncation": "disabled",
+            "usage": null,
+            "user": null
+          },
+          "sequence_number": 1,
+          "type": "response.in_progress"
+        }
+      },
+      {
+        "event": "response.output_item.added",
+        "data": "{\"type\":\"response.output_item.added\",\"item\":{\"id\":\"sh_0fba6f091975ad900069ea64e261b8819cb2e234bbe42d411a\",\"type\":\"shell_call\",\"status\":\"in_progress\",\"action\":{\"commands\":[],\"max_output_length\":null,\"timeout_ms\":null},\"call_id\":\"call_cXm5M3T7GimyIo1R95qpLNqA\",\"environment\":null},\"output_index\":0,\"sequence_number\":2}",
+        "json": {
+          "item": {
+            "action": {
+              "commands": [],
+              "max_output_length": null,
+              "timeout_ms": null
+            },
+            "call_id": "call_cXm5M3T7GimyIo1R95qpLNqA",
+            "environment": null,
+            "id": "sh_0fba6f091975ad900069ea64e261b8819cb2e234bbe42d411a",
+            "status": "in_progress",
+            "type": "shell_call"
+          },
+          "output_index": 0,
+          "sequence_number": 2,
+          "type": "response.output_item.added"
+        }
+      },
+      {
+        "event": "response.shell_call_command.added",
+        "data": "{\"type\":\"response.shell_call_command.added\",\"command\":\"\",\"command_index\":0,\"output_index\":0,\"sequence_number\":3}",
+        "json": {
+          "command": "",
+          "command_index": 0,
+          "output_index": 0,
+          "sequence_number": 3,
+          "type": "response.shell_call_command.added"
+        }
+      },
+      {
+        "event": "response.shell_call_command.delta",
+        "data": "{\"type\":\"response.shell_call_command.delta\",\"command_index\":0,\"delta\":\"pwd\",\"obfuscation\":\"InaReLveW0qgf\",\"output_index\":0,\"sequence_number\":4}",
+        "json": {
+          "command_index": 0,
+          "delta": "pwd",
+          "obfuscation": "InaReLveW0qgf",
+          "output_index": 0,
+          "sequence_number": 4,
+          "type": "response.shell_call_command.delta"
+        }
+      },
+      {
+        "event": "response.shell_call_command.done",
+        "data": "{\"type\":\"response.shell_call_command.done\",\"command\":\"pwd\",\"command_index\":0,\"output_index\":0,\"sequence_number\":5}",
+        "json": {
+          "command": "pwd",
+          "command_index": 0,
+          "output_index": 0,
+          "sequence_number": 5,
+          "type": "response.shell_call_command.done"
+        }
+      },
+      {
+        "event": "response.output_item.done",
+        "data": "{\"type\":\"response.output_item.done\",\"item\":{\"id\":\"sh_0fba6f091975ad900069ea64e261b8819cb2e234bbe42d411a\",\"type\":\"shell_call\",\"status\":\"completed\",\"action\":{\"commands\":[\"pwd\"],\"max_output_length\":12000,\"timeout_ms\":10000},\"call_id\":\"call_cXm5M3T7GimyIo1R95qpLNqA\",\"environment\":null},\"output_index\":0,\"sequence_number\":6}",
+        "json": {
+          "item": {
+            "action": {
+              "commands": [
+                "pwd"
+              ],
+              "max_output_length": 12000,
+              "timeout_ms": 10000
+            },
+            "call_id": "call_cXm5M3T7GimyIo1R95qpLNqA",
+            "environment": null,
+            "id": "sh_0fba6f091975ad900069ea64e261b8819cb2e234bbe42d411a",
+            "status": "completed",
+            "type": "shell_call"
+          },
+          "output_index": 0,
+          "sequence_number": 6,
+          "type": "response.output_item.done"
+        }
+      },
+      {
+        "event": "response.completed",
+        "data": "{\"type\":\"response.completed\",\"response\":{\"id\":\"resp_0fba6f091975ad900069ea64e196d0819cab320b6da3450634\",\"object\":\"response\",\"created_at\":1776968929,\"status\":\"completed\",\"background\":false,\"completed_at\":1776968930,\"error\":null,\"frequency_penalty\":0.0,\"incomplete_details\":null,\"instructions\":\"Use the shell tool when the task requires command execution. Emit exactly one shell call when one command is enough, and wait for shell_call_output before answering in natural language.\",\"max_output_tokens\":null,\"max_tool_calls\":null,\"model\":\"gpt-5.4-2026-03-05\",\"moderation\":null,\"output\":[{\"id\":\"sh_0fba6f091975ad900069ea64e261b8819cb2e234bbe42d411a\",\"type\":\"shell_call\",\"status\":\"completed\",\"action\":{\"commands\":[\"pwd\"],\"max_output_length\":12000,\"timeout_ms\":10000},\"call_id\":\"call_cXm5M3T7GimyIo1R95qpLNqA\",\"environment\":null}],\"parallel_tool_calls\":true,\"presence_penalty\":0.0,\"previous_response_id\":null,\"prompt_cache_key\":null,\"prompt_cache_retention\":\"in_memory\",\"reasoning\":{\"effort\":\"none\",\"summary\":null},\"safety_identifier\":null,\"service_tier\":\"default\",\"store\":true,\"temperature\":1.0,\"text\":{\"format\":{\"type\":\"text\"},\"verbosity\":\"medium\"},\"tool_choice\":\"required\",\"tools\":[{\"type\":\"shell\",\"environment\":{\"type\":\"local\"}}],\"top_logprobs\":0,\"top_p\":0.98,\"truncation\":\"disabled\",\"usage\":{\"input_tokens\":302,\"input_tokens_details\":{\"cached_tokens\":0},\"output_tokens\":30,\"output_tokens_details\":{\"reasoning_tokens\":0},\"total_tokens\":332},\"user\":null,\"metadata\":{}},\"sequence_number\":7}",
+        "json": {
+          "response": {
+            "background": false,
+            "completed_at": 1776968930,
+            "created_at": 1776968929,
+            "error": null,
+            "frequency_penalty": 0,
+            "id": "resp_0fba6f091975ad900069ea64e196d0819cab320b6da3450634",
+            "incomplete_details": null,
+            "instructions": "Use the shell tool when the task requires command execution. Emit exactly one shell call when one command is enough, and wait for shell_call_output before answering in natural language.",
+            "max_output_tokens": null,
+            "max_tool_calls": null,
+            "metadata": {},
+            "model": "gpt-5.4-2026-03-05",
+            "moderation": null,
+            "object": "response",
+            "output": [
+              {
+                "action": {
+                  "commands": [
+                    "pwd"
+                  ],
+                  "max_output_length": 12000,
+                  "timeout_ms": 10000
+                },
+                "call_id": "call_cXm5M3T7GimyIo1R95qpLNqA",
+                "environment": null,
+                "id": "sh_0fba6f091975ad900069ea64e261b8819cb2e234bbe42d411a",
+                "status": "completed",
+                "type": "shell_call"
+              }
+            ],
+            "parallel_tool_calls": true,
+            "presence_penalty": 0,
+            "previous_response_id": null,
+            "prompt_cache_key": null,
+            "prompt_cache_retention": "in_memory",
+            "reasoning": {
+              "effort": "none",
+              "summary": null
+            },
+            "safety_identifier": null,
+            "service_tier": "default",
+            "status": "completed",
+            "store": true,
+            "temperature": 1,
+            "text": {
+              "format": {
+                "type": "text"
+              },
+              "verbosity": "medium"
+            },
+            "tool_choice": "required",
+            "tools": [
+              {
+                "environment": {
+                  "type": "local"
+                },
+                "type": "shell"
+              }
+            ],
+            "top_logprobs": 0,
+            "top_p": 0.98,
+            "truncation": "disabled",
+            "usage": {
+              "input_tokens": 302,
+              "input_tokens_details": {
+                "cached_tokens": 0
+              },
+              "output_tokens": 30,
+              "output_tokens_details": {
+                "reasoning_tokens": 0
+              },
+              "total_tokens": 332
+            },
+            "user": null
+          },
+          "sequence_number": 7,
+          "type": "response.completed"
+        }
+      }
+    ]
+  }
+}

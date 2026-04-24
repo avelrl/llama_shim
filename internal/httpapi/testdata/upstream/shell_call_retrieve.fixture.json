@@ -1,0 +1,39 @@
+{
+  "captured_at": "2026-04-23T18:33:22Z",
+  "label": "shell_call_retrieve",
+  "method": "GET",
+  "url": "https://api.openai.com/v1/responses/resp_0fba6f091975ad900069ea64e196d0819cab320b6da3450634?stream=true",
+  "status_code": 400,
+  "content_type": "application/json",
+  "response_headers": {
+    "Alt-Svc": [
+      "h3=\":443\"; ma=86400"
+    ],
+    "Cf-Cache-Status": [
+      "DYNAMIC"
+    ],
+    "Content-Type": [
+      "application/json"
+    ],
+    "Date": [
+      "Thu, 23 Apr 2026 18:33:23 GMT"
+    ],
+    "Openai-Processing-Ms": [
+      "42"
+    ],
+    "Openai-Version": [
+      "2020-10-01"
+    ],
+    "Server": [
+      "cloudflare"
+    ],
+    "X-Content-Type-Options": [
+      "nosniff"
+    ]
+  },
+  "stream": {
+    "event_count": 0,
+    "done": false,
+    "events": null
+  }
+}

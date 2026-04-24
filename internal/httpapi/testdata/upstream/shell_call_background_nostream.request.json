@@ -1,0 +1,26 @@
+{
+  "model": "gpt-5.4",
+  "background": true,
+  "store": true,
+  "tool_choice": "required",
+  "tools": [
+    {
+      "type": "shell",
+      "environment": {
+        "type": "local"
+      }
+    }
+  ],
+  "input": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Run exactly one non-interactive command: pwd. Return a shell_call and do not answer in natural language yet."
+        }
+      ]
+    }
+  ]
+}

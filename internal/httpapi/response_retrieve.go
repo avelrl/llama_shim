@@ -199,7 +199,7 @@ func writeResponseReplayAsSSE(w http.ResponseWriter, response domain.Response, a
 	}
 
 	sequence := 0
-	if err := forEachResponseReplayEvent(response, artifacts, includeObfuscation, func(event responseReplayEvent) error {
+	if err := forEachResponseReplayEvent(response, artifacts, includeObfuscation, retrieveResponseReplayProfile, func(event responseReplayEvent) error {
 		sequence++
 		if sequence <= startingAfter {
 			return nil
@@ -212,7 +212,7 @@ func writeResponseReplayAsSSE(w http.ResponseWriter, response domain.Response, a
 	return emitter.done()
 }
 
-func forEachResponseReplayEvent(response domain.Response, artifacts []domain.ResponseReplayArtifact, includeObfuscation bool, visit func(responseReplayEvent) error) error {
+func forEachResponseReplayEvent(response domain.Response, artifacts []domain.ResponseReplayArtifact, includeObfuscation bool, profile responseReplayProfile, visit func(responseReplayEvent) error) error {
 	status := strings.TrimSpace(response.Status)
 	if status == "" {
 		status = "completed"
@@ -240,7 +240,7 @@ func forEachResponseReplayEvent(response domain.Response, artifacts []domain.Res
 
 	outputItems := responseReplayOutputItems(response)
 	for outputIndex, outputItem := range outputItems {
-		if err := forEachResponseReplayOutputItemEvent(response.ID, outputIndex, outputItem, artifacts, includeObfuscation, visit); err != nil {
+		if err := forEachResponseReplayOutputItemEvent(response.ID, outputIndex, outputItem, artifacts, includeObfuscation, profile, visit); err != nil {
 			return err
 		}
 	}
@@ -292,7 +292,7 @@ func replayItemPayload(item domain.Item) map[string]any {
 	return payload
 }
 
-func forEachResponseReplayOutputItemEvent(responseID string, outputIndex int, item domain.Item, artifacts []domain.ResponseReplayArtifact, includeObfuscation bool, visit func(responseReplayEvent) error) error {
+func forEachResponseReplayOutputItemEvent(responseID string, outputIndex int, item domain.Item, artifacts []domain.ResponseReplayArtifact, includeObfuscation bool, profile responseReplayProfile, visit func(responseReplayEvent) error) error {
 	addedItem := replayItemPayload(item)
 	itemType := strings.TrimSpace(item.Type)
 	switch itemType {
@@ -321,6 +321,9 @@ func forEachResponseReplayOutputItemEvent(responseID string, outputIndex int, it
 		return err
 	}
 	itemID := strings.TrimSpace(asStringValue(addedItem["id"]))
+	if isLocalCodingToolStreamItemType(itemType) {
+		itemID = ensureCompletedToolItemID(addedItem, responseID, outputIndex)
+	}
 
 	switch itemType {
 	case "message":
@@ -492,6 +495,14 @@ func forEachResponseReplayOutputItemEvent(responseID string, outputIndex int, it
 			}
 		}
 	}
+	if err := forEachLocalCodingToolReplayEvent(replayItemPayload(item), itemID, outputIndex, includeObfuscation, profile, func(replaySpec hostedToolReplayEventSpec) error {
+		return visit(responseReplayEvent{
+			eventType: replaySpec.eventType,
+			payload:   replaySpec.payload,
+		})
+	}); err != nil {
+		return err
+	}
 
 	if err := forEachCodeInterpreterReplayEvent(replayItemPayload(item), itemID, outputIndex, includeObfuscation, func(replaySpec hostedToolReplayEventSpec) error {
 		return visit(responseReplayEvent{
@@ -517,7 +528,7 @@ func forEachResponseReplayOutputItemEvent(responseID string, outputIndex int, it
 	}
 
 	doneItemPayload := replayItemPayload(item)
-	if isToolStreamItemType(itemType) {
+	if isToolStreamItemType(itemType) || isLocalCodingToolStreamItemType(itemType) {
 		ensureCompletedToolItemID(doneItemPayload, responseID, outputIndex)
 	}
 

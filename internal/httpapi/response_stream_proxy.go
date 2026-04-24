@@ -483,7 +483,7 @@ func writeCompletedResponseAsSSE(ctx context.Context, logger *slog.Logger, w htt
 	}
 	eventCount := 0
 	lastEventType := ""
-	if err := forEachResponseReplayEvent(response, nil, includeObfuscation, func(event responseReplayEvent) error {
+	if err := forEachResponseReplayEvent(response, nil, includeObfuscation, completedResponseReplayProfile, func(event responseReplayEvent) error {
 		eventCount++
 		lastEventType = event.eventType
 		event.payload["sequence_number"] = eventCount
@@ -955,7 +955,7 @@ func (p *responseStreamEventProxy) normalizeCompletedToolCallEvent(eventType str
 		}
 
 		itemID := strings.TrimSpace(asString(item["id"]))
-		if isToolStreamItemType(itemType) {
+		if isToolStreamItemType(itemType) || isLocalCodingToolStreamItemType(itemType) {
 			itemID = ensureCompletedToolItemID(item, strings.TrimSpace(asString(responsePayload["id"])), outputIndex)
 		}
 		if itemID == "" {
@@ -1035,6 +1035,24 @@ func (p *responseStreamEventProxy) normalizeCompletedToolCallEvent(eventType str
 					})
 				}
 				p.toolDoneItemIDs[itemID] = struct{}{}
+			}
+		}
+		if isLocalCodingToolStreamItemType(itemType) {
+			if _, seen := p.toolDoneItemIDs[itemID]; !seen {
+				emitted := false
+				if err := forEachLocalCodingToolReplayEvent(item, itemID, outputIndex, false, completedResponseReplayProfile, func(replaySpec hostedToolReplayEventSpec) error {
+					emitted = true
+					before = append(before, pendingSSEEvent{
+						eventType: replaySpec.eventType,
+						payload:   replaySpec.payload,
+					})
+					return nil
+				}); err != nil {
+					return before, eventType, payload
+				}
+				if emitted {
+					p.toolDoneItemIDs[itemID] = struct{}{}
+				}
 			}
 		}
 		if strings.TrimSpace(asString(item["type"])) == "code_interpreter_call" {
@@ -1357,6 +1375,11 @@ func (p *responseStreamEventProxy) logEventSummary(eventType string, payload map
 		"response.output_item.added",
 		"response.output_text.done",
 		"response.output_item.done",
+		"response.shell_call_command.added",
+		"response.shell_call_command.delta",
+		"response.shell_call_command.done",
+		"response.apply_patch_call_operation_diff.delta",
+		"response.apply_patch_call_operation_diff.done",
 		"response.web_search_call.in_progress",
 		"response.web_search_call.searching",
 		"response.web_search_call.completed",
@@ -1407,6 +1430,33 @@ func (p *responseStreamEventProxy) logEventSummary(eventType string, payload map
 		if item, ok := payload["item"].(map[string]any); ok {
 			attrs = append(attrs, summarizeOutputItemForLog(item)...)
 		}
+	case "response.shell_call_command.added":
+		attrs = append(attrs,
+			"command_index", payload["command_index"],
+			"command_len", len(asString(payload["command"])),
+		)
+	case "response.shell_call_command.delta":
+		attrs = append(attrs,
+			"command_index", payload["command_index"],
+			"delta_len", len(asString(payload["delta"])),
+		)
+	case "response.shell_call_command.done":
+		attrs = append(attrs,
+			"command_index", payload["command_index"],
+			"command_len", len(asString(payload["command"])),
+			"command_preview", truncateForLog(asString(payload["command"]), 256),
+		)
+	case "response.apply_patch_call_operation_diff.delta":
+		attrs = append(attrs,
+			"item_id", strings.TrimSpace(asString(payload["item_id"])),
+			"delta_len", len(asString(payload["delta"])),
+		)
+	case "response.apply_patch_call_operation_diff.done":
+		attrs = append(attrs,
+			"item_id", strings.TrimSpace(asString(payload["item_id"])),
+			"diff_len", len(asString(payload["diff"])),
+			"diff_preview", truncateForLog(asString(payload["diff"]), 256),
+		)
 	case "response.web_search_call.in_progress",
 		"response.web_search_call.searching",
 		"response.web_search_call.completed":
@@ -1640,7 +1690,7 @@ func summarizeResponseEnvelopeForLog(responsePayload map[string]any) []any {
 				continue
 			}
 			switch strings.TrimSpace(asString(item["type"])) {
-			case "function_call", "custom_tool_call", "mcp_call", "mcp_tool_call", "mcp_approval_request", "mcp_list_tools", "tool_search_call", "tool_search_output", "web_search_call", "file_search_call", "code_interpreter_call", "computer_call", "image_generation_call":
+			case "function_call", "custom_tool_call", "mcp_call", "mcp_tool_call", localBuiltinShellCallType, localBuiltinApplyPatchCallType, "mcp_approval_request", "mcp_list_tools", "tool_search_call", "tool_search_output", "web_search_call", "file_search_call", "code_interpreter_call", "computer_call", "image_generation_call":
 				toolCount++
 			case "message":
 				messageCount++
@@ -1738,6 +1788,26 @@ func inProgressOutputItemSnapshot(item map[string]any) map[string]any {
 		cloned["arguments"] = ""
 	case "custom_tool_call":
 		cloned["input"] = ""
+	case localBuiltinShellCallType:
+		action, _ := cloned["action"].(map[string]any)
+		if action == nil {
+			action = map[string]any{}
+		} else {
+			action = cloneAnyMap(action)
+		}
+		action["commands"] = []any{}
+		action["max_output_length"] = nil
+		action["timeout_ms"] = nil
+		cloned["action"] = action
+	case localBuiltinApplyPatchCallType:
+		operation, _ := cloned["operation"].(map[string]any)
+		if operation == nil {
+			operation = map[string]any{}
+		} else {
+			operation = cloneAnyMap(operation)
+		}
+		operation["diff"] = ""
+		cloned["operation"] = operation
 	case "web_search_call":
 		delete(cloned, "action")
 	case "file_search_call":
@@ -1777,7 +1847,7 @@ func inProgressOutputItemSnapshot(item map[string]any) map[string]any {
 
 func isSyntheticReplayOutputItemType(itemType string) bool {
 	switch strings.TrimSpace(itemType) {
-	case "function_call", "custom_tool_call", "mcp_call", "mcp_tool_call", "mcp_approval_request", "mcp_list_tools", "tool_search_call", "tool_search_output", "web_search_call", "file_search_call", "code_interpreter_call", "computer_call", "image_generation_call":
+	case "function_call", "custom_tool_call", "mcp_call", "mcp_tool_call", localBuiltinShellCallType, localBuiltinApplyPatchCallType, "mcp_approval_request", "mcp_list_tools", "tool_search_call", "tool_search_output", "web_search_call", "file_search_call", "code_interpreter_call", "computer_call", "image_generation_call":
 		return true
 	default:
 		return false
@@ -1796,6 +1866,15 @@ func syntheticReplayAddedItemNeedsInProgressStatus(itemType string, item map[str
 func isToolStreamItemType(itemType string) bool {
 	switch strings.TrimSpace(itemType) {
 	case "function_call", "custom_tool_call", "mcp_call", "mcp_tool_call":
+		return true
+	default:
+		return false
+	}
+}
+
+func isLocalCodingToolStreamItemType(itemType string) bool {
+	switch strings.TrimSpace(itemType) {
+	case localBuiltinShellCallType, localBuiltinApplyPatchCallType:
 		return true
 	default:
 		return false

@@ -76,6 +76,11 @@ func deriveToolChoiceContract(raw json.RawMessage, upstreamChoice any) toolChoic
 			Mode: toolChoiceContractRequiredNamedFunction,
 			Name: name,
 		}
+	case localBuiltinShellToolType, localBuiltinApplyPatchToolType:
+		return toolChoiceContract{
+			Mode: toolChoiceContractRequiredNamedFunction,
+			Name: strings.ToLower(strings.TrimSpace(asString(choice["type"]))),
+		}
 	case "custom", "custom_tool":
 		name, namespace := customToolIdentity(choice)
 		if name == "" {
@@ -414,12 +419,32 @@ func stringifyResponsesInput(rawInput json.RawMessage) (string, error) {
 				header += " (" + callID + ")"
 			}
 			parts = append(parts, strings.TrimSpace(header)+":\n"+strings.TrimSpace(item.Input()))
+		case localBuiltinShellCallType, localBuiltinApplyPatchCallType:
+			header := "ASSISTANT " + strings.ToUpper(strings.ReplaceAll(item.Type, "_", " "))
+			if callID := strings.TrimSpace(item.CallID()); callID != "" {
+				header += " (" + callID + ")"
+			}
+			arguments, argsErr := localBuiltinToolArgumentsJSON(item)
+			if argsErr != nil {
+				continue
+			}
+			parts = append(parts, header+":\n"+strings.TrimSpace(normalizeJSONStringField(arguments)))
 		case "function_call_output", "custom_tool_call_output":
 			header := strings.ToUpper(strings.ReplaceAll(item.Type, "_", " "))
 			if callID := strings.TrimSpace(item.CallID()); callID != "" {
 				header += " (" + callID + ")"
 			}
 			parts = append(parts, header+":\n"+stringifyResponsesItemOutput(item.OutputRaw()))
+		case localBuiltinShellCallOutputType, localBuiltinApplyPatchCallOutputType:
+			header := strings.ToUpper(strings.ReplaceAll(item.Type, "_", " "))
+			if callID := strings.TrimSpace(item.CallID()); callID != "" {
+				header += " (" + callID + ")"
+			}
+			output, outputErr := stringifyLocalBuiltinToolOutput(item)
+			if outputErr != nil {
+				continue
+			}
+			parts = append(parts, header+":\n"+output)
 		default:
 			raw, marshalErr := item.MarshalJSON()
 			if marshalErr != nil {
@@ -505,7 +530,7 @@ func enforceToolChoiceContract(response domain.Response, contract toolChoiceCont
 		switch item.Type {
 		case "", "reasoning":
 			continue
-		case "function_call", "custom_tool_call":
+		case "function_call", "custom_tool_call", localBuiltinShellCallType, localBuiltinApplyPatchCallType:
 			if contractMatchesOutputItem(contract, item) {
 				return nil
 			}
@@ -533,9 +558,18 @@ func enforceToolChoiceContract(response domain.Response, contract toolChoiceCont
 func contractMatchesOutputItem(contract toolChoiceContract, item domain.Item) bool {
 	switch contract.Mode {
 	case toolChoiceContractRequiredAny:
-		return item.Type == "function_call" || item.Type == "custom_tool_call"
+		return item.Type == "function_call" || item.Type == "custom_tool_call" || isLocalBuiltinToolCallType(item.Type)
 	case toolChoiceContractRequiredNamedFunction:
-		return item.Type == "function_call" && strings.EqualFold(strings.TrimSpace(item.Name()), contract.Name)
+		switch item.Type {
+		case "function_call":
+			return strings.EqualFold(strings.TrimSpace(item.Name()), contract.Name)
+		case localBuiltinShellCallType:
+			return strings.EqualFold(contract.Name, localBuiltinShellToolType)
+		case localBuiltinApplyPatchCallType:
+			return strings.EqualFold(contract.Name, localBuiltinApplyPatchToolType)
+		default:
+			return false
+		}
 	case toolChoiceContractRequiredNamedCustom:
 		if item.Type != "custom_tool_call" || !strings.EqualFold(strings.TrimSpace(item.Name()), contract.Name) {
 			return false
@@ -568,6 +602,12 @@ func buildToolChoiceMissingMessage(contract toolChoiceContract) string {
 func buildToolChoiceMismatchMessage(contract toolChoiceContract, item domain.Item) string {
 	switch contract.Mode {
 	case toolChoiceContractRequiredNamedFunction:
+		if item.Type == localBuiltinShellCallType {
+			return fmt.Sprintf("backend returned shell call instead of the required function call %q", contract.Name)
+		}
+		if item.Type == localBuiltinApplyPatchCallType {
+			return fmt.Sprintf("backend returned apply_patch call instead of the required function call %q", contract.Name)
+		}
 		return fmt.Sprintf("backend returned function call %q instead of the required function call %q", strings.TrimSpace(item.Name()), contract.Name)
 	case toolChoiceContractRequiredNamedCustom:
 		got := strings.TrimSpace(item.Name())

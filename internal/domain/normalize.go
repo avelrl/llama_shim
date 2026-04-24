@@ -149,12 +149,41 @@ func normalizeItemObject(raw json.RawMessage, source, param string) (Item, error
 		if _, ok := payload["input"]; !ok {
 			return Item{}, NewValidationError(param, "custom_tool_call input is required")
 		}
+	case "shell_call":
+		if strings.TrimSpace(asString(payload["call_id"])) == "" {
+			return Item{}, NewValidationError(param, "shell_call call_id is required")
+		}
+		if _, ok := payload["action"]; !ok {
+			return Item{}, NewValidationError(param, "shell_call action is required")
+		}
+	case "apply_patch_call":
+		if strings.TrimSpace(asString(payload["call_id"])) == "" {
+			return Item{}, NewValidationError(param, "apply_patch_call call_id is required")
+		}
+		if _, ok := payload["operation"]; !ok {
+			return Item{}, NewValidationError(param, "apply_patch_call operation is required")
+		}
 	case "function_call_output", "custom_tool_call_output":
 		if strings.TrimSpace(asString(payload["call_id"])) == "" {
 			return Item{}, NewValidationError(param, itemType+" call_id is required")
 		}
 		if _, ok := payload["output"]; !ok {
 			return Item{}, NewValidationError(param, itemType+" output is required")
+		}
+	case "shell_call_output":
+		if strings.TrimSpace(asString(payload["call_id"])) == "" {
+			return Item{}, NewValidationError(param, "shell_call_output call_id is required")
+		}
+		if _, ok := payload["output"]; ok {
+			break
+		}
+		return Item{}, NewValidationError(param, "shell_call_output output is required")
+	case "apply_patch_call_output":
+		if strings.TrimSpace(asString(payload["call_id"])) == "" {
+			return Item{}, NewValidationError(param, "apply_patch_call_output call_id is required")
+		}
+		if strings.TrimSpace(asString(payload["status"])) == "" {
+			return Item{}, NewValidationError(param, "apply_patch_call_output status is required")
 		}
 	case "reasoning":
 	default:
@@ -182,6 +211,30 @@ func normalizeItemObject(raw json.RawMessage, source, param string) (Item, error
 		item.Meta = &ItemMeta{
 			Transport:     "passthrough",
 			CanonicalType: "custom_tool_call_output",
+		}
+	case "shell_call":
+		item.Meta = &ItemMeta{
+			Transport:     "local_builtin",
+			CanonicalType: "shell_call",
+			ToolName:      "shell",
+		}
+	case "shell_call_output":
+		item.Meta = &ItemMeta{
+			Transport:     "local_builtin",
+			CanonicalType: "shell_call_output",
+			ToolName:      "shell",
+		}
+	case "apply_patch_call":
+		item.Meta = &ItemMeta{
+			Transport:     "local_builtin",
+			CanonicalType: "apply_patch_call",
+			ToolName:      "apply_patch",
+		}
+	case "apply_patch_call_output":
+		item.Meta = &ItemMeta{
+			Transport:     "local_builtin",
+			CanonicalType: "apply_patch_call_output",
+			ToolName:      "apply_patch",
 		}
 	}
 	return item, nil
