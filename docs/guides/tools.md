@@ -20,15 +20,15 @@ configured to do so.
 
 ## Current Practical Tool Surface
 
-| Tool family | Practical V2 behavior |
+| Tool family | Practical status |
 | --- | --- |
 | `file_search` | local subset |
 | `web_search` / `web_search_preview` | local subset when configured |
 | `image_generation` | local subset when configured |
 | `computer` | local screenshot-first subset when configured |
 | `code_interpreter` | local dev-oriented subset when configured |
-| native local `shell` | V3 partial subset in shim-local mode |
-| native local `apply_patch` | V3 partial subset in shim-local mode |
+| native local `shell` | broad local subset in shim-local mode |
+| native local `apply_patch` | broad local subset in shim-local mode |
 | remote `mcp` with `server_url` | local subset |
 | `mcp` with `connector_id` | proxy-only compatibility bridge |
 | `tool_search` hosted/server subset | local subset |

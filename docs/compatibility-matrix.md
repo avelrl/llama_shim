@@ -140,7 +140,7 @@ proxy-first escape hatch for standalone hosted/native requests, while
 
 ## V2 Ship Status
 
-No remaining V2 ship blockers are currently tracked as of April 15, 2026.
+No remaining V2 ship blockers are currently tracked as of April 25, 2026.
 
 ## Staged For V3
 
