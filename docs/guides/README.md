@@ -36,12 +36,11 @@ Assumptions:
 ## Operations
 
 - [Operations](operations.md): running, probing, backing up, and maintaining the shim
-- [Runtime Hardening](runtime-hardening.md): safe reliability and latency work
-  that should not live in `v*` scope docs or public preflight behavior
 - [Dev Stack](devstack.md): deterministic local stack and smoke path
 
 ## Related Reference Docs
 
+- [Engineering Notes](../engineering/README.md)
 - [V2 Scope](../v2-scope.md)
 - [Compatibility Matrix](../compatibility-matrix.md)
 - [V3 Preflight](../v3-preflight.md)

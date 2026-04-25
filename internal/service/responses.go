@@ -22,7 +22,7 @@ type Generator interface {
 
 type ResponseStore interface {
 	GetResponse(ctx context.Context, id string) (domain.StoredResponse, error)
-	GetResponseLineage(ctx context.Context, id string) ([]domain.StoredResponse, error)
+	GetResponseLineage(ctx context.Context, id string, maxItems int) ([]domain.StoredResponse, error)
 	SaveResponse(ctx context.Context, response domain.StoredResponse) error
 	SaveResponseReplayArtifacts(ctx context.Context, responseID string, artifacts []domain.ResponseReplayArtifact) error
 	GetResponseReplayArtifacts(ctx context.Context, responseID string) ([]domain.ResponseReplayArtifact, error)
@@ -69,15 +69,34 @@ type ResponseService struct {
 	conversations ConversationStore
 	generator     Generator
 	compactor     compactor.Compactor
+	limits        ResponseServiceLimits
 }
 
+type ResponseServiceLimits struct {
+	StoredLineageMaxItems int
+}
+
+const defaultStoredResponseLineageMaxItems = 128
+
 func NewResponseService(responses ResponseStore, conversations ConversationStore, generator Generator) *ResponseService {
+	return NewResponseServiceWithLimits(responses, conversations, generator, ResponseServiceLimits{})
+}
+
+func NewResponseServiceWithLimits(responses ResponseStore, conversations ConversationStore, generator Generator, limits ResponseServiceLimits) *ResponseService {
 	return &ResponseService{
 		responses:     responses,
 		conversations: conversations,
 		generator:     generator,
 		compactor:     compactor.Heuristic{},
+		limits:        normalizeResponseServiceLimits(limits),
 	}
+}
+
+func normalizeResponseServiceLimits(limits ResponseServiceLimits) ResponseServiceLimits {
+	if limits.StoredLineageMaxItems <= 0 {
+		limits.StoredLineageMaxItems = defaultStoredResponseLineageMaxItems
+	}
+	return limits
 }
 
 func (s *ResponseService) SetCompactor(next compactor.Compactor) {
@@ -200,7 +219,7 @@ func (s *ResponseService) prepareResponseContext(ctx context.Context, input Crea
 
 	switch {
 	case input.PreviousResponseID != "":
-		lineage, err := s.responses.GetResponseLineage(ctx, input.PreviousResponseID)
+		lineage, err := s.responses.GetResponseLineage(ctx, input.PreviousResponseID, s.limits.StoredLineageMaxItems)
 		if err != nil {
 			return PreparedResponseContext{}, err
 		}
@@ -853,7 +872,7 @@ func buildStoredEffectiveInputItems(effectiveInput, normalizedInput []domain.Ite
 
 func (s *ResponseService) reconstructStoredInputItems(ctx context.Context, stored domain.StoredResponse) ([]domain.Item, error) {
 	if stored.PreviousResponseID != "" {
-		lineage, err := s.responses.GetResponseLineage(ctx, stored.PreviousResponseID)
+		lineage, err := s.responses.GetResponseLineage(ctx, stored.PreviousResponseID, s.limits.StoredLineageMaxItems)
 		if err == nil {
 			items := make([]domain.Item, 0, len(stored.NormalizedInputItems)+(len(lineage)*2))
 			for _, response := range lineage {

@@ -1036,6 +1036,12 @@ paths:
         response is not found in shim storage, the request is forwarded to
         upstream `/v1/responses/{id}/input_items`.
 
+        Shim-owned `previous_response_id` lineage reconstruction is bounded by
+        the internal `shim.limits.responses_stored_lineage_max_items` runtime
+        knob. The knob is not an OpenAI request parameter and does not add a
+        public 4xx limit; it only bounds how much local stored history the shim
+        reconstructs for context and legacy input-item snapshots.
+
         Supported shim-owned query surface for locally stored responses:
         - `after`, `limit`, and `order` paginate the locally stored normalized
           input-item snapshot

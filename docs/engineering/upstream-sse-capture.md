@@ -40,7 +40,7 @@ kept instead of being discarded.
 ## Suggested request shape for `web_search_call`
 
 The repository includes a ready-to-run example request at
-[web_search_call.request.json](../internal/httpapi/testdata/upstream/web_search_call.request.json).
+[web_search_call.request.json](../../internal/httpapi/testdata/upstream/web_search_call.request.json).
 
 Keep prompts short and deterministic. The goal is not to benchmark model
 behavior, but to capture the SSE event sequence and payload shape.
@@ -48,9 +48,9 @@ behavior, but to capture the SSE event sequence and payload shape.
 ## Suggested request shape for `file_search_call`
 
 The repository also includes ready-to-run templates at
-[file_search_call.request.json](../internal/httpapi/testdata/upstream/file_search_call.request.json)
+[file_search_call.request.json](../../internal/httpapi/testdata/upstream/file_search_call.request.json)
 and
-[file_search_call_include_results.request.json](../internal/httpapi/testdata/upstream/file_search_call_include_results.request.json).
+[file_search_call_include_results.request.json](../../internal/httpapi/testdata/upstream/file_search_call_include_results.request.json).
 
 They require `OPENAI_VECTOR_STORE_ID` to point at a vector store that already
 contains at least one indexed file.
@@ -58,9 +58,9 @@ contains at least one indexed file.
 ## Suggested request shape for `code_interpreter_call`
 
 The repository also includes ready-to-run templates at
-[code_interpreter_call.request.json](../internal/httpapi/testdata/upstream/code_interpreter_call.request.json)
+[code_interpreter_call.request.json](../../internal/httpapi/testdata/upstream/code_interpreter_call.request.json)
 and
-[code_interpreter_call_include_outputs.request.json](../internal/httpapi/testdata/upstream/code_interpreter_call_include_outputs.request.json).
+[code_interpreter_call_include_outputs.request.json](../../internal/httpapi/testdata/upstream/code_interpreter_call_include_outputs.request.json).
 
 These use `container: {"type":"auto"}`, so they do not require any setup
 beyond `OPENAI_API_KEY`. The prompt asks the model to use the "python tool"
@@ -70,9 +70,9 @@ the live upstream behavior for outputs retrieval before we claim parity.
 
 For docs-thin artifact and failure cases, the repository also includes:
 
-- [code_interpreter_call_generated_file.request.json](../internal/httpapi/testdata/upstream/code_interpreter_call_generated_file.request.json)
-- [code_interpreter_call_generated_image.request.json](../internal/httpapi/testdata/upstream/code_interpreter_call_generated_image.request.json)
-- [code_interpreter_call_tool_error.request.json](../internal/httpapi/testdata/upstream/code_interpreter_call_tool_error.request.json)
+- [code_interpreter_call_generated_file.request.json](../../internal/httpapi/testdata/upstream/code_interpreter_call_generated_file.request.json)
+- [code_interpreter_call_generated_image.request.json](../../internal/httpapi/testdata/upstream/code_interpreter_call_generated_image.request.json)
+- [code_interpreter_call_tool_error.request.json](../../internal/httpapi/testdata/upstream/code_interpreter_call_tool_error.request.json)
 
 These are intended to answer three specific parity questions that are not
 fully pinned down by the public docs alone:
@@ -114,9 +114,9 @@ go run ./cmd/upstream-sse-capture \
 ## Suggested request shape for `computer_call`
 
 The repository includes ready-to-run templates at
-[computer_call_screenshot.request.json](../internal/httpapi/testdata/upstream/computer_call_screenshot.request.json)
+[computer_call_screenshot.request.json](../../internal/httpapi/testdata/upstream/computer_call_screenshot.request.json)
 and
-[computer_call_output.request.json](../internal/httpapi/testdata/upstream/computer_call_output.request.json).
+[computer_call_output.request.json](../../internal/httpapi/testdata/upstream/computer_call_output.request.json).
 
 The first request is intended to capture the screenshot-first turn described in
 the official Computer use guide. The follow-up request replays a
@@ -169,16 +169,16 @@ producing a richer action trace.
 ## Suggested request shapes for `shell_call` and `apply_patch_call`
 
 The repository includes ready-to-run templates at
-[shell_call.request.json](../internal/httpapi/testdata/upstream/shell_call.request.json),
-[shell_call_background.request.json](../internal/httpapi/testdata/upstream/shell_call_background.request.json),
-[shell_call_output.request.json](../internal/httpapi/testdata/upstream/shell_call_output.request.json),
-[shell_call_output_background.request.json](../internal/httpapi/testdata/upstream/shell_call_output_background.request.json),
-[apply_patch_call.request.json](../internal/httpapi/testdata/upstream/apply_patch_call.request.json),
+[shell_call.request.json](../../internal/httpapi/testdata/upstream/shell_call.request.json),
+[shell_call_background.request.json](../../internal/httpapi/testdata/upstream/shell_call_background.request.json),
+[shell_call_output.request.json](../../internal/httpapi/testdata/upstream/shell_call_output.request.json),
+[shell_call_output_background.request.json](../../internal/httpapi/testdata/upstream/shell_call_output_background.request.json),
+[apply_patch_call.request.json](../../internal/httpapi/testdata/upstream/apply_patch_call.request.json),
 and
-[apply_patch_call_output.request.json](../internal/httpapi/testdata/upstream/apply_patch_call_output.request.json),
-[apply_patch_call_background.request.json](../internal/httpapi/testdata/upstream/apply_patch_call_background.request.json),
+[apply_patch_call_output.request.json](../../internal/httpapi/testdata/upstream/apply_patch_call_output.request.json),
+[apply_patch_call_background.request.json](../../internal/httpapi/testdata/upstream/apply_patch_call_background.request.json),
 and
-[apply_patch_call_output_background.request.json](../internal/httpapi/testdata/upstream/apply_patch_call_output_background.request.json).
+[apply_patch_call_output_background.request.json](../../internal/httpapi/testdata/upstream/apply_patch_call_output_background.request.json).
 
 These only require `OPENAI_API_KEY`.
 The first-turn captures ask the model to emit one local-tool call.
@@ -326,9 +326,9 @@ retrieve claims conservative until a successful background shell trace exists.
 
 Two useful follow-up diagnostics are now templated in the repository:
 
-- [shell_call_background_minimal.request.json](../internal/httpapi/testdata/upstream/shell_call_background_minimal.request.json)
+- [shell_call_background_minimal.request.json](../../internal/httpapi/testdata/upstream/shell_call_background_minimal.request.json)
   removes the extra `instructions` field and uses structured message input
-- [shell_call_background_nostream.request.json](../internal/httpapi/testdata/upstream/shell_call_background_nostream.request.json)
+- [shell_call_background_nostream.request.json](../../internal/httpapi/testdata/upstream/shell_call_background_nostream.request.json)
   removes `stream=true` to test whether the failure is tied to streaming or to
   background local shell more generally
 
@@ -409,9 +409,9 @@ background response id with `GET /v1/responses/{id}?stream=true`.
 ## Suggested request shape for `image_generation_call`
 
 The repository includes ready-to-run templates at
-[image_generation_call.request.json](../internal/httpapi/testdata/upstream/image_generation_call.request.json)
+[image_generation_call.request.json](../../internal/httpapi/testdata/upstream/image_generation_call.request.json)
 and
-[image_generation_call_partial_images.request.json](../internal/httpapi/testdata/upstream/image_generation_call_partial_images.request.json).
+[image_generation_call_partial_images.request.json](../../internal/httpapi/testdata/upstream/image_generation_call_partial_images.request.json).
 
 These only require `OPENAI_API_KEY`. The partial-images variant requests a
 single `response.image_generation_call.partial_image` event and uses

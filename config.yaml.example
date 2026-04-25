@@ -40,6 +40,10 @@ shim:
     # normalization, retry decisions, and optional local shadow storage.
     # Responses above this size are proxied unchanged and are not persisted locally.
     responses_proxy_buffer_bytes: 64MiB
+    # Maximum number of stored response ancestors reconstructed for shim-owned
+    # previous_response_id local context and legacy input_items fallback.
+    # This is an internal storage/context cap, not an OpenAI request parameter.
+    responses_stored_lineage_max_items: 128
     # Maximum grammar definition size accepted by shim-local constrained custom tools.
     custom_tool_grammar_definition_bytes: 16KiB
     # Maximum compiled regex/pattern size accepted after regex or Lark expansion.

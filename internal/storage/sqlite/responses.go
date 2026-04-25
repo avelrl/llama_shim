@@ -84,7 +84,7 @@ func (s *Store) GetResponse(ctx context.Context, id string) (domain.StoredRespon
 	return response, nil
 }
 
-func (s *Store) GetResponseLineage(ctx context.Context, id string) ([]domain.StoredResponse, error) {
+func (s *Store) GetResponseLineage(ctx context.Context, id string, maxItems int) ([]domain.StoredResponse, error) {
 	lineage := make([]domain.StoredResponse, 0, 8)
 	seen := map[string]struct{}{}
 	currentID := id
@@ -95,16 +95,37 @@ func (s *Store) GetResponseLineage(ctx context.Context, id string) ([]domain.Sto
 		}
 		seen[currentID] = struct{}{}
 
-		response, err := s.GetResponse(ctx, currentID)
+		response, err := s.getResponseLineageNode(ctx, currentID)
 		if err != nil {
 			return nil, err
 		}
 		lineage = append(lineage, response)
+		if maxItems > 0 && len(lineage) >= maxItems {
+			break
+		}
 		currentID = response.PreviousResponseID
 	}
 
 	slices.Reverse(lineage)
 	return lineage, nil
+}
+
+func (s *Store) getResponseLineageNode(ctx context.Context, id string) (domain.StoredResponse, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, model, normalized_input_items_json, effective_input_items_json, output_json, output_text,
+		       COALESCE(previous_response_id, ''), COALESCE(conversation_id, ''), store, created_at, completed_at
+		FROM responses
+		WHERE id = ?
+	`, id)
+
+	response, err := scanStoredResponseLineageNode(row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.StoredResponse{}, ErrNotFound
+		}
+		return domain.StoredResponse{}, err
+	}
+	return response, nil
 }
 
 func (s *Store) DeleteResponse(ctx context.Context, id string) error {
@@ -144,6 +165,49 @@ func scanStoredResponse(row interface{ Scan(...any) error }) (domain.StoredRespo
 		&response.CreatedAt,
 		&response.CompletedAt,
 		&response.ResponseJSON,
+	); err != nil {
+		return domain.StoredResponse{}, err
+	}
+	items, err := domain.UnmarshalStoredItems([]byte(inputJSON))
+	if err != nil {
+		return domain.StoredResponse{}, fmt.Errorf("unmarshal normalized input items: %w", err)
+	}
+	response.NormalizedInputItems = items
+	effectiveItems, err := domain.UnmarshalStoredItems([]byte(effectiveInputJSON))
+	if err != nil {
+		return domain.StoredResponse{}, fmt.Errorf("unmarshal effective input items: %w", err)
+	}
+	response.EffectiveInputItems = effectiveItems
+
+	outputItems, err := domain.UnmarshalStoredItems([]byte(outputJSON))
+	if err != nil {
+		return domain.StoredResponse{}, fmt.Errorf("unmarshal output: %w", err)
+	}
+	response.Output = outputItems
+	response.Store = storeInt != 0
+	return response, nil
+}
+
+func scanStoredResponseLineageNode(row interface{ Scan(...any) error }) (domain.StoredResponse, error) {
+	var (
+		response           domain.StoredResponse
+		inputJSON          string
+		effectiveInputJSON string
+		outputJSON         string
+		storeInt           int
+	)
+	if err := row.Scan(
+		&response.ID,
+		&response.Model,
+		&inputJSON,
+		&effectiveInputJSON,
+		&outputJSON,
+		&response.OutputText,
+		&response.PreviousResponseID,
+		&response.ConversationID,
+		&storeInt,
+		&response.CreatedAt,
+		&response.CompletedAt,
 	); err != nil {
 		return domain.StoredResponse{}, err
 	}

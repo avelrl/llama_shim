@@ -179,6 +179,34 @@ implemented, but they must stay conservative:
   preservation; config parsing/default/env tests; full runtime smokes before
   and after implementation; `go test ./...`; `make lint`; `git diff --check`
 
+### 2026-04-25: Responses stored lineage reconstruction
+
+- Status: implemented
+- Symptom: shim-owned `previous_response_id` context reconstruction and legacy
+  `/v1/responses/{id}/input_items` fallback could walk an unbounded stored
+  response chain, and each ancestor read used the full response row including
+  `response_json`
+- Invariant: the shim must not add a new public OpenAI request limit or reject
+  otherwise valid Responses requests just to bound local storage work
+- Change:
+  bound stored response lineage reconstruction with
+  `shim.limits.responses_stored_lineage_max_items` and read lineage ancestors
+  through a metadata/input/output query that does not select `request_json` or
+  `response_json`
+- Covered paths:
+  local create context from `previous_response_id`, legacy input-items
+  reconstruction for rows without an effective-input snapshot, and
+  `/v1/responses/{id}/input_items` pagination behavior for large local item
+  snapshots
+- Operator surface:
+  `shim.limits.responses_stored_lineage_max_items` is a shim-only storage and
+  context retention knob, not an OpenAI API request field
+- Verification used:
+  focused storage tests for bounded newest-ancestor lineage and lean row reads;
+  service tests proving configured limit propagation; integration tests for
+  large input-item pagination and bounded legacy lineage fallback; config
+  parsing/default/env tests; `go test ./...`; `make lint`; `git diff --check`
+
 ## Change Note Template
 
 When a hardening change lands, add a short note with:
@@ -206,8 +234,8 @@ Example:
 
 ## Related Docs
 
-- [Operations](operations.md)
-- [Responses](responses.md)
-- [Tools Overview](tools.md)
+- [Operations](../guides/operations.md)
+- [Responses](../guides/responses.md)
+- [Tools Overview](../guides/tools.md)
 - [Compatibility Matrix](../compatibility-matrix.md)
 - [V2 Scope](../v2-scope.md)

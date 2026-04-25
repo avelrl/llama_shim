@@ -91,7 +91,9 @@ func main() {
 			ExpectContinueTimeout: cfg.LlamaHTTPExpectContinueTimeout,
 		},
 	})
-	responseService := service.NewResponseService(store, store, llamaClient)
+	responseService := service.NewResponseServiceWithLimits(store, store, llamaClient, service.ResponseServiceLimits{
+		StoredLineageMaxItems: cfg.ResponsesStoredLineageMaxItems,
+	})
 	responseCompactor, err := compactor.New(compactor.Config{
 		Backend:         cfg.ResponsesCompactionBackend,
 		BaseURL:         cfg.ResponsesCompactionBaseURL,

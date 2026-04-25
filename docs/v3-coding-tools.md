@@ -170,7 +170,7 @@ The Qwen-compatible live run also confirmed two practical boundaries:
 
 This live smoke improves confidence in the shim-local subset, but it does not
 replace the conservative status decision in
-[PLAN_v3_coding_tools_status.md](PLAN_v3_coding_tools_status.md).
+[v3-coding-tools-status-decision.md](engineering/v3-coding-tools-status-decision.md).
 
 ## Codex CLI Smoke
 

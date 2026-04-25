@@ -75,6 +75,7 @@ type TestAppOptions struct {
 	RetrievalFileUploadMaxBytes           int64
 	ChatCompletionsShadowStoreMaxBytes    int64
 	ResponsesProxyBufferMaxBytes          int64
+	ResponsesStoredLineageMaxItems        int
 	RetrievalMaxConcurrentSearches        int
 	RetrievalMaxSearchQueries             int
 	RetrievalMaxGroundingChunks           int
@@ -128,7 +129,9 @@ func NewTestAppWithOptions(t *testing.T, options TestAppOptions) *TestApp {
 		StartupCalibrationBearerToken: options.LlamaStartupCalibrationBearerToken,
 		Observer:                      metrics,
 	})
-	responseService := service.NewResponseService(store, store, llamaClient)
+	responseService := service.NewResponseServiceWithLimits(store, store, llamaClient, service.ResponseServiceLimits{
+		StoredLineageMaxItems: options.ResponsesStoredLineageMaxItems,
+	})
 	conversationService := service.NewConversationService(store)
 	testCtx, cancel := context.WithCancel(context.Background())
 

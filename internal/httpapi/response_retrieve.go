@@ -97,20 +97,9 @@ func parseResponseInputItemsQuery(r *http.Request) (responseInputItemsQuery, err
 }
 
 func paginateResponseInputItems(items []domain.Item, query responseInputItemsQuery) (listConversationItemsResponse, error) {
-	ordered := append([]domain.Item(nil), items...)
-	if query.Order == domain.ConversationItemOrderDesc {
-		reverseResponseItems(ordered)
-	}
-
 	start := 0
 	if query.After != "" {
-		afterIndex := -1
-		for idx, item := range ordered {
-			if strings.TrimSpace(item.ID()) == query.After {
-				afterIndex = idx
-				break
-			}
-		}
+		afterIndex := responseInputItemsOrderedIndex(items, query.Order, query.After)
 		if afterIndex < 0 {
 			return listConversationItemsResponse{}, domain.NewValidationError("after", "after cursor was not found")
 		}
@@ -118,17 +107,17 @@ func paginateResponseInputItems(items []domain.Item, query responseInputItemsQue
 	}
 
 	end := start + query.Limit
-	if end > len(ordered) {
-		end = len(ordered)
+	if end > len(items) {
+		end = len(items)
 	}
-	pageItems := ordered[start:end]
 
 	response := listConversationItemsResponse{
 		Object:  "list",
-		Data:    make([]map[string]any, 0, len(pageItems)),
-		HasMore: end < len(ordered),
+		Data:    make([]map[string]any, 0, end-start),
+		HasMore: end < len(items),
 	}
-	for _, item := range pageItems {
+	for pos := start; pos < end; pos++ {
+		item := items[responseInputItemsOriginalIndex(len(items), query.Order, pos)]
 		response.Data = append(response.Data, item.Map())
 	}
 	if len(response.Data) > 0 {
@@ -140,10 +129,29 @@ func paginateResponseInputItems(items []domain.Item, query responseInputItemsQue
 	return response, nil
 }
 
-func reverseResponseItems(items []domain.Item) {
-	for left, right := 0, len(items)-1; left < right; left, right = left+1, right-1 {
-		items[left], items[right] = items[right], items[left]
+func responseInputItemsOrderedIndex(items []domain.Item, order string, id string) int {
+	switch order {
+	case domain.ConversationItemOrderDesc:
+		for idx := len(items) - 1; idx >= 0; idx-- {
+			if strings.TrimSpace(items[idx].ID()) == id {
+				return len(items) - 1 - idx
+			}
+		}
+	default:
+		for idx, item := range items {
+			if strings.TrimSpace(item.ID()) == id {
+				return idx
+			}
+		}
 	}
+	return -1
+}
+
+func responseInputItemsOriginalIndex(length int, order string, orderedIndex int) int {
+	if order == domain.ConversationItemOrderDesc {
+		return length - 1 - orderedIndex
+	}
+	return orderedIndex
 }
 
 func parseResponseIncludeValues(values url.Values) []string {

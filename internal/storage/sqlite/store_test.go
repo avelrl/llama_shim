@@ -163,13 +163,54 @@ func TestStoreSaveResponseRoundTripAndLineage(t *testing.T) {
 	require.Len(t, got.Output, 1)
 	require.Equal(t, "two", domain.MessageText(got.Output[0]))
 
-	lineage, err := store.GetResponseLineage(ctx, second.ID)
+	lineage, err := store.GetResponseLineage(ctx, second.ID, 0)
 	require.NoError(t, err)
 	require.Len(t, lineage, 2)
 	require.Equal(t, []string{first.ID, second.ID}, []string{lineage[0].ID, lineage[1].ID})
 
 	_, err = store.GetResponse(ctx, "resp_missing")
 	require.ErrorIs(t, err, sqlite.ErrNotFound)
+}
+
+func TestStoreGetResponseLineageLimitsAndSkipsStoredResponseJSON(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store := openTestStore(t, ctx)
+
+	previousID := ""
+	for idx := 1; idx <= 5; idx++ {
+		id := fmt.Sprintf("resp_lineage_%02d", idx)
+		responseJSON := fmt.Sprintf(`{"id":%q,"object":"response","payload":%q}`, id, strings.Repeat("x", 4096))
+		require.NoError(t, store.SaveResponse(ctx, domain.StoredResponse{
+			ID:                   id,
+			Model:                "test-model",
+			RequestJSON:          fmt.Sprintf(`{"input":"turn %d"}`, idx),
+			ResponseJSON:         responseJSON,
+			NormalizedInputItems: []domain.Item{domain.NewInputTextMessage("user", fmt.Sprintf("turn %d", idx))},
+			EffectiveInputItems:  []domain.Item{domain.NewInputTextMessage("user", fmt.Sprintf("turn %d", idx))},
+			Output:               []domain.Item{domain.NewOutputTextMessage(fmt.Sprintf("answer %d", idx))},
+			OutputText:           fmt.Sprintf("answer %d", idx),
+			PreviousResponseID:   previousID,
+			Store:                true,
+			CreatedAt:            fmt.Sprintf("2026-04-02T12:0%d:00Z", idx),
+			CompletedAt:          fmt.Sprintf("2026-04-02T12:0%d:00Z", idx),
+		}))
+		previousID = id
+	}
+
+	lineage, err := store.GetResponseLineage(ctx, previousID, 3)
+	require.NoError(t, err)
+	require.Len(t, lineage, 3)
+	require.Equal(t, []string{"resp_lineage_03", "resp_lineage_04", "resp_lineage_05"}, []string{lineage[0].ID, lineage[1].ID, lineage[2].ID})
+	require.Empty(t, lineage[0].RequestJSON)
+	require.Empty(t, lineage[0].ResponseJSON)
+	require.Equal(t, "turn 3", domain.MessageText(lineage[0].NormalizedInputItems[0]))
+	require.Equal(t, "answer 5", domain.MessageText(lineage[2].Output[0]))
+
+	full, err := store.GetResponse(ctx, previousID)
+	require.NoError(t, err)
+	require.NotEmpty(t, full.ResponseJSON)
 }
 
 func TestStoreSaveResponseReplayArtifactsRoundTripAndCascade(t *testing.T) {

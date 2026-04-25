@@ -126,7 +126,8 @@ V5 is not a general wishlist.
 Do not put these here:
 
 - shim-owned memory or plugin features; use [v4-scope.md](v4-scope.md)
-- local runtime safety or sandbox hardening; use V4 or runtime-hardening docs
+- local runtime safety or sandbox hardening; use V4 or
+  [runtime-hardening docs](engineering/runtime-hardening.md)
 - basic WebSocket support for the current shim-local Responses subset; use
   [v3-websocket.md](v3-websocket.md)
 - new backends that are useful but unrelated to exact hosted parity; use

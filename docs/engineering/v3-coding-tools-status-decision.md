@@ -4,7 +4,7 @@ Last updated: April 24, 2026.
 
 This document records the completed decision for moving native local `shell`
 and `apply_patch` out of a purely staged V3 label in
-[compatibility-matrix.md](compatibility-matrix.md).
+[compatibility-matrix.md](../compatibility-matrix.md).
 
 It is intentionally conservative. It does not change the V2 contract and does
 not claim hosted shell/container parity.
@@ -39,7 +39,7 @@ The matrix label was strengthened because all of these are true:
    - current `POST /v1/responses` and streaming API references
 2. Deterministic tests pass:
    - focused native coding-tools tests from
-     [TEST_v3_coding_tools.md](TEST_v3_coding_tools.md)
+     [v3-coding-tools-test-runbook.md](v3-coding-tools-test-runbook.md)
    - `go test ./...`
    - `make lint`
    - `git diff --check`
@@ -114,7 +114,7 @@ compatibility and for closing the shim-local coding-tools status as
 uses the native `shell` and `apply_patch` tool declarations end to end.
 
 Follow-up: WebSocket transport support is tracked in
-[v3-websocket.md](v3-websocket.md). The Codex CLI smoke no longer accepts
+[v3-websocket.md](../v3-websocket.md). The Codex CLI smoke no longer accepts
 WebSocket HTTP 405 as a successful path.
 
 ## Status Decision

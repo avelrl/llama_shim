@@ -2953,6 +2953,39 @@ func TestResponseInputItemsPagination(t *testing.T) {
 	require.Equal(t, *secondPage.FirstID, *secondPage.LastID)
 }
 
+func TestResponseInputItemsPaginationHandlesManyItems(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	input := make([]map[string]any, 0, 120)
+	for idx := 0; idx < 120; idx++ {
+		input = append(input, map[string]any{
+			"type": "message",
+			"role": "user",
+			"content": []map[string]any{
+				{"type": "input_text", "text": fmt.Sprintf("item %03d", idx)},
+			},
+		})
+	}
+	response := postResponse(t, app, map[string]any{
+		"model": "test-model",
+		"store": true,
+		"input": input,
+	})
+
+	firstPage := getResponseInputItemsWithQuery(t, app, response.ID, "?limit=100")
+	require.Len(t, firstPage.Data, 100)
+	require.True(t, firstPage.HasMore)
+	require.Equal(t, "item 119", firstContentText(firstPage.Data[0]))
+	require.Equal(t, "item 020", firstContentText(firstPage.Data[99]))
+	require.NotNil(t, firstPage.LastID)
+
+	secondPage := getResponseInputItemsWithQuery(t, app, response.ID, "?limit=100&after="+url.QueryEscape(*firstPage.LastID))
+	require.Len(t, secondPage.Data, 20)
+	require.False(t, secondPage.HasMore)
+	require.Equal(t, "item 019", firstContentText(secondPage.Data[0]))
+	require.Equal(t, "item 000", firstContentText(secondPage.Data[19]))
+}
+
 func TestResponseInputItemsRejectInvalidAfter(t *testing.T) {
 	app := testutil.NewTestApp(t)
 
@@ -2988,6 +3021,53 @@ func TestResponseInputItemsIncludeLineageContext(t *testing.T) {
 	require.Equal(t, "Remember: my code = 123. Reply OK", firstContentText(items.Data[0]))
 	require.Equal(t, "OK", firstContentText(items.Data[1]))
 	require.Equal(t, "What was my code? Reply with just the number.", firstContentText(items.Data[2]))
+}
+
+func TestResponseInputItemsLegacyLineageFallbackIsBounded(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		ResponsesStoredLineageMaxItems: 3,
+	})
+
+	ctx := context.Background()
+	previousID := ""
+	for idx := 1; idx <= 5; idx++ {
+		id := fmt.Sprintf("resp_legacy_lineage_%02d", idx)
+		require.NoError(t, app.Store.SaveResponse(ctx, domain.StoredResponse{
+			ID:                   id,
+			Model:                "test-model",
+			RequestJSON:          fmt.Sprintf(`{"input":"turn %d"}`, idx),
+			ResponseJSON:         fmt.Sprintf(`{"id":%q,"object":"response","payload":%q}`, id, strings.Repeat("x", 4096)),
+			NormalizedInputItems: []domain.Item{domain.NewInputTextMessage("user", fmt.Sprintf("turn %d", idx))},
+			EffectiveInputItems:  nil,
+			Output:               []domain.Item{domain.NewOutputTextMessage(fmt.Sprintf("answer %d", idx))},
+			OutputText:           fmt.Sprintf("answer %d", idx),
+			PreviousResponseID:   previousID,
+			Store:                true,
+			CreatedAt:            fmt.Sprintf("2026-04-02T12:0%d:00Z", idx),
+			CompletedAt:          fmt.Sprintf("2026-04-02T12:0%d:00Z", idx),
+		}))
+		previousID = id
+	}
+	require.NoError(t, app.Store.SaveResponse(ctx, domain.StoredResponse{
+		ID:                   "resp_legacy_current",
+		Model:                "test-model",
+		RequestJSON:          `{"input":"current"}`,
+		ResponseJSON:         `{"id":"resp_legacy_current","object":"response"}`,
+		NormalizedInputItems: []domain.Item{domain.NewInputTextMessage("user", "current")},
+		EffectiveInputItems:  nil,
+		PreviousResponseID:   previousID,
+		Store:                true,
+		CreatedAt:            "2026-04-02T12:06:00Z",
+		CompletedAt:          "2026-04-02T12:06:00Z",
+	}))
+
+	items := getResponseInputItemsWithQuery(t, app, "resp_legacy_current", "?order=asc&limit=100")
+	require.Len(t, items.Data, 7)
+	require.Equal(t, "turn 3", firstContentText(items.Data[0]))
+	require.Equal(t, "answer 3", firstContentText(items.Data[1]))
+	require.Equal(t, "turn 5", firstContentText(items.Data[4]))
+	require.Equal(t, "answer 5", firstContentText(items.Data[5]))
+	require.Equal(t, "current", firstContentText(items.Data[6]))
 }
 
 func TestResponsesPreviousResponseIDStoreFalseRemainsHiddenButUsable(t *testing.T) {

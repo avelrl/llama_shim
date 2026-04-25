@@ -15,7 +15,7 @@ slice for `/v1/responses`:
   - `GET /v1/responses/{id}/input_items`
 - fixture-backed stream replay for local coding-tool items
 
-Use this together with [v3-coding-tools.md](v3-coding-tools.md).
+Use this together with [v3-coding-tools.md](../v3-coding-tools.md).
 
 ## Last Live Manual Smoke
 
@@ -240,7 +240,7 @@ The task matrix smoke must verify four deterministic real-Codex tasks:
 - `plan_doc`: deterministic `PLAN.md`, final `PLANNED`
 - `multi_file`: two-file workspace update, final `MULTIFILE`
 
-The WebSocket follow-up is tracked in [v3-websocket.md](v3-websocket.md); the
+The WebSocket follow-up is tracked in [v3-websocket.md](../v3-websocket.md); the
 Codex smokes no longer accept WebSocket 405 as a successful path.
 
 ## 1. Deterministic Repo-Owned Checks
@@ -272,9 +272,9 @@ What this covers:
 
 Relevant tests:
 
-- [internal/httpapi/local_tool_loop_request_test.go](../internal/httpapi/local_tool_loop_request_test.go)
-- [internal/httpapi/handlers_responses_test.go](../internal/httpapi/handlers_responses_test.go)
-- [internal/httpapi/integration_test.go](../internal/httpapi/integration_test.go)
+- [internal/httpapi/local_tool_loop_request_test.go](../../internal/httpapi/local_tool_loop_request_test.go)
+- [internal/httpapi/handlers_responses_test.go](../../internal/httpapi/handlers_responses_test.go)
+- [internal/httpapi/integration_test.go](../../internal/httpapi/integration_test.go)
 
 ### Full Regression Bar
 

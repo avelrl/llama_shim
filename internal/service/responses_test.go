@@ -173,6 +173,37 @@ func TestPrepareCreateContextTrimsHistoryBeforeLatestCompaction(t *testing.T) {
 	require.NotContains(t, domain.MessageText(prepared.ContextItems[0]), "Very old detail.")
 }
 
+func TestPrepareCreateContextUsesConfiguredStoredLineageLimit(t *testing.T) {
+	t.Parallel()
+
+	responseStore := &recordingResponseStore{
+		lineages: map[string][]domain.StoredResponse{
+			"resp_prev": {
+				{
+					ID:                   "resp_prev",
+					Model:                "test-model",
+					NormalizedInputItems: []domain.Item{domain.NewInputTextMessage("user", "Stored question.")},
+					Output:               []domain.Item{domain.NewOutputTextMessage("Stored answer.")},
+					OutputText:           "Stored answer.",
+					Store:                true,
+				},
+			},
+		},
+	}
+	svc := service.NewResponseServiceWithLimits(responseStore, noopConversationStore{}, noopGenerator{}, service.ResponseServiceLimits{
+		StoredLineageMaxItems: 7,
+	})
+
+	_, err := svc.PrepareCreateContext(context.Background(), service.CreateResponseInput{
+		Model:              "test-model",
+		Input:              json.RawMessage(`"Newest question?"`),
+		PreviousResponseID: "resp_prev",
+		RequestJSON:        `{"model":"test-model","previous_response_id":"resp_prev","input":"Newest question?"}`,
+	})
+	require.NoError(t, err)
+	require.Equal(t, []int{7}, responseStore.lineageMaxItems)
+}
+
 func TestPrepareCreateContextTrimsConversationHistoryBeforeLatestCompaction(t *testing.T) {
 	t.Parallel()
 
@@ -423,7 +454,7 @@ func (noopResponseStore) GetResponse(context.Context, string) (domain.StoredResp
 	return domain.StoredResponse{}, nil
 }
 
-func (noopResponseStore) GetResponseLineage(context.Context, string) ([]domain.StoredResponse, error) {
+func (noopResponseStore) GetResponseLineage(context.Context, string, int) ([]domain.StoredResponse, error) {
 	return nil, nil
 }
 
@@ -537,10 +568,50 @@ func TestSaveExternalResponsePersistsHiddenFollowUpWhenStoreFalse(t *testing.T) 
 	require.Equal(t, "42", saved.OutputText)
 }
 
+func TestGetInputItemsUsesConfiguredStoredLineageLimitForLegacyRows(t *testing.T) {
+	t.Parallel()
+
+	responseStore := &recordingResponseStore{
+		responses: map[string]domain.StoredResponse{
+			"resp_current": {
+				ID:                   "resp_current",
+				Model:                "test-model",
+				NormalizedInputItems: []domain.Item{domain.NewInputTextMessage("user", "current")},
+				PreviousResponseID:   "resp_prev",
+				Store:                true,
+			},
+		},
+		lineages: map[string][]domain.StoredResponse{
+			"resp_prev": {
+				{
+					ID:                   "resp_prev",
+					Model:                "test-model",
+					NormalizedInputItems: []domain.Item{domain.NewInputTextMessage("user", "previous")},
+					Output:               []domain.Item{domain.NewOutputTextMessage("answer")},
+					OutputText:           "answer",
+					Store:                true,
+				},
+			},
+		},
+	}
+	svc := service.NewResponseServiceWithLimits(responseStore, noopConversationStore{}, noopGenerator{}, service.ResponseServiceLimits{
+		StoredLineageMaxItems: 5,
+	})
+
+	items, err := svc.GetInputItems(context.Background(), "resp_current")
+	require.NoError(t, err)
+	require.Equal(t, []int{5}, responseStore.lineageMaxItems)
+	require.Len(t, items, 3)
+	require.Equal(t, "previous", domain.MessageText(items[0]))
+	require.Equal(t, "answer", domain.MessageText(items[1]))
+	require.Equal(t, "current", domain.MessageText(items[2]))
+}
+
 type recordingResponseStore struct {
-	saved     []domain.StoredResponse
-	lineages  map[string][]domain.StoredResponse
-	responses map[string]domain.StoredResponse
+	saved           []domain.StoredResponse
+	lineages        map[string][]domain.StoredResponse
+	responses       map[string]domain.StoredResponse
+	lineageMaxItems []int
 }
 
 func (s *recordingResponseStore) GetResponse(_ context.Context, id string) (domain.StoredResponse, error) {
@@ -552,7 +623,8 @@ func (s *recordingResponseStore) GetResponse(_ context.Context, id string) (doma
 	return domain.StoredResponse{}, nil
 }
 
-func (s *recordingResponseStore) GetResponseLineage(_ context.Context, id string) ([]domain.StoredResponse, error) {
+func (s *recordingResponseStore) GetResponseLineage(_ context.Context, id string, maxItems int) ([]domain.StoredResponse, error) {
+	s.lineageMaxItems = append(s.lineageMaxItems, maxItems)
 	if s.lineages != nil {
 		if lineage, ok := s.lineages[id]; ok {
 			return append([]domain.StoredResponse(nil), lineage...), nil
