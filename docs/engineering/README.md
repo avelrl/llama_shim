@@ -6,6 +6,9 @@ not practical user guides and are not release scope documents.
 - [Runtime Hardening](runtime-hardening.md): storage, replay, pagination, and
   runtime resource-bound work that must not silently change the public
   OpenAI-compatible contract.
+- [OpenAI API Choreography Atlas](openai-api-choreography-atlas.md):
+  diagram-first map of Responses, state, SSE, WebSocket, tools, Codex, and the
+  current shim-local boundaries.
 - [Upstream SSE Capture](upstream-sse-capture.md): procedure for capturing
   real upstream Responses traces and sanitized fixtures for parity work.
 - [V3 Coding Tools Test Runbook](v3-coding-tools-test-runbook.md): manual and

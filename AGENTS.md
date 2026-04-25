@@ -29,6 +29,17 @@ checkout.
 
 Do not close a compatibility task from memory alone.
 
+## Choreography diagram upkeep
+
+Keep [`docs/engineering/openai-api-choreography-atlas.md`](docs/engineering/openai-api-choreography-atlas.md)
+aligned with implementation and compatibility boundaries. If a change affects
+Responses state flow, SSE event flow, retrieve-stream replay, WebSocket
+transport, tool routing, native coding tools, Codex CLI behavior, compaction,
+or routing-mode semantics, update the relevant Mermaid diagram and nearby text
+in the same change. Before marking the task done, re-check that the atlas does
+not overclaim beyond [`docs/compatibility-matrix.md`](docs/compatibility-matrix.md)
+and the official-docs/fixture evidence used for the change.
+
 ## What must be checked
 
 For any OpenAI-surface task, verify all of these that apply:

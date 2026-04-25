@@ -41,6 +41,7 @@ Assumptions:
 ## Related Reference Docs
 
 - [Engineering Notes](../engineering/README.md)
+- [OpenAI API Choreography Atlas](../engineering/openai-api-choreography-atlas.md)
 - [V2 Scope](../v2-scope.md)
 - [Compatibility Matrix](../compatibility-matrix.md)
 - [V3 Preflight](../v3-preflight.md)
