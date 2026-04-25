@@ -475,20 +475,23 @@ func normalizeConstrainedDecodingBackend(value string) string {
 }
 
 func (h *responseHandler) constrainedCustomToolRuntimeFor(descriptor customToolDescriptor) constrainedCustomToolRuntime {
-	if h.constrainedDecodingBackend == config.ResponsesConstrainedDecodingBackendVLLM && descriptor.Constraint != nil {
-		switch {
-		case descriptor.Constraint.Syntax == "regex":
-			return vllmRegexConstrainedCustomToolRuntime{
-				createChatCompletionText: h.proxy.client.CreateChatCompletionText,
-			}
-		case descriptor.Constraint.Syntax == "lark" && strings.TrimSpace(descriptor.Constraint.VLLMGrammar) != "":
-			return vllmGrammarConstrainedCustomToolRuntime{
-				createChatCompletionText: h.proxy.client.CreateChatCompletionText,
-			}
-		}
-	}
-	return localConstrainedCustomToolRuntime{
+	deps := constrainedCustomToolRuntimeDeps{
 		createChatCompletionText: h.proxy.client.CreateChatCompletionText,
+	}
+	fallback := localConstrainedCustomToolRuntime{
+		createChatCompletionText: deps.createChatCompletionText,
+	}
+	adapter, ok := defaultConstrainedCustomToolBackendRegistry().Adapter(h.constrainedDecodingBackend)
+	if !ok {
+		return fallback
+	}
+	runtime, ok := adapter.RuntimeFor(deps, descriptor)
+	if !ok {
+		return fallback
+	}
+	return fallbackConstrainedCustomToolRuntime{
+		primary:  runtime,
+		fallback: fallback,
 	}
 }
 
@@ -662,37 +665,11 @@ func buildVLLMRegexConstrainedCustomToolRuntimeItems(items []domain.Item, curren
 }
 
 func buildVLLMRegexConstrainedCustomToolRuntimeOptions(options map[string]json.RawMessage, descriptor customToolDescriptor) (map[string]json.RawMessage, error) {
-	cloned := cloneGenerationOptions(options)
-	delete(cloned, "response_format")
-	delete(cloned, "json_schema")
-	delete(cloned, "structured_outputs")
-
-	structuredOutputs := map[string]string{
-		"regex": descriptor.Constraint.Anchored,
-	}
-	rawStructuredOutputs, err := json.Marshal(structuredOutputs)
-	if err != nil {
-		return nil, err
-	}
-	cloned["structured_outputs"] = rawStructuredOutputs
-	return cloned, nil
+	return buildVLLMStructuredOutputsOptions(options, "regex", descriptor.Constraint.Anchored)
 }
 
 func buildVLLMGrammarConstrainedCustomToolRuntimeOptions(options map[string]json.RawMessage, descriptor customToolDescriptor) (map[string]json.RawMessage, error) {
-	cloned := cloneGenerationOptions(options)
-	delete(cloned, "response_format")
-	delete(cloned, "json_schema")
-	delete(cloned, "structured_outputs")
-
-	structuredOutputs := map[string]string{
-		"grammar": descriptor.Constraint.VLLMGrammar,
-	}
-	rawStructuredOutputs, err := json.Marshal(structuredOutputs)
-	if err != nil {
-		return nil, err
-	}
-	cloned["structured_outputs"] = rawStructuredOutputs
-	return cloned, nil
+	return buildVLLMStructuredOutputsOptions(options, "grammar", descriptor.Constraint.VLLMGrammar)
 }
 
 func buildLocalConstrainedCustomToolRuntimeChatCompletionBody(model string, items []domain.Item, options map[string]json.RawMessage) ([]byte, error) {

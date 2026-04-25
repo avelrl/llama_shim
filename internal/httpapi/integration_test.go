@@ -570,7 +570,7 @@ func TestCapabilitiesEndpointReportsVLLMConstrainedRuntime(t *testing.T) {
 	require.Equal(t, "vllm", asStringAny(constrained["native_backend"]))
 	require.ElementsMatch(t, []any{"grammar.regex", "grammar.lark_subset"}, constrained["native_formats"].([]any))
 	require.Equal(t, "native_regex_or_grammar_plus_local_guardrail", asStringAny(constrained["validation"]))
-	require.Equal(t, "local_retry_when_native_invalid_or_timeout", asStringAny(constrained["repair"]))
+	require.Equal(t, "shim_validate_repair_after_native_invalid_timeout_or_upstream_error", asStringAny(constrained["repair"]))
 
 	constrainedRouting := constrained["routing"].(map[string]any)
 	require.Equal(t, "grammar_native_or_regex_native_or_shim_validate_repair_or_upstream_fallback", asStringAny(constrainedRouting["prefer_local"]))
@@ -4854,6 +4854,214 @@ func TestResponsesPreferLocalUsesVLLMGrammarNativeRuntimeForLarkCustomTool(t *te
 	require.Equal(t, "custom_tool_call", item["type"])
 	require.Equal(t, "math_exp", item["name"])
 	require.Equal(t, "4 + 4", item["input"])
+}
+
+func TestResponsesPreferLocalFallsBackToShimValidateRepairWhenVLLMNativeReturnsInvalidOutput(t *testing.T) {
+	var (
+		mu       sync.Mutex
+		requests []map[string]any
+	)
+	llamaServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, http.MethodPost, r.Method)
+		require.Equal(t, "/v1/chat/completions", r.URL.Path)
+
+		var request map[string]any
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
+		mu.Lock()
+		requests = append(requests, request)
+		call := len(requests)
+		mu.Unlock()
+
+		switch call {
+		case 1:
+			require.Contains(t, request, "structured_outputs")
+			require.NotContains(t, request, "response_format")
+			writeChatCompletionText(t, w, "test-model", "not valid")
+		case 2:
+			require.NotContains(t, request, "structured_outputs")
+			require.Contains(t, request, "response_format")
+			require.Contains(t, request, "json_schema")
+			writeChatCompletionText(t, w, "test-model", `{"input":"hello 42"}`)
+		default:
+			t.Fatalf("unexpected chat completion fallback call %d", call)
+		}
+	}))
+	defer llamaServer.Close()
+
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		LlamaBaseURL:                        llamaServer.URL,
+		CustomToolsMode:                     "auto",
+		ResponsesConstrainedDecodingBackend: config.ResponsesConstrainedDecodingBackendVLLM,
+	})
+
+	status, body := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model":       "test-model",
+		"tool_choice": map[string]any{"type": "custom", "name": "exact_text"},
+		"input":       "Use regex tool",
+		"tools": []map[string]any{
+			{
+				"type": "custom",
+				"name": "exact_text",
+				"format": map[string]any{
+					"type":       "grammar",
+					"syntax":     "regex",
+					"definition": `hello [0-9]+`,
+				},
+			},
+		},
+	})
+
+	require.Equal(t, http.StatusOK, status)
+	output, ok := body["output"].([]any)
+	require.True(t, ok)
+	require.Len(t, output, 1)
+	item, ok := output[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "custom_tool_call", item["type"])
+	require.Equal(t, "exact_text", item["name"])
+	require.Equal(t, "hello 42", item["input"])
+	require.Len(t, requests, 2)
+}
+
+func TestResponsesLocalOnlyFallsBackToShimValidateRepairWhenVLLMNativeReturnsUpstreamError(t *testing.T) {
+	var calls atomic.Int32
+	llamaServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, http.MethodPost, r.Method)
+		require.Equal(t, "/v1/chat/completions", r.URL.Path)
+
+		var request map[string]any
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
+		switch calls.Add(1) {
+		case 1:
+			require.Contains(t, request, "structured_outputs")
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+				"error": map[string]any{
+					"type":    "invalid_request_error",
+					"message": "structured_outputs.grammar is not supported",
+				},
+			}))
+		case 2:
+			require.NotContains(t, request, "structured_outputs")
+			require.Contains(t, request, "response_format")
+			writeChatCompletionText(t, w, "test-model", `{"input":"4 + 4"}`)
+		default:
+			t.Fatalf("unexpected chat completion fallback call")
+		}
+	}))
+	defer llamaServer.Close()
+
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		LlamaBaseURL:                        llamaServer.URL,
+		ResponsesMode:                       config.ResponsesModeLocalOnly,
+		CustomToolsMode:                     "auto",
+		ResponsesConstrainedDecodingBackend: config.ResponsesConstrainedDecodingBackendVLLM,
+	})
+
+	status, body := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model":       "test-model",
+		"tool_choice": map[string]any{"type": "custom", "name": "math_exp"},
+		"input":       "Use grammar tool",
+		"tools": []map[string]any{
+			{
+				"type": "custom",
+				"name": "math_exp",
+				"format": map[string]any{
+					"type":       "grammar",
+					"syntax":     "lark",
+					"definition": "start: expr\nexpr: term (SP ADD SP term)* -> add\n| term\nterm: INT\nSP: \" \"\nADD: \"+\"\n%import common.INT",
+				},
+			},
+		},
+	})
+
+	require.Equal(t, http.StatusOK, status)
+	output, ok := body["output"].([]any)
+	require.True(t, ok)
+	require.Len(t, output, 1)
+	item, ok := output[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "custom_tool_call", item["type"])
+	require.Equal(t, "math_exp", item["name"])
+	require.Equal(t, "4 + 4", item["input"])
+	require.Equal(t, int32(2), calls.Load())
+}
+
+func TestResponsesPreferUpstreamProxyFirstDoesNotUseConstrainedAdapter(t *testing.T) {
+	var paths []string
+	llamaServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		require.Equal(t, http.MethodPost, r.Method)
+		require.Equal(t, "/v1/responses", r.URL.Path)
+
+		var request map[string]any
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
+		createdAt := time.Now().Unix()
+		w.Header().Set("Content-Type", "application/json")
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"id":                 "resp_upstream_constrained",
+			"object":             "response",
+			"created_at":         createdAt,
+			"status":             "completed",
+			"completed_at":       createdAt,
+			"error":              nil,
+			"incomplete_details": nil,
+			"model":              "test-model",
+			"output": []map[string]any{
+				{
+					"id":      "item_upstream_custom",
+					"type":    "custom_tool_call",
+					"status":  "completed",
+					"call_id": "call_upstream_custom",
+					"name":    "exact_text",
+					"input":   "upstream handled",
+				},
+			},
+			"output_text":         "",
+			"parallel_tool_calls": true,
+			"tool_choice":         request["tool_choice"],
+			"tools":               request["tools"],
+			"store":               true,
+			"metadata":            map[string]any{},
+			"text":                map[string]any{"format": map[string]any{"type": "text"}},
+		}))
+	}))
+	defer llamaServer.Close()
+
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		LlamaBaseURL:                        llamaServer.URL,
+		ResponsesMode:                       config.ResponsesModePreferUpstream,
+		CustomToolsMode:                     "auto",
+		ResponsesConstrainedDecodingBackend: config.ResponsesConstrainedDecodingBackendVLLM,
+	})
+
+	status, body := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model":       "test-model",
+		"tool_choice": map[string]any{"type": "custom", "name": "exact_text"},
+		"input":       "Use regex tool",
+		"tools": []map[string]any{
+			{
+				"type": "custom",
+				"name": "exact_text",
+				"format": map[string]any{
+					"type":       "grammar",
+					"syntax":     "regex",
+					"definition": `hello [0-9]+`,
+				},
+			},
+		},
+	})
+
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, []string{"/v1/responses"}, paths)
+	output, ok := body["output"].([]any)
+	require.True(t, ok)
+	require.Len(t, output, 1)
+	item, ok := output[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "custom_tool_call", item["type"])
+	require.Equal(t, "upstream handled", item["input"])
 }
 
 func TestResponsesPreferLocalUsesBackendConstrainedRuntimeForRequiredSingleGrammarCustomTool(t *testing.T) {
@@ -12981,6 +13189,28 @@ func rawRequestWithHeaders(t *testing.T, app *testutil.TestApp, method, path str
 	var decoded map[string]any
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&decoded))
 	return resp.StatusCode, resp.Header.Clone(), decoded
+}
+
+func writeChatCompletionText(t *testing.T, w http.ResponseWriter, model string, content string) {
+	t.Helper()
+
+	w.Header().Set("Content-Type", "application/json")
+	require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+		"id":      "chatcmpl_test",
+		"object":  "chat.completion",
+		"created": time.Now().Unix(),
+		"model":   model,
+		"choices": []map[string]any{
+			{
+				"index": 0,
+				"message": map[string]any{
+					"role":    "assistant",
+					"content": content,
+				},
+				"finish_reason": "stop",
+			},
+		},
+	}))
 }
 
 func fakeImageGenerationResponsePayload(responseID, itemID string) map[string]any {

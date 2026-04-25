@@ -181,7 +181,7 @@ This now ships as:
 - `scripts/v3-coding-tools-smoke.sh`
 - `scripts/v3-constrained-decoding-smoke.sh`
 - optional `scripts/v3-vllm-constrained-smoke.sh` for a local vLLM
-  `structured_outputs.regex` backend
+  `structured_outputs.regex` / `structured_outputs.grammar` backend
 
 The current smoke path verifies:
 

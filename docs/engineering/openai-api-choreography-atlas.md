@@ -410,9 +410,9 @@ sequenceDiagram
   R->>K: compile regex or supported Lark subset
   K-->>R: anchored validation pattern
   R->>CR: direct or selected constrained custom tool
-  alt configured vLLM regex adapter
-    CR->>M: chat completion with structured_outputs.regex
-    M-->>CR: raw regex-constrained candidate
+  alt configured vLLM native adapter
+    CR->>M: chat completion with structured_outputs.regex or grammar
+    M-->>CR: raw native-constrained candidate
   else default shim validate/repair
     CR->>M: chat completion with json_schema hint
     M-->>CR: JSON candidate with input field
@@ -422,9 +422,9 @@ sequenceDiagram
     V-->>R: accepted raw custom tool input
     R->>S: persist custom_tool_call when store=true
     R-->>C: custom_tool_call item
-  else candidate invalid or runtime error
+  else candidate invalid or native runtime error
     V-->>R: invalid constrained output
-    R->>M: repair or fallback local tool-loop request
+    R->>M: shim_validate_repair fallback or local tool-loop repair
     M-->>R: repaired candidate or error
     R-->>C: validated item or local validation error
   end
@@ -443,6 +443,10 @@ What exists in the shim:
   `structured_outputs.regex` for regex grammars and
   `structured_outputs.grammar` for the shim-supported Lark subset, reporting
   `capability_class=grammar_native`.
+- The vLLM adapter is registered behind the constrained runtime adapter
+  registry. Invalid native output, native timeouts, and native upstream errors
+  retry through the default shim validate/repair runtime before route-level
+  upstream fallback is considered.
 - Future backend-specific adapters must change those capability fields before
   docs can claim `json_schema_native` or broader grammar parity.
 

@@ -114,6 +114,9 @@ Implemented local scope:
 - optional vLLM `structured_outputs.regex` adapter for regex grammar custom
   tools and `structured_outputs.grammar` adapter for the shim-supported Lark
   subset
+- backend adapter registry with explicit native-to-`shim_validate_repair`
+  fallback for invalid native output, native timeouts, and native upstream
+  errors
 - `/debug/capabilities` reports `support:
   grammar_native_with_validate_repair_fallback`, `capability_class:
   grammar_native`, `native_formats: ["grammar.regex",
@@ -123,8 +126,8 @@ Implemented local scope:
 
 Remaining valid expansion areas:
 
-- broader adapter registry/runtime selection beyond the current vLLM regex and
-  Lark-subset grammar slice
+- additional backend adapters beyond the current vLLM regex and Lark-subset
+  grammar slice
 - embedded constrained decoder/runtime libraries
 - lower-level sampler/logits integrations
 - SGLang and llama.cpp adapters after the vLLM grammar path is proven

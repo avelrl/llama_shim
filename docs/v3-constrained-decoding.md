@@ -80,7 +80,7 @@ The constrained decoding track starts from the following assumptions:
 
 ## Implemented V3 Slice
 
-The implemented V3 slice is deliberately conservative:
+The implemented default V3 slice is deliberately conservative:
 
 - a shared shim-local constrained custom tool runtime abstraction now owns the
   direct constrained generation path
@@ -93,13 +93,15 @@ The implemented V3 slice is deliberately conservative:
 - invalid, timed-out, or upstream-error runtime attempts still flow through the
   existing shim-local repair/fallback path
 
-The current active capability class is therefore `none`, not
-`json_schema_native` or `grammar_native`.
+The default active capability class is therefore `none`, not
+`json_schema_native` or `grammar_native`. When
+`responses.constrained_decoding.backend: vllm` is configured, the adapter
+registry selects the vLLM native adapter and reports `grammar_native` only for
+`grammar.regex` and the shim-supported Lark subset.
 
-The next implementation should not be `llama.cpp`-only. It should introduce a
-backend-agnostic adapter layer first, then wire the first real adapter for the
-backend the operator actually runs. The current practical first target is vLLM,
-with SGLang and llama.cpp kept as later adapters.
+The implementation now uses a backend-agnostic adapter registry. The first
+registered adapter is vLLM; SGLang and llama.cpp remain later adapters behind
+the same interface rather than separate request paths.
 
 ## Capability Classes
 
@@ -158,10 +160,11 @@ Behavior:
   restricting the next-token set; post-generation validation alone remains
   `shim_validate_repair`, not `grammar_native`
 
-The first `grammar_native` proof target is vLLM `structured_outputs.grammar`.
-This is a backend-native constrained decoding path, but it is not the same
-grammar dialect as OpenAI custom tool Lark. The shim must compile its supported
-Lark subset into the vLLM grammar dialect before the capability can be claimed.
+The first implemented `grammar_native` proof target is vLLM
+`structured_outputs.grammar`. This is a backend-native constrained decoding
+path, but it is not the same grammar dialect as OpenAI custom tool Lark. The
+shim claims only the subset it can compile into vLLM grammar and validate
+after generation.
 
 ## Backend Policy
 
@@ -173,9 +176,8 @@ The implemented rollout stays narrow:
 - vLLM is the first practical native-adapter target because the current
   operator environment can run it; the implemented adapter uses
   `structured_outputs.regex`, not `guided_regex`
-- vLLM `structured_outputs.grammar` is selected as the first `grammar_native`
-  candidate after the regex slice; it still needs an explicit supported-Lark
-  to vLLM grammar compiler and proof tests
+- vLLM `structured_outputs.grammar` is the first implemented `grammar_native`
+  path for the shim-supported Lark subset, with proof tests and a live smoke
 - SGLang and llama.cpp should be implemented as additional adapters, not as
   separate constrained-decoding feature branches
 - any backend can move to `regex_native`, `json_schema_native`, or
@@ -186,7 +188,7 @@ This avoids a misleading "native constrained decoding everywhere" story.
 
 ## Backend-Agnostic Adapter Plan
 
-The shim should keep the public flow backend-neutral:
+The shim keeps the public flow backend-neutral:
 
 ```text
 OpenAI Responses custom grammar
@@ -195,7 +197,7 @@ OpenAI Responses custom grammar
 constraint parser and supported-subset compiler
         |
         v
-constrained runtime adapter interface
+constrained runtime adapter registry
         |
         +--> vLLM adapter
         +--> SGLang adapter
@@ -203,7 +205,7 @@ constrained runtime adapter interface
         +--> shim_validate_repair fallback
 ```
 
-The adapter interface should answer two questions separately:
+Each adapter answers two questions separately:
 
 - what capability class is available for this backend and model
 - how to shape the native request for one constrained custom tool generation
@@ -215,7 +217,7 @@ Expected adapter mapping:
 
 | Backend | First useful native class | Notes |
 | --- | --- | --- |
-| vLLM | `regex_native`, then `grammar_native` for the shim-supported Lark subset | Regex is implemented through `/v1/chat/completions` `structured_outputs.regex`. First grammar target is `/v1/chat/completions` `structured_outputs.grammar`; only claim `grammar_native` after Lark-subset to vLLM grammar mapping is implemented and smoke-tested. |
+| vLLM | `grammar_native` for regex and the shim-supported Lark subset | Regex is implemented through `/v1/chat/completions` `structured_outputs.regex`. The supported Lark subset is compiled to vLLM grammar and sent through `/v1/chat/completions` `structured_outputs.grammar`. Native failures fall back to shim validate/repair before any route-level upstream fallback. |
 | SGLang | `regex_native` or `json_schema_native`, then possibly `grammar_native` | SGLang supports structured output modes, but adapter support must prove the exact wire shape and one-constraint-per-request behavior. |
 | llama.cpp | `json_schema_native` or `grammar_native` | Useful later, but no longer the first required target. GBNF mapping must be explicit before `grammar_native` is claimed. |
 | Generic OpenAI-compatible upstream | `none` | Stay on shim-local validate/repair unless a known adapter is configured. |
@@ -305,7 +307,7 @@ class.
 
 | Option | Native grammar path | What the shim would send | Strengths | Risks / prerequisites | Status |
 | --- | --- | --- | --- | --- | --- |
-| vLLM | `structured_outputs.grammar` on `/v1/chat/completions` | OpenAI custom tool Lark subset compiled to vLLM grammar text | Already running locally; regex native path is wired; grammar field was live-probed on 2026-04-25 | Need a real compiler from shim-supported Lark subset to vLLM grammar dialect; need live smoke against adversarial prompts | First target |
+| vLLM | `structured_outputs.grammar` on `/v1/chat/completions` | OpenAI custom tool Lark subset compiled to vLLM grammar text | Adapter registry, regex path, Lark-subset compiler, request-shaping tests, final guardrail, and live smoke are implemented | Broader Lark dialect parity still needs separate compiler/test proof | Implemented first slice |
 | SGLang | structured output grammar / EBNF mode | OpenAI custom tool Lark subset compiled to SGLang grammar or EBNF field | Strong structured-output story; likely good second backend for cross-checking adapter abstraction | Need a separate local server; exact request field and grammar dialect must be proven; Metal/runtime availability may be more work | Follow-up |
 | llama.cpp server | GBNF grammar-constrained generation | OpenAI custom tool Lark subset compiled to GBNF | Mature grammar mechanism; useful for GGUF/local deployments | Requires llama.cpp server and compatible model packaging; GBNF compiler must be explicit; different operational stack than vLLM | Follow-up |
 | xgrammar / llguidance inside shim only | none unless connected to backend sampling | Possible compile/validate helper, not enough by itself | Good parser/compiler building block; can help normalize subset rules | Does not become native if backend remains black-box HTTP; no logits/sampler control from shim alone | Helper only |
@@ -314,7 +316,7 @@ class.
 Selection rule:
 
 1. Use vLLM first because it is already part of the current local stack and the
-   grammar field has been live-probed.
+   grammar field has been live-probed and wired.
 2. Keep SGLang and llama.cpp as adapter implementations behind the same
    interface, not as separate feature branches.
 3. Do not let in-shim parser libraries upgrade the capability class by
@@ -560,8 +562,9 @@ Implementation order:
 3. Done: add the vLLM adapter for `grammar.syntax=regex`.
 4. Done: add a compiler from the shim-supported Lark subset to vLLM grammar.
 5. Done: add the vLLM adapter for supported `grammar.syntax=lark`.
-6. Done: expose capability fields for the selected adapter.
-7. Done: add fake-upstream request-shaping tests.
-8. Done: add `scripts/v3-vllm-constrained-smoke.sh` / `make
+6. Done: add the backend adapter registry and native-to-shim fallback wrapper.
+7. Done: expose capability fields for the selected adapter.
+8. Done: add fake-upstream request-shaping and native-failure fallback tests.
+9. Done: add `scripts/v3-vllm-constrained-smoke.sh` / `make
    v3-vllm-constrained-smoke`, gated by explicit environment variables and kept
    out of the default CI path.

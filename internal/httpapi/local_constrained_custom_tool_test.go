@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"llama_shim/internal/llama"
 )
 
 func TestParseLocalConstrainedToolSelectionOutputAcceptsMarkdownFencedJSON(t *testing.T) {
@@ -127,6 +129,86 @@ func TestVLLMGrammarConstrainedCustomToolRuntimeShapesStructuredOutputsAndValida
 
 	structuredOutputs := captured["structured_outputs"].(map[string]any)
 	require.Equal(t, constraint.VLLMGrammar, structuredOutputs["grammar"])
+}
+
+func TestFallbackConstrainedCustomToolRuntimeFallsBackFromNativeFailures(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name      string
+		firstText string
+		firstErr  error
+	}{
+		{name: "invalid_output", firstText: "not valid"},
+		{name: "upstream_4xx", firstErr: &llama.UpstreamError{StatusCode: 400, Message: "structured_outputs not supported"}},
+		{name: "timeout", firstErr: &llama.TimeoutError{Message: "native constrained runtime timed out"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			constraint := mustRegexCustomToolConstraint(t)
+			var captured []map[string]any
+			createChatCompletionText := func(_ context.Context, body []byte) (string, error) {
+				var request map[string]any
+				require.NoError(t, json.Unmarshal(body, &request))
+				captured = append(captured, request)
+				if len(captured) == 1 {
+					return tc.firstText, tc.firstErr
+				}
+				return `{"input":"hello 42"}`, nil
+			}
+			runtime := fallbackConstrainedCustomToolRuntime{
+				primary: vllmRegexConstrainedCustomToolRuntime{
+					createChatCompletionText: createChatCompletionText,
+				},
+				fallback: localConstrainedCustomToolRuntime{
+					createChatCompletionText: createChatCompletionText,
+				},
+			}
+
+			input, err := runtime.Generate(context.Background(), localConstrainedCustomToolRuntimeRequest{
+				Model:      "test-model",
+				Options:    map[string]json.RawMessage{"max_output_tokens": json.RawMessage(`32`)},
+				Descriptor: customToolDescriptor{Name: "exact_text", Constraint: constraint},
+			})
+			require.NoError(t, err)
+			require.Equal(t, "hello 42", input)
+			require.Len(t, captured, 2)
+			require.Contains(t, captured[0], "structured_outputs")
+			require.NotContains(t, captured[0], "response_format")
+			require.NotContains(t, captured[1], "structured_outputs")
+			require.Contains(t, captured[1], "response_format")
+			require.Contains(t, captured[1], "json_schema")
+		})
+	}
+}
+
+func TestConstrainedCustomToolBackendRegistrySelectsVLLMAdapter(t *testing.T) {
+	t.Parallel()
+
+	registry := defaultConstrainedCustomToolBackendRegistry()
+	adapter, ok := registry.Adapter("vllm")
+	require.True(t, ok)
+
+	capability := adapter.Capability()
+	require.Equal(t, "grammar_native", capability.CapabilityClass)
+	require.ElementsMatch(t, []string{"grammar.regex", "grammar.lark_subset"}, capability.NativeFormats)
+
+	deps := constrainedCustomToolRuntimeDeps{
+		createChatCompletionText: func(context.Context, []byte) (string, error) {
+			return "hello 42", nil
+		},
+	}
+	runtime, ok := adapter.RuntimeFor(deps, customToolDescriptor{Name: "exact_text", Constraint: mustRegexCustomToolConstraint(t)})
+	require.True(t, ok)
+	require.IsType(t, vllmRegexConstrainedCustomToolRuntime{}, runtime)
+
+	runtime, ok = adapter.RuntimeFor(deps, customToolDescriptor{Name: "math_exp", Constraint: mustLarkCustomToolConstraint(t)})
+	require.True(t, ok)
+	require.IsType(t, vllmGrammarConstrainedCustomToolRuntime{}, runtime)
+
+	_, ok = adapter.RuntimeFor(deps, customToolDescriptor{Name: "plain_text"})
+	require.False(t, ok)
 }
 
 func mustRegexCustomToolConstraint(t *testing.T) *customToolConstraint {
