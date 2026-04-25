@@ -6615,6 +6615,98 @@ func TestResponsesWebSocketCreateAndContinue(t *testing.T) {
 	require.Equal(t, firstID, asStringAny(secondResponse["previous_response_id"]))
 }
 
+func TestResponsesWebSocketCreateUsesStreamingResponsesBridge(t *testing.T) {
+	type upstreamRequest struct {
+		body       map[string]any
+		upgrade    string
+		connection string
+	}
+
+	requests := make(chan upstreamRequest, 1)
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseStream := func() {
+		releaseOnce.Do(func() {
+			close(release)
+		})
+	}
+	defer releaseStream()
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode upstream request: %v", err)
+			return
+		}
+		requests <- upstreamRequest{
+			body:       body,
+			upgrade:    r.Header.Get("Upgrade"),
+			connection: r.Header.Get("Connection"),
+		}
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			t.Errorf("upstream response writer does not flush")
+			return
+		}
+		_, _ = fmt.Fprint(w, "event: response.created\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"response.created","response":{"id":"resp_ws_stream","object":"response","created_at":1712059200,"status":"in_progress","completed_at":null,"error":null,"incomplete_details":null,"model":"test-model","output":[],"parallel_tool_calls":true,"store":true,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[],"top_p":1.0,"temperature":1.0,"truncation":"disabled","metadata":{},"output_text":""}}`+"\n\n")
+		flusher.Flush()
+
+		<-release
+
+		_, _ = fmt.Fprint(w, "event: response.completed\n")
+		_, _ = fmt.Fprint(w, `data: {"type":"response.completed","response":{"id":"resp_ws_stream","object":"response","created_at":1712059200,"status":"completed","completed_at":1712059201,"error":null,"incomplete_details":null,"model":"test-model","output":[{"id":"msg_ws_stream","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"stream ok","annotations":[]}]}],"parallel_tool_calls":true,"store":true,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[],"top_p":1.0,"temperature":1.0,"truncation":"disabled","metadata":{},"output_text":"stream ok"}}`+"\n\n")
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+		flusher.Flush()
+	}))
+	defer upstream.Close()
+
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		ResponsesMode: config.ResponsesModePreferUpstream,
+		LlamaBaseURL:  upstream.URL,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn := dialResponsesWebSocket(t, ctx, app)
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	require.NoError(t, conn.Write(ctx, websocket.MessageText, mustJSON(t, map[string]any{
+		"type":  "response.create",
+		"model": "test-model",
+		"store": true,
+		"input": "Stream through websocket before completion.",
+	})))
+
+	first := readWebSocketEvent(t, ctx, conn)
+	require.Equal(t, "response.created", first.Event)
+
+	var seen upstreamRequest
+	select {
+	case seen = <-requests:
+	case <-ctx.Done():
+		t.Fatal("upstream request was not observed")
+	}
+	require.Equal(t, true, seen.body["stream"])
+	require.Empty(t, seen.upgrade)
+	require.NotContains(t, strings.ToLower(seen.connection), "upgrade")
+
+	releaseStream()
+
+	var completed sseEvent
+	for {
+		event := readWebSocketEvent(t, ctx, conn)
+		if event.Event == "response.completed" {
+			completed = event
+			break
+		}
+	}
+	response := completed.Data["response"].(map[string]any)
+	require.Equal(t, "stream ok", asStringAny(response["output_text"]))
+}
+
 func TestResponsesWebSocketErrorsStayOnConnection(t *testing.T) {
 	app := testutil.NewTestApp(t)
 

@@ -66,15 +66,19 @@ Codex config also exposes:
 
 ## Current Code Status
 
-As of April 24, 2026:
+As of April 25, 2026:
 
 - `POST /v1/responses` remains the HTTP create path
 - `GET /v1/responses` without WebSocket upgrade still returns HTTP 405
 - `GET /v1/responses` with WebSocket upgrade accepts a persistent Responses
   WebSocket connection when `responses.websocket.enabled=true`
 - SSE create-stream and retrieve-stream are implemented for the local subset
-- WebSocket server frames reuse the existing completed-response replay event
-  path and write the same JSON payloads that SSE places in `data:`
+- generated WebSocket turns dispatch through the normal internal
+  `/v1/responses` SSE create path with `stream=true`; the bridge writes each
+  SSE `data:` JSON payload as one WebSocket text frame without buffering the
+  whole response body first
+- `generate=false` warmup responses still use the existing completed-response
+  replay helper because they do not produce model output
 - the repo uses `github.com/coder/websocket`
 - `cmd/responses-websocket-smoke` covers direct WebSocket stateful
   continuation, native `shell` and `apply_patch` replay events, local
@@ -165,16 +169,18 @@ The implementation avoids copying the response-generation stack.
    the current `POST` method check.
 3. Add `responseHandler.websocket(w, r)`.
 4. Factor completed-response replay into
-   `forEachCompletedResponseReplayEvent`, shared by SSE and WebSocket.
+   `forEachCompletedResponseReplayEvent`, shared by SSE and WebSocket warmup
+   or non-stream fallback paths.
 5. Strip WebSocket-unused create fields (`stream`, `stream_options`,
    `background`) before dispatching to the normal Responses create path.
 6. Execute one `response.create` at a time by processing frames synchronously on
    a single connection.
-7. Emit each replay event payload as one JSON text frame.
+7. For generated turns, set `stream=true` on the internal create request and
+   bridge the resulting SSE events directly to WebSocket JSON text frames.
 8. Reject malformed JSON and unsupported WebSocket message types with documented
    `error` frames and keep the connection open when safe.
-9. Force an internal shadow-store write for WebSocket-created responses so the
-   most recent `store=false` response can be used as `previous_response_id` on
+9. Cache the final `response.completed.response` for `store=false` WebSocket
+   turns so the most recent response can be used as `previous_response_id` on
    the same shim while public retrieve/delete/input-items still respect
    `store=false`.
 10. Keep unsupported and proxy-only routes on the same policy they have over

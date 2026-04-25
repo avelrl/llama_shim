@@ -8,7 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"net/http/httptest"
+	"net/url"
 	"strings"
 	"time"
 
@@ -135,14 +135,7 @@ func (h *responseHandler) handleWebSocketMessage(ctx context.Context, conn *webs
 		return writeCompletedResponseAsWebSocket(ctx, h.logger, conn, rawResponse)
 	}
 
-	status, responseBody := h.createResponseViaWebSocketHTTP(ctx, original, body)
-	if status < 200 || status >= 300 {
-		return writeWebSocketHTTPError(ctx, conn, status, responseBody)
-	}
-	if err := h.cacheWebSocketResponse(ctx, body, responseBody); err != nil && h.logger != nil {
-		h.logger.WarnContext(ctx, "responses websocket shadow cache failed", "request_id", RequestIDFromContext(ctx), "err", err)
-	}
-	return writeCompletedResponseAsWebSocket(ctx, h.logger, conn, responseBody)
+	return h.createResponseViaWebSocketStream(ctx, conn, original, body)
 }
 
 func buildWebSocketCreateBody(fields map[string]json.RawMessage) ([]byte, bool, error) {
@@ -206,22 +199,62 @@ func (h *responseHandler) validateWebSocketPreviousResponse(ctx context.Context,
 	return err
 }
 
-func (h *responseHandler) createResponseViaWebSocketHTTP(ctx context.Context, original *http.Request, body []byte) (int, []byte) {
-	recorder := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body)).WithContext(ctx)
+func (h *responseHandler) createResponseViaWebSocketStream(ctx context.Context, conn *websocket.Conn, original *http.Request, body []byte) error {
+	streamBody, err := buildWebSocketStreamCreateBody(body)
+	if err != nil {
+		return writeWebSocketError(ctx, conn, http.StatusBadRequest, newAPIError("invalid_request_error", "malformed JSON message", "", ""))
+	}
+
+	writer := newWebSocketResponseStreamWriter(ctx, h.logger, conn, h.serviceLimits.JSONBodyBytes, func(rawResponse []byte) error {
+		return h.cacheWebSocketResponse(ctx, body, rawResponse)
+	})
+	req := original.Clone(ctx)
+	req.Method = http.MethodPost
+	req.URL = &url.URL{Path: "/v1/responses"}
+	req.RequestURI = "/v1/responses"
+	req.Header = make(http.Header)
+	req.Body = io.NopCloser(bytes.NewReader(streamBody))
+	req.ContentLength = int64(len(streamBody))
+	req.GetBody = func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(streamBody)), nil
+	}
 	req.Header.Set("Content-Type", "application/json")
 	if requestID := RequestIDFromContext(original.Context()); requestID != "" {
 		req.Header.Set("X-Request-Id", requestID)
 	}
-	h.create(recorder, req)
 
-	result := recorder.Result()
-	defer result.Body.Close()
-	responseBody, err := io.ReadAll(result.Body)
-	if err != nil {
-		return http.StatusBadGateway, mustMarshalWebSocketHTTPError(newAPIError("upstream_error", "failed to read response body", "", ""))
+	h.create(writer, req)
+	if err := writer.Close(); err != nil {
+		return err
 	}
-	return result.StatusCode, responseBody
+	if err := writer.Err(); err != nil {
+		return err
+	}
+	if writer.Streamed() {
+		return nil
+	}
+
+	status := writer.Status()
+	responseBody, overflow := writer.Body()
+	if overflow {
+		return writeWebSocketError(ctx, conn, http.StatusBadGateway, newAPIError("upstream_error", "response body exceeded websocket bridge buffer", "", ""))
+	}
+	if status < 200 || status >= 300 {
+		return writeWebSocketHTTPError(ctx, conn, status, responseBody)
+	}
+	if err := h.cacheWebSocketResponse(ctx, body, responseBody); err != nil && h.logger != nil {
+		h.logger.WarnContext(ctx, "responses websocket shadow cache failed", "request_id", RequestIDFromContext(ctx), "err", err)
+	}
+	return writeCompletedResponseAsWebSocket(ctx, h.logger, conn, responseBody)
+}
+
+func buildWebSocketStreamCreateBody(body []byte) ([]byte, error) {
+	fields, err := decodeRawFields(body)
+	if err != nil {
+		return nil, err
+	}
+	fields["stream"] = json.RawMessage("true")
+	return json.Marshal(fields)
 }
 
 func (h *responseHandler) cacheWebSocketResponse(ctx context.Context, requestBody []byte, responseBody []byte) error {
@@ -332,4 +365,200 @@ func mustMarshalWebSocketHTTPError(apiErr apiError) []byte {
 		return []byte(`{"error":{"message":"internal server error","type":"internal_error"}}`)
 	}
 	return raw
+}
+
+type webSocketResponseStreamWriter struct {
+	ctx         context.Context
+	logger      *slog.Logger
+	conn        *websocket.Conn
+	header      http.Header
+	bodyLimit   int64
+	onCompleted func([]byte) error
+
+	status       int
+	wroteHeader  bool
+	streaming    bool
+	body         bytes.Buffer
+	bodyOverflow bool
+	err          error
+
+	lineBuffer string
+	eventType  string
+	dataLines  []string
+}
+
+func newWebSocketResponseStreamWriter(ctx context.Context, logger *slog.Logger, conn *websocket.Conn, bodyLimit int64, onCompleted func([]byte) error) *webSocketResponseStreamWriter {
+	if bodyLimit <= 0 {
+		bodyLimit = 1 << 20
+	}
+	return &webSocketResponseStreamWriter{
+		ctx:         ctx,
+		logger:      logger,
+		conn:        conn,
+		header:      make(http.Header),
+		bodyLimit:   bodyLimit,
+		onCompleted: onCompleted,
+	}
+}
+
+func (w *webSocketResponseStreamWriter) Header() http.Header {
+	return w.header
+}
+
+func (w *webSocketResponseStreamWriter) WriteHeader(status int) {
+	if w.wroteHeader {
+		return
+	}
+	w.status = status
+	w.wroteHeader = true
+	w.streaming = status >= 200 && status < 300 && strings.Contains(strings.ToLower(w.header.Get("Content-Type")), "text/event-stream")
+}
+
+func (w *webSocketResponseStreamWriter) Write(payload []byte) (int, error) {
+	if !w.wroteHeader {
+		w.WriteHeader(http.StatusOK)
+	}
+	if w.err != nil {
+		return 0, w.err
+	}
+	if !w.streaming {
+		w.writeBufferedBody(payload)
+		return len(payload), nil
+	}
+	if err := w.writeSSEChunk(payload); err != nil {
+		w.err = err
+		return 0, err
+	}
+	return len(payload), nil
+}
+
+func (w *webSocketResponseStreamWriter) Flush() {}
+
+func (w *webSocketResponseStreamWriter) Status() int {
+	if w.status == 0 {
+		return http.StatusOK
+	}
+	return w.status
+}
+
+func (w *webSocketResponseStreamWriter) Streamed() bool {
+	return w.streaming
+}
+
+func (w *webSocketResponseStreamWriter) Body() ([]byte, bool) {
+	return append([]byte(nil), w.body.Bytes()...), w.bodyOverflow
+}
+
+func (w *webSocketResponseStreamWriter) Err() error {
+	return w.err
+}
+
+func (w *webSocketResponseStreamWriter) Close() error {
+	if w.err != nil {
+		return w.err
+	}
+	if !w.streaming {
+		return nil
+	}
+	if strings.TrimSpace(w.lineBuffer) != "" {
+		if err := w.writeSSELine(w.lineBuffer); err != nil {
+			w.err = err
+			return err
+		}
+		w.lineBuffer = ""
+	}
+	if w.eventType != "" || len(w.dataLines) > 0 {
+		if err := w.flushSSEEvent(); err != nil {
+			w.err = err
+			return err
+		}
+	}
+	return nil
+}
+
+func (w *webSocketResponseStreamWriter) writeBufferedBody(payload []byte) {
+	if len(payload) == 0 || w.bodyOverflow {
+		return
+	}
+	remaining := int(w.bodyLimit) + 1 - w.body.Len()
+	if remaining <= 0 {
+		w.bodyOverflow = true
+		return
+	}
+	if len(payload) > remaining {
+		w.body.Write(payload[:remaining])
+		w.bodyOverflow = true
+		return
+	}
+	w.body.Write(payload)
+}
+
+func (w *webSocketResponseStreamWriter) writeSSEChunk(chunk []byte) error {
+	w.lineBuffer += string(chunk)
+	for {
+		idx := strings.IndexByte(w.lineBuffer, '\n')
+		if idx < 0 {
+			return nil
+		}
+		line := w.lineBuffer[:idx+1]
+		w.lineBuffer = w.lineBuffer[idx+1:]
+		if err := w.writeSSELine(line); err != nil {
+			return err
+		}
+	}
+}
+
+func (w *webSocketResponseStreamWriter) writeSSELine(line string) error {
+	trimmed := strings.TrimRight(line, "\r\n")
+	if trimmed == "" {
+		return w.flushSSEEvent()
+	}
+	switch {
+	case strings.HasPrefix(trimmed, "event:"):
+		w.eventType = strings.TrimSpace(strings.TrimPrefix(trimmed, "event:"))
+	case strings.HasPrefix(trimmed, "data:"):
+		data := strings.TrimPrefix(trimmed, "data:")
+		if strings.HasPrefix(data, " ") {
+			data = strings.TrimPrefix(data, " ")
+		}
+		w.dataLines = append(w.dataLines, data)
+	}
+	return nil
+}
+
+func (w *webSocketResponseStreamWriter) flushSSEEvent() error {
+	if w.eventType == "" && len(w.dataLines) == 0 {
+		return nil
+	}
+	eventType := w.eventType
+	payload := strings.Join(w.dataLines, "\n")
+	w.eventType = ""
+	w.dataLines = nil
+
+	if payload == "" || strings.TrimSpace(payload) == "[DONE]" {
+		return nil
+	}
+
+	var event map[string]any
+	if err := json.Unmarshal([]byte(payload), &event); err != nil {
+		return writeWebSocketError(w.ctx, w.conn, http.StatusBadGateway, newAPIError("upstream_error", "malformed SSE event from responses stream", "", ""))
+	}
+	if eventType == "" {
+		eventType = strings.TrimSpace(asString(event["type"]))
+	}
+	if strings.TrimSpace(asString(event["type"])) == "" && eventType != "" {
+		event["type"] = eventType
+	}
+	if eventType == "response.completed" && w.onCompleted != nil {
+		if responsePayload, ok := event["response"]; ok {
+			rawResponse, err := json.Marshal(responsePayload)
+			if err != nil {
+				return err
+			}
+			if err := w.onCompleted(rawResponse); err != nil && w.logger != nil {
+				w.logger.WarnContext(w.ctx, "responses websocket shadow cache failed", "request_id", RequestIDFromContext(w.ctx), "err", err)
+			}
+		}
+	}
+	return writeWebSocketJSON(w.ctx, w.conn, event)
 }
