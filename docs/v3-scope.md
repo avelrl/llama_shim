@@ -122,9 +122,12 @@ Remaining valid expansion areas:
 
 - broader adapter registry/runtime selection beyond the current vLLM regex
   slice
+- vLLM `structured_outputs.grammar` adapter for the shim-supported Lark subset,
+  starting with the arithmetic `math_exp` grammar, as the first
+  `grammar_native` proof target
 - embedded constrained decoder/runtime libraries
 - lower-level sampler/logits integrations
-- SGLang and llama.cpp adapters after the vLLM path is proven
+- SGLang and llama.cpp adapters after the vLLM grammar path is proven
 - `json_schema_native`, `regex_native`, or `grammar_native` capability upgrades
   only after concrete enforcement is wired and tested
 
