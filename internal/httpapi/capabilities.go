@@ -105,6 +105,7 @@ type capabilityConstrainedDecodingConfig struct {
 	CapabilityClass string                                    `json:"capability_class"`
 	NativeAvailable bool                                      `json:"native_available"`
 	NativeBackend   string                                    `json:"native_backend"`
+	NativeFormats   []string                                  `json:"native_formats"`
 	Validation      string                                    `json:"validation"`
 	Repair          string                                    `json:"repair"`
 	CustomTools     capabilityConstrainedCustomToolsConfig    `json:"custom_tools"`
@@ -427,7 +428,7 @@ func compactionCapability(deps RouterDeps) capabilityCompactionConfig {
 
 func constrainedDecodingCapability(deps RouterDeps) capabilityConstrainedDecodingConfig {
 	limits := normalizeServiceLimits(deps.ServiceLimits)
-	return capabilityConstrainedDecodingConfig{
+	capability := capabilityConstrainedDecodingConfig{
 		Enabled:         true,
 		Support:         "shim_validate_repair",
 		Runtime:         "chat_completions_json_schema_hint",
@@ -435,6 +436,7 @@ func constrainedDecodingCapability(deps RouterDeps) capabilityConstrainedDecodin
 		CapabilityClass: "none",
 		NativeAvailable: false,
 		NativeBackend:   "none",
+		NativeFormats:   []string{},
 		Validation:      "local_regex_validation",
 		Repair:          "local_retry_when_invalid_or_timeout",
 		CustomTools: capabilityConstrainedCustomToolsConfig{
@@ -460,6 +462,23 @@ func constrainedDecodingCapability(deps RouterDeps) capabilityConstrainedDecodin
 			LocalOnly:      "shim_validate_repair_or_validation_error",
 		},
 	}
+	if normalizeConstrainedDecodingBackend(deps.ResponsesConstrainedDecodingBackend) == config.ResponsesConstrainedDecodingBackendVLLM {
+		capability.Support = "regex_native_with_validate_repair_fallback"
+		capability.Runtime = "vllm_structured_outputs_regex"
+		capability.Backend = "vllm"
+		capability.CapabilityClass = "regex_native"
+		capability.NativeAvailable = true
+		capability.NativeBackend = "vllm"
+		capability.NativeFormats = []string{"grammar.regex"}
+		capability.Validation = "native_regex_plus_local_guardrail"
+		capability.Repair = "local_retry_when_native_invalid_or_timeout"
+		capability.Routing = capabilityRouting{
+			PreferLocal:    "regex_native_or_shim_validate_repair_or_upstream_fallback",
+			PreferUpstream: "proxy_first",
+			LocalOnly:      "regex_native_or_shim_validate_repair_or_validation_error",
+		}
+	}
+	return capability
 }
 
 func collectCapabilityProbes(ctx context.Context, deps RouterDeps) capabilityProbeSet {

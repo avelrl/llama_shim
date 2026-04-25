@@ -195,6 +195,12 @@ responses:
     # bridge: always rewrite custom tools into a compatible upstream format.
     # passthrough: always forward them unchanged.
     mode: auto
+  constrained_decoding:
+    # shim_validate_repair: default; use shim-local prompts plus final local
+    # validation/repair for constrained custom tools.
+    # vllm: use vLLM /v1/chat/completions structured_outputs.regex for
+    # grammar.syntax=regex when the local constrained runtime is selected.
+    backend: shim_validate_repair
   codex:
     # Enables Codex-compatible payload and response adaptations for /v1/responses.
     enable_compatibility: true

@@ -45,6 +45,7 @@ type responseHandler struct {
 	codeInterpreterGate          *concurrencyGate
 	responsesMode                string
 	customToolsMode              string
+	constrainedDecodingBackend   string
 	codexCompatibilityEnabled    bool
 	forceCodexToolChoiceRequired bool
 	webSearchProvider            websearch.Provider
@@ -55,7 +56,7 @@ type responseHandler struct {
 	localCodeInterpreterSessions LocalCodeInterpreterSessionStore
 }
 
-func newResponseHandler(logger *slog.Logger, service *service.ResponseService, proxy *proxyHandler, responsesMode string, customToolsMode string, codexCompatibilityEnabled bool, forceCodexToolChoiceRequired bool, webSearchProvider websearch.Provider, imageGenerationProvider imagegen.Provider, localComputer LocalComputerRuntimeConfig, localCodeInterpreter LocalCodeInterpreterRuntimeConfig, localCodeInterpreterFiles LocalCodeInterpreterFileStore, localCodeInterpreterSessions LocalCodeInterpreterSessionStore, metrics *Metrics, serviceLimits ServiceLimits, retrievalGate *concurrencyGate, codeInterpreterGate *concurrencyGate) *responseHandler {
+func newResponseHandler(logger *slog.Logger, service *service.ResponseService, proxy *proxyHandler, responsesMode string, customToolsMode string, constrainedDecodingBackend string, codexCompatibilityEnabled bool, forceCodexToolChoiceRequired bool, webSearchProvider websearch.Provider, imageGenerationProvider imagegen.Provider, localComputer LocalComputerRuntimeConfig, localCodeInterpreter LocalCodeInterpreterRuntimeConfig, localCodeInterpreterFiles LocalCodeInterpreterFileStore, localCodeInterpreterSessions LocalCodeInterpreterSessionStore, metrics *Metrics, serviceLimits ServiceLimits, retrievalGate *concurrencyGate, codeInterpreterGate *concurrencyGate) *responseHandler {
 	return &responseHandler{
 		logger:                       logger,
 		service:                      service,
@@ -66,6 +67,7 @@ func newResponseHandler(logger *slog.Logger, service *service.ResponseService, p
 		codeInterpreterGate:          codeInterpreterGate,
 		responsesMode:                normalizeResponsesMode(responsesMode),
 		customToolsMode:              customToolsMode,
+		constrainedDecodingBackend:   normalizeConstrainedDecodingBackend(constrainedDecodingBackend),
 		codexCompatibilityEnabled:    codexCompatibilityEnabled,
 		forceCodexToolChoiceRequired: forceCodexToolChoiceRequired,
 		webSearchProvider:            webSearchProvider,

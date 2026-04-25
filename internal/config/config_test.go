@@ -104,6 +104,8 @@ responses:
     backend: chat_completions
   custom_tools:
     mode: bridge
+  constrained_decoding:
+    backend: vllm
   codex:
     enable_compatibility: true
     force_tool_choice_required: true
@@ -191,6 +193,7 @@ responses:
 	require.Equal(t, 45000, cfg.ResponsesCompactionMaxInputRunes)
 	require.Equal(t, config.ResponsesComputerBackendChatCompletions, cfg.ResponsesComputerBackend)
 	require.Equal(t, "bridge", cfg.ResponsesCustomToolsMode)
+	require.Equal(t, config.ResponsesConstrainedDecodingBackendVLLM, cfg.ResponsesConstrainedDecodingBackend)
 	require.True(t, cfg.ResponsesCodexEnableCompatibility)
 	require.True(t, cfg.ResponsesCodexForceToolChoiceRequired)
 	require.Equal(t, config.ResponsesCodeInterpreterBackendDocker, cfg.ResponsesCodeInterpreterBackend)
@@ -276,6 +279,7 @@ responses:
 	t.Setenv("RETRIEVAL_EMBEDDER_MODEL", "text-embedding-3-small")
 	t.Setenv("CHAT_COMPLETIONS_DEFAULT_STORE_WHEN_OMITTED", "true")
 	t.Setenv("RESPONSES_MODE", "local_only")
+	t.Setenv("RESPONSES_CONSTRAINED_DECODING_BACKEND", "vllm")
 	t.Setenv("RESPONSES_WEB_SEARCH_BACKEND", "searxng")
 	t.Setenv("RESPONSES_WEB_SEARCH_BASE_URL", "http://127.0.0.1:8181")
 	t.Setenv("RESPONSES_WEB_SEARCH_TIMEOUT", "8s")
@@ -349,6 +353,7 @@ responses:
 	require.Equal(t, "text-embedding-3-small", cfg.RetrievalEmbedderModel)
 	require.True(t, cfg.ChatCompletionsStoreWhenOmitted)
 	require.Equal(t, config.ResponsesModeLocalOnly, cfg.ResponsesMode)
+	require.Equal(t, config.ResponsesConstrainedDecodingBackendVLLM, cfg.ResponsesConstrainedDecodingBackend)
 	require.Equal(t, "searxng", cfg.ResponsesWebSearchBackend)
 	require.Equal(t, "http://127.0.0.1:8181", cfg.ResponsesWebSearchBaseURL)
 	require.Equal(t, 8*time.Second, cfg.ResponsesWebSearchTimeout)
@@ -431,6 +436,7 @@ func TestLoadUsesCodexSafeDefaults(t *testing.T) {
 	require.Equal(t, 0, cfg.ResponsesCompactionMaxInputRunes)
 	require.Equal(t, config.ResponsesComputerBackendDisabled, cfg.ResponsesComputerBackend)
 	require.Equal(t, "auto", cfg.ResponsesCustomToolsMode)
+	require.Equal(t, config.ResponsesConstrainedDecodingBackendShimValidateRepair, cfg.ResponsesConstrainedDecodingBackend)
 	require.True(t, cfg.ResponsesCodexEnableCompatibility)
 	require.True(t, cfg.ResponsesCodexForceToolChoiceRequired)
 	require.Equal(t, config.ResponsesCodeInterpreterBackendDisabled, cfg.ResponsesCodeInterpreterBackend)

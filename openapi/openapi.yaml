@@ -2542,28 +2542,32 @@ components:
           $ref: "#/components/schemas/ShimCapabilityToolRouting"
     ShimCapabilityConstrainedDecodingRuntime:
       type: object
-      required: [enabled, support, runtime, backend, capability_class, native_available, native_backend, validation, repair, custom_tools, structured_outputs, routing]
+      required: [enabled, support, runtime, backend, capability_class, native_available, native_backend, native_formats, validation, repair, custom_tools, structured_outputs, routing]
       properties:
         enabled:
           type: boolean
         support:
           type: string
-          enum: [shim_validate_repair]
-          description: Shim-local constrained tool support. This is not an exact hosted/native constrained-sampling parity claim.
+          enum: [shim_validate_repair, regex_native_with_validate_repair_fallback]
+          description: Active constrained tool support. Native claims are limited to the reported capability class and formats.
         runtime:
           type: string
-          enum: [chat_completions_json_schema_hint]
+          enum: [chat_completions_json_schema_hint, vllm_structured_outputs_regex]
           description: Internal generation path used before final local validation.
         backend:
           type: string
         capability_class:
           type: string
-          enum: [none, json_schema_native, grammar_native]
+          enum: [none, regex_native, json_schema_native, grammar_native]
           description: Active native constrained-decoding class. The default shim path reports `none`.
         native_available:
           type: boolean
         native_backend:
           type: string
+        native_formats:
+          type: array
+          items:
+            type: string
         validation:
           type: string
         repair:

@@ -28,6 +28,7 @@ type RouterDeps struct {
 	ResponsesMode                         string
 	ResponsesWebSocketEnabled             bool
 	ResponsesCustomToolsMode              string
+	ResponsesConstrainedDecodingBackend   string
 	ResponsesCodexEnableCompatibility     bool
 	ResponsesCodexForceToolChoiceRequired bool
 	ResponsesCompactionBackend            string
@@ -68,6 +69,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 		proxyHandler,
 		deps.ResponsesMode,
 		deps.ResponsesCustomToolsMode,
+		deps.ResponsesConstrainedDecodingBackend,
 		deps.ResponsesCodexEnableCompatibility,
 		deps.ResponsesCodexForceToolChoiceRequired,
 		deps.WebSearchProvider,

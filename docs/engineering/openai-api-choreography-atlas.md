@@ -410,8 +410,13 @@ sequenceDiagram
   R->>K: compile regex or supported Lark subset
   K-->>R: anchored validation pattern
   R->>CR: direct or selected constrained custom tool
-  CR->>M: chat completion with json_schema hint
-  M-->>CR: JSON candidate with input field
+  alt configured vLLM regex adapter
+    CR->>M: chat completion with structured_outputs.regex
+    M-->>CR: raw regex-constrained candidate
+  else default shim validate/repair
+    CR->>M: chat completion with json_schema hint
+    M-->>CR: JSON candidate with input field
+  end
   CR->>V: validate candidate against compiled pattern
   alt candidate valid
     V-->>R: accepted raw custom tool input
@@ -434,7 +439,10 @@ What exists in the shim:
 - `/debug/capabilities.runtime.constrained_decoding` reports
   `support=shim_validate_repair`, `capability_class=none`, and
   `native_available=false` by default.
-- A future backend-specific adapter must change those capability fields before
+- With `responses.constrained_decoding.backend=vllm`, the shim uses
+  `structured_outputs.regex` and reports `capability_class=regex_native` for
+  `grammar.syntax=regex`.
+- Future backend-specific adapters must change those capability fields before
   docs can claim `json_schema_native` or `grammar_native`.
 
 ## 8. Retrieval, Vector Stores, And File Search
@@ -947,8 +955,10 @@ flowchart TB
   ready --> ops
   ready --> parity
 
-  constrained --> c0["Current: shim_validate_repair + JSON Schema hint"]
-  constrained --> c1["Future: proven json_schema_native or grammar_native adapter"]
+  constrained --> c0["Default: shim_validate_repair + JSON Schema hint"]
+  constrained --> c1["Optional: vLLM structured_outputs.regex"]
+  c1 --> c2["Capability: regex_native for grammar.syntax=regex"]
+  c1 --> c3["Later: SGLang / llama.cpp adapters"]
   backend --> b1["More image, retrieval, storage, or model backends"]
   ops --> o1["Tenanting, dashboards, admin workflows"]
   parity --> p1["Fixture-backed exact SSE/WS/tool choreography"]

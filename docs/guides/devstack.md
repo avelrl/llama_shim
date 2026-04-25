@@ -200,6 +200,15 @@ runtime subset:
 - create-stream emits typed `response.custom_tool_call_input.*` events for the
   same validated path
 
+`scripts/v3-vllm-constrained-smoke.sh` checks the optional vLLM regex-native
+runtime slice outside the default devstack CI path:
+
+- direct vLLM `/v1/chat/completions` enforces `structured_outputs.regex`
+- when `SHIM_BASE_URL` is set, `/debug/capabilities` reports `regex_native`
+  for the configured vLLM backend
+- when `SHIM_BASE_URL` is set, `/v1/responses` returns a regex
+  `custom_tool_call` generated through the vLLM adapter
+
 `scripts/codex-cli-devstack-smoke.sh` checks practical Codex CLI compatibility:
 
 - the real `codex exec` binary targets the shim through `openai_base_url`

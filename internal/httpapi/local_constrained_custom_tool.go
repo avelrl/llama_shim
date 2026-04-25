@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	"llama_shim/internal/config"
 	"llama_shim/internal/domain"
 	"llama_shim/internal/llama"
 	"llama_shim/internal/service"
@@ -454,9 +455,7 @@ func localConstrainedCustomSelectionID(namespace, name string) string {
 }
 
 func (h *responseHandler) generateLocalConstrainedCustomToolInput(ctx context.Context, model string, items []domain.Item, currentInputLen int, options map[string]json.RawMessage, descriptor customToolDescriptor) (string, error) {
-	runtime := localConstrainedCustomToolRuntime{
-		createChatCompletionText: h.proxy.client.CreateChatCompletionText,
-	}
+	runtime := h.constrainedCustomToolRuntimeFor(descriptor)
 	return runtime.Generate(ctx, localConstrainedCustomToolRuntimeRequest{
 		Model:           model,
 		Items:           items,
@@ -464,6 +463,26 @@ func (h *responseHandler) generateLocalConstrainedCustomToolInput(ctx context.Co
 		Options:         options,
 		Descriptor:      descriptor,
 	})
+}
+
+func normalizeConstrainedDecodingBackend(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case config.ResponsesConstrainedDecodingBackendVLLM:
+		return config.ResponsesConstrainedDecodingBackendVLLM
+	default:
+		return config.ResponsesConstrainedDecodingBackendShimValidateRepair
+	}
+}
+
+func (h *responseHandler) constrainedCustomToolRuntimeFor(descriptor customToolDescriptor) constrainedCustomToolRuntime {
+	if h.constrainedDecodingBackend == config.ResponsesConstrainedDecodingBackendVLLM && descriptor.Constraint != nil && descriptor.Constraint.Syntax == "regex" {
+		return vllmRegexConstrainedCustomToolRuntime{
+			createChatCompletionText: h.proxy.client.CreateChatCompletionText,
+		}
+	}
+	return localConstrainedCustomToolRuntime{
+		createChatCompletionText: h.proxy.client.CreateChatCompletionText,
+	}
 }
 
 type constrainedCustomToolRuntime interface {
@@ -483,6 +502,7 @@ type localConstrainedCustomToolRuntime struct {
 }
 
 var _ constrainedCustomToolRuntime = localConstrainedCustomToolRuntime{}
+var _ constrainedCustomToolRuntime = vllmRegexConstrainedCustomToolRuntime{}
 
 func (r localConstrainedCustomToolRuntime) Generate(ctx context.Context, request localConstrainedCustomToolRuntimeRequest) (string, error) {
 	runtimeItems, err := buildLocalConstrainedCustomToolRuntimeItems(request.Items, request.CurrentInputLen, request.Descriptor)
@@ -502,6 +522,30 @@ func (r localConstrainedCustomToolRuntime) Generate(ctx context.Context, request
 		return "", err
 	}
 	return parseLocalConstrainedCustomToolRuntimeOutput(rawOutput, request.Descriptor)
+}
+
+type vllmRegexConstrainedCustomToolRuntime struct {
+	createChatCompletionText func(context.Context, []byte) (string, error)
+}
+
+func (r vllmRegexConstrainedCustomToolRuntime) Generate(ctx context.Context, request localConstrainedCustomToolRuntimeRequest) (string, error) {
+	runtimeItems, err := buildVLLMRegexConstrainedCustomToolRuntimeItems(request.Items, request.CurrentInputLen, request.Descriptor)
+	if err != nil {
+		return "", err
+	}
+	runtimeOptions, err := buildVLLMRegexConstrainedCustomToolRuntimeOptions(request.Options, request.Descriptor)
+	if err != nil {
+		return "", err
+	}
+	chatBody, err := buildLocalConstrainedCustomToolRuntimeChatCompletionBody(request.Model, runtimeItems, runtimeOptions)
+	if err != nil {
+		return "", err
+	}
+	rawOutput, err := r.createChatCompletionText(ctx, chatBody)
+	if err != nil {
+		return "", err
+	}
+	return parseRawConstrainedCustomToolRuntimeOutput(rawOutput, request.Descriptor)
 }
 
 func shouldFallbackLocalConstrainedRuntimeError(err error) bool {
@@ -564,6 +608,40 @@ func buildLocalConstrainedCustomToolRuntimeOptions(options map[string]json.RawMe
 	return cloned, nil
 }
 
+func buildVLLMRegexConstrainedCustomToolRuntimeItems(items []domain.Item, currentInputLen int, descriptor customToolDescriptor) ([]domain.Item, error) {
+	label := descriptor.Name
+	if descriptor.Namespace != "" {
+		label = descriptor.Namespace + "." + descriptor.Name
+	}
+	prompt := strings.Join([]string{
+		"You are the shim-local constrained custom tool generator.",
+		"Generate raw input for the required custom tool `" + label + "`.",
+		"Return only the raw input string.",
+		"Do not emit JSON.",
+		"Do not emit assistant prose.",
+		"Do not emit a tool wrapper.",
+		"The complete response must fully satisfy this " + descriptor.Constraint.Syntax + " constraint: " + descriptor.Constraint.Definition,
+	}, " ")
+	return insertLocalToolLoopInstructions(items, currentInputLen, prompt), nil
+}
+
+func buildVLLMRegexConstrainedCustomToolRuntimeOptions(options map[string]json.RawMessage, descriptor customToolDescriptor) (map[string]json.RawMessage, error) {
+	cloned := cloneGenerationOptions(options)
+	delete(cloned, "response_format")
+	delete(cloned, "json_schema")
+	delete(cloned, "structured_outputs")
+
+	structuredOutputs := map[string]string{
+		"regex": descriptor.Constraint.Anchored,
+	}
+	rawStructuredOutputs, err := json.Marshal(structuredOutputs)
+	if err != nil {
+		return nil, err
+	}
+	cloned["structured_outputs"] = rawStructuredOutputs
+	return cloned, nil
+}
+
 func buildLocalConstrainedCustomToolRuntimeChatCompletionBody(model string, items []domain.Item, options map[string]json.RawMessage) ([]byte, error) {
 	messages, err := buildChatCompletionMessagesFromItems(items)
 	if err != nil {
@@ -605,6 +683,17 @@ func parseLocalConstrainedCustomToolRuntimeOutput(raw string, descriptor customT
 	}
 	if err := descriptor.Constraint.Validate(input); err != nil {
 		return "", &llama.InvalidResponseError{Message: fmt.Sprintf("shim-local constrained custom tool %s returned invalid constrained input: %v", descriptor.Name, err)}
+	}
+	return input, nil
+}
+
+func parseRawConstrainedCustomToolRuntimeOutput(raw string, descriptor customToolDescriptor) (string, error) {
+	input := strings.TrimSpace(raw)
+	if input == "" {
+		return "", &llama.InvalidResponseError{Message: fmt.Sprintf("shim-local constrained custom tool %s returned empty raw constrained output", descriptor.Name)}
+	}
+	if err := descriptor.Constraint.Validate(input); err != nil {
+		return "", &llama.InvalidResponseError{Message: fmt.Sprintf("shim-local constrained custom tool %s returned invalid raw constrained input: %v", descriptor.Name, err)}
 	}
 	return input, nil
 }

@@ -65,6 +65,38 @@ func TestLocalConstrainedCustomToolRuntimeShapesJSONSchemaHintAndValidates(t *te
 	require.Equal(t, schema, captured["json_schema"])
 }
 
+func TestVLLMRegexConstrainedCustomToolRuntimeShapesStructuredOutputsAndValidates(t *testing.T) {
+	t.Parallel()
+
+	constraint := mustRegexCustomToolConstraint(t)
+	var captured map[string]any
+	runtime := vllmRegexConstrainedCustomToolRuntime{
+		createChatCompletionText: func(_ context.Context, body []byte) (string, error) {
+			require.NoError(t, json.Unmarshal(body, &captured))
+			return "hello 42\n", nil
+		},
+	}
+
+	input, err := runtime.Generate(context.Background(), localConstrainedCustomToolRuntimeRequest{
+		Model: "test-model",
+		Options: map[string]json.RawMessage{
+			"max_output_tokens": json.RawMessage(`32`),
+			"response_format":   json.RawMessage(`{"type":"json_object"}`),
+			"json_schema":       json.RawMessage(`{"type":"object"}`),
+		},
+		Descriptor: customToolDescriptor{Name: "exact_text", Constraint: constraint},
+	})
+	require.NoError(t, err)
+	require.Equal(t, "hello 42", input)
+	require.Equal(t, "test-model", captured["model"])
+	require.Equal(t, float64(32), captured["max_tokens"])
+	require.NotContains(t, captured, "response_format")
+	require.NotContains(t, captured, "json_schema")
+
+	structuredOutputs := captured["structured_outputs"].(map[string]any)
+	require.Equal(t, constraint.Anchored, structuredOutputs["regex"])
+}
+
 func mustRegexCustomToolConstraint(t *testing.T) *customToolConstraint {
 	t.Helper()
 

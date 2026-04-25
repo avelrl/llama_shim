@@ -83,6 +83,7 @@ type Config struct {
 	ResponsesMode                                  string
 	ResponsesWebSocketEnabled                      bool
 	ResponsesCustomToolsMode                       string
+	ResponsesConstrainedDecodingBackend            string
 	ResponsesCodexEnableCompatibility              bool
 	ResponsesCodexForceToolChoiceRequired          bool
 	ResponsesCodeInterpreterBackend                string
@@ -113,6 +114,8 @@ const (
 	ResponsesCodeInterpreterInputFileURLPolicyDisabled             = "disabled"
 	ResponsesCodeInterpreterInputFileURLPolicyAllowlist            = "allowlist"
 	ResponsesCodeInterpreterInputFileURLPolicyUnsafeAllowHTTPHTTPS = "unsafe_allow_http_https"
+	ResponsesConstrainedDecodingBackendShimValidateRepair          = "shim_validate_repair"
+	ResponsesConstrainedDecodingBackendVLLM                        = "vllm"
 )
 
 func Load(configPath string) (Config, error) {
@@ -159,6 +162,7 @@ func Load(configPath string) (Config, error) {
 		ResponsesMode:                                  strings.ToLower(strings.TrimSpace(v.GetString("responses.mode"))),
 		ResponsesWebSocketEnabled:                      v.GetBool("responses.websocket.enabled"),
 		ResponsesCustomToolsMode:                       strings.ToLower(strings.TrimSpace(v.GetString("responses.custom_tools.mode"))),
+		ResponsesConstrainedDecodingBackend:            strings.ToLower(strings.TrimSpace(v.GetString("responses.constrained_decoding.backend"))),
 		ResponsesCodexEnableCompatibility:              v.GetBool("responses.codex.enable_compatibility"),
 		ResponsesCodexForceToolChoiceRequired:          v.GetBool("responses.codex.force_tool_choice_required"),
 		ResponsesCodeInterpreterBackend:                strings.ToLower(strings.TrimSpace(v.GetString("responses.code_interpreter.backend"))),
@@ -267,6 +271,9 @@ func Load(configPath string) (Config, error) {
 	}
 	if err := parseCustomToolsMode(cfg.ResponsesCustomToolsMode); err != nil {
 		return Config{}, fmt.Errorf("parse responses.custom_tools.mode: %w", err)
+	}
+	if err := parseConstrainedDecodingBackend(cfg.ResponsesConstrainedDecodingBackend); err != nil {
+		return Config{}, fmt.Errorf("parse responses.constrained_decoding.backend: %w", err)
 	}
 	if err := parseComputerBackend(cfg.ResponsesComputerBackend); err != nil {
 		return Config{}, fmt.Errorf("parse responses.computer.backend: %w", err)
@@ -500,6 +507,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("responses.mode", ResponsesModePreferLocal)
 	v.SetDefault("responses.websocket.enabled", true)
 	v.SetDefault("responses.custom_tools.mode", "auto")
+	v.SetDefault("responses.constrained_decoding.backend", ResponsesConstrainedDecodingBackendShimValidateRepair)
 	v.SetDefault("responses.codex.enable_compatibility", true)
 	v.SetDefault("responses.codex.force_tool_choice_required", true)
 	v.SetDefault("responses.web_search.backend", websearch.BackendDisabled)
@@ -654,6 +662,15 @@ func parseLogLevel(value string, dst *slog.Level) error {
 func parseCustomToolsMode(value string) error {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "", "bridge", "passthrough", "auto":
+		return nil
+	default:
+		return strconv.ErrSyntax
+	}
+}
+
+func parseConstrainedDecodingBackend(value string) error {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", ResponsesConstrainedDecodingBackendShimValidateRepair, ResponsesConstrainedDecodingBackendVLLM:
 		return nil
 	default:
 		return strconv.ErrSyntax

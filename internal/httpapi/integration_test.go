@@ -451,6 +451,7 @@ func TestCapabilitiesEndpointReportsConfiguredRuntime(t *testing.T) {
 	require.Equal(t, "none", asStringAny(constrained["capability_class"]))
 	require.Equal(t, false, constrained["native_available"])
 	require.Equal(t, "none", asStringAny(constrained["native_backend"]))
+	require.Empty(t, constrained["native_formats"].([]any))
 	require.Equal(t, "local_regex_validation", asStringAny(constrained["validation"]))
 	require.Equal(t, "local_retry_when_invalid_or_timeout", asStringAny(constrained["repair"]))
 	constrainedRouting := constrained["routing"].(map[string]any)
@@ -548,6 +549,33 @@ func TestCapabilitiesEndpointReportsConfiguredRuntime(t *testing.T) {
 	require.Equal(t, true, imageGenerationProbe["enabled"])
 	require.Equal(t, true, imageGenerationProbe["checked"])
 	require.Equal(t, true, imageGenerationProbe["ready"])
+}
+
+func TestCapabilitiesEndpointReportsVLLMConstrainedRuntime(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		ResponsesConstrainedDecodingBackend: config.ResponsesConstrainedDecodingBackendVLLM,
+	})
+
+	status, payload := rawRequest(t, app, http.MethodGet, "/debug/capabilities", nil)
+	require.Equal(t, http.StatusOK, status)
+
+	runtime := payload["runtime"].(map[string]any)
+	constrained := runtime["constrained_decoding"].(map[string]any)
+	require.Equal(t, true, constrained["enabled"])
+	require.Equal(t, "regex_native_with_validate_repair_fallback", asStringAny(constrained["support"]))
+	require.Equal(t, "vllm_structured_outputs_regex", asStringAny(constrained["runtime"]))
+	require.Equal(t, "vllm", asStringAny(constrained["backend"]))
+	require.Equal(t, "regex_native", asStringAny(constrained["capability_class"]))
+	require.Equal(t, true, constrained["native_available"])
+	require.Equal(t, "vllm", asStringAny(constrained["native_backend"]))
+	require.ElementsMatch(t, []any{"grammar.regex"}, constrained["native_formats"].([]any))
+	require.Equal(t, "native_regex_plus_local_guardrail", asStringAny(constrained["validation"]))
+	require.Equal(t, "local_retry_when_native_invalid_or_timeout", asStringAny(constrained["repair"]))
+
+	constrainedRouting := constrained["routing"].(map[string]any)
+	require.Equal(t, "regex_native_or_shim_validate_repair_or_upstream_fallback", asStringAny(constrainedRouting["prefer_local"]))
+	require.Equal(t, "proxy_first", asStringAny(constrainedRouting["prefer_upstream"]))
+	require.Equal(t, "regex_native_or_shim_validate_repair_or_validation_error", asStringAny(constrainedRouting["local_only"]))
 }
 
 func TestCapabilitiesEndpointReportsDegradedProbesWithoutFailingRoute(t *testing.T) {
@@ -4657,6 +4685,73 @@ func TestResponsesLocalOnlyUsesBackendConstrainedRuntimeForNamedRegexCustomTool(
 	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
 		ResponsesMode:   config.ResponsesModeLocalOnly,
 		CustomToolsMode: "auto",
+	})
+
+	status, body := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model":       "test-model",
+		"tool_choice": map[string]any{"type": "custom", "name": "exact_text"},
+		"input":       "Use regex tool",
+		"tools": []map[string]any{
+			{
+				"type": "custom",
+				"name": "exact_text",
+				"format": map[string]any{
+					"type":       "grammar",
+					"syntax":     "regex",
+					"definition": `hello [0-9]+`,
+				},
+			},
+		},
+	})
+
+	require.Equal(t, http.StatusOK, status)
+	output, ok := body["output"].([]any)
+	require.True(t, ok)
+	require.Len(t, output, 1)
+	item, ok := output[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "custom_tool_call", item["type"])
+	require.Equal(t, "exact_text", item["name"])
+	require.Equal(t, "hello 42", item["input"])
+}
+
+func TestResponsesPreferLocalUsesVLLMRegexNativeRuntimeForRegexCustomTool(t *testing.T) {
+	llamaServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, http.MethodPost, r.Method)
+		require.Equal(t, "/v1/chat/completions", r.URL.Path)
+
+		var request map[string]any
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
+		require.Equal(t, "test-model", asStringAny(request["model"]))
+		require.NotContains(t, request, "response_format")
+		require.NotContains(t, request, "json_schema")
+		structuredOutputs := request["structured_outputs"].(map[string]any)
+		require.Equal(t, `^(?:hello [0-9]+)$`, asStringAny(structuredOutputs["regex"]))
+
+		w.Header().Set("Content-Type", "application/json")
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"id":      "chatcmpl_vllm_regex",
+			"object":  "chat.completion",
+			"created": time.Now().Unix(),
+			"model":   "test-model",
+			"choices": []map[string]any{
+				{
+					"index": 0,
+					"message": map[string]any{
+						"role":    "assistant",
+						"content": "hello 42\n",
+					},
+					"finish_reason": "stop",
+				},
+			},
+		}))
+	}))
+	defer llamaServer.Close()
+
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		LlamaBaseURL:                        llamaServer.URL,
+		CustomToolsMode:                     "auto",
+		ResponsesConstrainedDecodingBackend: config.ResponsesConstrainedDecodingBackendVLLM,
 	})
 
 	status, body := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{

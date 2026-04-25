@@ -96,8 +96,10 @@ reopen the frozen V2 contract before code, tests, and capabilities exist.
 ### 5. Deeper constrained decoding work
 
 Status: first conservative runtime slice implemented as a `Broad subset` in
-[compatibility-matrix.md](compatibility-matrix.md), with true backend-native
-constrained sampling still unclaimed.
+[compatibility-matrix.md](compatibility-matrix.md). The default path still
+does not claim backend-native constrained sampling. An optional vLLM adapter can
+now claim `regex_native` for `grammar.syntax=regex` only when
+`responses.constrained_decoding.backend: vllm` is configured and verified.
 
 Implemented local scope:
 
@@ -108,14 +110,23 @@ Implemented local scope:
 - `/debug/capabilities` reports `support: shim_validate_repair`,
   `capability_class: none`, and `native_available: false`
 - focused devstack smoke coverage through `make v3-constrained-decoding-smoke`
+- optional vLLM `structured_outputs.regex` adapter for regex grammar custom
+  tools
+- `/debug/capabilities` reports `support:
+  regex_native_with_validate_repair_fallback`, `capability_class:
+  regex_native`, and `native_available: true` only for the configured vLLM
+  backend
+- live vLLM smoke coverage through `make v3-vllm-constrained-smoke`
 
 Remaining valid expansion areas:
 
-- backend-native constrained decoding hooks
+- broader adapter registry/runtime selection beyond the current vLLM regex
+  slice
 - embedded constrained decoder/runtime libraries
 - lower-level sampler/logits integrations
-- `llama.cpp`-first `json_schema_native` or `grammar_native` adapter, only
-  after concrete enforcement is wired and tested
+- SGLang and llama.cpp adapters after the vLLM path is proven
+- `json_schema_native`, `regex_native`, or `grammar_native` capability upgrades
+  only after concrete enforcement is wired and tested
 
 See [v3-constrained-decoding.md](v3-constrained-decoding.md) for the design
 starting point and implemented status.

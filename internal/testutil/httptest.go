@@ -61,6 +61,7 @@ func NewTestAppWithResponsesAndCodexSettings(t *testing.T, responsesMode string,
 type TestAppOptions struct {
 	ResponsesMode                         string
 	CustomToolsMode                       string
+	ResponsesConstrainedDecodingBackend   string
 	CodexCompatibilityEnabled             bool
 	ForceToolChoiceRequired               bool
 	ResponsesCompactionBackend            string
@@ -185,6 +186,7 @@ func NewTestAppWithOptions(t *testing.T, options TestAppOptions) *TestApp {
 		ResponsesMode:                         responsesMode,
 		ResponsesWebSocketEnabled:             true,
 		ResponsesCustomToolsMode:              options.CustomToolsMode,
+		ResponsesConstrainedDecodingBackend:   options.ResponsesConstrainedDecodingBackend,
 		ResponsesCodexEnableCompatibility:     options.CodexCompatibilityEnabled,
 		ResponsesCodexForceToolChoiceRequired: options.ForceToolChoiceRequired,
 		ResponsesCompactionBackend:            options.ResponsesCompactionBackend,
