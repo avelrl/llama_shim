@@ -179,6 +179,7 @@ This now ships as:
 - `scripts/devstack-smoke.sh`
 - `cmd/responses-websocket-smoke`
 - `scripts/v3-coding-tools-smoke.sh`
+- `scripts/v3-constrained-decoding-smoke.sh`
 
 The current smoke path verifies:
 
@@ -195,11 +196,14 @@ The current smoke path verifies:
 - hosted/server `tool_search` with namespace loading
 - stored `tool_search` follow-up through `function_call_output`
 - streamed generic replay for `tool_search`
+- focused V3 constrained-runtime capability flags and validated grammar custom
+  tool generation
 
 `make devstack-ci-smoke` is the CI-compatible gate on top of the stack. It
-combines the general devstack smoke, direct Responses WebSocket smoke, and V3
-native coding-tools smoke. It deliberately avoids real Codex CLI checks because
-CI runners should not need a locally installed `codex` binary.
+combines the general devstack smoke, direct Responses WebSocket smoke, V3
+native coding-tools smoke, and V3 constrained-runtime smoke. It deliberately
+avoids real Codex CLI checks because CI runners should not need a locally
+installed `codex` binary.
 
 `make devstack-full-smoke` is the local heavy gate. It includes
 `make devstack-ci-smoke` plus real Codex CLI smoke paths that verify the

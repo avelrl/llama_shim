@@ -188,8 +188,10 @@ responses:
     backend: disabled
   custom_tools:
     # How custom tools are transported to the upstream.
-    # auto: recommended default; bridge plain-text custom tools when possible
-    # and fall back to passthrough for grammar-constrained tools.
+    # auto: recommended default; use shim-local constrained runtime for
+    # supported grammar-constrained tools when Responses is handled locally,
+    # bridge plain-text custom tools when possible, and fall back to passthrough
+    # for standalone proxy requests.
     # bridge: always rewrite custom tools into a compatible upstream format.
     # passthrough: always forward them unchanged.
     mode: auto

@@ -443,6 +443,38 @@ func TestCapabilitiesEndpointReportsConfiguredRuntime(t *testing.T) {
 	require.Equal(t, "proxy_first_or_local_state", asStringAny(compactionRouting["prefer_upstream"]))
 	require.Equal(t, "local_subset", asStringAny(compactionRouting["local_only"]))
 
+	constrained := runtime["constrained_decoding"].(map[string]any)
+	require.Equal(t, true, constrained["enabled"])
+	require.Equal(t, "shim_validate_repair", asStringAny(constrained["support"]))
+	require.Equal(t, "chat_completions_json_schema_hint", asStringAny(constrained["runtime"]))
+	require.Equal(t, "configured_llama_chat_completions", asStringAny(constrained["backend"]))
+	require.Equal(t, "none", asStringAny(constrained["capability_class"]))
+	require.Equal(t, false, constrained["native_available"])
+	require.Equal(t, "none", asStringAny(constrained["native_backend"]))
+	require.Equal(t, "local_regex_validation", asStringAny(constrained["validation"]))
+	require.Equal(t, "local_retry_when_invalid_or_timeout", asStringAny(constrained["repair"]))
+	constrainedRouting := constrained["routing"].(map[string]any)
+	require.Equal(t, "shim_validate_repair_or_upstream_fallback", asStringAny(constrainedRouting["prefer_local"]))
+	require.Equal(t, "proxy_first", asStringAny(constrainedRouting["prefer_upstream"]))
+	require.Equal(t, "shim_validate_repair_or_validation_error", asStringAny(constrainedRouting["local_only"]))
+
+	constrainedCustomTools := constrained["custom_tools"].(map[string]any)
+	require.Equal(t, true, constrainedCustomTools["enabled"])
+	require.ElementsMatch(t, []any{"grammar.regex", "grammar.lark_subset"}, constrainedCustomTools["formats"].([]any))
+	require.Equal(t, true, constrainedCustomTools["lark_subset"])
+	require.Equal(t, float64(16<<10), constrainedCustomTools["max_grammar_definition_bytes"])
+	require.Equal(t, float64(32<<10), constrainedCustomTools["max_compiled_pattern_bytes"])
+
+	constrainedStructured := constrained["structured_outputs"].(map[string]any)
+	require.Equal(t, true, constrainedStructured["enabled"])
+	require.Equal(t, "local_validation_and_normalization", asStringAny(constrainedStructured["support"]))
+	require.ElementsMatch(t, []any{
+		"text.format=json_object",
+		"text.format=json_schema_subset",
+		"chat.response_format=json_object",
+		"chat.response_format=json_schema_subset",
+	}, constrainedStructured["formats"].([]any))
+
 	codex := runtime["codex"].(map[string]any)
 	require.Equal(t, true, codex["compatibility_enabled"])
 	require.Equal(t, true, codex["force_tool_choice_required"])

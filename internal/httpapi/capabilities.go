@@ -76,13 +76,14 @@ type capabilityContainersSurface struct {
 }
 
 type capabilityRuntimeConfig struct {
-	ResponsesMode   string                     `json:"responses_mode"`
-	CustomToolsMode string                     `json:"custom_tools_mode"`
-	Compaction      capabilityCompactionConfig `json:"compaction"`
-	Codex           capabilityCodexConfig      `json:"codex"`
-	Persistence     capabilityPersistenceInfo  `json:"persistence"`
-	Retrieval       capabilityRetrievalConfig  `json:"retrieval"`
-	Ops             capabilityOpsConfig        `json:"ops"`
+	ResponsesMode       string                              `json:"responses_mode"`
+	CustomToolsMode     string                              `json:"custom_tools_mode"`
+	Compaction          capabilityCompactionConfig          `json:"compaction"`
+	ConstrainedDecoding capabilityConstrainedDecodingConfig `json:"constrained_decoding"`
+	Codex               capabilityCodexConfig               `json:"codex"`
+	Persistence         capabilityPersistenceInfo           `json:"persistence"`
+	Retrieval           capabilityRetrievalConfig           `json:"retrieval"`
+	Ops                 capabilityOpsConfig                 `json:"ops"`
 }
 
 type capabilityCompactionConfig struct {
@@ -94,6 +95,35 @@ type capabilityCompactionConfig struct {
 	RetainedItems   int               `json:"retained_items,omitempty"`
 	MaxInputChars   int               `json:"max_input_chars,omitempty"`
 	Routing         capabilityRouting `json:"routing"`
+}
+
+type capabilityConstrainedDecodingConfig struct {
+	Enabled         bool                                      `json:"enabled"`
+	Support         string                                    `json:"support"`
+	Runtime         string                                    `json:"runtime"`
+	Backend         string                                    `json:"backend"`
+	CapabilityClass string                                    `json:"capability_class"`
+	NativeAvailable bool                                      `json:"native_available"`
+	NativeBackend   string                                    `json:"native_backend"`
+	Validation      string                                    `json:"validation"`
+	Repair          string                                    `json:"repair"`
+	CustomTools     capabilityConstrainedCustomToolsConfig    `json:"custom_tools"`
+	Structured      capabilityConstrainedStructuredJSONConfig `json:"structured_outputs"`
+	Routing         capabilityRouting                         `json:"routing"`
+}
+
+type capabilityConstrainedCustomToolsConfig struct {
+	Enabled                   bool     `json:"enabled"`
+	Formats                   []string `json:"formats"`
+	LarkSubset                bool     `json:"lark_subset"`
+	MaxGrammarDefinitionBytes int64    `json:"max_grammar_definition_bytes"`
+	MaxCompiledPatternBytes   int64    `json:"max_compiled_pattern_bytes"`
+}
+
+type capabilityConstrainedStructuredJSONConfig struct {
+	Enabled bool     `json:"enabled"`
+	Formats []string `json:"formats"`
+	Support string   `json:"support"`
 }
 
 type capabilityCodexConfig struct {
@@ -227,9 +257,10 @@ func buildCapabilityManifest(ctx context.Context, deps RouterDeps) capabilityMan
 			},
 		},
 		Runtime: capabilityRuntimeConfig{
-			ResponsesMode:   deps.ResponsesMode,
-			CustomToolsMode: deps.ResponsesCustomToolsMode,
-			Compaction:      compactionCapability(deps),
+			ResponsesMode:       deps.ResponsesMode,
+			CustomToolsMode:     deps.ResponsesCustomToolsMode,
+			Compaction:          compactionCapability(deps),
+			ConstrainedDecoding: constrainedDecodingCapability(deps),
 			Codex: capabilityCodexConfig{
 				CompatibilityEnabled:    deps.ResponsesCodexEnableCompatibility,
 				ForceToolChoiceRequired: deps.ResponsesCodexForceToolChoiceRequired,
@@ -390,6 +421,43 @@ func compactionCapability(deps RouterDeps) capabilityCompactionConfig {
 			PreferLocal:    "local_subset",
 			PreferUpstream: "proxy_first_or_local_state",
 			LocalOnly:      "local_subset",
+		},
+	}
+}
+
+func constrainedDecodingCapability(deps RouterDeps) capabilityConstrainedDecodingConfig {
+	limits := normalizeServiceLimits(deps.ServiceLimits)
+	return capabilityConstrainedDecodingConfig{
+		Enabled:         true,
+		Support:         "shim_validate_repair",
+		Runtime:         "chat_completions_json_schema_hint",
+		Backend:         normalizedCapabilityBackend("", deps.LlamaClient != nil, "configured_llama_chat_completions"),
+		CapabilityClass: "none",
+		NativeAvailable: false,
+		NativeBackend:   "none",
+		Validation:      "local_regex_validation",
+		Repair:          "local_retry_when_invalid_or_timeout",
+		CustomTools: capabilityConstrainedCustomToolsConfig{
+			Enabled:                   true,
+			Formats:                   []string{"grammar.regex", "grammar.lark_subset"},
+			LarkSubset:                true,
+			MaxGrammarDefinitionBytes: limits.CustomToolGrammarDefinitionBytes,
+			MaxCompiledPatternBytes:   limits.CustomToolCompiledPatternBytes,
+		},
+		Structured: capabilityConstrainedStructuredJSONConfig{
+			Enabled: true,
+			Formats: []string{
+				"text.format=json_object",
+				"text.format=json_schema_subset",
+				"chat.response_format=json_object",
+				"chat.response_format=json_schema_subset",
+			},
+			Support: "local_validation_and_normalization",
+		},
+		Routing: capabilityRouting{
+			PreferLocal:    "shim_validate_repair_or_upstream_fallback",
+			PreferUpstream: "proxy_first",
+			LocalOnly:      "shim_validate_repair_or_validation_error",
 		},
 	}
 }

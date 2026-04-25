@@ -136,8 +136,9 @@ make devstack-down
 ```
 
 `make devstack-ci-smoke` is the CI-compatible gate. It runs the general
-devstack smoke, focused Responses WebSocket smoke, and focused V3 native
-coding-tools smoke without requiring the local `codex` binary.
+devstack smoke, focused Responses WebSocket smoke, focused V3 native
+coding-tools smoke, and focused V3 constrained-runtime smoke without requiring
+the local `codex` binary.
 
 `make devstack-full-smoke` is the local heavy gate. It includes the
 CI-compatible gate plus basic real Codex CLI smoke, fallback-shell Codex CLI

@@ -56,6 +56,12 @@ Run the focused V3 native coding-tools smoke path:
 make v3-coding-tools-smoke
 ```
 
+Run the focused V3 constrained-decoding smoke path:
+
+```bash
+make v3-constrained-decoding-smoke
+```
+
 Run the real Codex CLI smoke path:
 
 ```bash
@@ -99,6 +105,7 @@ Equivalent individual commands:
 ```bash
 bash ./scripts/devstack-smoke.sh
 bash ./scripts/v3-coding-tools-smoke.sh
+bash ./scripts/v3-constrained-decoding-smoke.sh
 bash ./scripts/codex-cli-devstack-smoke.sh
 bash ./scripts/codex-cli-shell-tool-smoke.sh
 bash ./scripts/codex-cli-coding-task-smoke.sh
@@ -121,6 +128,7 @@ The shim itself talks to the fixture backend over the Compose network as
 - `make devstack-smoke`
 - `make responses-websocket-smoke`
 - `make v3-coding-tools-smoke`
+- `make v3-constrained-decoding-smoke`
 
 It intentionally does not require the real `codex` binary.
 
@@ -130,6 +138,7 @@ CI-compatible gate plus real Codex CLI checks:
 - `make devstack-smoke`
 - `make responses-websocket-smoke`
 - `make v3-coding-tools-smoke`
+- `make v3-constrained-decoding-smoke`
 - `make codex-cli-devstack-smoke`
 - `make codex-cli-shell-tool-smoke`
 - `make codex-cli-task-matrix-smoke`
@@ -181,6 +190,16 @@ subset:
 - apply-patch create/retrieve-stream emit
   `response.apply_patch_call_operation_diff.done`
 
+`scripts/v3-constrained-decoding-smoke.sh` checks the focused V3 constrained
+runtime subset:
+
+- `/debug/capabilities` reports `shim_validate_repair`,
+  `capability_class=none`, and `native_available=false`
+- non-stream direct grammar custom tool generation returns a validated
+  `custom_tool_call`
+- create-stream emits typed `response.custom_tool_call_input.*` events for the
+  same validated path
+
 `scripts/codex-cli-devstack-smoke.sh` checks practical Codex CLI compatibility:
 
 - the real `codex exec` binary targets the shim through `openai_base_url`
@@ -230,6 +249,8 @@ stack is runnable, probeable, and reproducible.
 - [scripts/devstack-smoke.sh](../../scripts/devstack-smoke.sh): repo-owned smoke path
 - [scripts/v3-coding-tools-smoke.sh](../../scripts/v3-coding-tools-smoke.sh):
   focused native coding-tools smoke path
+- [scripts/v3-constrained-decoding-smoke.sh](../../scripts/v3-constrained-decoding-smoke.sh):
+  focused constrained-runtime smoke path
 - [scripts/codex-cli-devstack-smoke.sh](../../scripts/codex-cli-devstack-smoke.sh):
   real Codex CLI smoke path
 - [scripts/codex-cli-shell-tool-smoke.sh](../../scripts/codex-cli-shell-tool-smoke.sh):

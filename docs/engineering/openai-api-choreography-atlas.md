@@ -393,6 +393,50 @@ This pattern applies to custom functions, remote MCP, coding tools, tool
 search, and several hosted-like local tools. The exact item names differ by
 tool family.
 
+## 7.1 Constrained Decoding Runtime
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant C as Client
+  participant R as Responses handler
+  participant K as Constraint compiler
+  participant CR as Constrained runtime
+  participant M as Chat backend
+  participant V as Local validator
+  participant S as Response store
+
+  C->>R: POST /v1/responses tools=[custom grammar]
+  R->>K: compile regex or supported Lark subset
+  K-->>R: anchored validation pattern
+  R->>CR: direct or selected constrained custom tool
+  CR->>M: chat completion with json_schema hint
+  M-->>CR: JSON candidate with input field
+  CR->>V: validate candidate against compiled pattern
+  alt candidate valid
+    V-->>R: accepted raw custom tool input
+    R->>S: persist custom_tool_call when store=true
+    R-->>C: custom_tool_call item
+  else candidate invalid or runtime error
+    V-->>R: invalid constrained output
+    R->>M: repair or fallback local tool-loop request
+    M-->>R: repaired candidate or error
+    R-->>C: validated item or local validation error
+  end
+```
+
+What exists in the shim:
+
+- `grammar.regex` and a supported Lark subset compile to a local validation
+  pattern.
+- The backend receives a structured-output hint, but the shim does not treat
+  that as proof of native constrained sampling.
+- `/debug/capabilities.runtime.constrained_decoding` reports
+  `support=shim_validate_repair`, `capability_class=none`, and
+  `native_available=false` by default.
+- A future backend-specific adapter must change those capability fields before
+  docs can claim `json_schema_native` or `grammar_native`.
+
 ## 8. Retrieval, Vector Stores, And File Search
 
 ```mermaid
@@ -893,7 +937,7 @@ support:
 ```mermaid
 flowchart TB
   ready["Ready for new V3 work"]
-  constrained["V3 constrained decoding runtime"]
+  constrained["V3 constrained runtime slice"]
   backend["V3 backend expansion"]
   parity["V5 exact hosted parity"]
   ops["V4/V3 ops expansion"]
@@ -903,7 +947,8 @@ flowchart TB
   ready --> ops
   ready --> parity
 
-  constrained --> c1["Backend-native grammar or regex enforcement"]
+  constrained --> c0["Current: shim_validate_repair + JSON Schema hint"]
+  constrained --> c1["Future: proven json_schema_native or grammar_native adapter"]
   backend --> b1["More image, retrieval, storage, or model backends"]
   ops --> o1["Tenanting, dashboards, admin workflows"]
   parity --> p1["Fixture-backed exact SSE/WS/tool choreography"]

@@ -1,4 +1,4 @@
-.PHONY: run build lint test vet diff-check ci-check maint-cleanup maint-optimize maint-vacuum maint-backup docker-build compose-up compose-down devstack-up devstack-down devstack-smoke devstack-ci-smoke devstack-full-smoke responses-websocket-smoke v3-coding-tools-smoke codex-cli-devstack-smoke codex-cli-shell-tool-smoke codex-cli-coding-task-smoke codex-cli-task-matrix-smoke
+.PHONY: run build lint test vet diff-check ci-check maint-cleanup maint-optimize maint-vacuum maint-backup docker-build compose-up compose-down devstack-up devstack-down devstack-smoke devstack-ci-smoke devstack-full-smoke responses-websocket-smoke v3-coding-tools-smoke v3-constrained-decoding-smoke codex-cli-devstack-smoke codex-cli-shell-tool-smoke codex-cli-coding-task-smoke codex-cli-task-matrix-smoke
 
 CONFIG ?= config.yaml
 BACKUP ?= ./.data/shim-backup.db
@@ -80,7 +80,7 @@ devstack-down:
 devstack-smoke:
 	bash ./scripts/devstack-smoke.sh
 
-devstack-ci-smoke: devstack-smoke responses-websocket-smoke v3-coding-tools-smoke
+devstack-ci-smoke: devstack-smoke responses-websocket-smoke v3-coding-tools-smoke v3-constrained-decoding-smoke
 
 devstack-full-smoke: devstack-ci-smoke codex-cli-devstack-smoke codex-cli-shell-tool-smoke codex-cli-task-matrix-smoke
 
@@ -90,6 +90,9 @@ responses-websocket-smoke:
 
 v3-coding-tools-smoke:
 	bash ./scripts/v3-coding-tools-smoke.sh
+
+v3-constrained-decoding-smoke:
+	bash ./scripts/v3-constrained-decoding-smoke.sh
 
 codex-cli-devstack-smoke:
 	bash ./scripts/codex-cli-devstack-smoke.sh

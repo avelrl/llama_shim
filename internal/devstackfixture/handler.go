@@ -338,6 +338,10 @@ func assistantTextForMessages(messages []chatMessage) string {
 	joined := strings.ToLower(strings.TrimSpace(joinMessageContent(messages)))
 
 	switch {
+	case strings.Contains(joined, "shim-local constrained custom tool generator") && strings.Contains(joined, "`math_exp`"):
+		return `{"input":"4 + 4"}`
+	case strings.Contains(joined, "shim-local constrained custom tool generator") && strings.Contains(joined, "`exact_text`"):
+		return `{"input":"hello 42"}`
 	case strings.Contains(lastUser, "reply ready") && containsAny(joined, "remember code 777", "remember: code=777"):
 		return "READY"
 	case strings.Contains(lastUser, "what code did i ask you to remember") && strings.Contains(joined, "777"):

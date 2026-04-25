@@ -95,14 +95,30 @@ reopen the frozen V2 contract before code, tests, and capabilities exist.
 
 ### 5. Deeper constrained decoding work
 
+Status: first conservative runtime slice implemented as a `Broad subset` in
+[compatibility-matrix.md](compatibility-matrix.md), with true backend-native
+constrained sampling still unclaimed.
+
+Implemented local scope:
+
+- shared constrained custom tool runtime abstraction
+- Chat Completions JSON Schema hint path for direct constrained custom tool
+  generation
+- final shim-local regex validation remains authoritative
+- `/debug/capabilities` reports `support: shim_validate_repair`,
+  `capability_class: none`, and `native_available: false`
+- focused devstack smoke coverage through `make v3-constrained-decoding-smoke`
+
+Remaining valid expansion areas:
+
 - backend-native constrained decoding hooks
 - embedded constrained decoder/runtime libraries
 - lower-level sampler/logits integrations
-- first narrow rollout target: `llama.cpp`-first native constrained decoding
-  with the current shim-local validate/repair path kept as fallback
+- `llama.cpp`-first `json_schema_native` or `grammar_native` adapter, only
+  after concrete enforcement is wired and tested
 
 See [v3-constrained-decoding.md](v3-constrained-decoding.md) for the design
-starting point and rollout assumptions.
+starting point and implemented status.
 
 This is valuable work, but it is a runtime-expansion track, not a V2 facade
 requirement.

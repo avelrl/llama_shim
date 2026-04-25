@@ -2500,7 +2500,7 @@ components:
           type: boolean
     ShimCapabilityRuntime:
       type: object
-      required: [responses_mode, custom_tools_mode, compaction, codex, persistence, retrieval, ops]
+      required: [responses_mode, custom_tools_mode, compaction, constrained_decoding, codex, persistence, retrieval, ops]
       properties:
         responses_mode:
           type: string
@@ -2508,6 +2508,8 @@ components:
           type: string
         compaction:
           $ref: "#/components/schemas/ShimCapabilityCompactionRuntime"
+        constrained_decoding:
+          $ref: "#/components/schemas/ShimCapabilityConstrainedDecodingRuntime"
         codex:
           $ref: "#/components/schemas/ShimCapabilityCodexConfig"
         persistence:
@@ -2538,6 +2540,70 @@ components:
           type: integer
         routing:
           $ref: "#/components/schemas/ShimCapabilityToolRouting"
+    ShimCapabilityConstrainedDecodingRuntime:
+      type: object
+      required: [enabled, support, runtime, backend, capability_class, native_available, native_backend, validation, repair, custom_tools, structured_outputs, routing]
+      properties:
+        enabled:
+          type: boolean
+        support:
+          type: string
+          enum: [shim_validate_repair]
+          description: Shim-local constrained tool support. This is not an exact hosted/native constrained-sampling parity claim.
+        runtime:
+          type: string
+          enum: [chat_completions_json_schema_hint]
+          description: Internal generation path used before final local validation.
+        backend:
+          type: string
+        capability_class:
+          type: string
+          enum: [none, json_schema_native, grammar_native]
+          description: Active native constrained-decoding class. The default shim path reports `none`.
+        native_available:
+          type: boolean
+        native_backend:
+          type: string
+        validation:
+          type: string
+        repair:
+          type: string
+        custom_tools:
+          $ref: "#/components/schemas/ShimCapabilityConstrainedCustomTools"
+        structured_outputs:
+          $ref: "#/components/schemas/ShimCapabilityConstrainedStructuredOutputs"
+        routing:
+          $ref: "#/components/schemas/ShimCapabilityToolRouting"
+    ShimCapabilityConstrainedCustomTools:
+      type: object
+      required: [enabled, formats, lark_subset, max_grammar_definition_bytes, max_compiled_pattern_bytes]
+      properties:
+        enabled:
+          type: boolean
+        formats:
+          type: array
+          items:
+            type: string
+        lark_subset:
+          type: boolean
+        max_grammar_definition_bytes:
+          type: integer
+          format: int64
+        max_compiled_pattern_bytes:
+          type: integer
+          format: int64
+    ShimCapabilityConstrainedStructuredOutputs:
+      type: object
+      required: [enabled, formats, support]
+      properties:
+        enabled:
+          type: boolean
+        formats:
+          type: array
+          items:
+            type: string
+        support:
+          type: string
     ShimCapabilityCodexConfig:
       type: object
       required: [compatibility_enabled, force_tool_choice_required]

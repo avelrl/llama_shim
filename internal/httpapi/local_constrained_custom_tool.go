@@ -454,23 +454,54 @@ func localConstrainedCustomSelectionID(namespace, name string) string {
 }
 
 func (h *responseHandler) generateLocalConstrainedCustomToolInput(ctx context.Context, model string, items []domain.Item, currentInputLen int, options map[string]json.RawMessage, descriptor customToolDescriptor) (string, error) {
-	runtimeItems, err := buildLocalConstrainedCustomToolRuntimeItems(items, currentInputLen, descriptor)
+	runtime := localConstrainedCustomToolRuntime{
+		createChatCompletionText: h.proxy.client.CreateChatCompletionText,
+	}
+	return runtime.Generate(ctx, localConstrainedCustomToolRuntimeRequest{
+		Model:           model,
+		Items:           items,
+		CurrentInputLen: currentInputLen,
+		Options:         options,
+		Descriptor:      descriptor,
+	})
+}
+
+type constrainedCustomToolRuntime interface {
+	Generate(context.Context, localConstrainedCustomToolRuntimeRequest) (string, error)
+}
+
+type localConstrainedCustomToolRuntimeRequest struct {
+	Model           string
+	Items           []domain.Item
+	CurrentInputLen int
+	Options         map[string]json.RawMessage
+	Descriptor      customToolDescriptor
+}
+
+type localConstrainedCustomToolRuntime struct {
+	createChatCompletionText func(context.Context, []byte) (string, error)
+}
+
+var _ constrainedCustomToolRuntime = localConstrainedCustomToolRuntime{}
+
+func (r localConstrainedCustomToolRuntime) Generate(ctx context.Context, request localConstrainedCustomToolRuntimeRequest) (string, error) {
+	runtimeItems, err := buildLocalConstrainedCustomToolRuntimeItems(request.Items, request.CurrentInputLen, request.Descriptor)
 	if err != nil {
 		return "", err
 	}
-	runtimeOptions, err := buildLocalConstrainedCustomToolRuntimeOptions(options, descriptor)
+	runtimeOptions, err := buildLocalConstrainedCustomToolRuntimeOptions(request.Options, request.Descriptor)
 	if err != nil {
 		return "", err
 	}
-	chatBody, err := buildLocalConstrainedCustomToolRuntimeChatCompletionBody(model, runtimeItems, runtimeOptions)
+	chatBody, err := buildLocalConstrainedCustomToolRuntimeChatCompletionBody(request.Model, runtimeItems, runtimeOptions)
 	if err != nil {
 		return "", err
 	}
-	rawOutput, err := h.proxy.client.CreateChatCompletionText(ctx, chatBody)
+	rawOutput, err := r.createChatCompletionText(ctx, chatBody)
 	if err != nil {
 		return "", err
 	}
-	return parseLocalConstrainedCustomToolRuntimeOutput(rawOutput, descriptor)
+	return parseLocalConstrainedCustomToolRuntimeOutput(rawOutput, request.Descriptor)
 }
 
 func shouldFallbackLocalConstrainedRuntimeError(err error) bool {

@@ -78,7 +78,7 @@ Practical usage guides live in [guides/README.md](guides/README.md).
 | Surface | Current shim status | Freeze guidance | Notes |
 | --- | --- | --- | --- |
 | custom functions / custom tools | Broad subset | Keep request/repair/fallback/error behavior explicit | This is part of the facade contract |
-| constrained custom tools `grammar` / `regex` | Broad subset | Ship V2 with honest subset wording | True constrained decoding is staged for V3, not required for V2 |
+| constrained custom tools `grammar` / `regex` | Broad subset | Keep capability-backed subset wording | V3 constrained-runtime slice now exposes shim-local validate/repair plus a Chat Completions JSON Schema hint through `/debug/capabilities`. It reports `capability_class: none` and `native_available: false`; true backend-native constrained sampling is not claimed. |
 | local `file_search` | Broad subset | Keep retrieval/result/citation subset explicit | Already usable end-to-end |
 | local `web_search` | Broad subset | Keep hosted-vs-local boundary explicit | Exact hosted search parity is intentionally not part of the V2 promise |
 | local `image_generation` | Broad subset | Keep separate image-backend contract explicit | Current subset is docs-aligned, not exact hosted planner parity |
@@ -133,8 +133,9 @@ proxy-first escape hatch for standalone hosted/native requests, while
 - `prefer_upstream` remains a proxy-first mode, not a hosted parity guarantee.
 - Retrieval ranking is docs-backed and usable, but not presented as exact
   hosted reranker equivalence.
-- Constrained custom tools are a supported shim subset, not true
-  backend-native constrained decoding parity.
+- Constrained custom tools are a supported shim subset. The V3 runtime slice is
+  observable and smoke-tested, but still reports no backend-native constrained
+  decoding parity by default.
 - Operator cleanup currently targets only explicit local `expires_at`
   resources.
 

@@ -1,6 +1,8 @@
 package httpapi
 
 import (
+	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -21,6 +23,51 @@ func TestParseLocalConstrainedToolSelectionOutputAcceptsMarkdownFencedJSON(t *te
 func TestParseLocalConstrainedCustomToolRuntimeOutputAcceptsMarkdownFencedJSON(t *testing.T) {
 	t.Parallel()
 
+	constraint := mustRegexCustomToolConstraint(t)
+
+	input, err := parseLocalConstrainedCustomToolRuntimeOutput(
+		"```json\n{\"input\":\"hello 42\"}\n```",
+		customToolDescriptor{Name: "exact_text", Constraint: constraint},
+	)
+	require.NoError(t, err)
+	require.Equal(t, "hello 42", input)
+}
+
+func TestLocalConstrainedCustomToolRuntimeShapesJSONSchemaHintAndValidates(t *testing.T) {
+	t.Parallel()
+
+	constraint := mustRegexCustomToolConstraint(t)
+	var captured map[string]any
+	runtime := localConstrainedCustomToolRuntime{
+		createChatCompletionText: func(_ context.Context, body []byte) (string, error) {
+			require.NoError(t, json.Unmarshal(body, &captured))
+			return `{"input":"hello 42"}`, nil
+		},
+	}
+
+	input, err := runtime.Generate(context.Background(), localConstrainedCustomToolRuntimeRequest{
+		Model:      "test-model",
+		Options:    map[string]json.RawMessage{"max_output_tokens": json.RawMessage(`32`)},
+		Descriptor: customToolDescriptor{Name: "exact_text", Constraint: constraint},
+	})
+	require.NoError(t, err)
+	require.Equal(t, "hello 42", input)
+	require.Equal(t, "test-model", captured["model"])
+	require.Equal(t, float64(32), captured["max_tokens"])
+
+	responseFormat := captured["response_format"].(map[string]any)
+	require.Equal(t, "json_schema", responseFormat["type"])
+	require.Equal(t, true, responseFormat["strict"])
+	schema := responseFormat["schema"].(map[string]any)
+	properties := schema["properties"].(map[string]any)
+	inputProperty := properties["input"].(map[string]any)
+	require.Equal(t, constraint.Anchored, inputProperty["pattern"])
+	require.Equal(t, schema, captured["json_schema"])
+}
+
+func mustRegexCustomToolConstraint(t *testing.T) *customToolConstraint {
+	t.Helper()
+
 	constraint, err := compileCustomToolConstraint(map[string]any{
 		"type": "custom",
 		"name": "exact_text",
@@ -31,11 +78,5 @@ func TestParseLocalConstrainedCustomToolRuntimeOutputAcceptsMarkdownFencedJSON(t
 		},
 	}, ServiceLimits{})
 	require.NoError(t, err)
-
-	input, err := parseLocalConstrainedCustomToolRuntimeOutput(
-		"```json\n{\"input\":\"hello 42\"}\n```",
-		customToolDescriptor{Name: "exact_text", Constraint: constraint},
-	)
-	require.NoError(t, err)
-	require.Equal(t, "hello 42", input)
+	return constraint
 }

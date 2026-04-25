@@ -1,14 +1,12 @@
 # V3 Constrained Decoding
 
-Last updated: April 19, 2026.
+Last updated: April 25, 2026.
 
-This document fixes the design starting point for the V3 constrained decoding
-track before implementation begins.
+This document fixes the design and current implementation status for the V3
+constrained decoding track.
 
 It does not change the frozen V2 contract.
-It does not change OpenAPI.
-It does not claim new OpenAI-surface parity before code, tests, and
-capabilities exist.
+It does not claim exact hosted/native OpenAI constrained-sampling parity.
 
 ## Why This Exists
 
@@ -32,19 +30,22 @@ This is a runtime-expansion track, not a V2 compatibility requirement.
 
 ## Official References Reviewed
 
-This design note was re-checked on April 19, 2026 against:
+This design note was re-checked on April 25, 2026 against:
 
 - local official-docs index: `openapi/llms.txt`
 - OpenAI docs:
   - [Function calling](https://developers.openai.com/api/docs/guides/function-calling#context-free-grammars)
   - [Function calling best practices](https://developers.openai.com/api/docs/guides/function-calling#key-ideas-and-best-practices)
-  - [Using GPT-5.4: constraining outputs](https://developers.openai.com/api/docs/guides/latest-model#constraining-outputs)
+  - [Structured model outputs](https://developers.openai.com/api/docs/guides/structured-outputs)
+  - [Using GPT-5.5](https://developers.openai.com/api/docs/guides/latest-model)
 
 The practical takeaway from the current official docs is:
 
 - custom tools support `grammar` with `lark` and `regex`
 - OpenAI's native implementation constrains sampling during generation
 - grammars are expected to stay simple, explicit, and bounded
+- Structured Outputs are a schema-constrained API feature, while JSON mode
+  only guarantees valid JSON and still requires application-side validation
 
 That supports a V3 direction toward native constrained decoding where the shim
 can actually control or select such a runtime.
@@ -74,20 +75,27 @@ The constrained decoding track starts from the following assumptions:
 - the shim should keep one shared abstraction above thin backend adapters rather
   than inventing a separate feature implementation per backend
 
-## First Implementation Target
+## Implemented V3 Slice
 
-The first V3 target is `llama.cpp`.
+The implemented V3 slice is deliberately conservative:
 
-Reasoning:
+- a shared shim-local constrained custom tool runtime abstraction now owns the
+  direct constrained generation path
+- that runtime shapes a Chat Completions request with an OpenAI-compatible
+  `response_format: {type: "json_schema"}` hint plus a llama.cpp-compatible
+  top-level `json_schema` hint
+- the hint is not treated as proof of native enforcement
+- the final `custom_tool_call.input` is accepted only after shim-local regex
+  validation against the compiled `grammar.regex` or supported Lark subset
+- invalid, timed-out, or upstream-error runtime attempts still flow through the
+  existing shim-local repair/fallback path
 
-- it is a realistic local deployment target for this repository
-- it is expected to be used often enough to justify an explicit adapter
-- it is a better first target than an opaque remote upstream because the shim
-  can treat it as an operator-controlled runtime instead of a black-box chat
-  proxy
+The current active capability class is therefore `none`, not
+`json_schema_native` or `grammar_native`.
 
-This document intentionally does not assume that every backend will support the
-same native constrained feature set.
+`llama.cpp` remains the likely first backend-specific native target, but no
+`grammar_native` adapter is claimed until the shim can prove and test a concrete
+backend-native grammar enforcement path.
 
 ## Capability Classes
 
@@ -131,11 +139,13 @@ Behavior:
 
 ## Backend Policy
 
-The first rollout should stay narrow:
+The implemented rollout stays narrow:
 
-- `llama.cpp` is the first `grammar_native` target
-- other backends remain on the current V2 fallback path until they have an
-  explicit adapter and capability coverage
+- generic upstreams remain on the current validate/repair path
+- the Chat Completions runtime receives structured-output hints where useful,
+  but those hints are not advertised as native constrained decoding
+- `llama.cpp` or another backend can move to `json_schema_native` or
+  `grammar_native` only after an explicit adapter and capability coverage exist
 - unknown or opaque upstreams should continue to behave as `none`
 
 This avoids a misleading "native constrained decoding everywhere" story.
@@ -167,12 +177,12 @@ V3 should refine runtime routing without rewriting the public mode model.
 - reject unsupported requests explicitly rather than pretending the runtime can
   enforce constraints it cannot enforce
 
-## `/debug/capabilities` Direction
+## `/debug/capabilities` Status
 
-Before or along with implementation, the capability manifest should grow
-constrained-decoding-specific detail rather than a single vague boolean.
+The capability manifest now exposes constrained-decoding-specific detail rather
+than a single vague boolean.
 
-The manifest should be able to answer:
+`runtime.constrained_decoding` answers:
 
 - whether constrained custom tools are available at all
 - whether the current process is using shim-local validate and repair only
@@ -180,12 +190,22 @@ The manifest should be able to answer:
 - which capability class is active: `none`, `json_schema_native`, or
   `grammar_native`
 - which backend is providing the native path when one exists
+- which grammar formats and operational limits are active
+- which structured-output validation subset is exposed by the shim
 
 This keeps V3 work observable for operators, tests, and future automation.
 
+Current default values intentionally report:
+
+- `support: "shim_validate_repair"`
+- `runtime: "chat_completions_json_schema_hint"`
+- `capability_class: "none"`
+- `native_available: false`
+- `native_backend: "none"`
+
 ## Test Expectations
 
-Before any native constrained path is called done, coverage should include:
+Before any native constrained path is called done, coverage still must include:
 
 - unit tests for backend capability detection and adapter request shaping
 - integration tests for `prefer_local`, `prefer_upstream`, and `local_only`
@@ -193,6 +213,15 @@ Before any native constrained path is called done, coverage should include:
 - devstack or fixture-backed smoke coverage where the runtime is reproducible
 
 The current shim-local validate and repair tests remain part of the baseline.
+
+Implemented V3-slice coverage includes:
+
+- unit coverage for constrained custom tool runtime request shaping and final
+  validation
+- integration coverage for direct and planner-selected grammar custom tools,
+  invalid-output repair, local-only behavior, and stream replay
+- `/debug/capabilities` coverage for the constrained runtime flags
+- devstack smoke coverage through `make v3-constrained-decoding-smoke`
 
 ## Non-Goals For The First Cut
 
@@ -205,15 +234,20 @@ following at once:
 - widen the public OpenAI compatibility wording before the runtime behavior is
   implemented and tested
 
-## Initial Rollout Shape
+## Implemented Rollout Shape
 
-The expected first rollout is:
+The implemented first rollout is:
 
-1. keep the V2 subset and wording intact
-2. add a shared constrained-runtime abstraction
-3. add a `llama.cpp` adapter as the first `grammar_native` backend
-4. expose the new capability in `/debug/capabilities`
-5. add integration and smoke coverage before any broader claims are made
+1. V2 subset and wording remain intact.
+2. A shared constrained-runtime abstraction owns the direct constrained custom
+   tool path.
+3. The current runtime provides a structured-generation hint path, but no
+   `grammar_native` adapter is claimed.
+4. `/debug/capabilities` exposes the active constrained-decoding support,
+   runtime, capability class, native availability, formats, limits, and routing.
+5. Integration and devstack smoke coverage exist before any broader claims are
+   made.
 
-That is the narrowest practical path from the current V2 subset to a real V3
-runtime-expansion track.
+The next valid status upgrade would require a fixture-backed or backend-owned
+adapter that can prove `json_schema_native` or `grammar_native` enforcement
+instead of only accepting a hint and validating after generation.
