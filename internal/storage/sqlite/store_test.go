@@ -880,6 +880,7 @@ func TestStoreSaveChatCompletionRoundTripAndList(t *testing.T) {
 	require.False(t, page.HasMore)
 	require.Len(t, page.Completions, 1)
 	require.Equal(t, first.ID, page.Completions[0].ID)
+	require.Empty(t, page.Completions[0].RequestJSON)
 
 	page, err = store.ListChatCompletions(ctx, domain.ListStoredChatCompletionsQuery{
 		Limit: 1,
@@ -900,6 +901,25 @@ func TestStoreSaveChatCompletionRoundTripAndList(t *testing.T) {
 	require.Len(t, page.Completions, 2)
 	require.Equal(t, []string{second.ID, third.ID}, []string{page.Completions[0].ID, page.Completions[1].ID})
 
+	page, err = store.ListChatCompletions(ctx, domain.ListStoredChatCompletionsQuery{
+		Limit: 1,
+		Order: domain.ChatCompletionOrderDesc,
+	})
+	require.NoError(t, err)
+	require.True(t, page.HasMore)
+	require.Len(t, page.Completions, 1)
+	require.Equal(t, third.ID, page.Completions[0].ID)
+
+	page, err = store.ListChatCompletions(ctx, domain.ListStoredChatCompletionsQuery{
+		After: third.ID,
+		Limit: 1,
+		Order: domain.ChatCompletionOrderDesc,
+	})
+	require.NoError(t, err)
+	require.True(t, page.HasMore)
+	require.Len(t, page.Completions, 1)
+	require.Equal(t, second.ID, page.Completions[0].ID)
+
 	_, err = store.ListChatCompletions(ctx, domain.ListStoredChatCompletionsQuery{
 		After: "chatcmpl_missing_after",
 		Limit: 1,
@@ -908,6 +928,95 @@ func TestStoreSaveChatCompletionRoundTripAndList(t *testing.T) {
 	require.ErrorIs(t, err, sqlite.ErrNotFound)
 
 	_, err = store.GetChatCompletion(ctx, "chatcmpl_missing")
+	require.ErrorIs(t, err, sqlite.ErrNotFound)
+}
+
+func TestStoreSaveChatCompletionPatchesResponseMetadata(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store := openTestStore(t, ctx)
+
+	completion := domain.StoredChatCompletion{
+		ID:           "chatcmpl_metadata_patch",
+		Model:        "gpt-5.4",
+		Metadata:     map[string]string{"topic": "patched"},
+		RequestJSON:  `{"model":"gpt-5.4","store":true,"metadata":{"topic":"patched"},"messages":[{"role":"user","content":"hello"}]}`,
+		ResponseJSON: `{"id":"chatcmpl_metadata_patch","object":"chat.completion","created":1712059200,"model":"gpt-5.4","choices":[{"index":0,"message":{"role":"assistant","content":"OK"},"finish_reason":"stop","logprobs":null}]}`,
+		CreatedAt:    1712059200,
+	}
+	require.NoError(t, store.SaveChatCompletion(ctx, completion))
+
+	got, err := store.GetChatCompletion(ctx, completion.ID)
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal([]byte(got.ResponseJSON), &payload))
+	require.Equal(t, map[string]any{"topic": "patched"}, payload["metadata"])
+}
+
+func TestStoreListChatCompletionMessagesPaginatesAndCascades(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store := openTestStore(t, ctx)
+
+	completion := domain.StoredChatCompletion{
+		ID:       "chatcmpl_messages",
+		Model:    "gpt-5.4",
+		Metadata: map[string]string{"topic": "messages"},
+		RequestJSON: `{
+			"model": "gpt-5.4",
+			"store": true,
+			"messages": [
+				{"role":"developer","content":"Be terse."},
+				{"role":"user","content":[{"type":"text","text":"Say first."}]},
+				{"role":"user","content":"Say second."}
+			]
+		}`,
+		ResponseJSON: `{"id":"chatcmpl_messages","object":"chat.completion","created":1712059200,"model":"gpt-5.4","metadata":{"topic":"messages"},"choices":[{"index":0,"message":{"role":"assistant","content":"OK"},"finish_reason":"stop","logprobs":null}]}`,
+		CreatedAt:    1712059200,
+	}
+	require.NoError(t, store.SaveChatCompletion(ctx, completion))
+
+	page, err := store.ListChatCompletionMessages(ctx, completion.ID, domain.ListStoredChatCompletionMessagesQuery{
+		Limit: 2,
+		Order: domain.ChatCompletionOrderAsc,
+	})
+	require.NoError(t, err)
+	require.True(t, page.HasMore)
+	require.Len(t, page.Messages, 2)
+	require.Equal(t, []string{completion.ID + "-0", completion.ID + "-1"}, []string{page.Messages[0].ID, page.Messages[1].ID})
+
+	payloads, err := domain.StoredChatCompletionMessagePayloads(page.Messages)
+	require.NoError(t, err)
+	require.Equal(t, "Be terse.", payloads[0]["content"])
+	require.Nil(t, payloads[1]["content"])
+	parts, ok := payloads[1]["content_parts"].([]any)
+	require.True(t, ok)
+	require.Len(t, parts, 1)
+
+	page, err = store.ListChatCompletionMessages(ctx, completion.ID, domain.ListStoredChatCompletionMessagesQuery{
+		After: completion.ID + "-2",
+		Limit: 1,
+		Order: domain.ChatCompletionOrderDesc,
+	})
+	require.NoError(t, err)
+	require.True(t, page.HasMore)
+	require.Len(t, page.Messages, 1)
+	require.Equal(t, completion.ID+"-1", page.Messages[0].ID)
+
+	_, err = store.ListChatCompletionMessages(ctx, completion.ID, domain.ListStoredChatCompletionMessagesQuery{
+		After: "missing-message",
+		Limit: 1,
+		Order: domain.ChatCompletionOrderAsc,
+	})
+	require.ErrorIs(t, err, sqlite.ErrNotFound)
+
+	require.NoError(t, store.DeleteChatCompletion(ctx, completion.ID))
+	_, err = store.ListChatCompletionMessages(ctx, completion.ID, domain.ListStoredChatCompletionMessagesQuery{
+		Limit: 1,
+		Order: domain.ChatCompletionOrderAsc,
+	})
 	require.ErrorIs(t, err, sqlite.ErrNotFound)
 }
 

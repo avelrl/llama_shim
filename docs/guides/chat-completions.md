@@ -65,6 +65,12 @@ Then use the stored-resource routes:
   `chat_completions.default_store_when_omitted=true`.
 - Streamed completions are reconstructed into the local shadow-store using a
   practical subset, not every possible hosted chunk variant.
+- Local stored-chat list and messages routes use SQL pagination for new
+  shadow-stored rows. Older database rows without the message snapshot still
+  fall back to the captured request JSON for compatibility.
+- Shadow-store capture is best-effort. If an upstream response exceeds the
+  internal `shim.limits.chat_completions_shadow_store_bytes` budget, the client
+  response is still proxied and only local persistence is skipped.
 
 ## Gotchas
 

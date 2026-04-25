@@ -8039,6 +8039,42 @@ func TestChatCompletionsStoredListFiltersAndPaginates(t *testing.T) {
 	require.Equal(t, third, asStringAny(page2.Data[0]["id"]))
 }
 
+func TestChatCompletionsStoredMessagesPaginates(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	completionID := postStoredChatCompletion(t, app, map[string]any{
+		"model": "gpt-5.4",
+		"store": true,
+		"messages": []map[string]any{
+			{"role": "developer", "content": "Be terse."},
+			{"role": "user", "content": "Say OK."},
+			{"role": "user", "content": []map[string]any{{"type": "text", "text": "Say OK again."}}},
+		},
+	})
+
+	page1 := getStoredChatCompletionMessages(t, app, completionID, "?limit=2&order=desc")
+	require.Equal(t, "list", page1.Object)
+	require.Len(t, page1.Data, 2)
+	require.True(t, page1.HasMore)
+	require.Equal(t, []string{completionID + "-2", completionID + "-1"}, []string{
+		asStringAny(page1.Data[0]["id"]),
+		asStringAny(page1.Data[1]["id"]),
+	})
+	require.Nil(t, page1.Data[0]["content"])
+	parts, ok := page1.Data[0]["content_parts"].([]any)
+	require.True(t, ok)
+	require.Len(t, parts, 1)
+
+	page2 := getStoredChatCompletionMessages(t, app, completionID, "?limit=1&order=desc&after="+completionID+"-2")
+	require.Len(t, page2.Data, 1)
+	require.True(t, page2.HasMore)
+	require.Equal(t, completionID+"-1", asStringAny(page2.Data[0]["id"]))
+
+	status, body := rawRequest(t, app, http.MethodGet, "/v1/chat/completions/"+completionID+"/messages?after=missing-message", nil)
+	require.Equal(t, http.StatusNotFound, status)
+	require.Equal(t, "not_found_error", body["error"].(map[string]any)["type"])
+}
+
 func TestChatCompletionsStoredListAcceptsLimitAboveOneHundred(t *testing.T) {
 	app := testutil.NewTestApp(t)
 

@@ -59,9 +59,9 @@ Practical usage guides live in [guides/README.md](guides/README.md).
 | Surface | Current shim status | Freeze guidance | Notes |
 | --- | --- | --- | --- |
 | `POST /v1/chat/completions` | Broad subset | Keep sanitization, streaming, and store policy explicit | Still a major compatibility surface even though Responses is primary |
-| stored Chat Completions `list/get/update/delete/messages` | Broad subset | Keep the local-first compatibility contract explicit | Shim-owned shadow-stored resources cover the core surface even when upstream stored-chat routes are absent |
+| stored Chat Completions `list/get/update/delete/messages` | Broad subset | Keep the local-first compatibility contract explicit | Shim-owned shadow-stored resources cover the core surface even when upstream stored-chat routes are absent. Local list uses SQL keyset pagination and SQL metadata filtering; new message snapshots use SQL pagination, with legacy request-JSON fallback only for older rows. |
 | stored Chat Completions upstream merge/fallback behavior | Broad subset | Keep implemented vs upstream-only behavior explicit in docs and tests | Upstream history remains an optional compatibility bridge; the shim does not imply full hosted stored-chat ownership |
-| streamed shadow-store reconstruction | Broad subset | Keep current boundaries explicit | Current subset covers practical assistant-text and tool-call-heavy flows, not every possible hosted chunk shape |
+| streamed shadow-store reconstruction | Broad subset | Keep current boundaries explicit | Current subset covers practical assistant-text and tool-call-heavy flows, not every possible hosted chunk shape. Oversized best-effort capture skips local persistence without changing the proxied client response. |
 
 ## Files, Vector Stores, And Retrieval
 

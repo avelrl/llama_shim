@@ -293,12 +293,6 @@ type chatCompletionDeletedResponse struct {
 	Deleted bool   `json:"deleted"`
 }
 
-type listStoredChatCompletionMessagesQuery struct {
-	After string
-	Limit int
-	Order string
-}
-
 func (h *proxyHandler) listStoredChatCompletions(w http.ResponseWriter, r *http.Request) {
 	query, err := parseListStoredChatCompletionsQuery(r)
 	if err != nil {
@@ -409,10 +403,20 @@ func (h *proxyHandler) listStoredChatCompletionMessages(w http.ResponseWriter, r
 		return
 	}
 
-	completion, err := h.store.GetChatCompletion(r.Context(), r.PathValue("completion_id"))
+	completionID := r.PathValue("completion_id")
+	page, err := h.store.ListChatCompletionMessages(r.Context(), completionID, query)
 	if err != nil {
 		if errors.Is(err, sqlite.ErrNotFound) {
-			h.forwardRequest(w, r)
+			if _, getErr := h.store.GetChatCompletion(r.Context(), completionID); errors.Is(getErr, sqlite.ErrNotFound) {
+				h.forwardRequest(w, r)
+				return
+			} else if getErr != nil {
+				status, payload := MapError(r.Context(), h.logger, getErr)
+				WriteJSON(w, status, apiErrorPayload{Error: payload})
+				return
+			}
+			status, payload := MapError(r.Context(), h.logger, err)
+			WriteJSON(w, status, apiErrorPayload{Error: payload})
 			return
 		}
 		status, payload := MapError(r.Context(), h.logger, err)
@@ -420,7 +424,7 @@ func (h *proxyHandler) listStoredChatCompletionMessages(w http.ResponseWriter, r
 		return
 	}
 
-	messages, err := storedChatCompletionMessagesPage(completion, query)
+	messages, err := domain.StoredChatCompletionMessagePayloads(page.Messages)
 	if err != nil {
 		status, payload := MapError(r.Context(), h.logger, err)
 		WriteJSON(w, status, apiErrorPayload{Error: payload})
@@ -429,10 +433,10 @@ func (h *proxyHandler) listStoredChatCompletionMessages(w http.ResponseWriter, r
 
 	WriteJSON(w, http.StatusOK, chatCompletionMessagesListResponse{
 		Object:  "list",
-		Data:    messages.Data,
-		FirstID: firstMapID(messages.Data),
-		LastID:  lastMapID(messages.Data),
-		HasMore: messages.HasMore,
+		Data:    messages,
+		FirstID: firstMapID(messages),
+		LastID:  lastMapID(messages),
+		HasMore: page.HasMore,
 	})
 }
 
@@ -538,9 +542,9 @@ func parseListStoredChatCompletionsQuery(r *http.Request) (domain.ListStoredChat
 	return query, nil
 }
 
-func parseListStoredChatCompletionMessagesQuery(r *http.Request) (listStoredChatCompletionMessagesQuery, error) {
+func parseListStoredChatCompletionMessagesQuery(r *http.Request) (domain.ListStoredChatCompletionMessagesQuery, error) {
 	values := r.URL.Query()
-	query := listStoredChatCompletionMessagesQuery{
+	query := domain.ListStoredChatCompletionMessagesQuery{
 		After: strings.TrimSpace(values.Get("after")),
 		Limit: 20,
 		Order: domain.ChatCompletionOrderAsc,
@@ -548,7 +552,7 @@ func parseListStoredChatCompletionMessagesQuery(r *http.Request) (listStoredChat
 	if rawLimit := strings.TrimSpace(values.Get("limit")); rawLimit != "" {
 		limit, err := strconv.Atoi(rawLimit)
 		if err != nil || limit < 1 {
-			return listStoredChatCompletionMessagesQuery{}, domain.NewValidationError("limit", "limit must be a positive integer")
+			return domain.ListStoredChatCompletionMessagesQuery{}, domain.NewValidationError("limit", "limit must be a positive integer")
 		}
 		query.Limit = limit
 	}
@@ -557,7 +561,7 @@ func parseListStoredChatCompletionMessagesQuery(r *http.Request) (listStoredChat
 		case domain.ChatCompletionOrderAsc, domain.ChatCompletionOrderDesc:
 			query.Order = rawOrder
 		default:
-			return listStoredChatCompletionMessagesQuery{}, domain.NewValidationError("order", "order must be one of asc or desc")
+			return domain.ListStoredChatCompletionMessagesQuery{}, domain.NewValidationError("order", "order must be one of asc or desc")
 		}
 	}
 	return query, nil
@@ -623,84 +627,6 @@ func parseChatCompletionMetadataFilter(values url.Values) (map[string]string, er
 		return nil, err
 	}
 	return domain.NormalizeResponseMetadata(raw)
-}
-
-type storedChatCompletionMessagesResult struct {
-	Data    []map[string]any
-	HasMore bool
-}
-
-func storedChatCompletionMessagesPage(stored domain.StoredChatCompletion, query listStoredChatCompletionMessagesQuery) (storedChatCompletionMessagesResult, error) {
-	messages, err := storedChatCompletionMessages(stored)
-	if err != nil {
-		return storedChatCompletionMessagesResult{}, err
-	}
-	if query.Order == domain.ChatCompletionOrderDesc {
-		for i, j := 0, len(messages)-1; i < j; i, j = i+1, j-1 {
-			messages[i], messages[j] = messages[j], messages[i]
-		}
-	}
-
-	start := 0
-	if query.After != "" {
-		start = -1
-		for i, message := range messages {
-			if mapStringValue(message["id"]) == query.After {
-				start = i + 1
-				break
-			}
-		}
-		if start < 0 {
-			return storedChatCompletionMessagesResult{}, sqlite.ErrNotFound
-		}
-	}
-
-	if start > len(messages) {
-		start = len(messages)
-	}
-	end := start + query.Limit
-	hasMore := end < len(messages)
-	if end > len(messages) {
-		end = len(messages)
-	}
-	return storedChatCompletionMessagesResult{
-		Data:    messages[start:end],
-		HasMore: hasMore,
-	}, nil
-}
-
-func storedChatCompletionMessages(stored domain.StoredChatCompletion) ([]map[string]any, error) {
-	var request struct {
-		Messages []json.RawMessage `json:"messages"`
-	}
-	if err := json.Unmarshal([]byte(stored.RequestJSON), &request); err != nil {
-		return nil, fmt.Errorf("decode stored chat completion request: %w", err)
-	}
-
-	messages := make([]map[string]any, 0, len(request.Messages))
-	for i, rawMessage := range request.Messages {
-		var message map[string]any
-		if err := json.Unmarshal(rawMessage, &message); err != nil {
-			return nil, fmt.Errorf("decode stored chat completion message: %w", err)
-		}
-		switch content := message["content"].(type) {
-		case []any:
-			message["content_parts"] = content
-			message["content"] = nil
-		default:
-			if _, ok := message["content_parts"]; !ok {
-				message["content_parts"] = nil
-			}
-		}
-		if _, ok := message["name"]; !ok {
-			message["name"] = nil
-		}
-		if _, ok := message["id"]; !ok {
-			message["id"] = fmt.Sprintf("%s-%d", stored.ID, i)
-		}
-		messages = append(messages, message)
-	}
-	return messages, nil
 }
 
 func firstRawID(data []json.RawMessage) *string {

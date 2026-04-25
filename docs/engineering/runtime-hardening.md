@@ -207,6 +207,36 @@ implemented, but they must stay conservative:
   large input-item pagination and bounded legacy lineage fallback; config
   parsing/default/env tests; `go test ./...`; `make lint`; `git diff --check`
 
+### 2026-04-25: Stored Chat Completions pagination
+
+- Status: implemented
+- Symptom: local stored Chat Completions list and messages routes could do more
+  local storage work than needed before returning a bounded page
+- Root cause: the list path scanned stored completion rows and filtered
+  metadata in Go, and the messages path rebuilt every request message from the
+  stored request JSON on each call
+- Invariant: the shim must not add a public `limit` maximum or reject valid
+  OpenAI-compatible stored-chat list/message requests to bound local work
+- Change:
+  use SQL keyset pagination for local stored-chat list, filter metadata in SQL,
+  and persist a per-message snapshot for new shadow-stored rows so
+  `GET /v1/chat/completions/{completion_id}/messages` can page through message
+  rows without reading the full stored completion body
+- Compatibility note:
+  older database rows without message snapshots still fall back to the captured
+  request JSON; that fallback is compatibility-only and does not widen the
+  current stored-chat parity claim
+- Operator surface:
+  `shim.limits.chat_completions_shadow_store_bytes` remains an internal
+  best-effort persistence budget; oversized upstream responses are still
+  proxied to the client, and only local shadow-store persistence is skipped
+- Verification used:
+  focused storage tests for SQL-paginated message snapshots and cascade
+  deletion; integration tests for stored-chat list/message pagination and
+  oversized non-stream shadow-store overflow; devstack smoke now covers stored
+  Chat Completions list/get/messages; `go test ./...`; `make lint`;
+  `git diff --check`
+
 ## Change Note Template
 
 When a hardening change lands, add a short note with:

@@ -139,6 +139,7 @@ CI-compatible gate plus real Codex CLI checks:
 - fixture `GET /healthz`
 - shim `GET /readyz`
 - shim `GET /debug/capabilities`
+- stored Chat Completions create/list/get/messages local-first surface
 - stateful `POST /v1/responses` with `previous_response_id`
 - local `file_search` over shim-owned `files` and `vector_stores`
 - local `web_search` over the deterministic fixture backend

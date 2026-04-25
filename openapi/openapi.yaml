@@ -2011,6 +2011,10 @@ paths:
         from sanitized upstream chunks, and a shim-owned default policy for
         omitted `store` requests via
         `chat_completions.default_store_when_omitted`.
+
+        Local list pagination is SQL keyset-based for shim-owned rows, and
+        metadata filters are applied before reading page payloads. The shim
+        does not add a public `limit` maximum to this OpenAI-compatible route.
       parameters:
         - name: model
           in: query
@@ -2082,6 +2086,11 @@ paths:
         upstream chunks. This local stored-chat surface remains available even
         when the configured backend does not implement official stored-chat
         resource routes.
+
+        Shadow-store capture is best-effort. Oversized upstream responses still
+        proxy to the client; the shim only skips local persistence when the
+        internal `shim.limits.chat_completions_shadow_store_bytes` budget is
+        exceeded.
       requestBody:
         required: true
         content:
@@ -2192,6 +2201,10 @@ paths:
         upstream stored resource route when the configured backend supports it.
         If the backend lacks this route, only shim-owned shadow copies expose
         a messages list.
+
+        New shim-owned rows store a normalized per-message snapshot and page it
+        with SQL keyset semantics. Older local rows without that snapshot fall
+        back to the captured request JSON for compatibility.
       parameters:
         - $ref: "#/components/parameters/ChatCompletionID"
         - name: after

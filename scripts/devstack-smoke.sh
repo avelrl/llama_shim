@@ -20,15 +20,16 @@ This smoke path checks:
   1. deterministic fixture health
   2. shim /readyz
   3. shim /debug/capabilities
-  4. stateful /v1/responses via previous_response_id
-  5. local /v1/responses file_search
-  6. local /v1/responses web_search
-  7. local /v1/responses image_generation
-  8. local /v1/responses remote MCP via server_url
-  9. local /v1/responses hosted/server tool_search with namespace follow-up
-  10. local /v1/responses stream replay for MCP
-  11. local /v1/responses generic stream replay for tool_search
-  12. /debug/capabilities advertises Responses WebSocket local subset support
+  4. stored Chat Completions create/list/get/messages local-first surface
+  5. stateful /v1/responses via previous_response_id
+  6. local /v1/responses file_search
+  7. local /v1/responses web_search
+  8. local /v1/responses image_generation
+  9. local /v1/responses remote MCP via server_url
+  10. local /v1/responses hosted/server tool_search with namespace follow-up
+  11. local /v1/responses stream replay for MCP
+  12. local /v1/responses generic stream replay for tool_search
+  13. /debug/capabilities advertises Responses WebSocket local subset support
 EOF
 }
 
@@ -49,9 +50,13 @@ fixture_internal_mcp_url="${FIXTURE_INTERNAL_MCP_URL:-http://fixture:8081/mcp}"
 tmp_dir="$(mktemp -d)"
 file_id=""
 vector_store_id=""
+chat_completion_id=""
 response_ids=()
 
 cleanup() {
+  if [[ -n "${chat_completion_id}" ]]; then
+    curl -fsS -X DELETE "${shim_base_url}/v1/chat/completions/${chat_completion_id}" >/dev/null || true
+  fi
   for response_id in "${response_ids[@]:-}"; do
     if [[ -n "${response_id}" ]]; then
       curl -fsS -X DELETE "${shim_base_url}/v1/responses/${response_id}" >/dev/null || true
@@ -127,6 +132,68 @@ printf '%s\n' "${capabilities_json}" | jq -e '
   .tools.tool_search_hosted.enabled == true and
   .probes.web_search_backend.ready == true and
   .probes.image_generation_backend.ready == true
+' >/dev/null
+
+echo "==> checking stored Chat Completions local-first surface"
+chat_completion_json="$(curl -fsS "${shim_base_url}/v1/chat/completions" \
+  -H 'Content-Type: application/json' \
+  -d "$(jq -nc '{
+    model: "devstack-model",
+    store: true,
+    metadata: {
+      topic: "devstack-chat"
+    },
+    messages: [
+      {
+        role: "developer",
+        content: "Be terse."
+      },
+      {
+        role: "user",
+        content: "Say OK and nothing else."
+      }
+    ]
+  }')")"
+chat_completion_id="$(printf '%s' "${chat_completion_json}" | jq -r '.id')"
+printf '%s\n' "${chat_completion_json}" | jq '{id, object, model, content: .choices[0].message.content}'
+printf '%s\n' "${chat_completion_json}" | jq -e '
+  .object == "chat.completion" and
+  .model == "devstack-model" and
+  .choices[0].message.content == "OK"
+' >/dev/null
+
+chat_completion_list_json="$(curl -fsS -G "${shim_base_url}/v1/chat/completions" \
+  --data-urlencode "metadata[topic]=devstack-chat" \
+  --data-urlencode "limit=1" \
+  --data-urlencode "order=asc")"
+printf '%s\n' "${chat_completion_list_json}" | jq '{object, first_id, last_id, has_more, ids: [.data[].id]}'
+printf '%s\n' "${chat_completion_list_json}" | jq -e --arg chat_completion_id "${chat_completion_id}" '
+  .object == "list" and
+  .data[0].id == $chat_completion_id and
+  .first_id == $chat_completion_id and
+  .last_id == $chat_completion_id and
+  .has_more == false
+' >/dev/null
+
+chat_completion_get_json="$(curl -fsS "${shim_base_url}/v1/chat/completions/${chat_completion_id}")"
+printf '%s\n' "${chat_completion_get_json}" | jq '{id, object, model, metadata}'
+printf '%s\n' "${chat_completion_get_json}" | jq -e --arg chat_completion_id "${chat_completion_id}" '
+  .id == $chat_completion_id and
+  .object == "chat.completion" and
+  .model == "devstack-model" and
+  .metadata.topic == "devstack-chat"
+' >/dev/null
+
+chat_completion_messages_json="$(curl -fsS -G "${shim_base_url}/v1/chat/completions/${chat_completion_id}/messages" \
+  --data-urlencode "limit=1" \
+  --data-urlencode "order=desc")"
+printf '%s\n' "${chat_completion_messages_json}" | jq '{object, first_id, last_id, has_more, first_message: .data[0]}'
+printf '%s\n' "${chat_completion_messages_json}" | jq -e --arg chat_completion_id "${chat_completion_id}" '
+  .object == "list" and
+  .data[0].id == ($chat_completion_id + "-1") and
+  .data[0].role == "user" and
+  .data[0].content == "Say OK and nothing else." and
+  .has_more == true
 ' >/dev/null
 
 echo "==> checking stateful previous_response_id flow"
