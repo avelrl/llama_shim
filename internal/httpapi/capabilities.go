@@ -463,19 +463,19 @@ func constrainedDecodingCapability(deps RouterDeps) capabilityConstrainedDecodin
 		},
 	}
 	if normalizeConstrainedDecodingBackend(deps.ResponsesConstrainedDecodingBackend) == config.ResponsesConstrainedDecodingBackendVLLM {
-		capability.Support = "regex_native_with_validate_repair_fallback"
-		capability.Runtime = "vllm_structured_outputs_regex"
+		capability.Support = "grammar_native_with_validate_repair_fallback"
+		capability.Runtime = "vllm_structured_outputs_regex_and_grammar"
 		capability.Backend = "vllm"
-		capability.CapabilityClass = "regex_native"
+		capability.CapabilityClass = "grammar_native"
 		capability.NativeAvailable = true
 		capability.NativeBackend = "vllm"
-		capability.NativeFormats = []string{"grammar.regex"}
-		capability.Validation = "native_regex_plus_local_guardrail"
+		capability.NativeFormats = []string{"grammar.regex", "grammar.lark_subset"}
+		capability.Validation = "native_regex_or_grammar_plus_local_guardrail"
 		capability.Repair = "local_retry_when_native_invalid_or_timeout"
 		capability.Routing = capabilityRouting{
-			PreferLocal:    "regex_native_or_shim_validate_repair_or_upstream_fallback",
+			PreferLocal:    "grammar_native_or_regex_native_or_shim_validate_repair_or_upstream_fallback",
 			PreferUpstream: "proxy_first",
-			LocalOnly:      "regex_native_or_shim_validate_repair_or_validation_error",
+			LocalOnly:      "grammar_native_or_regex_native_or_shim_validate_repair_or_validation_error",
 		}
 	}
 	return capability

@@ -98,8 +98,9 @@ reopen the frozen V2 contract before code, tests, and capabilities exist.
 Status: first conservative runtime slice implemented as a `Broad subset` in
 [compatibility-matrix.md](compatibility-matrix.md). The default path still
 does not claim backend-native constrained sampling. An optional vLLM adapter can
-now claim `regex_native` for `grammar.syntax=regex` only when
-`responses.constrained_decoding.backend: vllm` is configured and verified.
+now claim `grammar_native` for `grammar.syntax=regex` and the shim-supported
+Lark subset only when `responses.constrained_decoding.backend: vllm` is
+configured and verified.
 
 Implemented local scope:
 
@@ -111,25 +112,24 @@ Implemented local scope:
   `capability_class: none`, and `native_available: false`
 - focused devstack smoke coverage through `make v3-constrained-decoding-smoke`
 - optional vLLM `structured_outputs.regex` adapter for regex grammar custom
-  tools
+  tools and `structured_outputs.grammar` adapter for the shim-supported Lark
+  subset
 - `/debug/capabilities` reports `support:
-  regex_native_with_validate_repair_fallback`, `capability_class:
-  regex_native`, and `native_available: true` only for the configured vLLM
-  backend
+  grammar_native_with_validate_repair_fallback`, `capability_class:
+  grammar_native`, `native_formats: ["grammar.regex",
+  "grammar.lark_subset"]`, and `native_available: true` only for the configured
+  vLLM backend
 - live vLLM smoke coverage through `make v3-vllm-constrained-smoke`
 
 Remaining valid expansion areas:
 
-- broader adapter registry/runtime selection beyond the current vLLM regex
-  slice
-- vLLM `structured_outputs.grammar` adapter for the shim-supported Lark subset,
-  starting with the arithmetic `math_exp` grammar, as the first
-  `grammar_native` proof target
+- broader adapter registry/runtime selection beyond the current vLLM regex and
+  Lark-subset grammar slice
 - embedded constrained decoder/runtime libraries
 - lower-level sampler/logits integrations
 - SGLang and llama.cpp adapters after the vLLM grammar path is proven
-- `json_schema_native`, `regex_native`, or `grammar_native` capability upgrades
-  only after concrete enforcement is wired and tested
+- `json_schema_native` or broader `grammar_native` capability upgrades only
+  after concrete enforcement is wired and tested
 
 See [v3-constrained-decoding.md](v3-constrained-decoding.md) for the design
 starting point and implemented status.

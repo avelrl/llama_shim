@@ -199,7 +199,8 @@ responses:
     # shim_validate_repair: default; use shim-local prompts plus final local
     # validation/repair for constrained custom tools.
     # vllm: use vLLM /v1/chat/completions structured_outputs.regex for
-    # grammar.syntax=regex when the local constrained runtime is selected.
+    # grammar.syntax=regex and structured_outputs.grammar for the shim-supported
+    # grammar.syntax=lark subset when the local constrained runtime is selected.
     backend: shim_validate_repair
   codex:
     # Enables Codex-compatible payload and response adaptations for /v1/responses.

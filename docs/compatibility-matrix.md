@@ -78,7 +78,7 @@ Practical usage guides live in [guides/README.md](guides/README.md).
 | Surface | Current shim status | Freeze guidance | Notes |
 | --- | --- | --- | --- |
 | custom functions / custom tools | Broad subset | Keep request/repair/fallback/error behavior explicit | This is part of the facade contract |
-| constrained custom tools `grammar` / `regex` | Broad subset | Keep capability-backed subset wording | Default V3 constrained-runtime slice exposes shim-local validate/repair plus a Chat Completions JSON Schema hint through `/debug/capabilities` and reports `capability_class: none` / `native_available: false`. Optional `responses.constrained_decoding.backend: vllm` reports `regex_native` for `grammar.syntax=regex` only, using vLLM `structured_outputs.regex`. vLLM `structured_outputs.grammar` is selected as the first `grammar_native` target for the shim-supported Lark subset, but `grammar_native` is not claimed until the compiler, tests, and live smoke are implemented. |
+| constrained custom tools `grammar` / `regex` | Broad subset | Keep capability-backed subset wording | Default V3 constrained-runtime slice exposes shim-local validate/repair plus a Chat Completions JSON Schema hint through `/debug/capabilities` and reports `capability_class: none` / `native_available: false`. Optional `responses.constrained_decoding.backend: vllm` reports `grammar_native` for `grammar.syntax=regex` and the shim-supported Lark subset, using vLLM `structured_outputs.regex` / `structured_outputs.grammar` plus final local validation guardrails. Broader Lark parity is not claimed. |
 | local `file_search` | Broad subset | Keep retrieval/result/citation subset explicit | Already usable end-to-end |
 | local `web_search` | Broad subset | Keep hosted-vs-local boundary explicit | Exact hosted search parity is intentionally not part of the V2 promise |
 | local `image_generation` | Broad subset | Keep separate image-backend contract explicit | Current subset is docs-aligned, not exact hosted planner parity |
@@ -135,7 +135,8 @@ proxy-first escape hatch for standalone hosted/native requests, while
   hosted reranker equivalence.
 - Constrained custom tools are a supported shim subset. The V3 runtime slice is
   observable and smoke-tested. It reports no backend-native constrained decoding
-  parity by default; the optional vLLM path reports only `regex_native`.
+  parity by default; the optional vLLM path reports `grammar_native` only for
+  regex grammars and the shim-supported Lark subset.
 - Operator cleanup currently targets only explicit local `expires_at`
   resources.
 

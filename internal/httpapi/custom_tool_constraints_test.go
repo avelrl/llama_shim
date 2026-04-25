@@ -38,6 +38,14 @@ func TestCompileCustomToolConstraintSupportedLark(t *testing.T) {
 	require.NoError(t, constraint.Validate("4 + 4"))
 	require.NoError(t, constraint.Validate("4 + 4 + 4"))
 	require.Error(t, constraint.Validate("4+4"))
+	require.Equal(t, strings.Join([]string{
+		"root ::= expr",
+		"INT ::= [0-9]+",
+		"term ::= INT",
+		"SP ::= \" \"",
+		"ADD ::= \"+\"",
+		"expr ::= term (SP ADD SP term)* | term",
+	}, "\n"), constraint.VLLMGrammar)
 }
 
 func TestCompileCustomToolConstraintRejectsRecursiveLark(t *testing.T) {

@@ -376,15 +376,15 @@ Current default values intentionally report:
 - `native_available: false`
 - `native_backend: "none"`
 
-When the optional vLLM regex adapter is configured, the manifest exposes the
-concrete backend and class:
+When the optional vLLM adapter is configured, the manifest exposes the concrete
+backend and class:
 
-- `support: "regex_native_with_validate_repair_fallback"`
-- `runtime: "vllm_structured_outputs_regex"`
-- `capability_class: "regex_native"`
+- `support: "grammar_native_with_validate_repair_fallback"`
+- `runtime: "vllm_structured_outputs_regex_and_grammar"`
+- `capability_class: "grammar_native"`
 - `native_available: true`
 - `native_backend: "vllm"`
-- `native_formats: ["grammar.regex"]`
+- `native_formats: ["grammar.regex", "grammar.lark_subset"]`
 
 ## Test Expectations
 
@@ -406,7 +406,7 @@ Implemented V3-slice coverage includes:
 - `/debug/capabilities` coverage for the constrained runtime flags
 - devstack smoke coverage through `make v3-constrained-decoding-smoke`
 - unit and integration coverage for optional vLLM `structured_outputs.regex`
-  request shaping
+  and `structured_outputs.grammar` request shaping
 
 ## Non-Goals For The First Cut
 
@@ -427,16 +427,16 @@ The implemented first rollout is:
 2. A shared constrained-runtime abstraction owns the direct constrained custom
    tool path.
 3. The default runtime provides a structured-generation hint path. Optional
-   vLLM config provides `regex_native` for regex grammars only. No
-   `grammar_native` adapter is claimed.
+   vLLM config provides `grammar_native` for regex grammars and the
+   shim-supported Lark subset.
 4. `/debug/capabilities` exposes the active constrained-decoding support,
    runtime, capability class, native availability, formats, limits, and routing.
 5. Integration and devstack smoke coverage exist before any broader claims are
    made.
 
 The next valid status upgrade would require a fixture-backed or backend-owned
-adapter that can prove `json_schema_native` or `grammar_native` enforcement,
-or broader backend-native coverage beyond the current vLLM regex slice.
+adapter that can prove `json_schema_native` or broader `grammar_native`
+enforcement beyond the current vLLM regex and Lark-subset slice.
 
 ## Starting With vLLM
 
@@ -458,8 +458,8 @@ Live probe result on 2026-04-25:
   assistant content to the requested regex
 - the shim adapter therefore uses `structured_outputs.regex`
 - `structured_outputs.grammar` accepted a small grammar and constrained the
-  output to `Paris`, so vLLM is selected as the first `grammar_native` proof
-  target
+  output to `Paris`; the implemented adapter now uses this path for the
+  shim-supported Lark subset
 
 This matches the vLLM structured-output docs, which describe the older
 `guided_*` fields as deprecated and map `guided_regex` to
@@ -486,14 +486,16 @@ Before using a new vLLM build, still verify:
   `/v1/chat/completions`
 - Qwen3 can return only the constrained payload without extra reasoning/prose
 
-Minimum local smoke before coding:
+Minimum local smoke:
 
 1. Start vLLM with an OpenAI-compatible server endpoint.
 2. Confirm readiness: `curl -fsS http://127.0.0.1:8000/v1/models`.
 3. Send a direct Chat Completions request with a native regex constraint that
    allows only a tiny language such as `hello [0-9]+`.
-4. Use an adversarial prompt asking for invalid text.
-5. Verify the returned assistant content still satisfies the regex.
+4. Send a direct Chat Completions request with a native grammar constraint that
+   allows only a small arithmetic expression language.
+5. Use adversarial prompts asking for invalid text.
+6. Verify the returned assistant content still satisfies each constraint.
 
 Probe request template:
 
@@ -522,11 +524,8 @@ curl -fsS http://127.0.0.1:8000/v1/chat/completions \
 
 The exact constrained-output field names must be confirmed against the local
 vLLM build before claiming a native path. In the current Metal build,
-`structured_outputs.regex` is the proven field shape.
-
-Only after that probe passes should the shim adapter claim `regex_native`.
-Until the shim can map and prove supported Lark grammar enforcement, vLLM should
-not be marked `grammar_native`.
+`structured_outputs.regex` and `structured_outputs.grammar` are the proven
+field shapes.
 
 Grammar-native probe template:
 
@@ -549,18 +548,20 @@ curl -fsS http://127.0.0.1:8000/v1/chat/completions \
   }'
 ```
 
-This direct probe is only backend evidence. The shim can claim
-`grammar_native` only after the request is generated from an OpenAI-shaped Lark
-custom tool and the final custom tool input validates against the original shim
-constraint.
+This direct probe is only backend evidence. The shim claim also depends on the
+implemented OpenAI-shaped Lark custom tool path, generated vLLM grammar payload,
+fake-upstream request-shaping tests, final validation guardrail, and the live
+shim smoke.
 
 Implementation order:
 
 1. Done: add config for `responses.constrained_decoding.backend`.
 2. Done: keep `shim_validate_repair` as the default runtime.
 3. Done: add the vLLM adapter for `grammar.syntax=regex`.
-4. Done: expose capability fields for the selected adapter.
-5. Done: add fake-upstream request-shaping tests.
-6. Done: add `scripts/v3-vllm-constrained-smoke.sh` / `make
+4. Done: add a compiler from the shim-supported Lark subset to vLLM grammar.
+5. Done: add the vLLM adapter for supported `grammar.syntax=lark`.
+6. Done: expose capability fields for the selected adapter.
+7. Done: add fake-upstream request-shaping tests.
+8. Done: add `scripts/v3-vllm-constrained-smoke.sh` / `make
    v3-vllm-constrained-smoke`, gated by explicit environment variables and kept
    out of the default CI path.

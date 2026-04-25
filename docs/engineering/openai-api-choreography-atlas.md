@@ -440,10 +440,11 @@ What exists in the shim:
   `support=shim_validate_repair`, `capability_class=none`, and
   `native_available=false` by default.
 - With `responses.constrained_decoding.backend=vllm`, the shim uses
-  `structured_outputs.regex` and reports `capability_class=regex_native` for
-  `grammar.syntax=regex`.
+  `structured_outputs.regex` for regex grammars and
+  `structured_outputs.grammar` for the shim-supported Lark subset, reporting
+  `capability_class=grammar_native`.
 - Future backend-specific adapters must change those capability fields before
-  docs can claim `json_schema_native` or `grammar_native`.
+  docs can claim `json_schema_native` or broader grammar parity.
 
 ## 8. Retrieval, Vector Stores, And File Search
 
@@ -956,8 +957,8 @@ flowchart TB
   ready --> parity
 
   constrained --> c0["Default: shim_validate_repair + JSON Schema hint"]
-  constrained --> c1["Optional: vLLM structured_outputs.regex"]
-  c1 --> c2["Capability: regex_native for grammar.syntax=regex"]
+  constrained --> c1["Optional: vLLM structured_outputs.regex + grammar"]
+  c1 --> c2["Capability: grammar_native for regex + Lark subset"]
   c1 --> c3["Later: SGLang / llama.cpp adapters"]
   backend --> b1["More image, retrieval, storage, or model backends"]
   ops --> o1["Tenanting, dashboards, admin workflows"]

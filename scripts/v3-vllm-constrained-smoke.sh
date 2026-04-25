@@ -24,11 +24,14 @@ The shim must be started with:
   LLAMA_BASE_URL=$VLLM_BASE_URL
   RESPONSES_CONSTRAINED_DECODING_BACKEND=vllm
 
-This smoke path verifies the vLLM-backed V3 regex-native slice:
+This smoke path verifies the vLLM-backed V3 native constrained slice:
   1. direct vLLM /v1/chat/completions accepts structured_outputs.regex
-  2. optional shim /debug/capabilities reports regex_native
-  3. optional shim /v1/responses emits a regex custom_tool_call generated
+  2. direct vLLM /v1/chat/completions accepts structured_outputs.grammar
+  3. optional shim /debug/capabilities reports grammar_native
+  4. optional shim /v1/responses emits a regex custom_tool_call generated
      through the vLLM structured_outputs.regex adapter
+  5. optional shim /v1/responses emits a Lark grammar custom_tool_call
+     generated through the vLLM structured_outputs.grammar adapter
 EOF
 }
 
@@ -95,16 +98,43 @@ if ! [[ "${vllm_text}" =~ ^hello\ [0-9]{2}$ ]]; then
   exit 1
 fi
 
+echo "==> checking direct vLLM structured_outputs.grammar"
+vllm_grammar_json="$(curl -fsS "${vllm_base_url}/v1/chat/completions" \
+  -H 'Content-Type: application/json' \
+  -d "$(jq -nc --arg model "${model}" '{
+    model: $model,
+    messages: [
+      {
+        role: "user",
+        content: "Return exactly one arithmetic addition expression. No prose."
+      }
+    ],
+    max_tokens: 24,
+    temperature: 0,
+    structured_outputs: {
+      grammar: "root ::= INT SP ADD SP INT\nSP ::= \" \"\nADD ::= \"+\"\nINT ::= [0-9]+"
+    }
+  }')")"
+vllm_grammar_text="$(printf '%s\n' "${vllm_grammar_json}" | jq -r '.choices[0].message.content')"
+printf '%s\n' "${vllm_grammar_json}" | jq '{id, model, content: .choices[0].message.content}'
+if ! [[ "${vllm_grammar_text}" =~ ^[0-9]+\ \+\ [0-9]+$ ]]; then
+  echo "vLLM structured_outputs.grammar did not constrain output: ${vllm_grammar_text}" >&2
+  exit 1
+fi
+
 if [[ -z "${shim_base_url}" ]]; then
   echo "v3 vLLM constrained direct smoke passed"
   exit 0
 fi
 
-response_id=""
+response_ids=()
 cleanup() {
-  if [[ -n "${response_id}" && "${response_id}" != "null" ]]; then
+  for response_id in "${response_ids[@]:-}"; do
+    if [[ -z "${response_id}" || "${response_id}" == "null" ]]; then
+      continue
+    fi
     curl_shim -X DELETE "${shim_base_url}/v1/responses/${response_id}" >/dev/null || true
-  fi
+  done
 }
 trap cleanup EXIT
 
@@ -122,13 +152,14 @@ capabilities_json="$(curl_shim "${shim_base_url}/debug/capabilities")"
 printf '%s\n' "${capabilities_json}" | jq '{ready, constrained_decoding: .runtime.constrained_decoding}'
 printf '%s\n' "${capabilities_json}" | jq -e '
   .runtime.constrained_decoding.enabled == true and
-  .runtime.constrained_decoding.support == "regex_native_with_validate_repair_fallback" and
-  .runtime.constrained_decoding.runtime == "vllm_structured_outputs_regex" and
+  .runtime.constrained_decoding.support == "grammar_native_with_validate_repair_fallback" and
+  .runtime.constrained_decoding.runtime == "vllm_structured_outputs_regex_and_grammar" and
   .runtime.constrained_decoding.backend == "vllm" and
-  .runtime.constrained_decoding.capability_class == "regex_native" and
+  .runtime.constrained_decoding.capability_class == "grammar_native" and
   .runtime.constrained_decoding.native_available == true and
   .runtime.constrained_decoding.native_backend == "vllm" and
-  (.runtime.constrained_decoding.native_formats | index("grammar.regex"))
+  (.runtime.constrained_decoding.native_formats | index("grammar.regex")) and
+  (.runtime.constrained_decoding.native_formats | index("grammar.lark_subset"))
 ' >/dev/null
 
 echo "==> checking shim regex custom tool through vLLM adapter"
@@ -152,12 +183,44 @@ response_json="$(curl_shim "${shim_base_url}/v1/responses" \
     ]
   }')")"
 response_id="$(printf '%s\n' "${response_json}" | jq -r '.id')"
+response_ids+=("${response_id}")
 printf '%s\n' "${response_json}" | jq '{id, status, output_type: .output[0].type, tool_name: .output[0].name, tool_input: .output[0].input}'
 printf '%s\n' "${response_json}" | jq -e '
   .status == "completed" and
   .output[0].type == "custom_tool_call" and
   .output[0].name == "exact_text" and
   (.output[0].input | test("^hello [0-9]{2}$"))
+' >/dev/null
+
+echo "==> checking shim Lark grammar custom tool through vLLM adapter"
+grammar_response_json="$(curl_shim "${shim_base_url}/v1/responses" \
+  -H 'Content-Type: application/json' \
+  -d "$(jq -nc --arg model "${model}" '{
+    model: $model,
+    max_output_tokens: 24,
+    store: true,
+    tool_choice: {type: "custom", name: "math_exp"},
+    input: "Use grammar tool.",
+    tools: [
+      {
+        type: "custom",
+        name: "math_exp",
+        format: {
+          type: "grammar",
+          syntax: "lark",
+          definition: "start: expr\nexpr: INT SP ADD SP INT\nSP: \" \"\nADD: \"+\"\n%import common.INT"
+        }
+      }
+    ]
+  }')")"
+grammar_response_id="$(printf '%s\n' "${grammar_response_json}" | jq -r '.id')"
+response_ids+=("${grammar_response_id}")
+printf '%s\n' "${grammar_response_json}" | jq '{id, status, output_type: .output[0].type, tool_name: .output[0].name, tool_input: .output[0].input}'
+printf '%s\n' "${grammar_response_json}" | jq -e '
+  .status == "completed" and
+  .output[0].type == "custom_tool_call" and
+  .output[0].name == "math_exp" and
+  (.output[0].input | test("^[0-9]+ \\+ [0-9]+$"))
 ' >/dev/null
 
 echo "v3 vLLM constrained smoke passed"

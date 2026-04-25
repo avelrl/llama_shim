@@ -475,9 +475,16 @@ func normalizeConstrainedDecodingBackend(value string) string {
 }
 
 func (h *responseHandler) constrainedCustomToolRuntimeFor(descriptor customToolDescriptor) constrainedCustomToolRuntime {
-	if h.constrainedDecodingBackend == config.ResponsesConstrainedDecodingBackendVLLM && descriptor.Constraint != nil && descriptor.Constraint.Syntax == "regex" {
-		return vllmRegexConstrainedCustomToolRuntime{
-			createChatCompletionText: h.proxy.client.CreateChatCompletionText,
+	if h.constrainedDecodingBackend == config.ResponsesConstrainedDecodingBackendVLLM && descriptor.Constraint != nil {
+		switch {
+		case descriptor.Constraint.Syntax == "regex":
+			return vllmRegexConstrainedCustomToolRuntime{
+				createChatCompletionText: h.proxy.client.CreateChatCompletionText,
+			}
+		case descriptor.Constraint.Syntax == "lark" && strings.TrimSpace(descriptor.Constraint.VLLMGrammar) != "":
+			return vllmGrammarConstrainedCustomToolRuntime{
+				createChatCompletionText: h.proxy.client.CreateChatCompletionText,
+			}
 		}
 	}
 	return localConstrainedCustomToolRuntime{
@@ -503,6 +510,7 @@ type localConstrainedCustomToolRuntime struct {
 
 var _ constrainedCustomToolRuntime = localConstrainedCustomToolRuntime{}
 var _ constrainedCustomToolRuntime = vllmRegexConstrainedCustomToolRuntime{}
+var _ constrainedCustomToolRuntime = vllmGrammarConstrainedCustomToolRuntime{}
 
 func (r localConstrainedCustomToolRuntime) Generate(ctx context.Context, request localConstrainedCustomToolRuntimeRequest) (string, error) {
 	runtimeItems, err := buildLocalConstrainedCustomToolRuntimeItems(request.Items, request.CurrentInputLen, request.Descriptor)
@@ -534,6 +542,30 @@ func (r vllmRegexConstrainedCustomToolRuntime) Generate(ctx context.Context, req
 		return "", err
 	}
 	runtimeOptions, err := buildVLLMRegexConstrainedCustomToolRuntimeOptions(request.Options, request.Descriptor)
+	if err != nil {
+		return "", err
+	}
+	chatBody, err := buildLocalConstrainedCustomToolRuntimeChatCompletionBody(request.Model, runtimeItems, runtimeOptions)
+	if err != nil {
+		return "", err
+	}
+	rawOutput, err := r.createChatCompletionText(ctx, chatBody)
+	if err != nil {
+		return "", err
+	}
+	return parseRawConstrainedCustomToolRuntimeOutput(rawOutput, request.Descriptor)
+}
+
+type vllmGrammarConstrainedCustomToolRuntime struct {
+	createChatCompletionText func(context.Context, []byte) (string, error)
+}
+
+func (r vllmGrammarConstrainedCustomToolRuntime) Generate(ctx context.Context, request localConstrainedCustomToolRuntimeRequest) (string, error) {
+	runtimeItems, err := buildVLLMRawConstrainedCustomToolRuntimeItems(request.Items, request.CurrentInputLen, request.Descriptor)
+	if err != nil {
+		return "", err
+	}
+	runtimeOptions, err := buildVLLMGrammarConstrainedCustomToolRuntimeOptions(request.Options, request.Descriptor)
 	if err != nil {
 		return "", err
 	}
@@ -608,7 +640,7 @@ func buildLocalConstrainedCustomToolRuntimeOptions(options map[string]json.RawMe
 	return cloned, nil
 }
 
-func buildVLLMRegexConstrainedCustomToolRuntimeItems(items []domain.Item, currentInputLen int, descriptor customToolDescriptor) ([]domain.Item, error) {
+func buildVLLMRawConstrainedCustomToolRuntimeItems(items []domain.Item, currentInputLen int, descriptor customToolDescriptor) ([]domain.Item, error) {
 	label := descriptor.Name
 	if descriptor.Namespace != "" {
 		label = descriptor.Namespace + "." + descriptor.Name
@@ -625,6 +657,10 @@ func buildVLLMRegexConstrainedCustomToolRuntimeItems(items []domain.Item, curren
 	return insertLocalToolLoopInstructions(items, currentInputLen, prompt), nil
 }
 
+func buildVLLMRegexConstrainedCustomToolRuntimeItems(items []domain.Item, currentInputLen int, descriptor customToolDescriptor) ([]domain.Item, error) {
+	return buildVLLMRawConstrainedCustomToolRuntimeItems(items, currentInputLen, descriptor)
+}
+
 func buildVLLMRegexConstrainedCustomToolRuntimeOptions(options map[string]json.RawMessage, descriptor customToolDescriptor) (map[string]json.RawMessage, error) {
 	cloned := cloneGenerationOptions(options)
 	delete(cloned, "response_format")
@@ -633,6 +669,23 @@ func buildVLLMRegexConstrainedCustomToolRuntimeOptions(options map[string]json.R
 
 	structuredOutputs := map[string]string{
 		"regex": descriptor.Constraint.Anchored,
+	}
+	rawStructuredOutputs, err := json.Marshal(structuredOutputs)
+	if err != nil {
+		return nil, err
+	}
+	cloned["structured_outputs"] = rawStructuredOutputs
+	return cloned, nil
+}
+
+func buildVLLMGrammarConstrainedCustomToolRuntimeOptions(options map[string]json.RawMessage, descriptor customToolDescriptor) (map[string]json.RawMessage, error) {
+	cloned := cloneGenerationOptions(options)
+	delete(cloned, "response_format")
+	delete(cloned, "json_schema")
+	delete(cloned, "structured_outputs")
+
+	structuredOutputs := map[string]string{
+		"grammar": descriptor.Constraint.VLLMGrammar,
 	}
 	rawStructuredOutputs, err := json.Marshal(structuredOutputs)
 	if err != nil {

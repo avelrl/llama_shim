@@ -11,12 +11,13 @@ import (
 const customToolTransportLocalConstrained = "local_constrained"
 
 type customToolConstraint struct {
-	FormatType string
-	Syntax     string
-	Definition string
-	PatternSrc string
-	Anchored   string
-	Pattern    *regexp.Regexp
+	FormatType  string
+	Syntax      string
+	Definition  string
+	PatternSrc  string
+	Anchored    string
+	Pattern     *regexp.Regexp
+	VLLMGrammar string
 }
 
 func compileCustomToolConstraint(tool map[string]any, serviceLimits ServiceLimits) (*customToolConstraint, error) {
@@ -51,6 +52,7 @@ func compileCustomToolConstraint(tool map[string]any, serviceLimits ServiceLimit
 	}
 
 	var pattern string
+	var vllmGrammar string
 	switch syntax {
 	case "regex":
 		pattern = definition
@@ -60,6 +62,11 @@ func compileCustomToolConstraint(tool map[string]any, serviceLimits ServiceLimit
 			return nil, err
 		}
 		pattern = compiled
+		vllmCompiled, err := compileSupportedLarkToVLLMGrammar(definition)
+		if err != nil {
+			return nil, err
+		}
+		vllmGrammar = vllmCompiled
 	default:
 		return nil, fmt.Errorf("custom tool grammar syntax %q is not supported by shim-local constrained tools", syntax)
 	}
@@ -77,12 +84,13 @@ func compileCustomToolConstraint(tool map[string]any, serviceLimits ServiceLimit
 		return nil, fmt.Errorf("compile %s grammar: %w", syntax, err)
 	}
 	return &customToolConstraint{
-		FormatType: formatType,
-		Syntax:     syntax,
-		Definition: definition,
-		PatternSrc: pattern,
-		Anchored:   anchored,
-		Pattern:    matcher,
+		FormatType:  formatType,
+		Syntax:      syntax,
+		Definition:  definition,
+		PatternSrc:  pattern,
+		Anchored:    anchored,
+		Pattern:     matcher,
+		VLLMGrammar: vllmGrammar,
 	}, nil
 }
 
@@ -134,6 +142,81 @@ func compileSupportedLarkToRegex(definition string) (string, error) {
 		return "", err
 	}
 	return compiler.compileRule("start")
+}
+
+func compileSupportedLarkToVLLMGrammar(definition string) (string, error) {
+	base, err := newLarkRegexCompiler(definition)
+	if err != nil {
+		return "", err
+	}
+	compiler := &larkVLLMGrammarCompiler{
+		rules:       base.rules,
+		imports:     base.imports,
+		definitions: make(map[string]string),
+		visiting:    make(map[string]bool),
+	}
+	if _, err := compiler.compileRule("start"); err != nil {
+		return "", err
+	}
+
+	lines := []string{"root ::= " + compiler.definitions["start"]}
+	for _, name := range compiler.order {
+		if name == "start" {
+			continue
+		}
+		lines = append(lines, name+" ::= "+compiler.definitions[name])
+	}
+	return strings.Join(lines, "\n"), nil
+}
+
+type larkVLLMGrammarCompiler struct {
+	rules       map[string]string
+	imports     map[string]string
+	definitions map[string]string
+	visiting    map[string]bool
+	order       []string
+}
+
+func (c *larkVLLMGrammarCompiler) compileRule(name string) (string, error) {
+	if _, ok := c.definitions[name]; ok {
+		return name, nil
+	}
+	if pattern, ok := c.imports[name]; ok {
+		c.addDefinition(name, pattern)
+		return name, nil
+	}
+	if pattern, ok := supportedLarkImportPatterns[name]; ok {
+		c.addDefinition(name, pattern)
+		return name, nil
+	}
+	expr, ok := c.rules[name]
+	if !ok {
+		return "", fmt.Errorf("lark rule %q is not defined", name)
+	}
+	if c.visiting[name] {
+		return "", fmt.Errorf("recursive lark rule %q is not supported by shim-local constrained tools", name)
+	}
+	c.visiting[name] = true
+	defer delete(c.visiting, name)
+
+	parser, err := newLarkVLLMGrammarExprParser(stripLarkAliases(expr), c)
+	if err != nil {
+		return "", err
+	}
+	compiled, err := parser.parse()
+	if err != nil {
+		return "", err
+	}
+	c.addDefinition(name, compiled)
+	return name, nil
+}
+
+func (c *larkVLLMGrammarCompiler) addDefinition(name string, definition string) {
+	if _, ok := c.definitions[name]; ok {
+		return
+	}
+	c.definitions[name] = definition
+	c.order = append(c.order, name)
 }
 
 func newLarkRegexCompiler(definition string) (*larkRegexCompiler, error) {
@@ -496,6 +579,132 @@ func (p *larkExprParser) peek() larkToken {
 }
 
 func (p *larkExprParser) next() larkToken {
+	token := p.peek()
+	if p.position < len(p.tokens) {
+		p.position++
+	}
+	return token
+}
+
+type larkVLLMGrammarExprParser struct {
+	tokens   []larkToken
+	position int
+	compiler *larkVLLMGrammarCompiler
+}
+
+func newLarkVLLMGrammarExprParser(expr string, compiler *larkVLLMGrammarCompiler) (*larkVLLMGrammarExprParser, error) {
+	tokens, err := tokenizeLarkExpr(expr)
+	if err != nil {
+		return nil, err
+	}
+	return &larkVLLMGrammarExprParser{tokens: tokens, compiler: compiler}, nil
+}
+
+func (p *larkVLLMGrammarExprParser) parse() (string, error) {
+	expr, err := p.parseAlternation()
+	if err != nil {
+		return "", err
+	}
+	if p.peek().Kind != larkTokenEOF {
+		return "", fmt.Errorf("unexpected lark token %q", p.peek().Text)
+	}
+	return expr, nil
+}
+
+func (p *larkVLLMGrammarExprParser) parseAlternation() (string, error) {
+	first, err := p.parseSequence()
+	if err != nil {
+		return "", err
+	}
+	alternatives := []string{first}
+	for p.peek().Kind == larkTokenPipe {
+		p.next()
+		nextExpr, err := p.parseSequence()
+		if err != nil {
+			return "", err
+		}
+		alternatives = append(alternatives, nextExpr)
+	}
+	return strings.Join(alternatives, " | "), nil
+}
+
+func (p *larkVLLMGrammarExprParser) parseSequence() (string, error) {
+	parts := make([]string, 0, 4)
+	for {
+		switch p.peek().Kind {
+		case larkTokenEOF, larkTokenRParen, larkTokenPipe:
+			if len(parts) == 0 {
+				return "", fmt.Errorf("empty lark sequence is not supported by shim-local constrained tools")
+			}
+			return strings.Join(parts, " "), nil
+		default:
+			part, err := p.parseFactor()
+			if err != nil {
+				return "", err
+			}
+			parts = append(parts, part)
+		}
+	}
+}
+
+func (p *larkVLLMGrammarExprParser) parseFactor() (string, error) {
+	primary, err := p.parsePrimary()
+	if err != nil {
+		return "", err
+	}
+	for {
+		switch p.peek().Kind {
+		case larkTokenStar:
+			p.next()
+			primary += "*"
+		case larkTokenPlus:
+			p.next()
+			primary += "+"
+		case larkTokenQuestion:
+			p.next()
+			primary += "?"
+		default:
+			return primary, nil
+		}
+	}
+}
+
+func (p *larkVLLMGrammarExprParser) parsePrimary() (string, error) {
+	token := p.next()
+	switch token.Kind {
+	case larkTokenIdent:
+		return p.compiler.compileRule(token.Text)
+	case larkTokenString:
+		literal, err := strconv.Unquote(token.Text)
+		if err != nil {
+			return "", fmt.Errorf("decode lark string literal: %w", err)
+		}
+		return strconv.Quote(literal), nil
+	case larkTokenRegex:
+		return token.Text, nil
+	case larkTokenLParen:
+		expr, err := p.parseAlternation()
+		if err != nil {
+			return "", err
+		}
+		if p.peek().Kind != larkTokenRParen {
+			return "", fmt.Errorf("unclosed lark group")
+		}
+		p.next()
+		return "(" + expr + ")", nil
+	default:
+		return "", fmt.Errorf("unexpected lark token %q", token.Text)
+	}
+}
+
+func (p *larkVLLMGrammarExprParser) peek() larkToken {
+	if p.position >= len(p.tokens) {
+		return larkToken{Kind: larkTokenEOF}
+	}
+	return p.tokens[p.position]
+}
+
+func (p *larkVLLMGrammarExprParser) next() larkToken {
 	token := p.peek()
 	if p.position < len(p.tokens) {
 		p.position++

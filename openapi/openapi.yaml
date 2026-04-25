@@ -2548,11 +2548,11 @@ components:
           type: boolean
         support:
           type: string
-          enum: [shim_validate_repair, regex_native_with_validate_repair_fallback]
+          enum: [shim_validate_repair, grammar_native_with_validate_repair_fallback]
           description: Active constrained tool support. Native claims are limited to the reported capability class and formats.
         runtime:
           type: string
-          enum: [chat_completions_json_schema_hint, vllm_structured_outputs_regex]
+          enum: [chat_completions_json_schema_hint, vllm_structured_outputs_regex_and_grammar]
           description: Internal generation path used before final local validation.
         backend:
           type: string
