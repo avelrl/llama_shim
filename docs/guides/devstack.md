@@ -50,6 +50,20 @@ Run the full local smoke gate, including real Codex CLI checks:
 make devstack-full-smoke
 ```
 
+Capture the Responses external compatibility tester preflight artifacts:
+
+```bash
+make responses-compat-external-smoke
+```
+
+Run a strict external Responses compatibility tester command:
+
+```bash
+RESPONSES_COMPAT_REQUIRE_TESTER=1 \
+RESPONSES_COMPAT_TESTER_CMD='<external tester command>' \
+make responses-compat-external-smoke
+```
+
 Run the focused V3 native coding-tools smoke path:
 
 ```bash
@@ -104,6 +118,7 @@ Equivalent individual commands:
 
 ```bash
 bash ./scripts/devstack-smoke.sh
+bash ./scripts/responses-compat-external-smoke.sh
 bash ./scripts/v3-coding-tools-smoke.sh
 bash ./scripts/v3-constrained-decoding-smoke.sh
 bash ./scripts/codex-cli-devstack-smoke.sh
@@ -131,6 +146,17 @@ The shim itself talks to the fixture backend over the Compose network as
 - `make v3-constrained-decoding-smoke`
 
 It intentionally does not require the real `codex` binary.
+
+`make responses-compat-external-smoke` is the repo-owned bridge for external
+Responses API compatibility testers. With no tester command configured, it
+captures `/readyz`, `/debug/capabilities`, and a Broad subset profile summary
+under `.data/responses-compat-external`. With
+`RESPONSES_COMPAT_TESTER_CMD`, it exports `OPENAI_BASE_URL`,
+`OPENAI_API_KEY`, `SHIM_CAPABILITIES_FILE`,
+`RESPONSES_COMPAT_PROFILE=responses-broad-subset`, and artifact paths to the
+external tester command. Set `RESPONSES_COMPAT_REQUIRE_TESTER=1` when CI should
+fail if the command is missing. The profile and gap ledger are documented in
+[Responses Compatibility External Tester](../engineering/responses-compatibility-external-tester.md).
 
 `make devstack-full-smoke` is the local heavy smoke gate. It runs the
 CI-compatible gate plus real Codex CLI checks:
@@ -259,6 +285,8 @@ stack is runnable, probeable, and reproducible.
 - [config.devstack.yaml](../../config.devstack.yaml): shim config used by the stack
 - [docker-compose.devstack.yml](../../docker-compose.devstack.yml): Compose wiring
 - [scripts/devstack-smoke.sh](../../scripts/devstack-smoke.sh): repo-owned smoke path
+- [scripts/responses-compat-external-smoke.sh](../../scripts/responses-compat-external-smoke.sh):
+  repo-owned bridge for external Responses compatibility tester runs
 - [scripts/v3-coding-tools-smoke.sh](../../scripts/v3-coding-tools-smoke.sh):
   focused native coding-tools smoke path
 - [scripts/v3-constrained-decoding-smoke.sh](../../scripts/v3-constrained-decoding-smoke.sh):

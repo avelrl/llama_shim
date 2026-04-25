@@ -37,6 +37,8 @@ Assumptions:
 
 - [Operations](operations.md): running, probing, backing up, and maintaining the shim
 - [Dev Stack](devstack.md): deterministic local stack and smoke path
+- [Responses Compatibility External Tester](../engineering/responses-compatibility-external-tester.md):
+  Broad subset external tester profile and runner contract
 
 ## Related Reference Docs
 

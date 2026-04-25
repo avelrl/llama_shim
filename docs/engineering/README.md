@@ -11,6 +11,9 @@ not practical user guides and are not release scope documents.
   current shim-local boundaries.
 - [Upstream SSE Capture](upstream-sse-capture.md): procedure for capturing
   real upstream Responses traces and sanitized fixtures for parity work.
+- [Responses Compatibility External Tester](responses-compatibility-external-tester.md):
+  Broad subset tester profile, capability-gating rules, and repo-owned runner
+  contract for external API-surface compatibility tests.
 - [V3 Coding Tools Test Runbook](v3-coding-tools-test-runbook.md): manual and
   deterministic checks for the shim-local native coding-tools subset.
 - [V3 Coding Tools Status Decision](v3-coding-tools-status-decision.md):

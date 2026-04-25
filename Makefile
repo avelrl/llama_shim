@@ -1,4 +1,4 @@
-.PHONY: run build lint test vet diff-check ci-check maint-cleanup maint-optimize maint-vacuum maint-backup docker-build compose-up compose-down devstack-up devstack-down devstack-smoke devstack-ci-smoke devstack-full-smoke responses-websocket-smoke v3-coding-tools-smoke v3-constrained-decoding-smoke v3-vllm-constrained-smoke codex-cli-devstack-smoke codex-cli-shell-tool-smoke codex-cli-coding-task-smoke codex-cli-task-matrix-smoke
+.PHONY: run build lint test vet diff-check ci-check maint-cleanup maint-optimize maint-vacuum maint-backup docker-build compose-up compose-down devstack-up devstack-down devstack-smoke devstack-ci-smoke devstack-full-smoke responses-compat-external-smoke responses-websocket-smoke v3-coding-tools-smoke v3-constrained-decoding-smoke v3-vllm-constrained-smoke codex-cli-devstack-smoke codex-cli-shell-tool-smoke codex-cli-coding-task-smoke codex-cli-task-matrix-smoke
 
 CONFIG ?= config.yaml
 BACKUP ?= ./.data/shim-backup.db
@@ -83,6 +83,9 @@ devstack-smoke:
 devstack-ci-smoke: devstack-smoke responses-websocket-smoke v3-coding-tools-smoke v3-constrained-decoding-smoke
 
 devstack-full-smoke: devstack-ci-smoke codex-cli-devstack-smoke codex-cli-shell-tool-smoke codex-cli-task-matrix-smoke
+
+responses-compat-external-smoke:
+	bash ./scripts/responses-compat-external-smoke.sh
 
 responses-websocket-smoke:
 	$(TOOL_PREP)

@@ -45,6 +45,8 @@ v1 supports:
 - V2 release scope: [docs/v2-scope.md](docs/v2-scope.md)
 - completed V3 preflight substrate: [docs/v3-preflight.md](docs/v3-preflight.md)
 - deterministic dev stack and smoke path: [docs/guides/devstack.md](docs/guides/devstack.md)
+- Responses compatibility external tester:
+  [docs/engineering/responses-compatibility-external-tester.md](docs/engineering/responses-compatibility-external-tester.md)
 - V3 expansion staging: [docs/v3-scope.md](docs/v3-scope.md)
 - V4 extensions and plugin model: [docs/v4-scope.md](docs/v4-scope.md)
 - V5 hosted parity and advanced transports: [docs/v5-scope.md](docs/v5-scope.md)

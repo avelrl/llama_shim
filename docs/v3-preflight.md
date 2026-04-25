@@ -177,6 +177,7 @@ grows.
 This now ships as:
 
 - `scripts/devstack-smoke.sh`
+- `scripts/responses-compat-external-smoke.sh`
 - `cmd/responses-websocket-smoke`
 - `scripts/v3-coding-tools-smoke.sh`
 - `scripts/v3-constrained-decoding-smoke.sh`
@@ -200,6 +201,13 @@ The current smoke path verifies:
 - streamed generic replay for `tool_search`
 - focused V3 constrained-runtime capability flags and validated grammar custom
   tool generation
+
+`make responses-compat-external-smoke` is the repo-owned bridge to an external
+Responses compatibility tester. It always captures `/readyz` and
+`/debug/capabilities` into `.data/responses-compat-external/...` and can run a
+strict external tester command via `RESPONSES_COMPAT_TESTER_CMD`. Its Broad
+subset profile and gap ledger live in
+[Responses Compatibility External Tester](engineering/responses-compatibility-external-tester.md).
 
 `make devstack-ci-smoke` is the CI-compatible gate on top of the stack. It
 combines the general devstack smoke, direct Responses WebSocket smoke, V3
@@ -233,6 +241,8 @@ This preflight layer exists partly to make that possible:
 - runnable dev services give the tester a deterministic environment
 - the compose dev stack gives CI and autonomous agents a reproducible target
 - the shim-owned smoke path gives a quick local sanity loop before broader runs
+- `make responses-compat-external-smoke` gives the external tester a stable
+  repo-owned launch and artifact contract
 
 The boundary should stay clean:
 
@@ -249,8 +259,8 @@ Treat V3 preflight as complete when all of the following are true:
 - the repository can start a deterministic local stack for shim-focused smoke
   testing
 - at least one real end-to-end smoke script or command validates that stack
-- the external tester can later consume the same capability model instead of
-  relying on guesswork
+- the external tester can consume the same capability model instead of relying
+  on guesswork
 - new V3 backend or runtime work no longer has to invent ad hoc setup every
   time
 
