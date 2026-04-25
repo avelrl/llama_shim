@@ -767,9 +767,11 @@ paths:
         Returns a `response.compaction` resource.
 
         Shim behavior:
-        - local compaction returns a shim-owned opaque `compaction` item whose
-          `encrypted_content` can be passed into the next local `/v1/responses`
-          request as-is
+        - local compaction returns a canonical next input window that can be
+          passed into the next local `/v1/responses` request as-is
+        - the default heuristic backend returns a shim-owned opaque
+          `compaction` item; the `model_assisted_text` backend may include a
+          bounded retained tail followed by the compaction item
         - on the next local request, the shim expands that opaque blob into a
           synthetic summary message before generation
         - this is not byte-for-byte equivalent to OpenAI encrypted compaction
@@ -808,6 +810,11 @@ paths:
                 object: response.compaction
                 created_at: 1741900000
                 output:
+                  - type: message
+                    role: user
+                    content:
+                      - type: input_text
+                        text: Remember that the launch code is 777.
                   - id: cmp_123
                     type: compaction
                     encrypted_content: llama_shim.compaction.v1:ZXhhbXBsZQ
@@ -2413,7 +2420,7 @@ components:
           $ref: "#/components/schemas/ShimCapabilityContainersSurface"
     ShimCapabilityResponsesSurface:
       type: object
-      required: [enabled, stateful, retrieve, delete, cancel, input_items, create_stream, retrieve_stream, input_tokens, compact, mode]
+      required: [enabled, stateful, retrieve, delete, cancel, input_items, create_stream, retrieve_stream, input_tokens, compact, websocket, mode]
       properties:
         enabled:
           type: boolean
@@ -2435,8 +2442,24 @@ components:
           type: boolean
         compact:
           type: boolean
+        websocket:
+          $ref: "#/components/schemas/ShimCapabilityResponsesWebSocket"
         mode:
           type: string
+    ShimCapabilityResponsesWebSocket:
+      type: object
+      required: [enabled, support, endpoint, sequential, multiplexing]
+      properties:
+        enabled:
+          type: boolean
+        support:
+          type: string
+        endpoint:
+          type: string
+        sequential:
+          type: boolean
+        multiplexing:
+          type: boolean
     ShimCapabilityConversationsSurface:
       type: object
       required: [enabled, create, retrieve, items]
@@ -2477,12 +2500,14 @@ components:
           type: boolean
     ShimCapabilityRuntime:
       type: object
-      required: [responses_mode, custom_tools_mode, codex, persistence, retrieval, ops]
+      required: [responses_mode, custom_tools_mode, compaction, codex, persistence, retrieval, ops]
       properties:
         responses_mode:
           type: string
         custom_tools_mode:
           type: string
+        compaction:
+          $ref: "#/components/schemas/ShimCapabilityCompactionRuntime"
         codex:
           $ref: "#/components/schemas/ShimCapabilityCodexConfig"
         persistence:
@@ -2491,6 +2516,28 @@ components:
           $ref: "#/components/schemas/ShimCapabilityRetrievalRuntime"
         ops:
           $ref: "#/components/schemas/ShimCapabilityOpsConfig"
+    ShimCapabilityCompactionRuntime:
+      type: object
+      required: [enabled, support, backend, capability_class, model_configured, routing]
+      properties:
+        enabled:
+          type: boolean
+        support:
+          type: string
+        backend:
+          type: string
+          enum: [heuristic, model_assisted_text]
+        capability_class:
+          type: string
+          enum: [heuristic, model_assisted_text]
+        model_configured:
+          type: boolean
+        retained_items:
+          type: integer
+        max_input_chars:
+          type: integer
+        routing:
+          $ref: "#/components/schemas/ShimCapabilityToolRouting"
     ShimCapabilityCodexConfig:
       type: object
       required: [compatibility_enabled, force_tool_choice_required]

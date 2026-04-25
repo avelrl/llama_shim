@@ -109,19 +109,16 @@ requirement.
 
 ### 6. Higher-fidelity compaction runtime
 
-- model-assisted local compaction beyond the current heuristic broad subset
-- retained-window plus opaque compaction state instead of a single readable
-  synopsis
-- tool-aware and multimodal-aware state carry-forward where the shim owns local
-  state
-- canonical next-window shaping for `/v1/responses/compact` and related local
-  follow-up paths
+Status: closed as a `Broad subset` in
+[compatibility-matrix.md](compatibility-matrix.md).
 
-See [v3-compaction.md](v3-compaction.md) for the design starting point and
-rollout assumptions.
+The closed slice covers model-assisted text compaction, retained-window
+standalone output, automatic `context_management` compaction over local state,
+capability visibility, and devstack smoke coverage. See
+[v3-compaction.md](v3-compaction.md) for the exact scope and non-goals.
 
-This is a runtime-expansion and quality track, not a reason to reopen the
-frozen V2 contract.
+Tool-aware stateful compaction, multimodal-aware compaction, exact hosted
+encrypted payload parity, and exact hosted stream choreography remain deferred.
 
 ### 7. Responses WebSocket mode
 

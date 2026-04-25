@@ -38,6 +38,7 @@ type Config struct {
 
 type Result struct {
 	Item     domain.Item
+	Output   []domain.Item
 	Expanded []domain.Item
 }
 
@@ -126,7 +127,7 @@ func (h Heuristic) Compact(ctx context.Context, items []domain.Item) (Result, er
 	if err != nil {
 		return Result{}, err
 	}
-	return Result{Item: item, Expanded: expanded}, nil
+	return Result{Item: item, Output: []domain.Item{item}, Expanded: expanded}, nil
 }
 
 type ModelAssistedText struct {
@@ -210,7 +211,21 @@ func buildStructuredResult(state domain.SyntheticCompactionState, itemCount int,
 	if err != nil {
 		return Result{}, err
 	}
-	return Result{Item: item, Expanded: expanded}, nil
+
+	output := []domain.Item{item}
+	if len(retained) > 0 {
+		outputItem, err := domain.NewSyntheticCompactionItemWithOptions(summary, itemCount, domain.SyntheticCompactionOptions{
+			Mode:  BackendModelAssistedText,
+			State: state,
+		})
+		if err != nil {
+			return Result{}, err
+		}
+		output = make([]domain.Item, 0, len(retained)+1)
+		output = append(output, retained...)
+		output = append(output, outputItem)
+	}
+	return Result{Item: item, Output: output, Expanded: expanded}, nil
 }
 
 func parseModelState(text string) (domain.SyntheticCompactionState, error) {

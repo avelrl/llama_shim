@@ -51,8 +51,8 @@ Practical usage guides live in [guides/README.md](guides/README.md).
 | `GET /v1/conversations/{id}` | Implemented | Keep read-model honest | |
 | `GET/POST/DELETE /v1/conversations/{id}/items*` | Implemented | Keep canonical append/delete flow centralized | |
 | `/v1/responses/input_tokens` | Broad subset | Keep “local deterministic estimate” wording explicit | V2 does not require exact upstream tokenization parity |
-| `/v1/responses/compact` | Broad subset | Keep standalone compaction subset explicit | Exact hosted encrypted compaction state is not a V2 requirement |
-| server-side compaction via `context_management.compact_threshold` | Broad subset | Keep the local subset explicit and conservative | The shim accepts the documented request policy shape and supports the core local text/stateful path for non-stream create plus generic create-stream and retrieve-stream replay; exact hosted encrypted payload parity and exact hosted choreography remain out of scope |
+| `/v1/responses/compact` | Broad subset | Keep standalone compaction subset explicit | V3 adds `model_assisted_text` canonical next-window output with retained items plus a shim-owned opaque compaction item; exact hosted encrypted compaction state is not claimed |
+| server-side compaction via `context_management.compact_threshold` | Broad subset | Keep the local subset explicit and conservative | The shim accepts the documented request policy shape and supports the core local text/stateful path for non-stream create plus generic create-stream and retrieve-stream replay; V3 adds model-assisted local state compression and capability visibility, while exact hosted encrypted payload parity and exact hosted choreography remain out of scope |
 
 ## Chat Completions
 

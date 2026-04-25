@@ -30,6 +30,10 @@ type RouterDeps struct {
 	ResponsesCustomToolsMode              string
 	ResponsesCodexEnableCompatibility     bool
 	ResponsesCodexForceToolChoiceRequired bool
+	ResponsesCompactionBackend            string
+	ResponsesCompactionModel              string
+	ResponsesCompactionRetainedItems      int
+	ResponsesCompactionMaxInputRunes      int
 	ResponsesWebSearchBackend             string
 	ResponsesImageGenerationBackend       string
 	WebSearchProvider                     websearch.Provider

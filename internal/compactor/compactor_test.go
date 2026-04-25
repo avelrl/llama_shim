@@ -74,6 +74,9 @@ func TestModelAssistedTextCompactorBuildsStructuredOpaqueState(t *testing.T) {
 	require.Contains(t, userMessage["content"], "Remember repo llama_shim")
 
 	require.Equal(t, "compaction", result.Item.Type)
+	require.Len(t, result.Output, 2)
+	require.Equal(t, "Now implement compaction.", domain.MessageText(result.Output[0]))
+	require.Equal(t, "compaction", result.Output[1].Type)
 	require.Len(t, result.Expanded, 2)
 	require.Contains(t, domain.MessageText(result.Expanded[0]), "The user wants compaction shipped.")
 	require.Contains(t, domain.MessageText(result.Expanded[0]), "Repo is llama_shim")

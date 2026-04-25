@@ -161,7 +161,7 @@ func (s *ResponseService) Compact(ctx context.Context, input CreateResponseInput
 	if err != nil {
 		return domain.ResponseCompaction{}, err
 	}
-	output := []domain.Item{result.Item}
+	output := compactionResponseOutput(result)
 
 	inputTokens, err := domain.EstimateSyntheticTokenCount(prepared.ContextItems)
 	if err != nil {
@@ -183,6 +183,13 @@ func (s *ResponseService) Compact(ctx context.Context, input CreateResponseInput
 		Output:    output,
 		Usage:     domain.BuildSyntheticUsage(inputTokens, outputTokens),
 	}, nil
+}
+
+func compactionResponseOutput(result compactor.Result) []domain.Item {
+	if len(result.Output) > 0 {
+		return append([]domain.Item(nil), result.Output...)
+	}
+	return []domain.Item{result.Item}
 }
 
 func (s *ResponseService) prepareResponseContext(ctx context.Context, input CreateResponseInput, requireModel bool, requireInput bool) (PreparedResponseContext, error) {

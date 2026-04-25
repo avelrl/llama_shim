@@ -356,6 +356,9 @@ func assistantTextForMessages(messages []chatMessage) string {
 }
 
 func chatCompletionReply(request chatCompletionRequest) (string, []map[string]any, string) {
+	if output, ok := fixtureCompactionOutput(request); ok {
+		return output, nil, "stop"
+	}
 	if output, ok := fixtureToolSearchFinalOutput(request); ok {
 		return output, nil, "stop"
 	}
@@ -417,6 +420,28 @@ func chatCompletionReply(request chatCompletionRequest) (string, []map[string]an
 		}, "tool_calls"
 	}
 	return assistantTextForMessages(request.Messages), nil, "stop"
+}
+
+func fixtureCompactionOutput(request chatCompletionRequest) (string, bool) {
+	joined := strings.ToLower(strings.TrimSpace(joinMessageContent(request.Messages)))
+	if !strings.Contains(joined, "compact these prior context items for continuation") {
+		return "", false
+	}
+	if !strings.Contains(joined, "compact prior conversation state") {
+		return "", false
+	}
+	state := map[string]any{
+		"summary":           "The user asked the shim to remember launch code 777 for the devstack compaction smoke.",
+		"key_facts":         []string{"launch code is 777", "compaction smoke uses the deterministic fixture backend"},
+		"constraints":       []string{"reply with requested exact values"},
+		"open_loops":        []string{"answer follow-up code questions from compacted state"},
+		"recent_tool_state": []string{"no pending tool calls"},
+	}
+	raw, err := json.Marshal(state)
+	if err != nil {
+		return "", false
+	}
+	return string(raw), true
 }
 
 func fixtureCodexFunctionFinalOutput(request chatCompletionRequest) (string, bool) {

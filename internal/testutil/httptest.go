@@ -63,6 +63,10 @@ type TestAppOptions struct {
 	CustomToolsMode                       string
 	CodexCompatibilityEnabled             bool
 	ForceToolChoiceRequired               bool
+	ResponsesCompactionBackend            string
+	ResponsesCompactionModel              string
+	ResponsesCompactionRetainedItems      int
+	ResponsesCompactionMaxInputRunes      int
 	ChatCompletionsStoreWhenOmitted       *bool
 	AuthMode                              string
 	BearerTokens                          []string
@@ -183,6 +187,10 @@ func NewTestAppWithOptions(t *testing.T, options TestAppOptions) *TestApp {
 		ResponsesCustomToolsMode:              options.CustomToolsMode,
 		ResponsesCodexEnableCompatibility:     options.CodexCompatibilityEnabled,
 		ResponsesCodexForceToolChoiceRequired: options.ForceToolChoiceRequired,
+		ResponsesCompactionBackend:            options.ResponsesCompactionBackend,
+		ResponsesCompactionModel:              options.ResponsesCompactionModel,
+		ResponsesCompactionRetainedItems:      options.ResponsesCompactionRetainedItems,
+		ResponsesCompactionMaxInputRunes:      options.ResponsesCompactionMaxInputRunes,
 		ResponsesWebSearchBackend:             capabilityWebSearchBackend(options),
 		ResponsesImageGenerationBackend:       capabilityImageGenerationBackend(options),
 		WebSearchProvider:                     options.WebSearchProvider,

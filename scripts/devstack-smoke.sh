@@ -22,14 +22,16 @@ This smoke path checks:
   3. shim /debug/capabilities
   4. stored Chat Completions create/list/get/messages local-first surface
   5. stateful /v1/responses via previous_response_id
-  6. local /v1/responses file_search
-  7. local /v1/responses web_search
-  8. local /v1/responses image_generation
-  9. local /v1/responses remote MCP via server_url
-  10. local /v1/responses hosted/server tool_search with namespace follow-up
-  11. local /v1/responses stream replay for MCP
-  12. local /v1/responses generic stream replay for tool_search
-  13. /debug/capabilities advertises Responses WebSocket local subset support
+  6. model-assisted /v1/responses/compact canonical next-window flow
+  7. server-side context_management compaction flow
+  8. local /v1/responses file_search
+  9. local /v1/responses web_search
+  10. local /v1/responses image_generation
+  11. local /v1/responses remote MCP via server_url
+  12. local /v1/responses hosted/server tool_search with namespace follow-up
+  13. local /v1/responses stream replay for MCP
+  14. local /v1/responses generic stream replay for tool_search
+  15. /debug/capabilities advertises Responses WebSocket local subset support
 EOF
 }
 
@@ -99,6 +101,7 @@ printf '%s\n' "${capabilities_json}" | jq '{
   object,
   ready,
   responses_mode: .runtime.responses_mode,
+  compaction: .runtime.compaction,
   responses_websocket: .surfaces.responses.websocket,
   tools: {
     web_search: .tools.web_search.enabled,
@@ -117,6 +120,13 @@ printf '%s\n' "${capabilities_json}" | jq -e '
   .object == "shim.capabilities" and
   .ready == true and
   .runtime.responses_mode == "prefer_local" and
+  .runtime.compaction.enabled == true and
+  .runtime.compaction.support == "local_subset" and
+  .runtime.compaction.backend == "model_assisted_text" and
+  .runtime.compaction.capability_class == "model_assisted_text" and
+  .runtime.compaction.model_configured == true and
+  .runtime.compaction.retained_items == 2 and
+  .runtime.compaction.max_input_chars == 32000 and
   .surfaces.responses.websocket.enabled == true and
   .surfaces.responses.websocket.support == "local_subset" and
   .surfaces.responses.websocket.endpoint == "/v1/responses" and
@@ -221,6 +231,99 @@ second_response_id="$(printf '%s' "${stateful_second_json}" | jq -r '.id')"
 response_ids+=("${second_response_id}")
 printf '%s\n' "${stateful_second_json}" | jq '{id, status, output_text}'
 printf '%s\n' "${stateful_second_json}" | jq -e '.status == "completed" and .output_text == "777"' >/dev/null
+
+echo "==> checking standalone compaction canonical window"
+compaction_json="$(curl -fsS "${shim_base_url}/v1/responses/compact" \
+  -H 'Content-Type: application/json' \
+  -d "$(jq -nc '{
+    model: "devstack-model",
+    input: [
+      {
+        type: "message",
+        role: "user",
+        content: "Remember launch code 777 for compaction smoke."
+      },
+      {
+        type: "message",
+        role: "assistant",
+        content: [
+          {
+            type: "output_text",
+            text: "I will remember launch code 777."
+          }
+        ]
+      },
+      {
+        type: "message",
+        role: "user",
+        content: "Keep deployment mode local."
+      },
+      {
+        type: "message",
+        role: "assistant",
+        content: [
+          {
+            type: "output_text",
+            text: "Acknowledged local mode."
+          }
+        ]
+      }
+    ]
+  }')")"
+compaction_output_path="${tmp_dir}/compaction-output.json"
+printf '%s\n' "${compaction_json}" | jq '.output' > "${compaction_output_path}"
+printf '%s\n' "${compaction_json}" | jq '{id, object, output_types: [.output[].type], output_count: (.output | length)}'
+printf '%s\n' "${compaction_json}" | jq -e '
+  .object == "response.compaction" and
+  (.output | length) == 3 and
+  .output[0].type == "message" and
+  .output[1].type == "message" and
+  .output[2].type == "compaction" and
+  (.output[2].encrypted_content | startswith("llama_shim.compaction.v1:"))
+' >/dev/null
+
+compaction_next_json="$(curl -fsS "${shim_base_url}/v1/responses" \
+  -H 'Content-Type: application/json' \
+  -d "$(jq -nc --slurpfile compacted "${compaction_output_path}" '{
+    model: "devstack-model",
+    store: true,
+    input: ($compacted[0] + [
+      {
+        type: "message",
+        role: "user",
+        content: "What code did I ask you to remember? Reply digits only."
+      }
+    ])
+  }')")"
+compaction_next_response_id="$(printf '%s' "${compaction_next_json}" | jq -r '.id')"
+response_ids+=("${compaction_next_response_id}")
+printf '%s\n' "${compaction_next_json}" | jq '{id, status, output_text}'
+printf '%s\n' "${compaction_next_json}" | jq -e '.status == "completed" and .output_text == "777"' >/dev/null
+
+echo "==> checking server-side context_management compaction"
+server_compaction_json="$(curl -fsS "${shim_base_url}/v1/responses" \
+  -H 'Content-Type: application/json' \
+  -d "$(jq -nc --arg previous_response_id "${second_response_id}" '{
+    model: "devstack-model",
+    store: true,
+    previous_response_id: $previous_response_id,
+    context_management: [
+      {
+        type: "compaction",
+        compact_threshold: 1
+      }
+    ],
+    input: "What code did I ask you to remember? Reply digits only."
+  }')")"
+server_compaction_response_id="$(printf '%s' "${server_compaction_json}" | jq -r '.id')"
+response_ids+=("${server_compaction_response_id}")
+printf '%s\n' "${server_compaction_json}" | jq '{id, status, output_text, first_output_type: .output[0].type}'
+printf '%s\n' "${server_compaction_json}" | jq -e '
+  .status == "completed" and
+  .output_text == "777" and
+  .output[0].type == "compaction" and
+  .output[1].type == "message"
+' >/dev/null
 
 echo "==> seeding retrieval fixture"
 fixture_path="${tmp_dir}/codes.txt"

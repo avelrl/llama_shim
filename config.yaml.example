@@ -175,7 +175,9 @@ responses:
     timeout: 10s
     # Output budget sent to the compaction model.
     max_output_tokens: 1000
-    # Number of recent prior items retained verbatim inside shim-owned opaque state.
+    # Number of recent prior items retained for model-assisted compaction.
+    # Standalone compact responses return these as visible canonical-window
+    # items; automatic compaction carries them inside shim-owned opaque state.
     retained_items: 8
     # Maximum prior-context characters rendered into the compaction prompt.
     max_input_chars: 32000

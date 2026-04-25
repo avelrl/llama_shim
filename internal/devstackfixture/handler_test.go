@@ -529,6 +529,24 @@ func TestChatCompletionsCodexTaskMatrixRules(t *testing.T) {
 	}
 }
 
+func TestHandlerChatCompletionsReturnsCompactionJSON(t *testing.T) {
+	request := chatCompletionRequest{
+		Model: DefaultModel,
+		Messages: []chatMessage{
+			{Role: "system", Content: "You compact prior conversation state for an OpenAI-compatible Responses API shim."},
+			{Role: "user", Content: "Compact these prior context items for continuation:\n\n001 user: Remember launch code 777."},
+		},
+	}
+
+	content, toolCalls, finishReason := chatCompletionReply(request)
+	require.Nil(t, toolCalls)
+	require.Equal(t, "stop", finishReason)
+
+	var state map[string]any
+	require.NoError(t, json.Unmarshal([]byte(content), &state))
+	require.Contains(t, state["summary"], "launch code 777")
+}
+
 func TestHandlerChatCompletionsPlansAndCompletesToolSearchFunctionCalls(t *testing.T) {
 	server := httptest.NewServer(NewHandler())
 	defer server.Close()

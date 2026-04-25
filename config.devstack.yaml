@@ -59,6 +59,14 @@ responses:
     backend: responses
     base_url: http://fixture:8081
     timeout: 30s
+  compaction:
+    backend: model_assisted_text
+    base_url: http://fixture:8081
+    model: devstack-model
+    timeout: 10s
+    max_output_tokens: 1000
+    retained_items: 2
+    max_input_chars: 32000
   computer:
     backend: disabled
   custom_tools:

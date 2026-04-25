@@ -120,6 +120,25 @@ func TestCreateResponseAutomaticCompactionUsesConfiguredCompactorState(t *testin
 	require.Equal(t, "compaction", response.Output[0].Type)
 }
 
+func TestCompactUsesCompactorCanonicalOutputWindow(t *testing.T) {
+	t.Parallel()
+
+	svc := service.NewResponseService(noopResponseStore{}, noopConversationStore{}, noopGenerator{})
+	svc.SetCompactor(staticStructuredCompactor{})
+
+	compacted, err := svc.Compact(context.Background(), service.CreateResponseInput{
+		Model:       "test-model",
+		Input:       json.RawMessage(`"Keep repository path internal/service."`),
+		RequestJSON: `{"model":"test-model","input":"Keep repository path internal/service."}`,
+	})
+	require.NoError(t, err)
+
+	require.Equal(t, "response.compaction", compacted.Object)
+	require.Len(t, compacted.Output, 2)
+	require.Equal(t, "Retained recent tail.", domain.MessageText(compacted.Output[0]))
+	require.Equal(t, "compaction", compacted.Output[1].Type)
+}
+
 func TestPrepareCreateContextTrimsHistoryBeforeLatestCompaction(t *testing.T) {
 	t.Parallel()
 
@@ -445,7 +464,11 @@ func (staticStructuredCompactor) Compact(context.Context, []domain.Item) (compac
 	if err != nil {
 		return compactor.Result{}, err
 	}
-	return compactor.Result{Item: item, Expanded: expanded}, nil
+	return compactor.Result{
+		Item:     item,
+		Output:   []domain.Item{domain.NewOutputTextMessage("Retained recent tail."), item},
+		Expanded: expanded,
+	}, nil
 }
 
 type noopResponseStore struct{}

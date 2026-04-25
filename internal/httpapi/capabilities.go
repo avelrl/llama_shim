@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"llama_shim/internal/compactor"
 	"llama_shim/internal/config"
 	"llama_shim/internal/retrieval"
 	"llama_shim/internal/websearch"
@@ -75,12 +76,24 @@ type capabilityContainersSurface struct {
 }
 
 type capabilityRuntimeConfig struct {
-	ResponsesMode   string                    `json:"responses_mode"`
-	CustomToolsMode string                    `json:"custom_tools_mode"`
-	Codex           capabilityCodexConfig     `json:"codex"`
-	Persistence     capabilityPersistenceInfo `json:"persistence"`
-	Retrieval       capabilityRetrievalConfig `json:"retrieval"`
-	Ops             capabilityOpsConfig       `json:"ops"`
+	ResponsesMode   string                     `json:"responses_mode"`
+	CustomToolsMode string                     `json:"custom_tools_mode"`
+	Compaction      capabilityCompactionConfig `json:"compaction"`
+	Codex           capabilityCodexConfig      `json:"codex"`
+	Persistence     capabilityPersistenceInfo  `json:"persistence"`
+	Retrieval       capabilityRetrievalConfig  `json:"retrieval"`
+	Ops             capabilityOpsConfig        `json:"ops"`
+}
+
+type capabilityCompactionConfig struct {
+	Enabled         bool              `json:"enabled"`
+	Support         string            `json:"support"`
+	Backend         string            `json:"backend"`
+	CapabilityClass string            `json:"capability_class"`
+	ModelConfigured bool              `json:"model_configured"`
+	RetainedItems   int               `json:"retained_items,omitempty"`
+	MaxInputChars   int               `json:"max_input_chars,omitempty"`
+	Routing         capabilityRouting `json:"routing"`
 }
 
 type capabilityCodexConfig struct {
@@ -216,6 +229,7 @@ func buildCapabilityManifest(ctx context.Context, deps RouterDeps) capabilityMan
 		Runtime: capabilityRuntimeConfig{
 			ResponsesMode:   deps.ResponsesMode,
 			CustomToolsMode: deps.ResponsesCustomToolsMode,
+			Compaction:      compactionCapability(deps),
 			Codex: capabilityCodexConfig{
 				CompatibilityEnabled:    deps.ResponsesCodexEnableCompatibility,
 				ForceToolChoiceRequired: deps.ResponsesCodexForceToolChoiceRequired,
@@ -350,6 +364,33 @@ func buildCapabilityManifest(ctx context.Context, deps RouterDeps) capabilityMan
 			},
 		},
 		Probes: probes,
+	}
+}
+
+func compactionCapability(deps RouterDeps) capabilityCompactionConfig {
+	backend := strings.ToLower(strings.TrimSpace(deps.ResponsesCompactionBackend))
+	if backend == "" {
+		backend = compactor.BackendHeuristic
+	}
+	retainedItems := deps.ResponsesCompactionRetainedItems
+	maxInputChars := deps.ResponsesCompactionMaxInputRunes
+	if backend == compactor.BackendHeuristic {
+		retainedItems = 0
+		maxInputChars = 0
+	}
+	return capabilityCompactionConfig{
+		Enabled:         true,
+		Support:         "local_subset",
+		Backend:         backend,
+		CapabilityClass: backend,
+		ModelConfigured: strings.TrimSpace(deps.ResponsesCompactionModel) != "",
+		RetainedItems:   retainedItems,
+		MaxInputChars:   maxInputChars,
+		Routing: capabilityRouting{
+			PreferLocal:    "local_subset",
+			PreferUpstream: "proxy_first_or_local_state",
+			LocalOnly:      "local_subset",
+		},
 	}
 }
 

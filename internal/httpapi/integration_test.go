@@ -385,6 +385,10 @@ func TestCapabilitiesEndpointReportsConfiguredRuntime(t *testing.T) {
 		CustomToolsMode:                   "bridge",
 		CodexCompatibilityEnabled:         true,
 		ForceToolChoiceRequired:           true,
+		ResponsesCompactionBackend:        "model_assisted_text",
+		ResponsesCompactionModel:          "compact-model",
+		ResponsesCompactionRetainedItems:  5,
+		ResponsesCompactionMaxInputRunes:  45000,
 		RateLimitEnabled:                  true,
 		RateLimitRequestsPerMinute:        90,
 		RetrievalConfig:                   retrieval.Config{IndexBackend: retrieval.IndexBackendSQLiteVec},
@@ -425,6 +429,19 @@ func TestCapabilitiesEndpointReportsConfiguredRuntime(t *testing.T) {
 	runtime := payload["runtime"].(map[string]any)
 	require.Equal(t, config.ResponsesModeLocalOnly, asStringAny(runtime["responses_mode"]))
 	require.Equal(t, "bridge", asStringAny(runtime["custom_tools_mode"]))
+
+	compaction := runtime["compaction"].(map[string]any)
+	require.Equal(t, true, compaction["enabled"])
+	require.Equal(t, "local_subset", asStringAny(compaction["support"]))
+	require.Equal(t, "model_assisted_text", asStringAny(compaction["backend"]))
+	require.Equal(t, "model_assisted_text", asStringAny(compaction["capability_class"]))
+	require.Equal(t, true, compaction["model_configured"])
+	require.Equal(t, float64(5), compaction["retained_items"])
+	require.Equal(t, float64(45000), compaction["max_input_chars"])
+	compactionRouting := compaction["routing"].(map[string]any)
+	require.Equal(t, "local_subset", asStringAny(compactionRouting["prefer_local"]))
+	require.Equal(t, "proxy_first_or_local_state", asStringAny(compactionRouting["prefer_upstream"]))
+	require.Equal(t, "local_subset", asStringAny(compactionRouting["local_only"]))
 
 	codex := runtime["codex"].(map[string]any)
 	require.Equal(t, true, codex["compatibility_enabled"])

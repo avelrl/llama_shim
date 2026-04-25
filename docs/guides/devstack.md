@@ -141,6 +141,9 @@ CI-compatible gate plus real Codex CLI checks:
 - shim `GET /debug/capabilities`
 - stored Chat Completions create/list/get/messages local-first surface
 - stateful `POST /v1/responses` with `previous_response_id`
+- model-assisted `POST /v1/responses/compact` through the deterministic
+  fixture backend, including canonical next-window reuse
+- server-side `context_management` compaction over a stored state chain
 - local `file_search` over shim-owned `files` and `vector_stores`
 - local `web_search` over the deterministic fixture backend
 - local `image_generation` through the deterministic fixture backend
@@ -150,6 +153,8 @@ CI-compatible gate plus real Codex CLI checks:
 - hosted/server `tool_search` with namespace loading
 - stored `tool_search` follow-up through `function_call_output`
 - streamed generic replay for `tool_search`
+- `/debug/capabilities` exposes the active compaction backend and retained
+  window limits
 
 `cmd/responses-websocket-smoke` checks the focused V3 Responses WebSocket
 transport:
