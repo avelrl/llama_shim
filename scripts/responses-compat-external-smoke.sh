@@ -59,6 +59,10 @@ auth_header="${SHIM_AUTH_HEADER:-}"
 
 profile="${RESPONSES_COMPAT_PROFILE:-responses-broad-subset}"
 artifact_root="${RESPONSES_COMPAT_ARTIFACT_DIR:-.data/responses-compat-external}"
+case "${artifact_root}" in
+  /*) ;;
+  *) artifact_root="$(pwd)/${artifact_root}" ;;
+esac
 run_id="${RESPONSES_COMPAT_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)}"
 artifact_dir="${artifact_root%/}/${run_id}"
 tester_cmd="${RESPONSES_COMPAT_TESTER_CMD:-${OPENAI_COMPAT_TESTER_CMD:-}}"
