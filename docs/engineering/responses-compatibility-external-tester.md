@@ -48,7 +48,20 @@ runs an external tester command.
 
 ## Run Modes
 
-Capture-only preflight:
+The runner has two explicit harness modes:
+
+- `devstack-fixture`: deterministic local fixture mode. This is the default
+  for `make responses-compat-external-smoke` and is useful for transport,
+  storage, replay, SSE, and capability-manifest checks.
+- `real-upstream`: operator-owned mode for a shim that is already connected to
+  a real OpenAI-compatible backend such as vLLM, SGLang, llama.cpp, or OpenAI.
+  Use `make responses-compat-external-real-smoke` for this path.
+
+The runner cannot infer `llama.base_url` from public probes. In `real-upstream`
+mode, set `RESPONSES_COMPAT_EXPECTED_UPSTREAM` to record the intended upstream
+base URL as an operator assertion in the run artifacts.
+
+Devstack fixture capture-only preflight:
 
 ```bash
 make devstack-up
@@ -56,7 +69,7 @@ make responses-compat-external-smoke
 make devstack-down
 ```
 
-Strict external tester run:
+Devstack fixture strict external tester run:
 
 ```bash
 make devstack-up
@@ -66,9 +79,30 @@ make responses-compat-external-smoke
 make devstack-down
 ```
 
+Real-upstream capture-only preflight against an already running shim:
+
+```bash
+RESPONSES_COMPAT_EXPECTED_UPSTREAM=http://127.0.0.1:8000 \
+make responses-compat-external-real-smoke
+```
+
+Real-upstream strict external tester run:
+
+```bash
+RESPONSES_COMPAT_EXPECTED_UPSTREAM=http://127.0.0.1:8000 \
+RESPONSES_COMPAT_REQUIRE_TESTER=1 \
+RESPONSES_COMPAT_TESTER_CMD='<external tester command>' \
+make responses-compat-external-real-smoke
+```
+
 The command string is intentionally owned by the operator or CI job because
 external tester CLIs differ. The runner provides stable environment variables
 instead of baking in one third-party CLI contract.
+
+Do not interpret a `devstack-fixture` run with a real-model profile as a real
+Qwen, GPT, vLLM, SGLang, llama.cpp, or OpenAI compatibility verdict. The runner
+writes `harness-warnings.txt` when the profile or command appears
+real-model-specific while the mode is still `devstack-fixture`.
 
 ## Environment Contract
 
@@ -78,6 +112,8 @@ instead of baking in one third-party CLI contract.
 | `OPENAI_BASE_URL` | `$SHIM_BASE_URL/v1` | OpenAI-compatible base URL passed to the external tester. |
 | `OPENAI_API_KEY` | `shim-test-key` | API key passed to SDK-style testers. |
 | `SHIM_AUTH_HEADER` | empty | Optional auth header for shim-owned probe endpoints. |
+| `RESPONSES_COMPAT_RUN_MODE` | `devstack-fixture` | Harness mode: `devstack-fixture` or `real-upstream`. |
+| `RESPONSES_COMPAT_EXPECTED_UPSTREAM` | `devstack-fixture` in devstack mode, empty otherwise | Operator assertion for the upstream behind the shim. |
 | `RESPONSES_COMPAT_PROFILE` | `responses-broad-subset` | Profile name for tester-side filtering. |
 | `RESPONSES_COMPAT_TESTER_CMD` | empty | Shell command used to run the external tester. |
 | `OPENAI_COMPAT_TESTER_CMD` | empty | Backward-compatible alias for the tester command. |
@@ -92,6 +128,8 @@ The external command receives these exported variables:
 - `SHIM_BASE_URL`
 - `SHIM_AUTH_HEADER`
 - `SHIM_CAPABILITIES_FILE`
+- `RESPONSES_COMPAT_RUN_MODE`
+- `RESPONSES_COMPAT_EXPECTED_UPSTREAM`
 - `RESPONSES_COMPAT_PROFILE`
 - `RESPONSES_COMPAT_ARTIFACT_DIR`
 
@@ -103,6 +141,7 @@ Every run writes:
 - `capabilities.json`
 - `capabilities-summary.json`
 - `run.env`
+- `harness-warnings.txt`
 
 When an external tester command is provided, the runner also writes:
 

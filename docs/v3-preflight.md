@@ -205,8 +205,11 @@ The current smoke path verifies:
 `make responses-compat-external-smoke` is the repo-owned bridge to an external
 Responses compatibility tester. It always captures `/readyz` and
 `/debug/capabilities` into `.data/responses-compat-external/...` and can run a
-strict external tester command via `RESPONSES_COMPAT_TESTER_CMD`. Its Broad
-subset profile and gap ledger live in
+strict external tester command via `RESPONSES_COMPAT_TESTER_CMD`. The default
+mode is `RESPONSES_COMPAT_RUN_MODE=devstack-fixture`; use
+`make responses-compat-external-real-smoke` for a shim that is already connected
+to a real upstream backend and set `RESPONSES_COMPAT_EXPECTED_UPSTREAM` in the
+artifact ledger. Its Broad subset profile and gap ledger live in
 [Responses Compatibility External Tester](engineering/responses-compatibility-external-tester.md).
 
 `make devstack-ci-smoke` is the CI-compatible gate on top of the stack. It

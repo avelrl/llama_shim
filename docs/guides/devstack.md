@@ -56,12 +56,23 @@ Capture the Responses external compatibility tester preflight artifacts:
 make responses-compat-external-smoke
 ```
 
-Run a strict external Responses compatibility tester command:
+Run a strict external Responses compatibility tester command against the
+deterministic devstack fixture:
 
 ```bash
 RESPONSES_COMPAT_REQUIRE_TESTER=1 \
 RESPONSES_COMPAT_TESTER_CMD='<external tester command>' \
 make responses-compat-external-smoke
+```
+
+Run a strict external Responses compatibility tester command against a shim
+that is already connected to a real upstream backend:
+
+```bash
+RESPONSES_COMPAT_EXPECTED_UPSTREAM=http://127.0.0.1:8000 \
+RESPONSES_COMPAT_REQUIRE_TESTER=1 \
+RESPONSES_COMPAT_TESTER_CMD='<external tester command>' \
+make responses-compat-external-real-smoke
 ```
 
 Run the focused V3 native coding-tools smoke path:
@@ -119,6 +130,7 @@ Equivalent individual commands:
 ```bash
 bash ./scripts/devstack-smoke.sh
 bash ./scripts/responses-compat-external-smoke.sh
+RESPONSES_COMPAT_RUN_MODE=real-upstream RESPONSES_COMPAT_EXPECTED_UPSTREAM=<upstream-base-url> bash ./scripts/responses-compat-external-smoke.sh
 bash ./scripts/v3-coding-tools-smoke.sh
 bash ./scripts/v3-constrained-decoding-smoke.sh
 bash ./scripts/codex-cli-devstack-smoke.sh
@@ -148,15 +160,22 @@ The shim itself talks to the fixture backend over the Compose network as
 It intentionally does not require the real `codex` binary.
 
 `make responses-compat-external-smoke` is the repo-owned bridge for external
-Responses API compatibility testers. With no tester command configured, it
-captures `/readyz`, `/debug/capabilities`, and a Broad subset profile summary
-under `.data/responses-compat-external`. With
+Responses API compatibility testers in `devstack-fixture` mode. With no tester
+command configured, it captures `/readyz`, `/debug/capabilities`, and a Broad
+subset profile summary under `.data/responses-compat-external`. With
 `RESPONSES_COMPAT_TESTER_CMD`, it exports `OPENAI_BASE_URL`,
 `OPENAI_API_KEY`, `SHIM_CAPABILITIES_FILE`,
 `RESPONSES_COMPAT_PROFILE=responses-broad-subset`, and artifact paths to the
 external tester command. Set `RESPONSES_COMPAT_REQUIRE_TESTER=1` when CI should
 fail if the command is missing. The profile and gap ledger are documented in
 [Responses Compatibility External Tester](../engineering/responses-compatibility-external-tester.md).
+
+`make responses-compat-external-real-smoke` runs the same harness with
+`RESPONSES_COMPAT_RUN_MODE=real-upstream`. Use it only when the shim is already
+running against the intended upstream backend. Set
+`RESPONSES_COMPAT_EXPECTED_UPSTREAM` so the artifact ledger records that
+operator assertion. The harness cannot read `llama.base_url` from public shim
+probes, so the assertion is explicit rather than inferred.
 
 `make devstack-full-smoke` is the local heavy smoke gate. It runs the
 CI-compatible gate plus real Codex CLI checks:

@@ -19,6 +19,8 @@ Optional:
   OPENAI_BASE_URL=http://127.0.0.1:18080/v1
   OPENAI_API_KEY=shim-test-key
   SHIM_AUTH_HEADER='Authorization: Bearer <token>'
+  RESPONSES_COMPAT_RUN_MODE=devstack-fixture
+  RESPONSES_COMPAT_EXPECTED_UPSTREAM=devstack-fixture
   RESPONSES_COMPAT_PROFILE=responses-broad-subset
   RESPONSES_COMPAT_ARTIFACT_DIR=.data/responses-compat-external
   RESPONSES_COMPAT_RUN_ID=manual
@@ -34,6 +36,8 @@ The external command receives:
   SHIM_BASE_URL
   SHIM_AUTH_HEADER
   SHIM_CAPABILITIES_FILE
+  RESPONSES_COMPAT_RUN_MODE
+  RESPONSES_COMPAT_EXPECTED_UPSTREAM
   RESPONSES_COMPAT_PROFILE
   RESPONSES_COMPAT_ARTIFACT_DIR
 EOF
@@ -49,6 +53,7 @@ require_cmd curl
 require_cmd date
 require_cmd mkdir
 require_cmd tail
+require_cmd tr
 
 shim_base_url="${SHIM_BASE_URL:-http://127.0.0.1:18080}"
 shim_base_url="${shim_base_url%/}"
@@ -57,6 +62,8 @@ openai_base_url="${openai_base_url%/}"
 openai_api_key="${OPENAI_API_KEY:-shim-test-key}"
 auth_header="${SHIM_AUTH_HEADER:-}"
 
+run_mode="${RESPONSES_COMPAT_RUN_MODE:-devstack-fixture}"
+expected_upstream="${RESPONSES_COMPAT_EXPECTED_UPSTREAM:-}"
 profile="${RESPONSES_COMPAT_PROFILE:-responses-broad-subset}"
 artifact_root="${RESPONSES_COMPAT_ARTIFACT_DIR:-.data/responses-compat-external}"
 case "${artifact_root}" in
@@ -68,7 +75,55 @@ artifact_dir="${artifact_root%/}/${run_id}"
 tester_cmd="${RESPONSES_COMPAT_TESTER_CMD:-${OPENAI_COMPAT_TESTER_CMD:-}}"
 require_tester="${RESPONSES_COMPAT_REQUIRE_TESTER:-0}"
 
+case "${run_mode}" in
+  devstack-fixture | real-upstream) ;;
+  *)
+    echo "unsupported RESPONSES_COMPAT_RUN_MODE: ${run_mode}" >&2
+    echo "supported values: devstack-fixture, real-upstream" >&2
+    exit 2
+    ;;
+esac
+
+if [[ -z "${expected_upstream}" && "${run_mode}" == "devstack-fixture" ]]; then
+  expected_upstream="devstack-fixture"
+fi
+
 mkdir -p "${artifact_dir}"
+warnings_path="${artifact_dir}/harness-warnings.txt"
+: >"${warnings_path}"
+
+warn_harness() {
+  local message="$1"
+  echo "warning: ${message}" >&2
+  printf 'warning: %s\n' "${message}" >>"${warnings_path}"
+}
+
+contains_real_model_marker() {
+  local value="$1"
+  case "${value}" in
+    *qwen* | *gpt* | *vllm* | *sglang* | *gemma* | *mistral*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+emit_harness_warnings() {
+  local context
+  context="$(printf '%s %s' "${profile}" "${tester_cmd}" | tr '[:upper:]' '[:lower:]')"
+
+  if [[ "${run_mode}" == "devstack-fixture" ]] && contains_real_model_marker "${context}"; then
+    warn_harness "run mode is devstack-fixture, but the profile or tester command looks real-model-specific; treat model-output failures as harness/profile mismatch until rerun with RESPONSES_COMPAT_RUN_MODE=real-upstream"
+  fi
+
+  if [[ "${run_mode}" == "real-upstream" && -z "${expected_upstream}" ]]; then
+    warn_harness "run mode is real-upstream, but RESPONSES_COMPAT_EXPECTED_UPSTREAM is unset; the runner cannot infer llama.base_url from public probes, so this run lacks an upstream assertion"
+  fi
+}
+
+emit_harness_warnings
 
 curl_shim() {
   if [[ -n "${auth_header}" ]]; then
@@ -99,6 +154,8 @@ SHIM_BASE_URL=${shim_base_url}
 OPENAI_BASE_URL=${openai_base_url}
 OPENAI_API_KEY_SET=$([[ -n "${openai_api_key}" ]] && echo true || echo false)
 SHIM_AUTH_HEADER_SET=$([[ -n "${auth_header}" ]] && echo true || echo false)
+RESPONSES_COMPAT_RUN_MODE=${run_mode}
+RESPONSES_COMPAT_EXPECTED_UPSTREAM=${expected_upstream}
 RESPONSES_COMPAT_PROFILE=${profile}
 RESPONSES_COMPAT_REQUIRE_TESTER=${require_tester}
 EOF
@@ -153,6 +210,8 @@ export OPENAI_API_KEY="${openai_api_key}"
 export SHIM_BASE_URL="${shim_base_url}"
 export SHIM_AUTH_HEADER="${auth_header}"
 export SHIM_CAPABILITIES_FILE="${capabilities_path}"
+export RESPONSES_COMPAT_RUN_MODE="${run_mode}"
+export RESPONSES_COMPAT_EXPECTED_UPSTREAM="${expected_upstream}"
 export RESPONSES_COMPAT_PROFILE="${profile}"
 export RESPONSES_COMPAT_ARTIFACT_DIR="${artifact_dir}"
 
