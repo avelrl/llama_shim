@@ -74,6 +74,7 @@ type TestAppOptions struct {
 	JSONBodyLimitBytes                    int64
 	RetrievalFileUploadMaxBytes           int64
 	ChatCompletionsShadowStoreMaxBytes    int64
+	ResponsesProxyBufferMaxBytes          int64
 	RetrievalMaxConcurrentSearches        int
 	RetrievalMaxSearchQueries             int
 	RetrievalMaxGroundingChunks           int
@@ -167,6 +168,7 @@ func NewTestAppWithOptions(t *testing.T, options TestAppOptions) *TestApp {
 			JSONBodyBytes:                    options.JSONBodyLimitBytes,
 			RetrievalFileUploadBytes:         options.RetrievalFileUploadMaxBytes,
 			ChatCompletionsShadowStoreBytes:  options.ChatCompletionsShadowStoreMaxBytes,
+			ResponsesProxyBufferBytes:        options.ResponsesProxyBufferMaxBytes,
 			RetrievalMaxConcurrentSearches:   options.RetrievalMaxConcurrentSearches,
 			RetrievalMaxSearchQueries:        options.RetrievalMaxSearchQueries,
 			RetrievalMaxGroundingChunks:      options.RetrievalMaxGroundingChunks,

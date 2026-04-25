@@ -94,9 +94,26 @@ func TestProxyResponsesStreamCanonicalizesErrorBody(t *testing.T) {
 	}
 
 	recorder := httptest.NewRecorder()
-	err := proxyResponsesStream(context.Background(), nil, recorder, resp, customToolTransportPlan{}, "", nil)
+	err := proxyResponsesStream(context.Background(), nil, recorder, resp, customToolTransportPlan{}, "", 0, nil)
 	require.NoError(t, err)
 	require.JSONEq(t, `{"error":{"message":"messages is required","type":"invalid_request_error","param":null,"code":null}}`, recorder.Body.String())
+}
+
+func TestProxyResponsesStreamLargeFallbackProxiesUnchangedWhenBufferOverflows(t *testing.T) {
+	body := strings.Repeat("A", 32)
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header: http.Header{
+			"Content-Type": []string{"application/json"},
+		},
+		Body: io.NopCloser(strings.NewReader(body)),
+	}
+
+	recorder := httptest.NewRecorder()
+	err := proxyResponsesStream(context.Background(), nil, recorder, resp, customToolTransportPlan{}, "", 4, nil)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Equal(t, body, recorder.Body.String())
 }
 
 func TestWriteCompletedResponseAsSSEReplaysCoreEventSequence(t *testing.T) {

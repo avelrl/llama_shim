@@ -16,6 +16,7 @@ shim:
   limits:
     json_body_bytes: 1MiB
     retrieval_file_upload_bytes: 64MiB
+    responses_proxy_buffer_bytes: 64MiB
     retrieval_max_concurrent_searches: 8
     retrieval_max_search_queries: 4
     retrieval_max_grounding_chunks: 20

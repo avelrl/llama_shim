@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -74,6 +75,24 @@ func TestPrepareShadowStorePreservesStateFields(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "resp_prev", input.PreviousResponseID)
 	require.Equal(t, "conv_1", input.ConversationID)
+}
+
+func TestReadResponsesProxyBodyOverflowKeepsConsumedBytes(t *testing.T) {
+	handler := &responseHandler{
+		serviceLimits: ServiceLimits{ResponsesProxyBufferBytes: 4},
+	}
+	resp := &http.Response{
+		Body: io.NopCloser(strings.NewReader("abcdef")),
+	}
+
+	prefix, remaining, overflowed, err := handler.readResponsesProxyBody(resp)
+
+	require.NoError(t, err)
+	require.True(t, overflowed)
+	require.Equal(t, "abcde", string(prefix))
+	rest, err := io.ReadAll(remaining)
+	require.NoError(t, err)
+	require.Equal(t, "f", string(rest))
 }
 
 func TestParseCreateResponseStreamOptionsRequiresStream(t *testing.T) {

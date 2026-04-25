@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -1097,9 +1098,13 @@ func (h *responseHandler) cancel(w http.ResponseWriter, r *http.Request) {
 	}
 	defer upstreamResp.Body.Close()
 
-	body, err := io.ReadAll(upstreamResp.Body)
+	body, remaining, overflowed, err := h.readResponsesProxyBody(upstreamResp)
 	if err != nil {
 		WriteError(w, http.StatusBadGateway, "upstream_error", "failed to read upstream response", "")
+		return
+	}
+	if overflowed {
+		h.writeResponsesProxyOverflowPassthrough(w, r, upstreamResp, body, remaining)
 		return
 	}
 	if canonical, ok, err := canonicalizeAPIErrorBody(upstreamResp.StatusCode, body); err == nil && ok {
@@ -1167,9 +1172,13 @@ func (h *responseHandler) proxyBufferedJSONRequest(w http.ResponseWriter, r *htt
 	}
 	defer resp.Body.Close()
 
-	responseBody, readErr := io.ReadAll(resp.Body)
+	responseBody, remaining, overflowed, readErr := h.readResponsesProxyBody(resp)
 	if readErr != nil {
 		WriteError(w, http.StatusBadGateway, "upstream_error", "failed to read upstream response", "")
+		return
+	}
+	if overflowed {
+		h.writeResponsesProxyOverflowPassthrough(w, r, resp, responseBody, remaining)
 		return
 	}
 	if canonical, ok, err := canonicalizeAPIErrorBody(resp.StatusCode, responseBody); err == nil && ok {
@@ -1182,6 +1191,30 @@ func (h *responseHandler) proxyBufferedJSONRequest(w http.ResponseWriter, r *htt
 	}
 	w.WriteHeader(resp.StatusCode)
 	_, _ = w.Write(responseBody)
+}
+
+func (h *responseHandler) readResponsesProxyBody(resp *http.Response) ([]byte, *bufio.Reader, bool, error) {
+	reader := bufio.NewReader(resp.Body)
+	body, overflowed, err := readResponsePrefix(reader, normalizeServiceLimits(h.serviceLimits).ResponsesProxyBufferBytes)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	return body, reader, overflowed, nil
+}
+
+func (h *responseHandler) writeResponsesProxyOverflowPassthrough(w http.ResponseWriter, r *http.Request, resp *http.Response, prefix []byte, remaining io.Reader) {
+	limit := normalizeServiceLimits(h.serviceLimits).ResponsesProxyBufferBytes
+	h.logger.WarnContext(r.Context(), "responses proxy body buffer skipped",
+		"request_id", RequestIDFromContext(r.Context()),
+		"reason", "response_too_large",
+		"limit_bytes", limit,
+	)
+	copyResponseHeaders(w.Header(), resp.Header)
+	w.WriteHeader(resp.StatusCode)
+	if len(prefix) > 0 {
+		_, _ = w.Write(prefix)
+	}
+	_, _ = io.Copy(w, remaining)
 }
 
 func readJSONBody(w http.ResponseWriter, r *http.Request) ([]byte, error) {
@@ -1573,9 +1606,13 @@ func (h *responseHandler) proxyCreateWithShadowStore(w http.ResponseWriter, r *h
 		}
 	}()
 
-	body, err := io.ReadAll(response.Body)
+	body, remaining, overflowed, err := h.readResponsesProxyBody(response)
 	if err != nil {
 		WriteError(w, http.StatusBadGateway, "upstream_error", "failed to read upstream response", "")
+		return
+	}
+	if overflowed {
+		h.writeResponsesProxyOverflowPassthrough(w, r, response, body, remaining)
 		return
 	}
 	if shouldRetryCustomToolsWithBridgeBody(response.StatusCode, body, plan) {
@@ -1593,9 +1630,13 @@ func (h *responseHandler) proxyCreateWithShadowStore(w http.ResponseWriter, r *h
 			return
 		}
 
-		body, err = io.ReadAll(response.Body)
+		body, remaining, overflowed, err = h.readResponsesProxyBody(response)
 		if err != nil {
 			WriteError(w, http.StatusBadGateway, "upstream_error", "failed to read upstream response", "")
+			return
+		}
+		if overflowed {
+			h.writeResponsesProxyOverflowPassthrough(w, r, response, body, remaining)
 			return
 		}
 	}
@@ -1614,9 +1655,13 @@ func (h *responseHandler) proxyCreateWithShadowStore(w http.ResponseWriter, r *h
 			return
 		}
 
-		body, err = io.ReadAll(response.Body)
+		body, remaining, overflowed, err = h.readResponsesProxyBody(response)
 		if err != nil {
 			WriteError(w, http.StatusBadGateway, "upstream_error", "failed to read upstream response", "")
+			return
+		}
+		if overflowed {
+			h.writeResponsesProxyOverflowPassthrough(w, r, response, body, remaining)
 			return
 		}
 	}
@@ -1635,9 +1680,13 @@ func (h *responseHandler) proxyCreateWithShadowStore(w http.ResponseWriter, r *h
 			return
 		}
 
-		body, err = io.ReadAll(response.Body)
+		body, remaining, overflowed, err = h.readResponsesProxyBody(response)
 		if err != nil {
 			WriteError(w, http.StatusBadGateway, "upstream_error", "failed to read upstream response", "")
+			return
+		}
+		if overflowed {
+			h.writeResponsesProxyOverflowPassthrough(w, r, response, body, remaining)
 			return
 		}
 	}

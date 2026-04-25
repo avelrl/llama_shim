@@ -184,7 +184,7 @@ func (h *responseHandler) proxyCreateStream(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	if err := proxyResponsesStream(r.Context(), h.logger, w, resp, plan, requestJSON, onCompleted); err != nil && !shouldIgnoreStreamProxyError(err) {
+	if err := proxyResponsesStream(r.Context(), h.logger, w, resp, plan, requestJSON, h.serviceLimits.ResponsesProxyBufferBytes, onCompleted); err != nil && !shouldIgnoreStreamProxyError(err) {
 		h.logger.WarnContext(r.Context(), "stream proxy failed", "request_id", RequestIDFromContext(r.Context()), "err", err)
 	}
 }
@@ -363,7 +363,7 @@ func (h *responseHandler) createStreamViaUpstream(w http.ResponseWriter, r *http
 		return
 	}
 
-	err = proxyResponsesStream(r.Context(), h.logger, w, resp, plan, requestJSON, func(rawResponse []byte, artifacts []domain.ResponseReplayArtifact) error {
+	err = proxyResponsesStream(r.Context(), h.logger, w, resp, plan, requestJSON, h.serviceLimits.ResponsesProxyBufferBytes, func(rawResponse []byte, artifacts []domain.ResponseReplayArtifact) error {
 		response, err := domain.ParseUpstreamResponse(rawResponse)
 		if err != nil {
 			return err
@@ -396,7 +396,7 @@ func (h *responseHandler) proxyResponseRequest(r *http.Request, body []byte) (*h
 	return h.proxy.client.Proxy(cloned.Context(), cloned)
 }
 
-func proxyResponsesStream(ctx context.Context, logger *slog.Logger, w http.ResponseWriter, resp *http.Response, plan customToolTransportPlan, requestJSON string, onCompleted func([]byte, []domain.ResponseReplayArtifact) error) error {
+func proxyResponsesStream(ctx context.Context, logger *slog.Logger, w http.ResponseWriter, resp *http.Response, plan customToolTransportPlan, requestJSON string, bufferLimitBytes int64, onCompleted func([]byte, []domain.ResponseReplayArtifact) error) error {
 	isSSE := strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "text/event-stream")
 	if logger != nil && logger.Enabled(ctx, slog.LevelDebug) {
 		logger.DebugContext(ctx, "responses stream opened",
@@ -408,8 +408,28 @@ func proxyResponsesStream(ctx context.Context, logger *slog.Logger, w http.Respo
 	}
 
 	if !isSSE || resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, err := io.ReadAll(resp.Body)
+		reader := bufio.NewReader(resp.Body)
+		bufferLimit := normalizeServiceLimits(ServiceLimits{ResponsesProxyBufferBytes: bufferLimitBytes}).ResponsesProxyBufferBytes
+		body, overflowed, err := readResponsePrefix(reader, bufferLimit)
 		if err != nil {
+			return err
+		}
+		if overflowed {
+			if logger != nil {
+				logger.WarnContext(ctx, "responses stream fallback body buffer skipped",
+					"request_id", RequestIDFromContext(ctx),
+					"reason", "response_too_large",
+					"limit_bytes", bufferLimit,
+				)
+			}
+			copyResponseHeaders(w.Header(), resp.Header)
+			w.WriteHeader(resp.StatusCode)
+			if len(body) > 0 {
+				if _, err := w.Write(body); err != nil {
+					return err
+				}
+			}
+			_, err = io.Copy(w, reader)
 			return err
 		}
 		originalBody := body

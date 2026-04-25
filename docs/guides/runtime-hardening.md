@@ -155,6 +155,30 @@ implemented, but they must stay conservative:
   parsing tests for the shared `config.yaml` `probe.*` knobs, `go test
   ./...`, `go vet ./...`, and `git diff --check`
 
+### 2026-04-25: Responses proxy body buffering
+
+- Status: implemented
+- Symptom: several non-stream Responses proxy fallback paths needed to inspect
+  an upstream body for shim-owned retry, normalization, canonical error, or
+  shadow-store behavior before writing the client response
+- Invariant: the shim must not add a public OpenAI-surface response-size cap;
+  oversized upstream responses must still be proxied to the client unchanged
+- Change:
+  bound the internal non-stream `/v1/responses` proxy buffer with
+  `shim.limits.responses_proxy_buffer_bytes`; when the upstream body exceeds
+  that internal limit, the shim writes the captured prefix plus the remaining
+  body to the client and skips only shim-owned normalization/local persistence
+- Covered paths:
+  create proxy/shadow-store, buffered Responses proxy helper, streamed
+  non-SSE/error fallback, and cancel refresh fallback
+- Operator surface:
+  `shim.limits.responses_proxy_buffer_bytes` is a shim-only runtime knob, not
+  an OpenAI API request field or compatibility limit
+- Verification used:
+  focused overflow tests for create, cancel, stream fallback, and prefix
+  preservation; config parsing/default/env tests; full runtime smokes before
+  and after implementation; `go test ./...`; `make lint`; `git diff --check`
+
 ## Change Note Template
 
 When a hardening change lands, add a short note with:

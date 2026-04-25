@@ -41,6 +41,7 @@ shim:
   limits:
     json_body_bytes: 2MiB
     retrieval_file_upload_bytes: 32MiB
+    responses_proxy_buffer_bytes: 96MiB
     custom_tool_grammar_definition_bytes: 24KiB
     custom_tool_compiled_pattern_bytes: 40KiB
     retrieval_max_concurrent_searches: 6
@@ -156,6 +157,7 @@ responses:
 	require.Equal(t, "/metrics", cfg.ShimMetricsPath)
 	require.EqualValues(t, 2<<20, cfg.ShimJSONBodyLimitBytes)
 	require.EqualValues(t, 32<<20, cfg.RetrievalFileUploadMaxBytes)
+	require.EqualValues(t, 96<<20, cfg.ResponsesProxyBufferMaxBytes)
 	require.EqualValues(t, 24<<10, cfg.CustomToolGrammarDefinitionMaxBytes)
 	require.EqualValues(t, 40<<10, cfg.CustomToolCompiledPatternMaxBytes)
 	require.Equal(t, 6, cfg.RetrievalMaxConcurrentSearches)
@@ -244,6 +246,7 @@ responses:
 	t.Setenv("SHIM_METRICS_PATH", "/internal/metrics")
 	t.Setenv("SHIM_LIMITS_JSON_BODY_BYTES", "3MiB")
 	t.Setenv("SHIM_LIMITS_RETRIEVAL_FILE_UPLOAD_BYTES", "48MiB")
+	t.Setenv("SHIM_LIMITS_RESPONSES_PROXY_BUFFER_BYTES", "80MiB")
 	t.Setenv("SHIM_LIMITS_CUSTOM_TOOL_GRAMMAR_DEFINITION_BYTES", "20KiB")
 	t.Setenv("SHIM_LIMITS_CUSTOM_TOOL_COMPILED_PATTERN_BYTES", "36KiB")
 	t.Setenv("SHIM_LIMITS_RETRIEVAL_MAX_CONCURRENT_SEARCHES", "9")
@@ -316,6 +319,7 @@ responses:
 	require.Equal(t, "/internal/metrics", cfg.ShimMetricsPath)
 	require.EqualValues(t, 3<<20, cfg.ShimJSONBodyLimitBytes)
 	require.EqualValues(t, 48<<20, cfg.RetrievalFileUploadMaxBytes)
+	require.EqualValues(t, 80<<20, cfg.ResponsesProxyBufferMaxBytes)
 	require.EqualValues(t, 20<<10, cfg.CustomToolGrammarDefinitionMaxBytes)
 	require.EqualValues(t, 36<<10, cfg.CustomToolCompiledPatternMaxBytes)
 	require.Equal(t, 9, cfg.RetrievalMaxConcurrentSearches)
@@ -396,6 +400,7 @@ func TestLoadUsesCodexSafeDefaults(t *testing.T) {
 	require.Equal(t, "/metrics", cfg.ShimMetricsPath)
 	require.EqualValues(t, 1<<20, cfg.ShimJSONBodyLimitBytes)
 	require.EqualValues(t, 64<<20, cfg.RetrievalFileUploadMaxBytes)
+	require.EqualValues(t, 64<<20, cfg.ResponsesProxyBufferMaxBytes)
 	require.EqualValues(t, 16<<10, cfg.CustomToolGrammarDefinitionMaxBytes)
 	require.EqualValues(t, 32<<10, cfg.CustomToolCompiledPatternMaxBytes)
 	require.Equal(t, 8, cfg.RetrievalMaxConcurrentSearches)

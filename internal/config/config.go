@@ -46,6 +46,7 @@ type Config struct {
 	ShimJSONBodyLimitBytes                         int64
 	RetrievalFileUploadMaxBytes                    int64
 	ChatCompletionsShadowStoreMaxBytes             int64
+	ResponsesProxyBufferMaxBytes                   int64
 	CustomToolGrammarDefinitionMaxBytes            int64
 	CustomToolCompiledPatternMaxBytes              int64
 	RetrievalMaxConcurrentSearches                 int
@@ -290,6 +291,11 @@ func Load(configPath string) (Config, error) {
 		return Config{}, fmt.Errorf("parse shim.limits.chat_completions_shadow_store_bytes: %w", err)
 	}
 	cfg.ChatCompletionsShadowStoreMaxBytes = chatCompletionShadowStoreLimit
+	responsesProxyBufferLimit, err := parseByteSize(v.GetString("shim.limits.responses_proxy_buffer_bytes"))
+	if err != nil {
+		return Config{}, fmt.Errorf("parse shim.limits.responses_proxy_buffer_bytes: %w", err)
+	}
+	cfg.ResponsesProxyBufferMaxBytes = responsesProxyBufferLimit
 	customToolGrammarDefinitionLimit, err := parseByteSize(v.GetString("shim.limits.custom_tool_grammar_definition_bytes"))
 	if err != nil {
 		return Config{}, fmt.Errorf("parse shim.limits.custom_tool_grammar_definition_bytes: %w", err)
@@ -456,6 +462,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("shim.limits.json_body_bytes", "1MiB")
 	v.SetDefault("shim.limits.retrieval_file_upload_bytes", "64MiB")
 	v.SetDefault("shim.limits.chat_completions_shadow_store_bytes", "64MiB")
+	v.SetDefault("shim.limits.responses_proxy_buffer_bytes", "64MiB")
 	v.SetDefault("shim.limits.custom_tool_grammar_definition_bytes", "16KiB")
 	v.SetDefault("shim.limits.custom_tool_compiled_pattern_bytes", "32KiB")
 	v.SetDefault("shim.limits.retrieval_max_concurrent_searches", "8")

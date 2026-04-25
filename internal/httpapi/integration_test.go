@@ -2612,6 +2612,96 @@ func TestResponsesCancelRefreshesShadowStoredBackgroundResponse(t *testing.T) {
 	require.True(t, *got.Background)
 }
 
+func TestResponsesCancelLargeUpstreamBodyStillProxiesWhenBufferOverflows(t *testing.T) {
+	largeContent := strings.Repeat("C", 4096)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/models" {
+			w.Header().Set("Content-Type", "application/json")
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+				"data": []map[string]any{
+					{"id": "test-model", "object": "model", "owned_by": "organization_owner"},
+				},
+			}))
+			return
+		}
+		if r.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+				"error": map[string]any{
+					"type":    "not_found_error",
+					"message": "response not found",
+				},
+			}))
+			return
+		}
+		require.Equal(t, http.MethodPost, r.Method)
+		require.True(t, strings.HasPrefix(r.URL.Path, "/v1/responses/"))
+		require.True(t, strings.HasSuffix(r.URL.Path, "/cancel"))
+		responseID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/responses/"), "/cancel")
+		upstreamBody, err := json.Marshal(map[string]any{
+			"id":           responseID,
+			"object":       "response",
+			"created_at":   1712059200,
+			"status":       "cancelled",
+			"completed_at": nil,
+			"background":   true,
+			"model":        "test-model",
+			"output": []map[string]any{
+				{
+					"id":     "msg_1",
+					"type":   "message",
+					"role":   "assistant",
+					"status": "completed",
+					"content": []map[string]any{
+						{"type": "output_text", "text": largeContent},
+					},
+				},
+			},
+			"output_text": largeContent,
+		})
+		require.NoError(t, err)
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Length", strconv.Itoa(len(upstreamBody)))
+		_, _ = w.Write(upstreamBody)
+	}))
+	defer upstream.Close()
+
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		LlamaBaseURL:                 upstream.URL,
+		ResponsesProxyBufferMaxBytes: 256,
+	})
+
+	createdAt := time.Unix(1712059200, 0).UTC()
+	response := domain.NewResponse("resp_large_cancel_source", "test-model", "Queued", "", "", createdAt.Unix())
+	response.Background = domain.BoolPtr(true)
+	responseJSON, err := json.Marshal(response)
+	require.NoError(t, err)
+	input := []domain.Item{domain.NewInputTextMessage("user", "Do this in the background")}
+	require.NoError(t, app.Store.SaveResponse(context.Background(), domain.StoredResponse{
+		ID:                   response.ID,
+		Model:                response.Model,
+		RequestJSON:          `{"model":"test-model","store":true,"background":true,"input":"Do this in the background"}`,
+		ResponseJSON:         string(responseJSON),
+		NormalizedInputItems: input,
+		EffectiveInputItems:  input,
+		Output:               response.Output,
+		OutputText:           response.OutputText,
+		Store:                true,
+		CreatedAt:            domain.FormatTime(createdAt),
+		CompletedAt:          domain.FormatTime(createdAt),
+	}))
+
+	status, payload := rawRequest(t, app, http.MethodPost, "/v1/responses/"+response.ID+"/cancel", nil)
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, response.ID, asStringAny(payload["id"]))
+	require.Equal(t, "cancelled", asStringAny(payload["status"]))
+	require.Equal(t, largeContent, asStringAny(payload["output_text"]))
+
+	got := getResponse(t, app, response.ID)
+	require.Equal(t, "completed", got.Status)
+}
+
 func TestResponsesInputTokensCountLocalSubset(t *testing.T) {
 	app := testutil.NewTestApp(t)
 
@@ -3828,6 +3918,68 @@ func TestResponsesWithSupportedGenerationFieldsPreferUpstreamProxyAndShadowStore
 	got := getResponse(t, app, response.ID)
 	require.Equal(t, response.ID, got.ID)
 	require.Equal(t, "OK", got.OutputText)
+}
+
+func TestResponsesNonStreamLargeProxyBodyStillProxiesWhenBufferOverflows(t *testing.T) {
+	largeContent := strings.Repeat("A", 4096)
+	upstreamBody, err := json.Marshal(map[string]any{
+		"id":                   "resp_large_proxy",
+		"object":               "response",
+		"created_at":           1712059200,
+		"status":               "completed",
+		"completed_at":         1712059201,
+		"model":                "test-model",
+		"previous_response_id": nil,
+		"output": []map[string]any{
+			{
+				"id":     "msg_1",
+				"type":   "message",
+				"role":   "assistant",
+				"status": "completed",
+				"content": []map[string]any{
+					{"type": "output_text", "text": largeContent},
+				},
+			},
+		},
+		"output_text": largeContent,
+	})
+	require.NoError(t, err)
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, http.MethodPost, r.Method)
+		require.Equal(t, "/v1/responses", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Length", strconv.Itoa(len(upstreamBody)))
+		_, _ = w.Write(upstreamBody)
+	}))
+	defer upstream.Close()
+
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		ResponsesMode:                config.ResponsesModePreferUpstream,
+		LlamaBaseURL:                 upstream.URL,
+		ResponsesProxyBufferMaxBytes: 256,
+	})
+
+	requestBody := mustJSON(t, map[string]any{
+		"model": "test-model",
+		"store": true,
+		"input": "Return a long answer",
+	})
+	req, err := http.NewRequest(http.MethodPost, app.Server.URL+"/v1/responses", bytes.NewReader(requestBody))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, strconv.Itoa(len(upstreamBody)), resp.Header.Get("Content-Length"))
+	require.Equal(t, string(upstreamBody), string(body))
+	_, err = app.Store.GetResponse(context.Background(), "resp_large_proxy")
+	require.ErrorIs(t, err, sqlite.ErrNotFound)
 }
 
 func TestResponsesWithJSONTextFormatAreHandledLocally(t *testing.T) {

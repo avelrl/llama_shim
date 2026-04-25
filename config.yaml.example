@@ -36,6 +36,10 @@ shim:
     # optional local shadow storage. Responses above this size are still
     # proxied to the client but are not persisted locally.
     chat_completions_shadow_store_bytes: 64MiB
+    # Maximum non-stream /v1/responses upstream body buffered for shim-owned
+    # normalization, retry decisions, and optional local shadow storage.
+    # Responses above this size are proxied unchanged and are not persisted locally.
+    responses_proxy_buffer_bytes: 64MiB
     # Maximum grammar definition size accepted by shim-local constrained custom tools.
     custom_tool_grammar_definition_bytes: 16KiB
     # Maximum compiled regex/pattern size accepted after regex or Lark expansion.
