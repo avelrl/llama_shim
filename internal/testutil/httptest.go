@@ -79,6 +79,7 @@ type TestAppOptions struct {
 	JSONBodyLimitBytes                    int64
 	RetrievalFileUploadMaxBytes           int64
 	ChatCompletionsShadowStoreMaxBytes    int64
+	ChatCompletionsShadowStoreTimeout     time.Duration
 	ResponsesProxyBufferMaxBytes          int64
 	ResponsesStoredLineageMaxItems        int
 	RetrievalMaxConcurrentSearches        int
@@ -173,14 +174,15 @@ func NewTestAppWithOptions(t *testing.T, options TestAppOptions) *TestApp {
 		MetricsConfig:       httpapi.MetricsConfig{Enabled: metricsEnabled, Path: options.MetricsPath},
 		Metrics:             metrics,
 		ServiceLimits: httpapi.ServiceLimits{
-			JSONBodyBytes:                    options.JSONBodyLimitBytes,
-			RetrievalFileUploadBytes:         options.RetrievalFileUploadMaxBytes,
-			ChatCompletionsShadowStoreBytes:  options.ChatCompletionsShadowStoreMaxBytes,
-			ResponsesProxyBufferBytes:        options.ResponsesProxyBufferMaxBytes,
-			RetrievalMaxConcurrentSearches:   options.RetrievalMaxConcurrentSearches,
-			RetrievalMaxSearchQueries:        options.RetrievalMaxSearchQueries,
-			RetrievalMaxGroundingChunks:      options.RetrievalMaxGroundingChunks,
-			CodeInterpreterMaxConcurrentRuns: options.CodeInterpreterMaxConcurrentRuns,
+			JSONBodyBytes:                     options.JSONBodyLimitBytes,
+			RetrievalFileUploadBytes:          options.RetrievalFileUploadMaxBytes,
+			ChatCompletionsShadowStoreBytes:   options.ChatCompletionsShadowStoreMaxBytes,
+			ChatCompletionsShadowStoreTimeout: options.ChatCompletionsShadowStoreTimeout,
+			ResponsesProxyBufferBytes:         options.ResponsesProxyBufferMaxBytes,
+			RetrievalMaxConcurrentSearches:    options.RetrievalMaxConcurrentSearches,
+			RetrievalMaxSearchQueries:         options.RetrievalMaxSearchQueries,
+			RetrievalMaxGroundingChunks:       options.RetrievalMaxGroundingChunks,
+			CodeInterpreterMaxConcurrentRuns:  options.CodeInterpreterMaxConcurrentRuns,
 		},
 		ChatCompletionsStoreWhenOmitted:       chatCompletionsStoreWhenOmitted,
 		ResponsesMode:                         responsesMode,

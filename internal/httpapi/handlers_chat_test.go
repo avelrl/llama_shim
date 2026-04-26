@@ -2,10 +2,15 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"llama_shim/internal/storage/sqlite"
 )
 
 func TestSanitizeChatCompletionJSONBodyStripsNonOpenAIFields(t *testing.T) {
@@ -142,4 +147,49 @@ func TestLimitedBodyCaptureBufferMarksOverflowWithoutFailingWrites(t *testing.T)
 	require.Equal(t, 6, n)
 	require.True(t, capture.overflowed)
 	require.Equal(t, "abcd", string(capture.Bytes()))
+}
+
+func TestShadowStoreChatCompletionBestEffortIgnoresCanceledRequestContext(t *testing.T) {
+	store, err := sqlite.Open(context.Background(), filepath.Join(t.TempDir(), "shim.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = store.Close()
+	})
+
+	handler := newProxyHandler(nil, nil, store, ServiceLimits{
+		ChatCompletionsShadowStoreTimeout: time.Second,
+	}, false)
+	requestCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err = handler.shadowStoreChatCompletionBestEffort(requestCtx,
+		[]byte(`{
+			"model":"gpt-5.4",
+			"store":true,
+			"metadata":{"case":"client_cancel"},
+			"messages":[{"role":"user","content":"Say OK"}]
+		}`),
+		[]byte(`{
+			"id":"chatcmpl_context_cancel",
+			"object":"chat.completion",
+			"created":1777020000,
+			"model":"gpt-5.4",
+			"choices":[
+				{
+					"index":0,
+					"message":{"role":"assistant","content":"OK"},
+					"finish_reason":"stop",
+					"logprobs":null
+				}
+			]
+		}`),
+	)
+	require.NoError(t, err)
+
+	stored, err := store.GetChatCompletion(context.Background(), "chatcmpl_context_cancel")
+	require.NoError(t, err)
+	require.Equal(t, "gpt-5.4", stored.Model)
+	require.Equal(t, map[string]string{"case": "client_cancel"}, stored.Metadata)
+	require.JSONEq(t, `{"model":"gpt-5.4","store":true,"metadata":{"case":"client_cancel"},"messages":[{"role":"user","content":"Say OK"}]}`, stored.RequestJSON)
+	require.JSONEq(t, `{"id":"chatcmpl_context_cancel","object":"chat.completion","created":1777020000,"model":"gpt-5.4","metadata":{"case":"client_cancel"},"choices":[{"index":0,"message":{"role":"assistant","content":"OK"},"finish_reason":"stop","logprobs":null}]}`, stored.ResponseJSON)
 }

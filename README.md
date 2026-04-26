@@ -127,6 +127,7 @@ shim:
   limits:
     json_body_bytes: 1MiB
     retrieval_file_upload_bytes: 64MiB
+    chat_completions_shadow_store_timeout: 5s
     retrieval_max_concurrent_searches: 8
     retrieval_max_search_queries: 4
     retrieval_max_grounding_chunks: 20
@@ -228,6 +229,7 @@ Supported environment overrides:
 - `SHIM_METRICS_PATH` overrides `shim.metrics.path`
 - `SHIM_LIMITS_JSON_BODY_BYTES` overrides `shim.limits.json_body_bytes`
 - `SHIM_LIMITS_RETRIEVAL_FILE_UPLOAD_BYTES` overrides `shim.limits.retrieval_file_upload_bytes`
+- `SHIM_LIMITS_CHAT_COMPLETIONS_SHADOW_STORE_TIMEOUT` overrides `shim.limits.chat_completions_shadow_store_timeout`
 - `SHIM_LIMITS_RETRIEVAL_MAX_CONCURRENT_SEARCHES` overrides `shim.limits.retrieval_max_concurrent_searches`
 - `SHIM_LIMITS_RETRIEVAL_MAX_SEARCH_QUERIES` overrides `shim.limits.retrieval_max_search_queries`
 - `SHIM_LIMITS_RETRIEVAL_MAX_GROUNDING_CHUNKS` overrides `shim.limits.retrieval_max_grounding_chunks`

@@ -46,6 +46,7 @@ type Config struct {
 	ShimJSONBodyLimitBytes                         int64
 	RetrievalFileUploadMaxBytes                    int64
 	ChatCompletionsShadowStoreMaxBytes             int64
+	ChatCompletionsShadowStoreTimeout              time.Duration
 	ResponsesProxyBufferMaxBytes                   int64
 	ResponsesStoredLineageMaxItems                 int
 	CustomToolGrammarDefinitionMaxBytes            int64
@@ -299,6 +300,9 @@ func Load(configPath string) (Config, error) {
 		return Config{}, fmt.Errorf("parse shim.limits.chat_completions_shadow_store_bytes: %w", err)
 	}
 	cfg.ChatCompletionsShadowStoreMaxBytes = chatCompletionShadowStoreLimit
+	if err := parseDuration(v.GetString("shim.limits.chat_completions_shadow_store_timeout"), &cfg.ChatCompletionsShadowStoreTimeout); err != nil {
+		return Config{}, fmt.Errorf("parse shim.limits.chat_completions_shadow_store_timeout: %w", err)
+	}
 	responsesProxyBufferLimit, err := parseByteSize(v.GetString("shim.limits.responses_proxy_buffer_bytes"))
 	if err != nil {
 		return Config{}, fmt.Errorf("parse shim.limits.responses_proxy_buffer_bytes: %w", err)
@@ -475,6 +479,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("shim.limits.json_body_bytes", "1MiB")
 	v.SetDefault("shim.limits.retrieval_file_upload_bytes", "64MiB")
 	v.SetDefault("shim.limits.chat_completions_shadow_store_bytes", "64MiB")
+	v.SetDefault("shim.limits.chat_completions_shadow_store_timeout", "5s")
 	v.SetDefault("shim.limits.responses_proxy_buffer_bytes", "64MiB")
 	v.SetDefault("shim.limits.responses_stored_lineage_max_items", "128")
 	v.SetDefault("shim.limits.custom_tool_grammar_definition_bytes", "16KiB")

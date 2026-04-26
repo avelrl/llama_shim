@@ -71,6 +71,9 @@ Then use the stored-resource routes:
 - Shadow-store capture is best-effort. If an upstream response exceeds the
   internal `shim.limits.chat_completions_shadow_store_bytes` budget, the client
   response is still proxied and only local persistence is skipped.
+- Shadow-store persistence uses the internal
+  `shim.limits.chat_completions_shadow_store_timeout` budget and is detached
+  from client disconnect cancellation after the upstream response has completed.
 
 ## Gotchas
 

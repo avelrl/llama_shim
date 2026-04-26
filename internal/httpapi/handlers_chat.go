@@ -54,7 +54,7 @@ func (h *proxyHandler) forwardChatCompletions(w http.ResponseWriter, r *http.Req
 			return
 		}
 		if shouldStore {
-			if err := h.shadowStoreChatCompletion(r.Context(), rawBody, sanitized); err != nil {
+			if err := h.shadowStoreChatCompletionBestEffort(r.Context(), rawBody, sanitized); err != nil {
 				h.logger.ErrorContext(r.Context(), "chat completion shadow store failed",
 					"request_id", RequestIDFromContext(r.Context()),
 					"err", err,
@@ -139,7 +139,7 @@ func (h *proxyHandler) forwardChatCompletions(w http.ResponseWriter, r *http.Req
 				"request_id", RequestIDFromContext(r.Context()),
 				"err", reconstructErr,
 			)
-		} else if err := h.shadowStoreChatCompletion(r.Context(), rawBody, reconstructedBody); err != nil {
+		} else if err := h.shadowStoreChatCompletionBestEffort(r.Context(), rawBody, reconstructedBody); err != nil {
 			h.logger.ErrorContext(r.Context(), "chat completion streamed shadow store failed",
 				"request_id", RequestIDFromContext(r.Context()),
 				"err", err,
@@ -224,7 +224,7 @@ func (h *proxyHandler) writeSanitizedChatCompletionResponse(w http.ResponseWrite
 		)
 		return nil
 	}
-	if err := h.shadowStoreChatCompletion(r.Context(), rawBody, capture.Bytes()); err != nil {
+	if err := h.shadowStoreChatCompletionBestEffort(r.Context(), rawBody, capture.Bytes()); err != nil {
 		h.logger.ErrorContext(r.Context(), "chat completion shadow store failed",
 			"request_id", RequestIDFromContext(r.Context()),
 			"err", err,
@@ -507,6 +507,17 @@ func (h *proxyHandler) shadowStoreChatCompletion(ctx context.Context, requestBod
 		ResponseJSON: responseJSON,
 		CreatedAt:    response.Created,
 	})
+}
+
+func (h *proxyHandler) shadowStoreChatCompletionBestEffort(ctx context.Context, requestBody []byte, responseBody []byte) error {
+	storeCtx, cancel := h.chatCompletionShadowStoreContext(ctx)
+	defer cancel()
+	return h.shadowStoreChatCompletion(storeCtx, requestBody, responseBody)
+}
+
+func (h *proxyHandler) chatCompletionShadowStoreContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	limits := normalizeServiceLimits(h.serviceLimits)
+	return context.WithTimeout(context.WithoutCancel(ctx), limits.ChatCompletionsShadowStoreTimeout)
 }
 
 func parseListStoredChatCompletionsQuery(r *http.Request) (domain.ListStoredChatCompletionsQuery, error) {

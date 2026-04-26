@@ -229,13 +229,17 @@ implemented, but they must stay conservative:
 - Operator surface:
   `shim.limits.chat_completions_shadow_store_bytes` remains an internal
   best-effort persistence budget; oversized upstream responses are still
-  proxied to the client, and only local shadow-store persistence is skipped
+  proxied to the client, and only local shadow-store persistence is skipped.
+  `shim.limits.chat_completions_shadow_store_timeout` bounds the internal
+  SQLite write after a successful upstream response; it is detached from client
+  disconnect cancellation and does not change the public Chat Completions
+  response contract
 - Verification used:
-  focused storage tests for SQL-paginated message snapshots and cascade
-  deletion; integration tests for stored-chat list/message pagination and
-  oversized non-stream shadow-store overflow; devstack smoke now covers stored
-  Chat Completions list/get/messages; `go test ./...`; `make lint`;
-  `git diff --check`
+  focused storage tests for SQL-paginated message snapshots, cascade deletion,
+  and canceled request-context shadow-store persistence; integration tests for
+  stored-chat list/message pagination and oversized non-stream shadow-store
+  overflow; devstack smoke now covers stored Chat Completions list/get/messages;
+  `go test ./...`; `make lint`; `git diff --check`
 
 ## Change Note Template
 

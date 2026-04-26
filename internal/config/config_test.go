@@ -41,6 +41,7 @@ shim:
   limits:
     json_body_bytes: 2MiB
     retrieval_file_upload_bytes: 32MiB
+    chat_completions_shadow_store_timeout: 3s
     responses_proxy_buffer_bytes: 96MiB
     responses_stored_lineage_max_items: 32
     custom_tool_grammar_definition_bytes: 24KiB
@@ -160,6 +161,7 @@ responses:
 	require.Equal(t, "/metrics", cfg.ShimMetricsPath)
 	require.EqualValues(t, 2<<20, cfg.ShimJSONBodyLimitBytes)
 	require.EqualValues(t, 32<<20, cfg.RetrievalFileUploadMaxBytes)
+	require.Equal(t, 3*time.Second, cfg.ChatCompletionsShadowStoreTimeout)
 	require.EqualValues(t, 96<<20, cfg.ResponsesProxyBufferMaxBytes)
 	require.Equal(t, 32, cfg.ResponsesStoredLineageMaxItems)
 	require.EqualValues(t, 24<<10, cfg.CustomToolGrammarDefinitionMaxBytes)
@@ -251,6 +253,7 @@ responses:
 	t.Setenv("SHIM_METRICS_PATH", "/internal/metrics")
 	t.Setenv("SHIM_LIMITS_JSON_BODY_BYTES", "3MiB")
 	t.Setenv("SHIM_LIMITS_RETRIEVAL_FILE_UPLOAD_BYTES", "48MiB")
+	t.Setenv("SHIM_LIMITS_CHAT_COMPLETIONS_SHADOW_STORE_TIMEOUT", "4s")
 	t.Setenv("SHIM_LIMITS_RESPONSES_PROXY_BUFFER_BYTES", "80MiB")
 	t.Setenv("SHIM_LIMITS_RESPONSES_STORED_LINEAGE_MAX_ITEMS", "24")
 	t.Setenv("SHIM_LIMITS_CUSTOM_TOOL_GRAMMAR_DEFINITION_BYTES", "20KiB")
@@ -326,6 +329,7 @@ responses:
 	require.Equal(t, "/internal/metrics", cfg.ShimMetricsPath)
 	require.EqualValues(t, 3<<20, cfg.ShimJSONBodyLimitBytes)
 	require.EqualValues(t, 48<<20, cfg.RetrievalFileUploadMaxBytes)
+	require.Equal(t, 4*time.Second, cfg.ChatCompletionsShadowStoreTimeout)
 	require.EqualValues(t, 80<<20, cfg.ResponsesProxyBufferMaxBytes)
 	require.Equal(t, 24, cfg.ResponsesStoredLineageMaxItems)
 	require.EqualValues(t, 20<<10, cfg.CustomToolGrammarDefinitionMaxBytes)

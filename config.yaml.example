@@ -36,6 +36,10 @@ shim:
     # optional local shadow storage. Responses above this size are still
     # proxied to the client but are not persisted locally.
     chat_completions_shadow_store_bytes: 64MiB
+    # Maximum time spent on best-effort local Chat Completions shadow-store
+    # persistence after the upstream response has completed. This internal
+    # storage write is detached from client disconnect cancellation.
+    chat_completions_shadow_store_timeout: 5s
     # Maximum non-stream /v1/responses upstream body buffered for shim-owned
     # normalization, retry decisions, and optional local shadow storage.
     # Responses above this size are proxied unchanged and are not persisted locally.
