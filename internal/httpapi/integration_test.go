@@ -482,10 +482,17 @@ func TestCapabilitiesEndpointReportsConfiguredRuntime(t *testing.T) {
 
 	persistence := runtime["persistence"].(map[string]any)
 	require.Equal(t, "sqlite", asStringAny(persistence["backend"]))
+	require.Equal(t, "sqlite", asStringAny(persistence["file_store"]))
+	require.Equal(t, "sqlite", asStringAny(persistence["vector_store"]))
 	require.Equal(t, true, persistence["expected_durable"])
 
 	retrievalRuntime := runtime["retrieval"].(map[string]any)
+	require.Equal(t, "sqlite", asStringAny(retrievalRuntime["storage_backend"]))
 	require.Equal(t, retrieval.IndexBackendSQLiteVec, asStringAny(retrievalRuntime["index_backend"]))
+	require.Equal(t, "custom", asStringAny(retrievalRuntime["embedder_backend"]))
+	require.Equal(t, true, retrievalRuntime["semantic_search"])
+	require.Equal(t, true, retrievalRuntime["hybrid_search"])
+	require.Equal(t, true, retrievalRuntime["local_rerank"])
 
 	ops := runtime["ops"].(map[string]any)
 	require.Equal(t, config.ShimAuthModeDisabled, asStringAny(ops["auth_mode"]))

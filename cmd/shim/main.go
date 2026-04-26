@@ -58,19 +58,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	store, err := sqlite.OpenWithOptions(processCtx, cfg.SQLitePath, sqlite.OpenOptions{
-		Retrieval: retrieval.Config{
-			IndexBackend: cfg.RetrievalIndexBackend,
-			Embedder: retrieval.EmbedderConfig{
-				Backend: cfg.RetrievalEmbedderBackend,
-				BaseURL: cfg.RetrievalEmbedderBaseURL,
-				Model:   cfg.RetrievalEmbedderModel,
-			},
-		},
-		Embedder: retrievalEmbedder,
-	})
+	store, err := openStore(processCtx, cfg, retrievalEmbedder)
 	if err != nil {
-		logger.Error("open sqlite", "err", err)
+		logger.Error("open storage", "backend", cfg.StorageBackend, "err", err)
 		os.Exit(1)
 	}
 	defer store.Close()
@@ -153,6 +143,7 @@ func main() {
 			RateLimit:           httpapi.RateLimitConfig{Enabled: cfg.ShimRateLimitEnabled, RequestsPerMinute: cfg.ShimRateLimitRequestsPerMinute, Burst: cfg.ShimRateLimitBurst},
 			MetricsConfig:       httpapi.MetricsConfig{Enabled: cfg.ShimMetricsEnabled, Path: cfg.ShimMetricsPath},
 			Metrics:             metrics,
+			StorageBackend:      cfg.StorageBackend,
 			ServiceLimits: httpapi.ServiceLimits{
 				JSONBodyBytes:                     cfg.ShimJSONBodyLimitBytes,
 				RetrievalFileUploadBytes:          cfg.RetrievalFileUploadMaxBytes,
@@ -184,6 +175,7 @@ func main() {
 			LocalComputer:                         localComputer,
 			LocalCodeInterpreter:                  localCodeInterpreter,
 			RetrievalIndexBackend:                 cfg.RetrievalIndexBackend,
+			RetrievalEmbedderBackend:              cfg.RetrievalEmbedderBackend,
 			RetrievalEmbedder:                     retrievalEmbedder,
 			Store:                                 store,
 		}),
@@ -208,6 +200,7 @@ func main() {
 		"llama_http_tls_handshake_timeout", cfg.LlamaHTTPTLSHandshakeTimeout,
 		"llama_http_expect_continue_timeout", cfg.LlamaHTTPExpectContinueTimeout,
 		"sqlite_path", cfg.SQLitePath,
+		"storage_backend", cfg.StorageBackend,
 		"sqlite_maintenance_cleanup_interval", cfg.SQLiteMaintenanceCleanupInterval,
 		"config_file", cfg.ConfigFile,
 		"log_file_path", cfg.LogFilePath,
@@ -274,6 +267,25 @@ func main() {
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		logger.Error("server stopped", "err", err)
 		os.Exit(1)
+	}
+}
+
+func openStore(ctx context.Context, cfg config.Config, retrievalEmbedder retrieval.Embedder) (*sqlite.Store, error) {
+	switch cfg.StorageBackend {
+	case config.StorageBackendSQLite:
+		return sqlite.OpenWithOptions(ctx, cfg.SQLitePath, sqlite.OpenOptions{
+			Retrieval: retrieval.Config{
+				IndexBackend: cfg.RetrievalIndexBackend,
+				Embedder: retrieval.EmbedderConfig{
+					Backend: cfg.RetrievalEmbedderBackend,
+					BaseURL: cfg.RetrievalEmbedderBaseURL,
+					Model:   cfg.RetrievalEmbedderModel,
+				},
+			},
+			Embedder: retrievalEmbedder,
+		})
+	default:
+		return nil, fmt.Errorf("unsupported storage backend %q", cfg.StorageBackend)
 	}
 }
 

@@ -6,18 +6,12 @@ import (
 	"fmt"
 
 	"llama_shim/internal/domain"
+	"llama_shim/internal/storage"
 )
 
 const maxConversationItemsPerRequest = 20
 
-type ConversationCreator interface {
-	CreateConversation(ctx context.Context, conversation domain.Conversation) error
-	GetConversation(ctx context.Context, id string) (domain.Conversation, []domain.ConversationItem, error)
-	ListConversationItems(ctx context.Context, query domain.ListConversationItemsQuery) (domain.ConversationItemPage, error)
-	AppendConversationItems(ctx context.Context, conversation domain.Conversation, items []domain.Item, createdAt string) ([]domain.ConversationItem, error)
-	GetConversationItem(ctx context.Context, conversationID, itemID string) (domain.ConversationItem, error)
-	DeleteConversationItem(ctx context.Context, conversation domain.Conversation, itemID, updatedAt string) error
-}
+type ConversationCreator = storage.ConversationStore
 
 type ConversationService struct {
 	store ConversationCreator

@@ -8,6 +8,7 @@ import (
 	"llama_shim/internal/compactor"
 	"llama_shim/internal/config"
 	"llama_shim/internal/retrieval"
+	"llama_shim/internal/storage"
 	"llama_shim/internal/websearch"
 )
 
@@ -133,12 +134,23 @@ type capabilityCodexConfig struct {
 }
 
 type capabilityPersistenceInfo struct {
-	Backend         string `json:"backend"`
-	ExpectedDurable bool   `json:"expected_durable"`
+	Backend              string `json:"backend"`
+	ResponseStore        string `json:"response_store"`
+	ConversationStore    string `json:"conversation_store"`
+	ChatCompletionStore  string `json:"chat_completion_store"`
+	FileStore            string `json:"file_store"`
+	VectorStore          string `json:"vector_store"`
+	CodeInterpreterStore string `json:"code_interpreter_store"`
+	ExpectedDurable      bool   `json:"expected_durable"`
 }
 
 type capabilityRetrievalConfig struct {
-	IndexBackend string `json:"index_backend"`
+	StorageBackend  string `json:"storage_backend"`
+	IndexBackend    string `json:"index_backend"`
+	EmbedderBackend string `json:"embedder_backend"`
+	SemanticSearch  bool   `json:"semantic_search"`
+	HybridSearch    bool   `json:"hybrid_search"`
+	LocalRerank     bool   `json:"local_rerank"`
 }
 
 type capabilityOpsConfig struct {
@@ -266,13 +278,8 @@ func buildCapabilityManifest(ctx context.Context, deps RouterDeps) capabilityMan
 				CompatibilityEnabled:    deps.ResponsesCodexEnableCompatibility,
 				ForceToolChoiceRequired: deps.ResponsesCodexForceToolChoiceRequired,
 			},
-			Persistence: capabilityPersistenceInfo{
-				Backend:         "sqlite",
-				ExpectedDurable: deps.Store != nil,
-			},
-			Retrieval: capabilityRetrievalConfig{
-				IndexBackend: deps.RetrievalIndexBackend,
-			},
+			Persistence: capabilityPersistence(deps),
+			Retrieval:   capabilityRetrieval(deps),
 			Ops: capabilityOpsConfig{
 				AuthMode: normalizedCapabilityAuthMode(authConfig.Mode),
 				RateLimit: capabilityRateLimit{
@@ -423,6 +430,57 @@ func compactionCapability(deps RouterDeps) capabilityCompactionConfig {
 			PreferUpstream: "proxy_first_or_local_state",
 			LocalOnly:      "local_subset",
 		},
+	}
+}
+
+func capabilityPersistence(deps RouterDeps) capabilityPersistenceInfo {
+	backend := strings.ToLower(strings.TrimSpace(deps.StorageBackend))
+	if backend == "" && deps.Store != nil {
+		backend = storage.BackendSQLite
+	}
+	if backend == "" {
+		backend = "none"
+	}
+	return capabilityPersistenceInfo{
+		Backend:              backend,
+		ResponseStore:        backend,
+		ConversationStore:    backend,
+		ChatCompletionStore:  backend,
+		FileStore:            backend,
+		VectorStore:          backend,
+		CodeInterpreterStore: backend,
+		ExpectedDurable:      deps.Store != nil,
+	}
+}
+
+func capabilityRetrieval(deps RouterDeps) capabilityRetrievalConfig {
+	storageBackend := strings.ToLower(strings.TrimSpace(deps.StorageBackend))
+	if storageBackend == "" && deps.Store != nil {
+		storageBackend = storage.BackendSQLite
+	}
+	if storageBackend == "" {
+		storageBackend = "none"
+	}
+	indexBackend := strings.ToLower(strings.TrimSpace(deps.RetrievalIndexBackend))
+	if indexBackend == "" {
+		indexBackend = retrieval.IndexBackendLexical
+	}
+	embedderBackend := strings.ToLower(strings.TrimSpace(deps.RetrievalEmbedderBackend))
+	if embedderBackend == "" {
+		if deps.RetrievalEmbedder != nil {
+			embedderBackend = "custom"
+		} else {
+			embedderBackend = retrieval.EmbedderBackendDisabled
+		}
+	}
+	semantic := indexBackend == retrieval.IndexBackendSQLiteVec && deps.RetrievalEmbedder != nil
+	return capabilityRetrievalConfig{
+		StorageBackend:  storageBackend,
+		IndexBackend:    indexBackend,
+		EmbedderBackend: embedderBackend,
+		SemanticSearch:  semantic,
+		HybridSearch:    semantic,
+		LocalRerank:     semantic,
 	}
 }
 

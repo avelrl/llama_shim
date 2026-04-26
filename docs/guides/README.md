@@ -48,6 +48,7 @@ Assumptions:
 - [Compatibility Matrix](../compatibility-matrix.md)
 - [V3 Preflight](../v3-preflight.md)
 - [V3 Scope](../v3-scope.md)
+- [V3 Storage and Retrieval Backends](../v3-storage-retrieval-backends.md)
 - [V4 Extensions and Plugin Model](../v4-scope.md)
 - [V5 Hosted Parity and Advanced Transports](../v5-scope.md)
 - [OpenAPI spec](../../openapi/openapi.yaml)

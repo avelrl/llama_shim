@@ -3,7 +3,6 @@ package sqlite
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,6 +11,7 @@ import (
 	"time"
 
 	"llama_shim/internal/domain"
+	"llama_shim/internal/storage"
 	"llama_shim/internal/storage/migrations"
 
 	_ "modernc.org/sqlite"
@@ -25,8 +25,8 @@ type Store struct {
 	retrieval retrievalBackend
 }
 
-var ErrNotFound = errors.New("not found")
-var ErrConflict = errors.New("conflict")
+var ErrNotFound = storage.ErrNotFound
+var ErrConflict = storage.ErrConflict
 
 func Open(ctx context.Context, path string) (*Store, error) {
 	return OpenWithOptions(ctx, path, OpenOptions{})

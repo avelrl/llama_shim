@@ -173,6 +173,7 @@ func NewTestAppWithOptions(t *testing.T, options TestAppOptions) *TestApp {
 		RateLimit:           httpapi.RateLimitConfig{Enabled: options.RateLimitEnabled, RequestsPerMinute: options.RateLimitRequestsPerMinute, Burst: options.RateLimitBurst},
 		MetricsConfig:       httpapi.MetricsConfig{Enabled: metricsEnabled, Path: options.MetricsPath},
 		Metrics:             metrics,
+		StorageBackend:      config.StorageBackendSQLite,
 		ServiceLimits: httpapi.ServiceLimits{
 			JSONBodyBytes:                     options.JSONBodyLimitBytes,
 			RetrievalFileUploadBytes:          options.RetrievalFileUploadMaxBytes,
@@ -202,6 +203,7 @@ func NewTestAppWithOptions(t *testing.T, options TestAppOptions) *TestApp {
 		LocalComputer:                         localComputer,
 		LocalCodeInterpreter:                  localCodeInterpreter,
 		RetrievalIndexBackend:                 options.RetrievalConfig.IndexBackend,
+		RetrievalEmbedderBackend:              options.RetrievalConfig.Embedder.Backend,
 		RetrievalEmbedder:                     options.RetrievalEmbedder,
 		Store:                                 store,
 	}))

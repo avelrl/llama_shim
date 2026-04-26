@@ -61,7 +61,13 @@ shim:
     # Maximum concurrent shim-local code_interpreter executions.
     code_interpreter_max_concurrent_runs: 2
 
-# Local state storage owned by the shim.
+# Storage backend selector. Only sqlite is implemented today; this key exists
+# so future Postgres/pgvector storage can be introduced without changing the
+# OpenAI-facing route contract.
+storage:
+  backend: sqlite
+
+# Local SQLite state storage owned by the shim.
 sqlite:
   # Path to the SQLite file that stores responses and conversations.
   path: ./.data/shim.db

@@ -12,7 +12,7 @@ import (
 	"llama_shim/internal/compactor"
 	"llama_shim/internal/domain"
 	"llama_shim/internal/llama"
-	"llama_shim/internal/storage/sqlite"
+	"llama_shim/internal/storage"
 )
 
 type Generator interface {
@@ -20,19 +20,8 @@ type Generator interface {
 	GenerateStream(ctx context.Context, model string, items []domain.Item, options map[string]json.RawMessage, onDelta func(string) error) error
 }
 
-type ResponseStore interface {
-	GetResponse(ctx context.Context, id string) (domain.StoredResponse, error)
-	GetResponseLineage(ctx context.Context, id string, maxItems int) ([]domain.StoredResponse, error)
-	SaveResponse(ctx context.Context, response domain.StoredResponse) error
-	SaveResponseReplayArtifacts(ctx context.Context, responseID string, artifacts []domain.ResponseReplayArtifact) error
-	GetResponseReplayArtifacts(ctx context.Context, responseID string) ([]domain.ResponseReplayArtifact, error)
-	DeleteResponse(ctx context.Context, id string) error
-}
-
-type ConversationStore interface {
-	GetConversation(ctx context.Context, id string) (domain.Conversation, []domain.ConversationItem, error)
-	SaveResponseAndAppendConversation(ctx context.Context, conversation domain.Conversation, response domain.StoredResponse, input []domain.Item, output []domain.Item) error
-}
+type ResponseStore = storage.ResponseStore
+type ConversationStore = storage.ResponseConversationStore
 
 type CreateResponseInput struct {
 	Model              string
@@ -815,9 +804,9 @@ func MapStorageError(err error) error {
 	switch {
 	case err == nil:
 		return nil
-	case errors.Is(err, sqlite.ErrNotFound):
+	case errors.Is(err, storage.ErrNotFound):
 		return ErrNotFound
-	case errors.Is(err, sqlite.ErrConflict):
+	case errors.Is(err, storage.ErrConflict):
 		return ErrConflict
 	default:
 		return err

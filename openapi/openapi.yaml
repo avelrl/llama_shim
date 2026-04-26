@@ -2618,18 +2618,43 @@ components:
           type: boolean
     ShimCapabilityPersistence:
       type: object
-      required: [backend, expected_durable]
+      required: [backend, response_store, conversation_store, chat_completion_store, file_store, vector_store, code_interpreter_store, expected_durable]
       properties:
         backend:
+          type: string
+          description: Active durable storage backend selector. `sqlite` is the only implemented backend in the current release.
+        response_store:
+          type: string
+        conversation_store:
+          type: string
+        chat_completion_store:
+          type: string
+        file_store:
+          type: string
+        vector_store:
+          type: string
+        code_interpreter_store:
           type: string
         expected_durable:
           type: boolean
     ShimCapabilityRetrievalRuntime:
       type: object
-      required: [index_backend]
+      required: [storage_backend, index_backend, embedder_backend, semantic_search, hybrid_search, local_rerank]
       properties:
+        storage_backend:
+          type: string
+          description: Durable object storage backend used by files, vector stores, and local file_search state.
         index_backend:
           type: string
+          description: Retrieval index backend. `lexical` is the default; `sqlite_vec` enables local semantic retrieval when an embedder is configured.
+        embedder_backend:
+          type: string
+        semantic_search:
+          type: boolean
+        hybrid_search:
+          type: boolean
+        local_rerank:
+          type: boolean
     ShimCapabilityOpsConfig:
       type: object
       required: [auth_mode, rate_limit, metrics, health_public, readyz_public]

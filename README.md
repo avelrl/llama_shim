@@ -48,6 +48,8 @@ v1 supports:
 - Responses compatibility external tester:
   [docs/engineering/responses-compatibility-external-tester.md](docs/engineering/responses-compatibility-external-tester.md)
 - V3 expansion staging: [docs/v3-scope.md](docs/v3-scope.md)
+- V3 storage and retrieval backend plan:
+  [docs/v3-storage-retrieval-backends.md](docs/v3-storage-retrieval-backends.md)
 - V4 extensions and plugin model: [docs/v4-scope.md](docs/v4-scope.md)
 - V5 hosted parity and advanced transports: [docs/v5-scope.md](docs/v5-scope.md)
 - OpenAPI spec: [openapi/openapi.yaml](openapi/openapi.yaml)
@@ -57,6 +59,7 @@ v1 supports:
 - `cmd/shim`: process bootstrap and HTTP server startup
 - `internal/httpapi`: thin handlers, JSON error mapping, request ID and request logging middleware
 - `internal/service`: orchestration for response generation and conversation creation
+- `internal/storage`: backend contracts and shared storage errors
 - `internal/storage/sqlite`: explicit SQL, migrations, WAL mode, foreign keys, busy timeout
 - `internal/llama`: adapter for `llama.cpp` `POST /v1/chat/completions`
 - `internal/domain`: input normalization, context reconstruction, ID generation, response normalization
@@ -64,7 +67,8 @@ v1 supports:
 Key design choices:
 
 - `llama.cpp` remains stateless; the shim owns all state semantics
-- SQLite is the only persistent store in v1
+- SQLite is the only persistent store today; `storage.backend=sqlite` is the
+  explicit default and unsupported storage backends fail at startup
 - write transactions stay short; the service never keeps a DB transaction open while waiting for generation
 - response and conversation objects use a compact, stable JSON shape
 - non-shim upstream routes can stream through the shim via SSE passthrough
@@ -132,6 +136,9 @@ shim:
     retrieval_max_search_queries: 4
     retrieval_max_grounding_chunks: 20
     code_interpreter_max_concurrent_runs: 2
+
+storage:
+  backend: sqlite
 
 sqlite:
   path: ./data/shim.db
@@ -217,6 +224,7 @@ Supported environment overrides:
 - `LOG_LEVEL` default `info`; set `debug` to emit an additional debug log line with request and response bodies
 - `LOG_FILE_PATH` overrides `log.file_path`; when set, logs are duplicated to stdout and the configured file
 - `LLAMA_BASE_URL` overrides `llama.base_url`
+- `STORAGE_BACKEND` overrides `storage.backend`; supported values: `sqlite`
 - `SQLITE_PATH` overrides `sqlite.path`
 - `SQLITE_MAINTENANCE_CLEANUP_INTERVAL` overrides `sqlite.maintenance.cleanup_interval`
 - `SHIM_ADDR` overrides `shim.addr`

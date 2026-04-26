@@ -12,6 +12,7 @@ import (
 	"llama_shim/internal/compactor"
 	"llama_shim/internal/imagegen"
 	"llama_shim/internal/retrieval"
+	"llama_shim/internal/storage"
 	"llama_shim/internal/websearch"
 
 	"github.com/spf13/viper"
@@ -19,6 +20,7 @@ import (
 
 type Config struct {
 	Addr                                           string
+	StorageBackend                                 string
 	SQLitePath                                     string
 	SQLiteMaintenanceCleanupInterval               time.Duration
 	LlamaBaseURL                                   string
@@ -117,6 +119,7 @@ const (
 	ResponsesCodeInterpreterInputFileURLPolicyUnsafeAllowHTTPHTTPS = "unsafe_allow_http_https"
 	ResponsesConstrainedDecodingBackendShimValidateRepair          = "shim_validate_repair"
 	ResponsesConstrainedDecodingBackendVLLM                        = "vllm"
+	StorageBackendSQLite                                           = storage.BackendSQLite
 )
 
 func Load(configPath string) (Config, error) {
@@ -136,6 +139,7 @@ func Load(configPath string) (Config, error) {
 
 	cfg := Config{
 		Addr:                                           strings.TrimSpace(v.GetString("shim.addr")),
+		StorageBackend:                                 strings.ToLower(strings.TrimSpace(v.GetString("storage.backend"))),
 		SQLitePath:                                     strings.TrimSpace(v.GetString("sqlite.path")),
 		SQLiteMaintenanceCleanupInterval:               0,
 		LlamaBaseURL:                                   strings.TrimRight(strings.TrimSpace(v.GetString("llama.base_url")), "/"),
@@ -182,6 +186,11 @@ func Load(configPath string) (Config, error) {
 			cfg.ResponsesCodeInterpreterBackend = ResponsesCodeInterpreterBackendDisabled
 		}
 	}
+	storageBackend, err := storage.NormalizeBackend(cfg.StorageBackend)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse storage.backend: %w", err)
+	}
+	cfg.StorageBackend = storageBackend
 
 	if err := parseDuration(v.GetString("llama.timeout"), &cfg.LlamaTimeout); err != nil {
 		return Config{}, fmt.Errorf("parse llama.timeout: %w", err)
@@ -488,6 +497,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("shim.limits.retrieval_max_search_queries", "4")
 	v.SetDefault("shim.limits.retrieval_max_grounding_chunks", "20")
 	v.SetDefault("shim.limits.code_interpreter_max_concurrent_runs", "2")
+	v.SetDefault("storage.backend", storage.BackendSQLite)
 	v.SetDefault("sqlite.path", "./data/shim.db")
 	v.SetDefault("sqlite.maintenance.cleanup_interval", "15m")
 	v.SetDefault("llama.base_url", "http://127.0.0.1:8081")

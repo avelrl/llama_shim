@@ -54,6 +54,8 @@ sqlite:
   path: ./tmp/test.db
   maintenance:
     cleanup_interval: 17m
+storage:
+  backend: sqlite
 llama:
   base_url: http://127.0.0.1:9091
   timeout: 12s
@@ -135,6 +137,7 @@ responses:
 	cfg, err := config.Load(configPath)
 	require.NoError(t, err)
 	require.Equal(t, ":9090", cfg.Addr)
+	require.Equal(t, "sqlite", cfg.StorageBackend)
 	require.Equal(t, "./tmp/test.db", cfg.SQLitePath)
 	require.Equal(t, 17*time.Minute, cfg.SQLiteMaintenanceCleanupInterval)
 	require.Equal(t, "http://127.0.0.1:9091", cfg.LlamaBaseURL)
@@ -251,6 +254,7 @@ responses:
 	t.Setenv("SHIM_RATE_LIMIT_BURST", "30")
 	t.Setenv("SHIM_METRICS_ENABLED", "false")
 	t.Setenv("SHIM_METRICS_PATH", "/internal/metrics")
+	t.Setenv("STORAGE_BACKEND", "sqlite")
 	t.Setenv("SHIM_LIMITS_JSON_BODY_BYTES", "3MiB")
 	t.Setenv("SHIM_LIMITS_RETRIEVAL_FILE_UPLOAD_BYTES", "48MiB")
 	t.Setenv("SHIM_LIMITS_CHAT_COMPLETIONS_SHADOW_STORE_TIMEOUT", "4s")
@@ -319,6 +323,7 @@ responses:
 	cfg, err := config.Load(configPath)
 	require.NoError(t, err)
 	require.Equal(t, ":7070", cfg.Addr)
+	require.Equal(t, "sqlite", cfg.StorageBackend)
 	require.Equal(t, 21*time.Minute, cfg.SQLiteMaintenanceCleanupInterval)
 	require.Equal(t, config.ShimAuthModeStaticBearer, cfg.ShimAuthMode)
 	require.Equal(t, []string{"token-1", "token-2"}, cfg.ShimAuthBearerTokens)
@@ -468,6 +473,7 @@ func TestLoadUsesCodexSafeDefaults(t *testing.T) {
 	require.Equal(t, 30*time.Second, cfg.LlamaHTTPKeepAlive)
 	require.Equal(t, 10*time.Second, cfg.LlamaHTTPTLSHandshakeTimeout)
 	require.Equal(t, time.Second, cfg.LlamaHTTPExpectContinueTimeout)
+	require.Equal(t, config.StorageBackendSQLite, cfg.StorageBackend)
 }
 
 func TestLoadRejectsLegacyUnsafeHostAlias(t *testing.T) {
@@ -529,6 +535,19 @@ retrieval:
 	_, err := config.Load(configPath)
 	require.Error(t, err)
 	require.ErrorContains(t, err, `unsupported retrieval index backend "bogus"`)
+}
+
+func TestLoadRejectsUnsupportedStorageBackend(t *testing.T) {
+	disableDotEnv(t)
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	writeFile(t, configPath, `
+storage:
+  backend: postgres
+`)
+
+	_, err := config.Load(configPath)
+	require.Error(t, err)
+	require.ErrorContains(t, err, `unsupported storage backend "postgres"`)
 }
 
 func TestLoadRejectsImageGenerationResponsesBackendWithoutBaseURL(t *testing.T) {

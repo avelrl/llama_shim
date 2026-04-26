@@ -21,6 +21,7 @@ import (
 	"llama_shim/internal/llama"
 	"llama_shim/internal/sandbox"
 	"llama_shim/internal/service"
+	"llama_shim/internal/storage"
 	"llama_shim/internal/storage/sqlite"
 )
 
@@ -99,25 +100,8 @@ func matchesLocalCodeInterpreterAllowedHost(host string, candidate string) bool 
 	return normalizedHost == normalizedCandidate
 }
 
-type LocalCodeInterpreterSessionStore interface {
-	GetCodeInterpreterSession(ctx context.Context, id string) (domain.CodeInterpreterSession, error)
-	ListCodeInterpreterSessions(ctx context.Context, query domain.ListCodeInterpreterSessionsQuery) (domain.CodeInterpreterSessionPage, error)
-	SaveCodeInterpreterSession(ctx context.Context, session domain.CodeInterpreterSession) error
-	TouchCodeInterpreterSession(ctx context.Context, id string, lastActiveAt string) error
-	DeleteCodeInterpreterSession(ctx context.Context, id string) error
-	GetCodeInterpreterContainerFile(ctx context.Context, containerID string, id string) (domain.CodeInterpreterContainerFile, error)
-	GetCodeInterpreterContainerFileByPath(ctx context.Context, containerID string, containerPath string) (domain.CodeInterpreterContainerFile, error)
-	ListCodeInterpreterContainerFiles(ctx context.Context, query domain.ListCodeInterpreterContainerFilesQuery) (domain.CodeInterpreterContainerFilePage, error)
-	SaveCodeInterpreterContainerFile(ctx context.Context, file domain.CodeInterpreterContainerFile) (domain.CodeInterpreterContainerFile, error)
-	DeleteCodeInterpreterContainerFile(ctx context.Context, containerID string, id string) error
-	CountCodeInterpreterContainerFileBackingReferences(ctx context.Context, backingFileID string) (int, error)
-}
-
-type LocalCodeInterpreterFileStore interface {
-	GetFile(ctx context.Context, id string) (domain.StoredFile, error)
-	SaveFile(ctx context.Context, file domain.StoredFile) error
-	DeleteFile(ctx context.Context, id string) error
-}
+type LocalCodeInterpreterSessionStore = storage.CodeInterpreterStore
+type LocalCodeInterpreterFileStore = storage.FileBackingStore
 
 type localCodeInterpreterConfig struct {
 	IncludeOutputs bool

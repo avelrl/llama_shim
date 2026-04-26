@@ -81,6 +81,9 @@ curl http://127.0.0.1:8080/v1/responses \
 
 ## Shim-Specific Notes
 
+- Durable retrieval objects are stored through `storage.backend`. Today the
+  only supported backend is `sqlite`; the key is explicit so future Postgres or
+  pgvector work can be added without changing the OpenAI-shaped routes.
 - Lexical search works in the default local setup.
 - Semantic, hybrid, and local rerank subsets become available when
   `retrieval.index.backend=sqlite_vec` and a retrieval embedder are configured.
@@ -103,4 +106,6 @@ curl http://127.0.0.1:8080/v1/responses \
 
 - [Tools Overview](tools.md)
 - [Local semantic retrieval setup](../semantic-retrieval-embedanything.md)
+- [V3 storage and retrieval backend plan](../v3-storage-retrieval-backends.md)
 - [Official file-search guide](https://developers.openai.com/api/docs/guides/tools-file-search)
+- [Official retrieval guide](https://developers.openai.com/api/docs/guides/retrieval)

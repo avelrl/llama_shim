@@ -24,6 +24,7 @@ type RouterDeps struct {
 	MetricsConfig                         MetricsConfig
 	Metrics                               *Metrics
 	ServiceLimits                         ServiceLimits
+	StorageBackend                        string
 	ChatCompletionsStoreWhenOmitted       bool
 	ResponsesMode                         string
 	ResponsesWebSocketEnabled             bool
@@ -42,6 +43,7 @@ type RouterDeps struct {
 	LocalComputer                         LocalComputerRuntimeConfig
 	LocalCodeInterpreter                  LocalCodeInterpreterRuntimeConfig
 	RetrievalIndexBackend                 string
+	RetrievalEmbedderBackend              string
 	RetrievalEmbedder                     retrieval.Embedder
 	Store                                 *sqlite.Store
 }

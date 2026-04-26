@@ -70,6 +70,9 @@ The tracks below assume the small preflight substrate in
 
 ### 2. More retrieval and storage backends
 
+Status: foundation started. See
+[v3-storage-retrieval-backends.md](v3-storage-retrieval-backends.md).
+
 - ANN indexing beyond the current exact local subset
 - Postgres / pgvector / multi-instance storage modes
 - more embedders and rerankers beyond the current compatibility-driven set

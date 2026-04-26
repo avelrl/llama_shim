@@ -491,6 +491,9 @@ Shim reality:
 
 - `/v1/files`, `/v1/vector_stores`, vector-store files, and vector-store search
   are local-first.
+- Durable retrieval object storage is currently `storage.backend=sqlite`; V3
+  backend expansion is tracked in
+  [v3-storage-retrieval-backends.md](../v3-storage-retrieval-backends.md).
 - Lexical search is the default local substrate; semantic and hybrid paths
   depend on configured retrieval indexing.
 - Local `file_search` injects bounded grounding context before final answer
