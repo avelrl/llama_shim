@@ -1,6 +1,6 @@
 # V3 Expansion Staging
 
-Last updated: April 25, 2026.
+Last updated: April 26, 2026.
 
 This document is the parking lot for work that did not make the V2 ship bar
 and should not be reintroduced into the frozen V2 scope.
@@ -11,6 +11,17 @@ runtime work without muddying the V2 release contract.
 
 V3 now starts from the completed shim-owned automation and dev-stack substrate
 documented in [v3-preflight.md](v3-preflight.md).
+
+Current compatibility checkpoint:
+
+- April 26, 2026: the real-upstream
+  [`openai-compatible-tester`](engineering/responses-compatibility-external-tester.md)
+  `strict` run passed through the shim with profile `llama-shim-kimi-k2.6`.
+- The checkpoint supports keeping the current Responses status at
+  `Broad subset`; it is not an exact hosted-parity claim.
+- The same day, broader `compat` mode exposed one non-core Chat Completions
+  tool follow-up budget edge after tool output. Responses stayed green, so this
+  is not a V3 Responses blocker.
 
 For work that goes beyond compatibility and into opinionated memory, plugin
 architecture, or hardening, see [v4-scope.md](v4-scope.md).

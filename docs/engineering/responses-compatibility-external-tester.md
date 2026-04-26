@@ -1,6 +1,6 @@
 # Responses Compatibility External Tester
 
-Last updated: April 25, 2026.
+Last updated: April 26, 2026.
 
 Status: repo-owned runner and Broad subset profile are in place. This is an
 engineering runbook, not a stronger hosted-parity claim.
@@ -9,13 +9,14 @@ engineering runbook, not a stronger hosted-parity claim.
 
 This runbook was checked against the local docs index in
 [`openapi/llms.txt`](../../openapi/llms.txt), the OpenAI Docs MCP, and the
-official OpenAI docs on April 25, 2026.
+official OpenAI docs on April 26, 2026.
 
 Relevant official pages:
 
 - [Conversation state](https://developers.openai.com/api/docs/guides/conversation-state)
 - [Streaming API responses](https://developers.openai.com/api/docs/guides/streaming-responses)
 - [Responses API reference](https://platform.openai.com/docs/api-reference/responses)
+- [Chat Completions API reference](https://platform.openai.com/docs/api-reference/chat/create)
 
 The docs-backed baseline is:
 
@@ -28,6 +29,35 @@ The docs-backed baseline is:
   `response.output_text.delta`, and `response.completed`.
 - `/v1/responses/{response_id}/input_items` is the API surface for listing the
   items used to generate a stored response.
+
+## Latest Real-Upstream Ledger
+
+Last real-upstream check: April 26, 2026.
+
+Configuration:
+
+- harness mode: `real-upstream`
+- tester mode: `strict`
+- tester profile: `llama-shim-kimi-k2.6`
+- tester config paths supplied through `TESTER_MODELS`, `TESTER_SUITE`,
+  `TESTER_CAPABILITIES`, and `TESTER_PROFILE`
+- artifact root: `.data/responses-compat-external/20260426T150735Z`
+
+Result:
+
+- `strict` passed through the shim against the configured real upstream
+- Responses, Conversations, stored state, streaming, structured output,
+  function/custom tools, constrained custom tools, and compaction cases passed
+- `/readyz` was `503` during the run, but this was capture-only by design in
+  `real-upstream` mode; `/healthz` and ordinary `/v1/*` request paths worked
+
+The same day, `compat` mode completed without timeout but reported one
+non-core Chat Completions failure in `chat.tool_call`. The first forced
+tool-call turn produced a tool call, while the follow-up after the tool result
+returned `finish_reason: "length"` with `message.content: null`. Treat this as
+an upstream/model budget edge for the broader Chat profile, not as a failure of
+the V3 Responses `Broad subset` gate. Use `strict` as the current gate for the
+Responses compatibility claim.
 
 ## Goal
 

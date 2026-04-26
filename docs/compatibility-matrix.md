@@ -1,6 +1,6 @@
 # V2 Compatibility Matrix
 
-Last updated: April 25, 2026.
+Last updated: April 26, 2026.
 
 This document is the source of truth for the current V2-compatible surface of
 `llama_shim`.
@@ -36,11 +36,22 @@ The frozen V2 release ledger lives in [v2-scope.md](v2-scope.md).
 
 Practical usage guides live in [guides/README.md](guides/README.md).
 
+Current external evidence:
+
+- April 26, 2026: `openai-compatible-tester` real-upstream `strict` mode passed
+  through the shim with profile `llama-shim-kimi-k2.6`; see
+  [Responses Compatibility External Tester](engineering/responses-compatibility-external-tester.md#latest-real-upstream-ledger).
+- April 26, 2026: `compat` mode exposed one broader Chat Completions
+  `chat.tool_call` budget edge after tool-output submission
+  (`finish_reason: "length"`, `message.content: null`). Responses remained
+  green. This does not strengthen or weaken the Responses `Broad subset` claim;
+  it is tracked as upstream/model behavior for the broader Chat profile.
+
 ## Responses And Conversations
 
 | Surface | Current shim status | Freeze guidance | Notes |
 | --- | --- | --- | --- |
-| `POST /v1/responses` | Broad subset | Keep the local-first stateful contract explicit | Local-first path is real and stateful; the hosted/native tool contract is fixed for the V2 facade scope |
+| `POST /v1/responses` | Broad subset | Keep the local-first stateful contract explicit | Local-first path is real and stateful; the hosted/native tool contract is fixed for the V2 facade scope. April 26, 2026 real-upstream external `strict` tester passed without changing the boundary to exact hosted parity. |
 | `GET /v1/responses/{id}` | Implemented | Keep docs and OpenAPI aligned | Stored response ownership is already in the shim |
 | `DELETE /v1/responses/{id}` and `POST /v1/responses/{id}/cancel` | Implemented | Keep lifecycle semantics honest | No known V2 blocker beyond lifecycle wording |
 | `GET /v1/responses/{id}/input_items` | Implemented | Keep item-history semantics stable | Effective input snapshot is already persisted |
@@ -58,7 +69,7 @@ Practical usage guides live in [guides/README.md](guides/README.md).
 
 | Surface | Current shim status | Freeze guidance | Notes |
 | --- | --- | --- | --- |
-| `POST /v1/chat/completions` | Broad subset | Keep sanitization, streaming, and store policy explicit | Still a major compatibility surface even though Responses is primary |
+| `POST /v1/chat/completions` | Broad subset | Keep sanitization, streaming, and store policy explicit | Still a major compatibility surface even though Responses is primary. Real-upstream `compat` testing can expose model-budget-dependent tool follow-up failures that are outside the current Responses gate. |
 | stored Chat Completions `list/get/update/delete/messages` | Broad subset | Keep the local-first compatibility contract explicit | Shim-owned shadow-stored resources cover the core surface even when upstream stored-chat routes are absent. Local list uses SQL keyset pagination and SQL metadata filtering; new message snapshots use SQL pagination, with legacy request-JSON fallback only for older rows. |
 | stored Chat Completions upstream merge/fallback behavior | Broad subset | Keep implemented vs upstream-only behavior explicit in docs and tests | Upstream history remains an optional compatibility bridge; the shim does not imply full hosted stored-chat ownership |
 | streamed shadow-store reconstruction | Broad subset | Keep current boundaries explicit | Current subset covers practical assistant-text and tool-call-heavy flows, not every possible hosted chunk shape. Oversized best-effort capture skips local persistence without changing the proxied client response. |
