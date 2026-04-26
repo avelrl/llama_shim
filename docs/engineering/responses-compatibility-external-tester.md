@@ -61,6 +61,13 @@ The runner cannot infer `llama.base_url` from public probes. In `real-upstream`
 mode, set `RESPONSES_COMPAT_EXPECTED_UPSTREAM` to record the intended upstream
 base URL as an operator assertion in the run artifacts.
 
+`devstack-fixture` mode requires `/readyz` to return 2xx. `real-upstream` mode
+waits only for `/healthz` and captures `/readyz` as evidence by default because
+many OpenAI-compatible gateways do not expose a health probe that satisfies the
+shim's backend readiness check while ordinary `/v1/*` requests still work.
+Override this with `RESPONSES_COMPAT_REQUIRE_READYZ=1` when a real-upstream run
+must be gated on backend readiness.
+
 Devstack fixture capture-only preflight:
 
 ```bash
@@ -99,6 +106,96 @@ The command string is intentionally owned by the operator or CI job because
 external tester CLIs differ. The runner provides stable environment variables
 instead of baking in one third-party CLI contract.
 
+In `real-upstream` mode, the runner does not synthesize an `OPENAI_API_KEY`.
+Leave `OPENAI_API_KEY` unset when the external tester should load credentials
+from its own `.env`; set it explicitly only when the harness should pass a
+specific key through the process environment. `devstack-fixture` mode keeps the
+`shim-test-key` default for unauthenticated local smoke runs.
+
+## Running openai-compatible-tester
+
+Use this flow when validating a real shim process against the external
+`openai-compatible-tester`.
+
+1. Start the shim in one terminal:
+
+```bash
+export SHIM_CONFIG=<shim-config.yaml>
+export SHIM_BASE_URL=http://127.0.0.1:8080
+
+CONFIG="$SHIM_CONFIG" make run
+```
+
+Equivalent direct command:
+
+```bash
+go run ./cmd/shim -config "$SHIM_CONFIG"
+```
+
+Keep this process running while the external tester runs. For the default
+local config, the shim base URL is usually `http://127.0.0.1:8080`; for the
+devstack fixture it is usually `http://127.0.0.1:18080`.
+
+Before running the tester, check the shim from another terminal:
+
+```bash
+curl -fsS "$SHIM_BASE_URL/healthz"
+curl -sS "$SHIM_BASE_URL/readyz"
+curl -sS "$SHIM_BASE_URL/debug/capabilities"
+```
+
+If the shim config uses a real upstream gateway, record that expected upstream
+URL separately; the harness cannot infer it from public shim probes.
+
+2. In another terminal, define only local runtime paths and URLs:
+
+```bash
+export TESTER_DIR=<path-to-openai-compatible-tester>
+export SHIM_BASE_URL=http://127.0.0.1:8080
+export RESPONSES_COMPAT_EXPECTED_UPSTREAM=<upstream-base-url>
+export TESTER_MODELS=configs/models_llama_shim.yaml
+export TESTER_SUITE=configs/suite_llama_shim.yaml
+export TESTER_CAPABILITIES=configs/capabilities_llama_shim.yaml
+export TESTER_PROFILE=llama-shim-kimi-k2.6
+```
+
+Do not commit real keys or absolute local paths. In `real-upstream` mode the
+harness leaves `OPENAI_API_KEY` unset, so the tester can load credentials from
+its own `.env`. If a run must use an explicit process-level key, export
+`OPENAI_API_KEY` locally before the command and keep it out of artifacts and
+docs.
+
+3. Run the strict tester profile through the harness:
+
+```bash
+RESPONSES_COMPAT_REQUIRE_TESTER=1 \
+RESPONSES_COMPAT_TESTER_CMD='cd "$TESTER_DIR" && go run . --no-tui --models "$TESTER_MODELS" --suite "$TESTER_SUITE" --capabilities "$TESTER_CAPABILITIES" --profile "$TESTER_PROFILE" --mode strict --out-dir "$RESPONSES_COMPAT_ARTIFACT_DIR/openai-compatible-tester" --json' \
+make responses-compat-external-real-smoke
+```
+
+The harness exports `SHIM_BASE_URL`, `OPENAI_BASE_URL`, capability paths, and
+artifact paths to the tester command. The tester's `--out-dir` should stay
+under `$RESPONSES_COMPAT_ARTIFACT_DIR` so each run keeps the shim probes,
+tester logs, and tester report together.
+
+4. Read the result:
+
+- `==> external Responses compatibility tester passed` means the harness and
+  tester command both exited successfully.
+- `tester.stdout.log` and `tester.stderr.log` contain the external tester
+  output.
+- `tester.exitcode` contains the tester process exit code.
+- `readyz.status`, `readyz.json`, `capabilities.status`, and
+  `capabilities.json` show what the shim advertised before the tester ran.
+- The tester report lives under
+  `.data/responses-compat-external/<run-id>/openai-compatible-tester...`.
+
+If `readyz.status` is non-2xx in `real-upstream` mode, do not treat that alone
+as a failed tester verdict. This mode only requires `/healthz` by default
+because gateway readiness probes can be stricter than the ordinary `/v1/*`
+request path. Set `RESPONSES_COMPAT_REQUIRE_READYZ=1` when readiness must be a
+hard gate.
+
 Do not interpret a `devstack-fixture` run with a real-model profile as a real
 Qwen, GPT, vLLM, SGLang, llama.cpp, or OpenAI compatibility verdict. The runner
 writes `harness-warnings.txt` when the profile or command appears
@@ -110,13 +207,14 @@ real-model-specific while the mode is still `devstack-fixture`.
 | --- | --- | --- |
 | `SHIM_BASE_URL` | `http://127.0.0.1:18080` | Shim root used for `/readyz` and `/debug/capabilities`. |
 | `OPENAI_BASE_URL` | `$SHIM_BASE_URL/v1` | OpenAI-compatible base URL passed to the external tester. |
-| `OPENAI_API_KEY` | `shim-test-key` | API key passed to SDK-style testers. |
+| `OPENAI_API_KEY` | `shim-test-key` in devstack mode, unset in real-upstream mode | API key passed to SDK-style testers when explicitly configured. |
 | `SHIM_AUTH_HEADER` | empty | Optional auth header for shim-owned probe endpoints. |
 | `RESPONSES_COMPAT_RUN_MODE` | `devstack-fixture` | Harness mode: `devstack-fixture` or `real-upstream`. |
 | `RESPONSES_COMPAT_EXPECTED_UPSTREAM` | `devstack-fixture` in devstack mode, empty otherwise | Operator assertion for the upstream behind the shim. |
 | `RESPONSES_COMPAT_PROFILE` | `responses-broad-subset` | Profile name for tester-side filtering. |
 | `RESPONSES_COMPAT_TESTER_CMD` | empty | Shell command used to run the external tester. |
 | `OPENAI_COMPAT_TESTER_CMD` | empty | Backward-compatible alias for the tester command. |
+| `RESPONSES_COMPAT_REQUIRE_READYZ` | `1` in devstack mode, `0` in real-upstream mode | Whether non-2xx `/readyz` blocks the run. |
 | `RESPONSES_COMPAT_REQUIRE_TESTER` | `0` | When `1` or `true`, missing tester command is a failure. |
 | `RESPONSES_COMPAT_ARTIFACT_DIR` | `.data/responses-compat-external` | Artifact root. |
 | `RESPONSES_COMPAT_RUN_ID` | UTC timestamp | Artifact subdirectory name. |
@@ -124,7 +222,7 @@ real-model-specific while the mode is still `devstack-fixture`.
 The external command receives these exported variables:
 
 - `OPENAI_BASE_URL`
-- `OPENAI_API_KEY`
+- `OPENAI_API_KEY` when configured
 - `SHIM_BASE_URL`
 - `SHIM_AUTH_HEADER`
 - `SHIM_CAPABILITIES_FILE`
@@ -138,7 +236,9 @@ The external command receives these exported variables:
 Every run writes:
 
 - `readyz.json`
+- `readyz.status`
 - `capabilities.json`
+- `capabilities.status`
 - `capabilities-summary.json`
 - `run.env`
 - `harness-warnings.txt`

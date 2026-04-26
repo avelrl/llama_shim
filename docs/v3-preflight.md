@@ -209,7 +209,11 @@ strict external tester command via `RESPONSES_COMPAT_TESTER_CMD`. The default
 mode is `RESPONSES_COMPAT_RUN_MODE=devstack-fixture`; use
 `make responses-compat-external-real-smoke` for a shim that is already connected
 to a real upstream backend and set `RESPONSES_COMPAT_EXPECTED_UPSTREAM` in the
-artifact ledger. Its Broad subset profile and gap ledger live in
+artifact ledger. Real-upstream mode captures `/readyz` evidence but only waits
+for `/healthz` by default, because gateway health probes can be stricter than
+the API paths under test. It also leaves `OPENAI_API_KEY` unset by default so
+the external tester can load its own `.env`. Its Broad subset profile and gap
+ledger live in
 [Responses Compatibility External Tester](engineering/responses-compatibility-external-tester.md).
 
 `make devstack-ci-smoke` is the CI-compatible gate on top of the stack. It

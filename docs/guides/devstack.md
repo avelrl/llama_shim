@@ -75,6 +75,10 @@ RESPONSES_COMPAT_TESTER_CMD='<external tester command>' \
 make responses-compat-external-real-smoke
 ```
 
+For the copy-paste `openai-compatible-tester` command, including the
+`TESTER_DIR` and artifact layout conventions, see
+[Responses Compatibility External Tester](../engineering/responses-compatibility-external-tester.md#running-openai-compatible-tester).
+
 Run the focused V3 native coding-tools smoke path:
 
 ```bash
@@ -175,7 +179,11 @@ fail if the command is missing. The profile and gap ledger are documented in
 running against the intended upstream backend. Set
 `RESPONSES_COMPAT_EXPECTED_UPSTREAM` so the artifact ledger records that
 operator assertion. The harness cannot read `llama.base_url` from public shim
-probes, so the assertion is explicit rather than inferred.
+probes, so the assertion is explicit rather than inferred. This mode waits for
+`/healthz` and captures `/readyz` without requiring it to be 2xx by default;
+set `RESPONSES_COMPAT_REQUIRE_READYZ=1` if the real-upstream run must be
+blocked on the shim backend readiness probe. It also leaves `OPENAI_API_KEY`
+unset by default so external testers can load their own `.env` credentials.
 
 `make devstack-full-smoke` is the local heavy smoke gate. It runs the
 CI-compatible gate plus real Codex CLI checks:

@@ -24,11 +24,12 @@ Optional:
   RESPONSES_COMPAT_PROFILE=responses-broad-subset
   RESPONSES_COMPAT_ARTIFACT_DIR=.data/responses-compat-external
   RESPONSES_COMPAT_RUN_ID=manual
+  RESPONSES_COMPAT_REQUIRE_READYZ=1
   RESPONSES_COMPAT_REQUIRE_TESTER=1
 
 If RESPONSES_COMPAT_TESTER_CMD is unset, the script performs a capture-only
-preflight: it probes /readyz and /debug/capabilities, writes artifacts, and
-exits successfully unless RESPONSES_COMPAT_REQUIRE_TESTER=1.
+preflight: it probes /healthz, captures /readyz and /debug/capabilities,
+writes artifacts, and exits successfully unless RESPONSES_COMPAT_REQUIRE_TESTER=1.
 
 The external command receives:
   OPENAI_BASE_URL
@@ -59,7 +60,6 @@ shim_base_url="${SHIM_BASE_URL:-http://127.0.0.1:18080}"
 shim_base_url="${shim_base_url%/}"
 openai_base_url="${OPENAI_BASE_URL:-${shim_base_url}/v1}"
 openai_base_url="${openai_base_url%/}"
-openai_api_key="${OPENAI_API_KEY:-shim-test-key}"
 auth_header="${SHIM_AUTH_HEADER:-}"
 
 run_mode="${RESPONSES_COMPAT_RUN_MODE:-devstack-fixture}"
@@ -74,6 +74,7 @@ run_id="${RESPONSES_COMPAT_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)}"
 artifact_dir="${artifact_root%/}/${run_id}"
 tester_cmd="${RESPONSES_COMPAT_TESTER_CMD:-${OPENAI_COMPAT_TESTER_CMD:-}}"
 require_tester="${RESPONSES_COMPAT_REQUIRE_TESTER:-0}"
+require_readyz="${RESPONSES_COMPAT_REQUIRE_READYZ:-}"
 
 case "${run_mode}" in
   devstack-fixture | real-upstream) ;;
@@ -86,6 +87,19 @@ esac
 
 if [[ -z "${expected_upstream}" && "${run_mode}" == "devstack-fixture" ]]; then
   expected_upstream="devstack-fixture"
+fi
+
+openai_api_key="${OPENAI_API_KEY:-}"
+if [[ -z "${openai_api_key}" && "${run_mode}" == "devstack-fixture" ]]; then
+  openai_api_key="shim-test-key"
+fi
+
+if [[ -z "${require_readyz}" ]]; then
+  if [[ "${run_mode}" == "devstack-fixture" ]]; then
+    require_readyz="1"
+  else
+    require_readyz="0"
+  fi
 fi
 
 mkdir -p "${artifact_dir}"
@@ -133,6 +147,20 @@ curl_shim() {
   fi
 }
 
+capture_shim() {
+  local url="$1"
+  local output_path="$2"
+  local status_path="$3"
+  local status
+
+  if [[ -n "${auth_header}" ]]; then
+    status="$(curl -sS -H "${auth_header}" -o "${output_path}" -w "%{http_code}" "${url}")"
+  else
+    status="$(curl -sS -o "${output_path}" -w "%{http_code}" "${url}")"
+  fi
+  printf '%s\n' "${status}" >"${status_path}"
+}
+
 wait_http_ok() {
   local label="$1"
   local url="$2"
@@ -157,20 +185,40 @@ SHIM_AUTH_HEADER_SET=$([[ -n "${auth_header}" ]] && echo true || echo false)
 RESPONSES_COMPAT_RUN_MODE=${run_mode}
 RESPONSES_COMPAT_EXPECTED_UPSTREAM=${expected_upstream}
 RESPONSES_COMPAT_PROFILE=${profile}
+RESPONSES_COMPAT_REQUIRE_READYZ=${require_readyz}
 RESPONSES_COMPAT_REQUIRE_TESTER=${require_tester}
 EOF
 }
 
-echo "==> waiting for shim readiness: ${shim_base_url}/readyz"
-wait_http_ok "shim" "${shim_base_url}/readyz"
+echo "==> waiting for shim health: ${shim_base_url}/healthz"
+wait_http_ok "shim health" "${shim_base_url}/healthz"
+
+if [[ "${require_readyz}" == "1" || "${require_readyz}" == "true" ]]; then
+  echo "==> waiting for shim readiness: ${shim_base_url}/readyz"
+  wait_http_ok "shim readiness" "${shim_base_url}/readyz"
+else
+  echo "==> shim readiness is capture-only for run mode: ${run_mode}"
+fi
 
 readyz_path="${artifact_dir}/readyz.json"
+readyz_status_path="${artifact_dir}/readyz.status"
 capabilities_path="${artifact_dir}/capabilities.json"
+capabilities_status_path="${artifact_dir}/capabilities.status"
 summary_path="${artifact_dir}/capabilities-summary.json"
 
 echo "==> capturing readiness and capabilities into ${artifact_dir}"
-curl_shim "${shim_base_url}/readyz" >"${readyz_path}"
-curl_shim "${shim_base_url}/debug/capabilities" >"${capabilities_path}"
+capture_shim "${shim_base_url}/readyz" "${readyz_path}" "${readyz_status_path}"
+readyz_status="$(cat "${readyz_status_path}")"
+if [[ "${readyz_status}" != 2* ]]; then
+  warn_harness "/readyz returned HTTP ${readyz_status}; continuing because RESPONSES_COMPAT_REQUIRE_READYZ=${require_readyz}"
+fi
+
+capture_shim "${shim_base_url}/debug/capabilities" "${capabilities_path}" "${capabilities_status_path}"
+capabilities_status="$(cat "${capabilities_status_path}")"
+if [[ "${capabilities_status}" != 2* ]]; then
+  echo "/debug/capabilities returned HTTP ${capabilities_status}" >&2
+  exit 1
+fi
 write_run_env
 
 if command -v jq >/dev/null 2>&1; then
@@ -206,7 +254,11 @@ if [[ -z "${tester_cmd}" ]]; then
 fi
 
 export OPENAI_BASE_URL="${openai_base_url}"
-export OPENAI_API_KEY="${openai_api_key}"
+if [[ -n "${openai_api_key}" ]]; then
+  export OPENAI_API_KEY="${openai_api_key}"
+else
+  unset OPENAI_API_KEY
+fi
 export SHIM_BASE_URL="${shim_base_url}"
 export SHIM_AUTH_HEADER="${auth_header}"
 export SHIM_CAPABILITIES_FILE="${capabilities_path}"
