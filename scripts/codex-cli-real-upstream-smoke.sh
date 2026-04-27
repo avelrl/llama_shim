@@ -171,6 +171,18 @@ require_no_unsupported_apply_patch() {
   fi
 }
 
+require_file_change_event() {
+  local output_file="$1"
+  local lines
+  lines="$(json_lines "${output_file}")"
+  if ! printf '%s\n' "${lines}" \
+    | jq -e 'select((.type == "item.started" or .type == "item.completed") and .item.type == "file_change")' >/dev/null; then
+    echo "Codex did not emit a file_change event; apply_patch/freeform may not have been exercised" >&2
+    cat "${output_file}" >&2
+    exit 1
+  fi
+}
+
 agent_text() {
   local output_file="$1"
   json_lines "${output_file}" \
@@ -306,9 +318,10 @@ EOF
   run_codex_case \
     bugfix \
     "${workspace_abs}" \
-    'Use local command execution. First run go test ./.... Then inspect mathutil.go, fix Add with the smallest possible change, run go test ./... again, and reply exactly BUGFIX_OK.'
+    'Use local command execution. First run go test ./.... Then inspect mathutil.go, fix Add with the smallest possible change using apply_patch, run go test ./... again, and reply exactly BUGFIX_OK.'
 
   require_command_event "${base_dir}/bugfix/codex.jsonl"
+  require_file_change_event "${base_dir}/bugfix/codex.jsonl"
   if ! grep -q 'return a + b' "${workspace_abs}/mathutil.go"; then
     echo "bugfix case did not patch mathutil.go as expected" >&2
     exit 1

@@ -551,8 +551,10 @@ This smoke writes an isolated temporary Codex config under
 for the run, enables `[features].apply_patch_freeform`, keeps HTTP-first by
 default, and validates local file/test results after Codex exits. It also fails
 if Codex reports `unsupported call: apply_patch`, because that means the model
-attempted patch execution but the local Codex handler was not registered. It
-waits for `/healthz` and then probes `/v1/models` with the configured Codex
+attempted patch execution but the local Codex handler was not registered. The
+bugfix case also requires a `file_change` event so the smoke cannot pass only
+through shell text replacement. The script waits for `/healthz` and then
+probes `/v1/models` with the configured Codex
 bearer key; it does not block on `/readyz`, because
 auth-required real upstream gateways can fail the unauthenticated readiness
 probe while ordinary authorized `/v1/*` paths work. Use

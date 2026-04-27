@@ -233,11 +233,15 @@ func newLarkRegexCompiler(definition string) (*larkRegexCompiler, error) {
 		case strings.HasPrefix(line, "%ignore"):
 			return nil, fmt.Errorf("lark %%ignore directives are not supported by shim-local constrained tools")
 		case strings.HasPrefix(line, "%import"):
-			name, pattern, err := parseSupportedLarkImport(line)
+			importsList, err := parseSupportedLarkImport(line)
 			if err != nil {
 				return nil, err
 			}
-			imports[name] = pattern
+			for _, imported := range importsList {
+				imports[imported.name] = imported.pattern
+			}
+		case strings.HasPrefix(line, "%declare"):
+			return nil, fmt.Errorf("lark %%declare directives are not supported by shim-local constrained tools")
 		case strings.HasPrefix(line, "|"):
 			if lastRule == "" {
 				return nil, fmt.Errorf("lark alternative is missing a parent rule")
@@ -272,44 +276,92 @@ func newLarkRegexCompiler(definition string) (*larkRegexCompiler, error) {
 	}, nil
 }
 
-func parseSupportedLarkImport(line string) (string, string, error) {
+type larkImport struct {
+	name    string
+	pattern string
+}
+
+func parseSupportedLarkImport(line string) ([]larkImport, error) {
 	trimmed := strings.TrimSpace(strings.TrimPrefix(line, "%import"))
 	if trimmed == "" {
-		return "", "", fmt.Errorf("unsupported empty lark %%import directive")
+		return nil, fmt.Errorf("unsupported empty lark %%import directive")
 	}
 
-	target := trimmed
-	alias := ""
-	if idx := strings.Index(trimmed, "->"); idx >= 0 {
-		target = strings.TrimSpace(trimmed[:idx])
-		alias = strings.TrimSpace(trimmed[idx+2:])
+	if strings.HasPrefix(trimmed, "common.") {
+		imported, err := parseSupportedCommonLarkImport(trimmed)
+		if err != nil {
+			return nil, err
+		}
+		return []larkImport{imported}, nil
 	}
-	parts := strings.Split(target, ".")
-	name := strings.TrimSpace(parts[len(parts)-1])
+
+	if strings.HasPrefix(trimmed, "common") {
+		rest := strings.TrimSpace(strings.TrimPrefix(trimmed, "common"))
+		if strings.HasPrefix(rest, "(") && strings.HasSuffix(rest, ")") {
+			group := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(rest, "("), ")"))
+			if group == "" {
+				return nil, fmt.Errorf("unsupported empty lark %%import common group")
+			}
+			parts := strings.Split(group, ",")
+			out := make([]larkImport, 0, len(parts))
+			for _, part := range parts {
+				imported, err := parseSupportedCommonLarkImport(strings.TrimSpace(part))
+				if err != nil {
+					return nil, err
+				}
+				out = append(out, imported)
+			}
+			return out, nil
+		}
+	}
+
+	return nil, fmt.Errorf("lark %%import %q is not supported by shim-local constrained tools", trimmed)
+}
+
+func parseSupportedCommonLarkImport(target string) (larkImport, error) {
+	alias := ""
+	if idx := strings.Index(target, "->"); idx >= 0 {
+		alias = strings.TrimSpace(target[idx+2:])
+		target = strings.TrimSpace(target[:idx])
+	}
+	base := strings.TrimSpace(strings.TrimPrefix(target, "common."))
+	if strings.Contains(base, ".") || !isLarkIdentifier(base) {
+		return larkImport{}, fmt.Errorf("lark %%import common.%s is not supported by shim-local constrained tools", base)
+	}
+	name := base
 	if alias != "" {
+		if !isLarkIdentifier(alias) {
+			return larkImport{}, fmt.Errorf("unsupported lark %%import alias %q", alias)
+		}
 		name = alias
 	}
-	pattern, ok := supportedLarkImportPatterns[name]
+	pattern, ok := supportedLarkImportPatterns[base]
 	if !ok {
-		base := strings.TrimSpace(parts[len(parts)-1])
-		pattern, ok = supportedLarkImportPatterns[base]
+		return larkImport{}, fmt.Errorf("lark %%import common.%s is not supported by shim-local constrained tools", base)
 	}
-	if !ok {
-		return "", "", fmt.Errorf("lark %%import %q is not supported by shim-local constrained tools", strings.TrimSpace(target))
-	}
-	return name, pattern, nil
+	return larkImport{name: name, pattern: pattern}, nil
 }
 
 var supportedLarkImportPatterns = map[string]string{
-	"INT":        `[0-9]+`,
-	"SIGNED_INT": `[-+]?[0-9]+`,
-	"NUMBER":     `(?:[0-9]+(?:\.[0-9]+)?)`,
-	"WS":         `\s+`,
-	"WS_INLINE":  `[ \t]+`,
-	"DIGIT":      `[0-9]`,
-	"LETTER":     `[A-Za-z]`,
-	"CNAME":      `[A-Za-z_][A-Za-z0-9_]*`,
-	"LF":         `\n`,
+	"CNAME":          `[A-Za-z_][A-Za-z0-9_]*`,
+	"CR":             `\r`,
+	"CRLF":           `\r\n`,
+	"DECIMAL":        `(?:[0-9]+\.[0-9]*|\.[0-9]+)`,
+	"DIGIT":          `[0-9]`,
+	"ESCAPED_STRING": `"(?:\\.|[^"\\])*"`,
+	"FLOAT":          `(?:(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][-+]?[0-9]+)?|[0-9]+[eE][-+]?[0-9]+)`,
+	"HEXDIGIT":       `[0-9A-Fa-f]`,
+	"INT":            `[0-9]+`,
+	"LETTER":         `[A-Za-z]`,
+	"LF":             `\n`,
+	"NEWLINE":        `(?:\r?\n)+`,
+	"NUMBER":         `(?:[0-9]+(?:\.[0-9]*)?(?:[eE][-+]?[0-9]+)?|\.[0-9]+(?:[eE][-+]?[0-9]+)?)`,
+	"SIGNED_FLOAT":   `[-+]?(?:(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][-+]?[0-9]+)?|[0-9]+[eE][-+]?[0-9]+)`,
+	"SIGNED_INT":     `[-+]?[0-9]+`,
+	"SIGNED_NUMBER":  `[-+]?(?:[0-9]+(?:\.[0-9]*)?(?:[eE][-+]?[0-9]+)?|\.[0-9]+(?:[eE][-+]?[0-9]+)?)`,
+	"WORD":           `[A-Za-z]+`,
+	"WS":             `[ \t\f\r\n]+`,
+	"WS_INLINE":      `[ \t]+`,
 }
 
 func (c *larkRegexCompiler) compileRule(name string) (string, error) {
@@ -389,12 +441,21 @@ func tokenizeLarkExpr(expr string) ([]larkToken, error) {
 			tokens = append(tokens, larkToken{Kind: larkTokenPipe, Text: "|"})
 			i++
 		case '*':
+			if i+1 < len(expr) && expr[i+1] == '?' {
+				return nil, fmt.Errorf("lark lazy quantifiers are not supported by shim-local constrained tools")
+			}
 			tokens = append(tokens, larkToken{Kind: larkTokenStar, Text: "*"})
 			i++
 		case '+':
+			if i+1 < len(expr) && expr[i+1] == '?' {
+				return nil, fmt.Errorf("lark lazy quantifiers are not supported by shim-local constrained tools")
+			}
 			tokens = append(tokens, larkToken{Kind: larkTokenPlus, Text: "+"})
 			i++
 		case '?':
+			if i+1 < len(expr) && expr[i+1] == '?' {
+				return nil, fmt.Errorf("lark lazy quantifiers are not supported by shim-local constrained tools")
+			}
 			tokens = append(tokens, larkToken{Kind: larkTokenQuestion, Text: "?"})
 			i++
 		case '"', '\'':
@@ -452,10 +513,62 @@ func readLarkRegexLiteral(expr string, start int) (string, int, error) {
 		case expr[i] == '\\':
 			escaped = true
 		case expr[i] == '/':
-			return expr[start+1 : i], i + 1, nil
+			pattern := expr[start+1 : i]
+			if containsUnsupportedRegexLookaround(pattern) {
+				return "", 0, fmt.Errorf("lark lexer regex lookaround is not supported by shim-local constrained tools")
+			}
+			if containsUnsupportedRegexLazyQuantifier(pattern) {
+				return "", 0, fmt.Errorf("lark lexer regex lazy quantifiers are not supported by shim-local constrained tools")
+			}
+			return pattern, i + 1, nil
 		}
 	}
 	return "", 0, fmt.Errorf("unterminated lark regex literal")
+}
+
+func containsUnsupportedRegexLookaround(pattern string) bool {
+	escaped := false
+	inClass := false
+	for i := 0; i < len(pattern); i++ {
+		switch {
+		case escaped:
+			escaped = false
+		case pattern[i] == '\\':
+			escaped = true
+		case pattern[i] == '[':
+			inClass = true
+		case pattern[i] == ']':
+			inClass = false
+		case !inClass && pattern[i] == '(' && i+2 < len(pattern) && pattern[i+1] == '?':
+			if pattern[i+2] == '=' || pattern[i+2] == '!' {
+				return true
+			}
+			if pattern[i+2] == '<' && i+3 < len(pattern) && (pattern[i+3] == '=' || pattern[i+3] == '!') {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func containsUnsupportedRegexLazyQuantifier(pattern string) bool {
+	escaped := false
+	inClass := false
+	for i := 0; i+1 < len(pattern); i++ {
+		switch {
+		case escaped:
+			escaped = false
+		case pattern[i] == '\\':
+			escaped = true
+		case pattern[i] == '[':
+			inClass = true
+		case pattern[i] == ']':
+			inClass = false
+		case !inClass && (pattern[i] == '*' || pattern[i] == '+' || pattern[i] == '?') && pattern[i+1] == '?':
+			return true
+		}
+	}
+	return false
 }
 
 type larkExprParser struct {

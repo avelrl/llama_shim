@@ -68,6 +68,45 @@ func TestCompileCustomToolConstraintSupportsCommonLFImport(t *testing.T) {
 	}, "\n"), constraint.VLLMGrammar)
 }
 
+func TestCompileCustomToolConstraintSupportsCommonGroupedImports(t *testing.T) {
+	constraint, err := compileCustomToolConstraint(map[string]any{
+		"type": "custom",
+		"name": "grouped_common",
+		"format": map[string]any{
+			"type":       "grammar",
+			"syntax":     "lark",
+			"definition": "start: CNAME WS_INLINE SIGNED_NUMBER NEWLINE\n%import common (CNAME, WS_INLINE, SIGNED_NUMBER, NEWLINE)",
+		},
+	}, ServiceLimits{})
+	require.NoError(t, err)
+	require.NotNil(t, constraint)
+	require.NoError(t, constraint.Validate("value -1.5\n"))
+	require.NoError(t, constraint.Validate("value 2e3\n"))
+	require.Error(t, constraint.Validate("value\n"))
+	require.Contains(t, constraint.VLLMGrammar, `SIGNED_NUMBER ::= [-+]?(?:`)
+	require.Contains(t, constraint.VLLMGrammar, `NEWLINE ::= (?:\r?\n)+`)
+}
+
+func TestCompileCustomToolConstraintSupportsCommonImportAlias(t *testing.T) {
+	constraint, err := compileCustomToolConstraint(map[string]any{
+		"type": "custom",
+		"name": "aliased_common",
+		"format": map[string]any{
+			"type":       "grammar",
+			"syntax":     "lark",
+			"definition": "start: ALIASED_INT\n%import common.INT -> ALIASED_INT",
+		},
+	}, ServiceLimits{})
+	require.NoError(t, err)
+	require.NotNil(t, constraint)
+	require.NoError(t, constraint.Validate("42"))
+	require.Error(t, constraint.Validate("x"))
+	require.Equal(t, strings.Join([]string{
+		"root ::= ALIASED_INT",
+		"ALIASED_INT ::= [0-9]+",
+	}, "\n"), constraint.VLLMGrammar)
+}
+
 func TestCompileCustomToolConstraintSupportsCodexApplyPatchLark(t *testing.T) {
 	const applyPatchLark = `start: begin_patch hunk+ end_patch
 begin_patch: "*** Begin Patch" LF
@@ -105,6 +144,64 @@ eof_line: "*** End of File" LF
 	require.Contains(t, constraint.VLLMGrammar, `LF ::= \n`)
 }
 
+func TestCompileCustomToolConstraintSupportsCodexJSReplLark(t *testing.T) {
+	const jsReplLark = `
+start: pragma_source | plain_source
+
+pragma_source: PRAGMA_LINE NEWLINE js_source
+plain_source: PLAIN_JS_SOURCE
+
+js_source: JS_SOURCE
+
+PRAGMA_LINE: /[ \t]*\/\/ codex-js-repl:[^\r\n]*/
+NEWLINE: /\r?\n/
+PLAIN_JS_SOURCE: /(?:\s*)(?:[^\s{\"` + "`" + `]|` + "`" + `[^` + "`" + `]|` + "``" + `[^` + "`" + `])[\s\S]*/
+JS_SOURCE: /(?:\s*)(?:[^\s{\"` + "`" + `]|` + "`" + `[^` + "`" + `]|` + "``" + `[^` + "`" + `])[\s\S]*/
+`
+
+	constraint, err := compileCustomToolConstraint(map[string]any{
+		"type": "custom",
+		"name": "js_repl",
+		"format": map[string]any{
+			"type":       "grammar",
+			"syntax":     "lark",
+			"definition": jsReplLark,
+		},
+	}, ServiceLimits{})
+	require.NoError(t, err)
+	require.NotNil(t, constraint)
+	require.NoError(t, constraint.Validate("const answer = 42;"))
+	require.NoError(t, constraint.Validate("// codex-js-repl: timeout_ms=15000\nawait Promise.resolve(42);"))
+	require.Error(t, constraint.Validate(`{"code":"const answer = 42;"}`))
+}
+
+func TestCompileCustomToolConstraintSupportsCodexCodeModeLark(t *testing.T) {
+	const codeModeLark = `
+start: pragma_source | plain_source
+pragma_source: PRAGMA_LINE NEWLINE SOURCE
+plain_source: SOURCE
+
+PRAGMA_LINE: /[ \t]*\/\/ @exec:[^\r\n]*/
+NEWLINE: /\r?\n/
+SOURCE: /[\s\S]+/
+`
+
+	constraint, err := compileCustomToolConstraint(map[string]any{
+		"type": "custom",
+		"name": "exec",
+		"format": map[string]any{
+			"type":       "grammar",
+			"syntax":     "lark",
+			"definition": codeModeLark,
+		},
+	}, ServiceLimits{})
+	require.NoError(t, err)
+	require.NotNil(t, constraint)
+	require.NoError(t, constraint.Validate("echo hello"))
+	require.NoError(t, constraint.Validate("// @exec: timeout_ms=15000\necho hello"))
+	require.Error(t, constraint.Validate(""))
+}
+
 func TestCompileCustomToolConstraintRejectsRecursiveLark(t *testing.T) {
 	_, err := compileCustomToolConstraint(map[string]any{
 		"type": "custom",
@@ -117,6 +214,44 @@ func TestCompileCustomToolConstraintRejectsRecursiveLark(t *testing.T) {
 	}, ServiceLimits{})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "recursive lark rule")
+}
+
+func TestCompileCustomToolConstraintRejectsNonCommonImport(t *testing.T) {
+	_, err := compileCustomToolConstraint(map[string]any{
+		"type": "custom",
+		"name": "bad_import",
+		"format": map[string]any{
+			"type":       "grammar",
+			"syntax":     "lark",
+			"definition": "start: INT\n%import not_common.INT",
+		},
+	}, ServiceLimits{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `%import "not_common.INT" is not supported`)
+}
+
+func TestCompileCustomToolConstraintRejectsUnsupportedLarkRegexFeatures(t *testing.T) {
+	for name, definition := range map[string]string{
+		"lookahead":          `start: /a(?=b)/`,
+		"lookbehind":         `start: /(?<=a)b/`,
+		"regex_lazy":         `start: /a+?/`,
+		"grammar_lazy":       `start: "a"+?`,
+		"declare":            "start: VALUE\n%declare VALUE",
+		"unsupported_common": "start: VALUE\n%import common.VALUE",
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := compileCustomToolConstraint(map[string]any{
+				"type": "custom",
+				"name": "bad_lark",
+				"format": map[string]any{
+					"type":       "grammar",
+					"syntax":     "lark",
+					"definition": definition,
+				},
+			}, ServiceLimits{})
+			require.Error(t, err)
+		})
+	}
 }
 
 func TestCompileCustomToolConstraintRejectsOversizedDefinition(t *testing.T) {
