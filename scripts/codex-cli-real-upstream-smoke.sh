@@ -79,16 +79,29 @@ if [[ -z "${api_key_value}" ]]; then
   exit 1
 fi
 
-echo "==> waiting for shim readiness: ${shim_base_url%/}/readyz"
+mkdir -p "${base_dir}" "${codex_home}"
+
+echo "==> waiting for shim health: ${shim_base_url%/}/healthz"
 for _ in $(seq 1 60); do
-  if curl -fsS "${shim_base_url%/}/readyz" >/dev/null 2>&1; then
+  if curl -fsS "${shim_base_url%/}/healthz" >/dev/null 2>&1; then
     break
   fi
   sleep 1
 done
-curl -fsS "${shim_base_url%/}/readyz" >/dev/null
+curl -fsS "${shim_base_url%/}/healthz" >/dev/null
 
-mkdir -p "${base_dir}" "${codex_home}"
+echo "==> checking authorized upstream model path: ${shim_base_url%/}/v1/models"
+if ! models_probe="$(curl -fsS "${shim_base_url%/}/v1/models" \
+  -H "Authorization: Bearer ${api_key_value}")"; then
+  echo "authorized /v1/models probe through shim failed" >&2
+  echo "check SHIM_BASE_URL, llama.base_url, upstream auth, and ${api_key_env}" >&2
+  exit 1
+fi
+if ! jq -e '.object == "list" and (.data | type == "array")' <<<"${models_probe}" >/dev/null; then
+  echo "authorized /v1/models probe returned an unexpected shape" >&2
+  printf '%s\n' "${models_probe}" >&2
+  exit 1
+fi
 
 cat >"${codex_home}/config.toml" <<EOF
 model = "${model}"

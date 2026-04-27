@@ -61,6 +61,11 @@ GW_API_KEY="$GW_API_KEY" \
 make codex-cli-real-upstream-smoke
 ```
 
+The smoke waits for shim process liveness with `/healthz`, then probes
+`/v1/models` with the same bearer key that Codex will use. It intentionally does
+not block on `/readyz`: real upstream gateways can require request auth while
+`/readyz` is a terse unauthenticated operator probe.
+
 Default cases:
 
 - `boot`: plain Codex response through the custom provider.

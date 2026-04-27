@@ -541,8 +541,12 @@ make codex-cli-real-upstream-smoke
 This smoke writes an isolated temporary Codex config under
 `.tmp/codex-real-upstream-smoke/codex-home`, disables apps/web search/memories
 for the run, keeps HTTP-first by default, and validates local file/test results
-after Codex exits. Use [Codex Testing Plan](codex-testing-plan.md) for the
-manual phase-by-phase version of the same gate.
+after Codex exits. It waits for `/healthz` and then probes `/v1/models` with the
+configured Codex bearer key; it does not block on `/readyz`, because
+auth-required real upstream gateways can fail the unauthenticated readiness
+probe while ordinary authorized `/v1/*` paths work. Use
+[Codex Testing Plan](codex-testing-plan.md) for the manual phase-by-phase
+version of the same gate.
 
 The Codex smoke scripts now fail if Codex hits HTTP 405 from
 `ws://.../v1/responses`, because WebSocket support is expected for this shim
