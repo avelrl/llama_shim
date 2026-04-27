@@ -166,7 +166,7 @@ responses:
           supports_reasoning_summaries: false
           default_reasoning_summary: none
           shell_type: shell_command
-          apply_patch_tool_type: ""
+          apply_patch_tool_type: freeform
           web_search_tool_type: text
           supports_parallel_tool_calls: false
           support_verbosity: false
@@ -207,7 +207,10 @@ The high-impact fields to tune first are:
 - `shell_type`: which shell tool family Codex declares. Useful values are
   `shell_command`, `unified_exec`, `local`, `default`, and `disabled`.
 - `apply_patch_tool_type`: `freeform`, `function`, or empty for Codex default
-  selection.
+  selection. Use `freeform` for Codex coding smoke runs so the local
+  `apply_patch` tool shape is advertised through the Codex model catalog. For
+  Codex CLI versions where the local handler is gated separately, also set
+  `[features].apply_patch_freeform = true` in `config.toml`.
 - `input_modalities`, `supports_image_detail_original`, and
   `supports_search_tool`: whether Codex exposes image/search related surfaces.
 - `support_verbosity`, `default_verbosity`, `supports_reasoning_summaries`, and
@@ -237,7 +240,7 @@ public OpenAI `GET /v1/models` schema.
 | `supports_reasoning_summaries` | `false` | boolean | Whether Codex may send/use reasoning summary controls for the model. |
 | `default_reasoning_summary` | `none` | `auto`, `concise`, `detailed`, `none` | Default reasoning summary mode Codex uses when no explicit `model_reasoning_summary` override is set. |
 | `shell_type` | `shell_command` | `shell_command`, `unified_exec`, `local`, `default`, `disabled` | Shell tool family Codex declares. `shell_command` is the current practical default for Codex local command execution. `unified_exec` exposes `exec_command`/`write_stdin`. `disabled` removes shell tools. |
-| `apply_patch_tool_type` | empty/null | empty, `freeform`, `function` | Apply-patch tool shape Codex declares. Empty lets Codex pick its local default; `freeform` is closest to current Codex patch choreography. |
+| `apply_patch_tool_type` | empty/null | empty, `freeform`, `function` | Apply-patch tool shape Codex declares. Empty can omit the local handler for custom model metadata; use `freeform` for coding smoke runs. Pair it with Codex `[features].apply_patch_freeform = true` when testing local patch execution. |
 | `web_search_tool_type` | `text` | `text`, `text_and_image` | Web-search tool result shape Codex expects if search is enabled. This does not create a shim search backend by itself. |
 | `supports_parallel_tool_calls` | `false` | boolean | Whether Codex advertises parallel tool-call support for the model. Keep `false` for upstreams that handle tool calls serially or unreliably. |
 | `support_verbosity` | `false` | boolean | Whether Codex may send GPT-5-style `verbosity` controls. Enable only if the upstream accepts them. |
@@ -280,7 +283,7 @@ responses:
           supports_reasoning_summaries: false
           default_reasoning_summary: none
           shell_type: shell_command
-          apply_patch_tool_type: ""
+          apply_patch_tool_type: freeform
           supports_parallel_tool_calls: false
           support_verbosity: false
           input_modalities: [text]
@@ -436,6 +439,11 @@ Current Codex CLI has two relevant local command-tool modes for this shim:
   Codex then sends function tools such as `exec_command` and `write_stdin`.
 - With `-c 'features.unified_exec=false'`, Codex can fall back to the default
   function tool named `shell`.
+- To exercise local `apply_patch`, set
+  `[features].apply_patch_freeform = true` and expose model metadata with
+  `apply_patch_tool_type: freeform`. Without the feature flag, Codex may still
+  receive an upstream `apply_patch` tool call but report `unsupported call:
+  apply_patch` locally.
 
 Both of those are Codex CLI function-tool declarations. They are different
 from the official Responses native shell declaration, which is
@@ -540,9 +548,12 @@ make codex-cli-real-upstream-smoke
 
 This smoke writes an isolated temporary Codex config under
 `.tmp/codex-real-upstream-smoke/codex-home`, disables apps/web search/memories
-for the run, keeps HTTP-first by default, and validates local file/test results
-after Codex exits. It waits for `/healthz` and then probes `/v1/models` with the
-configured Codex bearer key; it does not block on `/readyz`, because
+for the run, enables `[features].apply_patch_freeform`, keeps HTTP-first by
+default, and validates local file/test results after Codex exits. It also fails
+if Codex reports `unsupported call: apply_patch`, because that means the model
+attempted patch execution but the local Codex handler was not registered. It
+waits for `/healthz` and then probes `/v1/models` with the configured Codex
+bearer key; it does not block on `/readyz`, because
 auth-required real upstream gateways can fail the unauthenticated readiness
 probe while ordinary authorized `/v1/*` paths work. Use
 [Codex Testing Plan](codex-testing-plan.md) for the manual phase-by-phase

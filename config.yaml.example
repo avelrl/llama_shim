@@ -310,7 +310,7 @@ responses:
       #     supports_reasoning_summaries: false
       #     default_reasoning_summary: none
       #     shell_type: shell_command
-      #     apply_patch_tool_type: ""
+      #     apply_patch_tool_type: freeform
       #     web_search_tool_type: text
       #     supports_parallel_tool_calls: false
       #     support_verbosity: false
@@ -342,7 +342,7 @@ responses:
       #     supports_reasoning_summaries: false
       #     default_reasoning_summary: none
       #     shell_type: shell_command
-      #     apply_patch_tool_type: ""
+      #     apply_patch_tool_type: freeform
       #     web_search_tool_type: text
       #     supports_parallel_tool_calls: false
       #     support_verbosity: false

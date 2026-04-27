@@ -399,7 +399,70 @@ func buildChatCompletionMessagesFromItems(items []domain.Item) ([]map[string]any
 		}
 	}
 
+	messages = synthesizeMissingChatToolOutputs(messages)
 	return messages, nil
+}
+
+const missingChatToolOutputContent = "tool output was not supplied by the client; treat this tool call as failed and continue with available context."
+
+func synthesizeMissingChatToolOutputs(messages []map[string]any) []map[string]any {
+	if len(messages) == 0 {
+		return messages
+	}
+
+	out := make([]map[string]any, 0, len(messages))
+	pending := make([]string, 0)
+
+	flushPending := func() {
+		for _, callID := range pending {
+			out = append(out, map[string]any{
+				"role":         "tool",
+				"tool_call_id": callID,
+				"content":      missingChatToolOutputContent,
+			})
+		}
+		pending = pending[:0]
+	}
+
+	for _, message := range messages {
+		role := strings.TrimSpace(asString(message["role"]))
+		if role == "tool" {
+			callID := strings.TrimSpace(asString(message["tool_call_id"]))
+			if len(pending) > 0 && callID != "" {
+				for idx, pendingID := range pending {
+					if pendingID == callID {
+						pending = append(pending[:idx], pending[idx+1:]...)
+						break
+					}
+				}
+			}
+			out = append(out, message)
+			continue
+		}
+
+		if len(pending) > 0 {
+			flushPending()
+		}
+		out = append(out, message)
+
+		if role != "assistant" {
+			continue
+		}
+		toolCalls, ok := message["tool_calls"].([]map[string]any)
+		if !ok {
+			continue
+		}
+		for _, call := range toolCalls {
+			callID := strings.TrimSpace(asString(call["id"]))
+			if callID != "" {
+				pending = append(pending, callID)
+			}
+		}
+	}
+	if len(pending) > 0 {
+		flushPending()
+	}
+	return out
 }
 
 func ensureLocalToolCallID(callID string) (string, error) {

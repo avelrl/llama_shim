@@ -82,13 +82,18 @@ fi
 mkdir -p "${base_dir}" "${codex_home}"
 
 echo "==> waiting for shim health: ${shim_base_url%/}/healthz"
+health_ready=false
 for _ in $(seq 1 60); do
   if curl -fsS "${shim_base_url%/}/healthz" >/dev/null 2>&1; then
+    health_ready=true
     break
   fi
   sleep 1
 done
-curl -fsS "${shim_base_url%/}/healthz" >/dev/null
+if [[ "${health_ready}" != true ]]; then
+  echo "shim health probe failed: ${shim_base_url%/}/healthz" >&2
+  exit 1
+fi
 
 echo "==> checking authorized upstream model path: ${shim_base_url%/}/v1/models"
 if ! models_probe="$(curl -fsS "${shim_base_url%/}/v1/models" \
@@ -117,7 +122,7 @@ persistence = "none"
 apps = false
 memories = false
 multi_agent = false
-web_search = false
+apply_patch_freeform = true
 unified_exec = ${unified_exec}
 
 [apps._default]
@@ -155,6 +160,15 @@ require_command_event() {
   local lines
   lines="$(json_lines "${output_file}")"
   printf '%s\n' "${lines}" | jq -e 'select(.type == "item.started" and .item.type == "command_execution")' >/dev/null
+}
+
+require_no_unsupported_apply_patch() {
+  local output_file="$1"
+  if grep -a -q 'unsupported call: apply_patch' "${output_file}"; then
+    echo "Codex reported unsupported apply_patch; check apply_patch_freeform/model metadata wiring" >&2
+    cat "${output_file}" >&2
+    exit 1
+  fi
 }
 
 agent_text() {
@@ -216,6 +230,7 @@ run_codex_case() {
 
   cat "${output_file}"
   require_json_events "${output_file}"
+  require_no_unsupported_apply_patch "${output_file}"
 }
 
 run_boot_case() {

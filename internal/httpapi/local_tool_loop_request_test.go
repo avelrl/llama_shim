@@ -94,6 +94,45 @@ func TestBuildChatCompletionMessagesFromItemsUsesResponsesCallIDForToolCalls(t *
 	require.Equal(t, "call_abc", messages[2]["tool_call_id"])
 }
 
+func TestBuildChatCompletionMessagesFromItemsSynthesizesMissingToolOutput(t *testing.T) {
+	items := []domain.Item{
+		mustDomainItem(t, `{"type":"message","role":"user","content":"Call add."}`),
+		mustDomainItem(t, `{"type":"function_call","id":"item_123","call_id":"call_missing","name":"add","arguments":"{\"a\":40,\"b\":2}"}`),
+		mustDomainItem(t, `{"type":"message","role":"user","content":"Continue."}`),
+	}
+
+	messages, err := buildChatCompletionMessagesFromItems(items)
+
+	require.NoError(t, err)
+	require.Len(t, messages, 4)
+	require.Equal(t, "assistant", messages[1]["role"])
+	require.Equal(t, "tool", messages[2]["role"])
+	require.Equal(t, "call_missing", messages[2]["tool_call_id"])
+	require.Contains(t, messages[2]["content"], "tool output was not supplied")
+	require.Equal(t, "user", messages[3]["role"])
+}
+
+func TestBuildChatCompletionMessagesFromItemsSynthesizesMissingApplyPatchOutput(t *testing.T) {
+	items := []domain.Item{
+		mustDomainItem(t, `{"type":"message","role":"user","content":"Patch the file."}`),
+		mustDomainItem(t, `{"type":"apply_patch_call","id":"item_patch","call_id":"call_patch","status":"completed","operation":{"type":"update_file","path":"smoke_target.txt"}}`),
+		mustDomainItem(t, `{"type":"message","role":"user","content":"Use another edit path."}`),
+	}
+
+	messages, err := buildChatCompletionMessagesFromItems(items)
+
+	require.NoError(t, err)
+	require.Len(t, messages, 4)
+	require.Equal(t, "assistant", messages[1]["role"])
+	toolCalls, ok := messages[1]["tool_calls"].([]map[string]any)
+	require.True(t, ok)
+	require.Equal(t, localBuiltinApplyPatchSyntheticName, toolCalls[0]["function"].(map[string]any)["name"])
+	require.Equal(t, "tool", messages[2]["role"])
+	require.Equal(t, "call_patch", messages[2]["tool_call_id"])
+	require.Contains(t, messages[2]["content"], "tool output was not supplied")
+	require.Equal(t, "user", messages[3]["role"])
+}
+
 func mustDomainItem(t *testing.T, raw string) domain.Item {
 	t.Helper()
 

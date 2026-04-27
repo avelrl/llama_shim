@@ -48,6 +48,63 @@ func TestCompileCustomToolConstraintSupportedLark(t *testing.T) {
 	}, "\n"), constraint.VLLMGrammar)
 }
 
+func TestCompileCustomToolConstraintSupportsCommonLFImport(t *testing.T) {
+	constraint, err := compileCustomToolConstraint(map[string]any{
+		"type": "custom",
+		"name": "line_pair",
+		"format": map[string]any{
+			"type":       "grammar",
+			"syntax":     "lark",
+			"definition": "start: \"a\" LF \"b\"\n%import common.LF",
+		},
+	}, ServiceLimits{})
+	require.NoError(t, err)
+	require.NotNil(t, constraint)
+	require.NoError(t, constraint.Validate("a\nb"))
+	require.Error(t, constraint.Validate("ab"))
+	require.Equal(t, strings.Join([]string{
+		"root ::= \"a\" LF \"b\"",
+		`LF ::= \n`,
+	}, "\n"), constraint.VLLMGrammar)
+}
+
+func TestCompileCustomToolConstraintSupportsCodexApplyPatchLark(t *testing.T) {
+	const applyPatchLark = `start: begin_patch hunk+ end_patch
+begin_patch: "*** Begin Patch" LF
+end_patch: "*** End Patch" LF?
+
+hunk: add_hunk | delete_hunk | update_hunk
+add_hunk: "*** Add File: " filename LF add_line+
+delete_hunk: "*** Delete File: " filename LF
+update_hunk: "*** Update File: " filename LF change_move? change?
+
+filename: /(.+)/
+add_line: "+" /(.*)/ LF -> line
+
+change_move: "*** Move to: " filename LF
+change: (change_context | change_line)+ eof_line?
+change_context: ("@@" | "@@ " /(.+)/) LF
+change_line: ("+" | "-" | " ") /(.*)/ LF
+eof_line: "*** End of File" LF
+
+%import common.LF`
+
+	constraint, err := compileCustomToolConstraint(map[string]any{
+		"type": "custom",
+		"name": "apply_patch",
+		"format": map[string]any{
+			"type":       "grammar",
+			"syntax":     "lark",
+			"definition": applyPatchLark,
+		},
+	}, ServiceLimits{})
+	require.NoError(t, err)
+	require.NotNil(t, constraint)
+	require.NoError(t, constraint.Validate("*** Begin Patch\n*** Add File: hello.txt\n+hello\n*** End Patch\n"))
+	require.Error(t, constraint.Validate("*** Begin Patch\n*** Add File: hello.txt\n+hello\n"))
+	require.Contains(t, constraint.VLLMGrammar, `LF ::= \n`)
+}
+
 func TestCompileCustomToolConstraintRejectsRecursiveLark(t *testing.T) {
 	_, err := compileCustomToolConstraint(map[string]any{
 		"type": "custom",

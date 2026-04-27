@@ -309,6 +309,7 @@ var supportedLarkImportPatterns = map[string]string{
 	"DIGIT":      `[0-9]`,
 	"LETTER":     `[A-Za-z]`,
 	"CNAME":      `[A-Za-z_][A-Za-z0-9_]*`,
+	"LF":         `\n`,
 }
 
 func (c *larkRegexCompiler) compileRule(name string) (string, error) {
