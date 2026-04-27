@@ -12,7 +12,7 @@ import (
 	"strings"
 
 	"llama_shim/internal/domain"
-	"llama_shim/internal/storage/sqlite"
+	"llama_shim/internal/storage"
 )
 
 type containerHandler struct {
@@ -340,7 +340,7 @@ func containerOwnerFromContext(r *http.Request) string {
 func (h *containerHandler) writeError(w http.ResponseWriter, r *http.Request, err error) {
 	var validationErr *domain.ValidationError
 	switch {
-	case errors.Is(err, sqlite.ErrNotFound):
+	case errors.Is(err, storage.ErrNotFound):
 		WriteError(w, http.StatusNotFound, "invalid_request_error", "resource not found", "")
 	case errors.As(err, &validationErr):
 		WriteError(w, http.StatusBadRequest, "invalid_request_error", validationErr.Message, validationErr.Param)

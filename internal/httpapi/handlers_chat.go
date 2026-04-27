@@ -14,7 +14,8 @@ import (
 	"strings"
 
 	"llama_shim/internal/domain"
-	"llama_shim/internal/storage/sqlite"
+	"llama_shim/internal/storage"
+	"llama_shim/internal/upstreamcompat"
 )
 
 const maxChatCompletionCanonicalizedErrorBytes int64 = 1 << 20
@@ -31,6 +32,23 @@ func (h *proxyHandler) forwardChatCompletions(w http.ResponseWriter, r *http.Req
 		return
 	}
 	sanitizeProfile := buildChatCompletionSanitizationProfile(rawBody)
+	upstreamBody, upstreamCompatibility, err := upstreamcompat.NormalizeChatCompletionRequest(rawBody, h.chatCompletionsCompatibility)
+	if err != nil {
+		status, payload := MapError(r.Context(), h.logger, err)
+		WriteJSON(w, status, apiErrorPayload{Error: payload})
+		return
+	}
+	if upstreamCompatibility.Applied() && h.logger != nil {
+		h.logger.DebugContext(r.Context(), "normalized chat completion request for upstream compatibility",
+			"request_id", RequestIDFromContext(r.Context()),
+			"developer_roles_remapped", upstreamCompatibility.DeveloperRolesRemapped,
+			"default_thinking_disabled", upstreamCompatibility.DefaultThinkingDisabled,
+			"default_max_tokens_applied", upstreamCompatibility.DefaultMaxTokensApplied,
+			"json_schema_downgraded", upstreamCompatibility.JSONSchemaDowngraded,
+			"tool_parameter_property_types_ensured", upstreamCompatibility.ToolParameterPropertyTypesEnsured,
+			"empty_assistant_tool_content_omitted", upstreamCompatibility.EmptyAssistantToolContentOmitted,
+		)
+	}
 
 	shouldStore := false
 	if shadowStore, err := h.shouldShadowStoreChatCompletion(rawBody); err != nil {
@@ -41,8 +59,8 @@ func (h *proxyHandler) forwardChatCompletions(w http.ResponseWriter, r *http.Req
 	} else {
 		shouldStore = shadowStore
 	}
-	if profile, err := parseChatToolCompatRequest(rawBody); err == nil && shouldApplyChatToolCompat(profile) {
-		rawResponse, err := h.createChatCompletionWithToolCompat(r.Context(), rawBody, profile.Contract)
+	if profile, err := parseChatToolCompatRequest(upstreamBody); err == nil && shouldApplyChatToolCompat(profile) {
+		rawResponse, err := h.createChatCompletionWithToolCompat(r.Context(), upstreamBody, profile.Contract)
 		if err != nil {
 			status, payload := MapError(r.Context(), h.logger, err)
 			WriteJSON(w, status, apiErrorPayload{Error: payload})
@@ -68,10 +86,10 @@ func (h *proxyHandler) forwardChatCompletions(w http.ResponseWriter, r *http.Req
 	}
 
 	cloned := r.Clone(r.Context())
-	cloned.Body = io.NopCloser(bytes.NewReader(rawBody))
-	cloned.ContentLength = int64(len(rawBody))
+	cloned.Body = io.NopCloser(bytes.NewReader(upstreamBody))
+	cloned.ContentLength = int64(len(upstreamBody))
 	cloned.GetBody = func() (io.ReadCloser, error) {
-		return io.NopCloser(bytes.NewReader(rawBody)), nil
+		return io.NopCloser(bytes.NewReader(upstreamBody)), nil
 	}
 	if cloned.Header.Get("X-Request-Id") == "" {
 		cloned.Header.Set("X-Request-Id", RequestIDFromContext(cloned.Context()))
@@ -91,6 +109,12 @@ func (h *proxyHandler) forwardChatCompletions(w http.ResponseWriter, r *http.Req
 		if response.StatusCode >= 200 && response.StatusCode < 300 {
 			if shouldSanitizeChatCompletionJSON(contentType) {
 				if err := h.writeSanitizedChatCompletionResponse(w, r, response, rawBody, shouldStore, sanitizeProfile); err != nil {
+					if h.logger != nil {
+						h.logger.WarnContext(r.Context(), "chat completion response sanitize failed before proxy write",
+							"request_id", RequestIDFromContext(r.Context()),
+							"err", err,
+						)
+					}
 					WriteError(w, http.StatusBadGateway, "upstream_error", "failed to read upstream response", "")
 				}
 				return
@@ -326,7 +350,7 @@ func (h *proxyHandler) listStoredChatCompletions(w http.ResponseWriter, r *http.
 func (h *proxyHandler) getStoredChatCompletion(w http.ResponseWriter, r *http.Request) {
 	completion, err := h.store.GetChatCompletion(r.Context(), r.PathValue("completion_id"))
 	if err != nil {
-		if errors.Is(err, sqlite.ErrNotFound) {
+		if errors.Is(err, storage.ErrNotFound) {
 			h.forwardRequest(w, r)
 			return
 		}
@@ -347,7 +371,7 @@ func (h *proxyHandler) updateStoredChatCompletion(w http.ResponseWriter, r *http
 
 	completionID := r.PathValue("completion_id")
 	if _, err := h.store.GetChatCompletion(r.Context(), completionID); err != nil {
-		if errors.Is(err, sqlite.ErrNotFound) {
+		if errors.Is(err, storage.ErrNotFound) {
 			h.forwardWithBody(w, r, rawBody)
 			return
 		}
@@ -378,7 +402,7 @@ func (h *proxyHandler) updateStoredChatCompletion(w http.ResponseWriter, r *http
 func (h *proxyHandler) deleteStoredChatCompletion(w http.ResponseWriter, r *http.Request) {
 	completionID := r.PathValue("completion_id")
 	if err := h.store.DeleteChatCompletion(r.Context(), completionID); err != nil {
-		if errors.Is(err, sqlite.ErrNotFound) {
+		if errors.Is(err, storage.ErrNotFound) {
 			h.forwardRequest(w, r)
 			return
 		}
@@ -406,8 +430,8 @@ func (h *proxyHandler) listStoredChatCompletionMessages(w http.ResponseWriter, r
 	completionID := r.PathValue("completion_id")
 	page, err := h.store.ListChatCompletionMessages(r.Context(), completionID, query)
 	if err != nil {
-		if errors.Is(err, sqlite.ErrNotFound) {
-			if _, getErr := h.store.GetChatCompletion(r.Context(), completionID); errors.Is(getErr, sqlite.ErrNotFound) {
+		if errors.Is(err, storage.ErrNotFound) {
+			if _, getErr := h.store.GetChatCompletion(r.Context(), completionID); errors.Is(getErr, storage.ErrNotFound) {
 				h.forwardRequest(w, r)
 				return
 			} else if getErr != nil {

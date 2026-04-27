@@ -411,10 +411,10 @@ func ensureLocalToolCallID(callID string) (string, error) {
 }
 
 func localChatToolCallID(item domain.Item) string {
-	if id := strings.TrimSpace(item.ID()); id != "" {
-		return id
+	if callID := strings.TrimSpace(item.CallID()); callID != "" {
+		return callID
 	}
-	return strings.TrimSpace(item.CallID())
+	return strings.TrimSpace(item.ID())
 }
 
 func normalizeJSONStringField(raw json.RawMessage) string {

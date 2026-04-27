@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"log/slog"
+	"path"
 	"slices"
 	"strings"
 
@@ -34,11 +35,22 @@ type customToolBridge struct {
 	ByCanonical map[string]customToolDescriptor
 }
 
+type UpstreamToolCompatibilityRule struct {
+	Model         string
+	DisabledTools []string
+}
+
+type CodexUpstreamInputCompatibilityRule struct {
+	Model string
+	Mode  string
+}
+
 type customToolTransportPlan struct {
 	Mode                customToolsMode
 	Bridge              customToolBridge
 	BridgeFallbackSafe  bool
 	DroppedBuiltinTools []string
+	DisabledToolTypes   []string
 	ToolChoiceContract  toolChoiceContract
 }
 
@@ -77,7 +89,12 @@ func parseCustomToolsMode(value string) customToolsMode {
 }
 
 func remapCustomToolsPayload(rawFields map[string]json.RawMessage, configuredMode string, codexCompatibilityEnabled bool, forceCodexToolChoiceRequired bool) ([]byte, customToolTransportPlan, error) {
-	plan, tools, err := buildCustomToolTransportPlan(rawFields, configuredMode)
+	return remapCustomToolsPayloadWithCompatibility(rawFields, configuredMode, codexCompatibilityEnabled, forceCodexToolChoiceRequired, nil)
+}
+
+func remapCustomToolsPayloadWithCompatibility(rawFields map[string]json.RawMessage, configuredMode string, codexCompatibilityEnabled bool, forceCodexToolChoiceRequired bool, upstreamToolCompatibility []UpstreamToolCompatibilityRule) ([]byte, customToolTransportPlan, error) {
+	disabledTools := disabledUpstreamToolTypesForModel(rawStringField(rawFields, "model"), upstreamToolCompatibility)
+	plan, tools, err := buildCustomToolTransportPlanWithCompatibility(rawFields, configuredMode, disabledTools)
 	if err != nil {
 		return nil, customToolTransportPlan{}, err
 	}
@@ -129,10 +146,15 @@ func remapCustomToolsPayload(rawFields map[string]json.RawMessage, configuredMod
 }
 
 func buildCustomToolTransportPlan(rawFields map[string]json.RawMessage, configuredMode string) (customToolTransportPlan, []map[string]any, error) {
+	return buildCustomToolTransportPlanWithCompatibility(rawFields, configuredMode, nil)
+}
+
+func buildCustomToolTransportPlanWithCompatibility(rawFields map[string]json.RawMessage, configuredMode string, disabledTools map[string]struct{}) (customToolTransportPlan, []map[string]any, error) {
 	mode := parseCustomToolsMode(configuredMode)
+	disabledToolTypes := sortedToolTypes(disabledTools)
 	rawTools, ok := rawFields["tools"]
 	if !ok {
-		return customToolTransportPlan{Mode: effectiveModeWithoutTools(mode)}, nil, nil
+		return customToolTransportPlan{Mode: effectiveModeWithoutTools(mode), DisabledToolTypes: disabledToolTypes}, nil, nil
 	}
 
 	var tools []map[string]any
@@ -140,7 +162,7 @@ func buildCustomToolTransportPlan(rawFields map[string]json.RawMessage, configur
 		return customToolTransportPlan{}, nil, domain.NewValidationError("tools", "tools must be an array")
 	}
 	if len(tools) == 0 {
-		return customToolTransportPlan{Mode: effectiveModeWithoutTools(mode)}, tools, nil
+		return customToolTransportPlan{Mode: effectiveModeWithoutTools(mode), DisabledToolTypes: disabledToolTypes}, tools, nil
 	}
 
 	containsCustom := false
@@ -158,7 +180,7 @@ func buildCustomToolTransportPlan(rawFields map[string]json.RawMessage, configur
 	filteredTools := make([]map[string]any, 0, len(tools))
 	for _, tool := range tools {
 		toolType := strings.TrimSpace(asString(tool["type"]))
-		if isDisabledWebSearchTool(tool) {
+		if isDisabledWebSearchTool(tool) || isToolTypeDisabledForUpstream(toolType, disabledTools) {
 			droppedBuiltinTools = append(droppedBuiltinTools, toolType)
 			continue
 		}
@@ -208,21 +230,26 @@ func buildCustomToolTransportPlan(rawFields map[string]json.RawMessage, configur
 		return customToolTransportPlan{
 			Mode:                effectiveModeWithoutTools(mode),
 			DroppedBuiltinTools: droppedBuiltinTools,
+			DisabledToolTypes:   disabledToolTypes,
 		}, filteredTools, nil
 	}
 
 	switch mode {
 	case customToolsModePassthrough:
 		return customToolTransportPlan{
-			Mode:               customToolsModePassthrough,
-			BridgeFallbackSafe: bridgeFallbackSafe,
-		}, tools, nil
+			Mode:                customToolsModePassthrough,
+			BridgeFallbackSafe:  bridgeFallbackSafe,
+			DroppedBuiltinTools: droppedBuiltinTools,
+			DisabledToolTypes:   disabledToolTypes,
+		}, filteredTools, nil
 	case customToolsModeAuto:
 		if requiresPassthrough {
 			return customToolTransportPlan{
-				Mode:               customToolsModePassthrough,
-				BridgeFallbackSafe: bridgeFallbackSafe,
-			}, tools, nil
+				Mode:                customToolsModePassthrough,
+				BridgeFallbackSafe:  bridgeFallbackSafe,
+				DroppedBuiltinTools: droppedBuiltinTools,
+				DisabledToolTypes:   disabledToolTypes,
+			}, filteredTools, nil
 		}
 	case customToolsModeBridge:
 		if bridgeUnsupported {
@@ -248,6 +275,7 @@ func buildCustomToolTransportPlan(rawFields map[string]json.RawMessage, configur
 		Bridge:              bridge,
 		BridgeFallbackSafe:  true,
 		DroppedBuiltinTools: droppedBuiltinTools,
+		DisabledToolTypes:   disabledToolTypes,
 	}, filteredTools, nil
 }
 
@@ -318,6 +346,9 @@ func remapToolChoice(raw json.RawMessage, rawFields map[string]json.RawMessage, 
 	if isDisabledWebSearchTool(choice) {
 		return nil, domain.NewValidationError("tool_choice", "tool_choice references a disabled web_search tool")
 	}
+	if plan.ToolTypeDisabled(asString(choice["type"])) {
+		return nil, domain.NewValidationError("tool_choice", "tool_choice references a tool disabled for the selected upstream model")
+	}
 	if !plan.Bridge.Active() {
 		return choice, nil
 	}
@@ -338,6 +369,88 @@ func remapToolChoice(raw json.RawMessage, rawFields map[string]json.RawMessage, 
 		"type": "function",
 		"name": descriptor.Name,
 	}, nil
+}
+
+func (p customToolTransportPlan) ToolTypeDisabled(toolType string) bool {
+	normalized := normalizeToolType(toolType)
+	if normalized == "" {
+		return false
+	}
+	for _, disabled := range p.DisabledToolTypes {
+		if normalizeToolType(disabled) == normalized {
+			return true
+		}
+	}
+	return false
+}
+
+func disabledUpstreamToolTypesForModel(model string, rules []UpstreamToolCompatibilityRule) map[string]struct{} {
+	model = strings.TrimSpace(model)
+	if model == "" || len(rules) == 0 {
+		return nil
+	}
+	disabled := make(map[string]struct{})
+	for _, rule := range rules {
+		if !modelPatternMatches(rule.Model, model) {
+			continue
+		}
+		for _, tool := range rule.DisabledTools {
+			if normalized := normalizeToolType(tool); normalized != "" {
+				disabled[normalized] = struct{}{}
+			}
+		}
+	}
+	if len(disabled) == 0 {
+		return nil
+	}
+	return disabled
+}
+
+func modelPatternMatches(pattern, model string) bool {
+	pattern = strings.ToLower(strings.TrimSpace(pattern))
+	model = strings.ToLower(strings.TrimSpace(model))
+	if pattern == "" || model == "" {
+		return false
+	}
+	if pattern == model {
+		return true
+	}
+	if !strings.ContainsAny(pattern, "*?[") {
+		return false
+	}
+	matched, err := path.Match(pattern, model)
+	return err == nil && matched
+}
+
+func isToolTypeDisabledForUpstream(toolType string, disabled map[string]struct{}) bool {
+	if len(disabled) == 0 {
+		return false
+	}
+	_, ok := disabled[normalizeToolType(toolType)]
+	return ok
+}
+
+func sortedToolTypes(values map[string]struct{}) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(values))
+	for value := range values {
+		if normalized := normalizeToolType(value); normalized != "" {
+			out = append(out, normalized)
+		}
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
+}
+
+func normalizeToolType(value string) string {
+	switch normalized := strings.ToLower(strings.TrimSpace(value)); normalized {
+	case "namespace_tool":
+		return "namespace"
+	default:
+		return normalized
+	}
 }
 
 func shouldForceRequiredToolChoice(rawFields map[string]json.RawMessage, tools []map[string]any, enabled bool) bool {
@@ -928,6 +1041,7 @@ func logCustomToolTransport(ctx context.Context, logger *slog.Logger, rawFields 
 		"bridge_active", plan.BridgeActive(),
 		"bridge_tool_count", len(plan.Bridge.ByCanonical),
 		"dropped_builtin_tools", plan.DroppedBuiltinTools,
+		"disabled_upstream_tool_types", plan.DisabledToolTypes,
 		"tool_choice_contract_mode", plan.ToolChoiceContract.Mode,
 		"tool_choice_contract_name", plan.ToolChoiceContract.Name,
 		"tool_choice_contract_namespace", plan.ToolChoiceContract.Namespace,

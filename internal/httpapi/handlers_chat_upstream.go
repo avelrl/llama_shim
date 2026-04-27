@@ -11,7 +11,7 @@ import (
 	"strings"
 
 	"llama_shim/internal/domain"
-	"llama_shim/internal/storage/sqlite"
+	"llama_shim/internal/storage"
 )
 
 const upstreamStoredChatCompletionsPageLimit = 100
@@ -129,7 +129,7 @@ func (h *proxyHandler) buildMergedStoredChatCompletionsPage(ctx context.Context,
 		data = append(data, entry.Raw)
 	}
 	if !seenAfter {
-		return storedChatCompletionsMergedPage{}, nil, sqlite.ErrNotFound
+		return storedChatCompletionsMergedPage{}, nil, storage.ErrNotFound
 	}
 	hasMore := len(data) > query.Limit
 	if hasMore {

@@ -3,6 +3,7 @@ package sqlite
 import "llama_shim/internal/storage"
 
 var (
+	_ storage.Store                     = (*Store)(nil)
 	_ storage.HealthStore               = (*Store)(nil)
 	_ storage.ResponseStore             = (*Store)(nil)
 	_ storage.ResponseConversationStore = (*Store)(nil)

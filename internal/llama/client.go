@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"llama_shim/internal/domain"
+	"llama_shim/internal/upstreamcompat"
 )
 
 type Client struct {
@@ -26,6 +27,7 @@ type Client struct {
 	streamClient                  *http.Client
 	admission                     *admissionController
 	logger                        *slog.Logger
+	chatCompletionsCompatibility  upstreamcompat.ChatCompletionOptions
 	startupCalibrationBearerToken string
 	calibrationMu                 sync.RWMutex
 	calibration                   StartupCalibrationSnapshot
@@ -37,6 +39,7 @@ type ClientOptions struct {
 	Logger                        *slog.Logger
 	Observer                      AdmissionObserver
 	Transport                     TransportOptions
+	ChatCompletionsCompatibility  []upstreamcompat.ChatCompletionRule
 	StartupCalibrationBearerToken string
 }
 
@@ -73,6 +76,12 @@ var hopByHopHeaders = map[string]struct{}{
 	"Trailer":             {},
 	"Transfer-Encoding":   {},
 	"Upgrade":             {},
+}
+
+var proxyManagedRequestHeaders = map[string]struct{}{
+	// The proxy may sanitize, shadow-store, or inspect upstream bodies. Let
+	// net/http own transparent compression so response bodies stay readable.
+	"Accept-Encoding": {},
 }
 
 type UpstreamError struct {
@@ -120,6 +129,7 @@ func NewClientWithOptions(baseURL string, timeout time.Duration, options ClientO
 		},
 		admission:                     newAdmissionController(options),
 		logger:                        options.Logger,
+		chatCompletionsCompatibility:  upstreamcompat.ChatCompletionOptions{Rules: append([]upstreamcompat.ChatCompletionRule(nil), options.ChatCompletionsCompatibility...)},
 		startupCalibrationBearerToken: strings.TrimSpace(options.StartupCalibrationBearerToken),
 		calibration:                   DisabledStartupCalibrationSnapshot(),
 	}
@@ -332,6 +342,7 @@ func (c *Client) doJSONRequestDetailedWithBearerToken(ctx context.Context, metho
 	if err != nil {
 		return jsonRequestResult{}, fmt.Errorf("build llama url: %w", err)
 	}
+	requestBody = c.normalizeChatCompletionRequestForUpstream(ctx, path, scope, requestBody)
 
 	req, err := http.NewRequestWithContext(ctx, method, endpoint, bytes.NewReader(requestBody))
 	if err != nil {
@@ -379,6 +390,7 @@ func (c *Client) doStreamingRequest(ctx context.Context, path string, requestBod
 	if err != nil {
 		return nil, nil, fmt.Errorf("build llama url: %w", err)
 	}
+	requestBody = c.normalizeChatCompletionRequestForUpstream(ctx, path, scope, requestBody)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(requestBody))
 	if err != nil {
@@ -403,6 +415,34 @@ func (c *Client) doStreamingRequest(ctx context.Context, path string, requestBod
 	}
 
 	return resp, release, nil
+}
+
+func (c *Client) normalizeChatCompletionRequestForUpstream(ctx context.Context, path string, scope string, requestBody []byte) []byte {
+	if path != "/v1/chat/completions" {
+		return requestBody
+	}
+	normalized, compatibility, err := upstreamcompat.NormalizeChatCompletionRequest(requestBody, c.chatCompletionsCompatibility)
+	if err != nil {
+		if c != nil && c.logger != nil {
+			c.logger.WarnContext(ctx, "failed to normalize chat completion request for upstream compatibility",
+				"scope", scope,
+				"err", err,
+			)
+		}
+		return requestBody
+	}
+	if compatibility.Applied() && c != nil && c.logger != nil {
+		c.logger.DebugContext(ctx, "normalized chat completion request for upstream compatibility",
+			"scope", scope,
+			"developer_roles_remapped", compatibility.DeveloperRolesRemapped,
+			"default_thinking_disabled", compatibility.DefaultThinkingDisabled,
+			"default_max_tokens_applied", compatibility.DefaultMaxTokensApplied,
+			"json_schema_downgraded", compatibility.JSONSchemaDowngraded,
+			"tool_parameter_property_types_ensured", compatibility.ToolParameterPropertyTypesEnsured,
+			"empty_assistant_tool_content_omitted", compatibility.EmptyAssistantToolContentOmitted,
+		)
+	}
+	return normalized
 }
 
 func (c *Client) acquireUpstreamSlot(ctx context.Context, scope string) (func(), error) {
@@ -471,6 +511,9 @@ func cloneHeader(src http.Header) http.Header {
 
 func removeHopByHopHeaders(header http.Header) {
 	for key := range hopByHopHeaders {
+		header.Del(key)
+	}
+	for key := range proxyManagedRequestHeaders {
 		header.Del(key)
 	}
 }

@@ -146,7 +146,7 @@ func (h *responseHandler) createLocalImageGenerationResponse(ctx context.Context
 		return domain.Response{}, nil, err
 	}
 
-	upstreamBody, _, err := buildUpstreamResponsesBody(rawFields, prepared.ContextItems, prepared.NormalizedInput, prepared.ToolCallRefs, h.customToolsMode, h.codexCompatibilityEnabled, h.forceCodexToolChoiceRequired)
+	upstreamBody, _, err := buildUpstreamResponsesBody(rawFields, prepared.ContextItems, prepared.NormalizedInput, prepared.ToolCallRefs, h.customToolsMode, h.codexCompatibilityEnabled, h.effectiveForceCodexToolChoiceRequired(rawFields))
 	if err != nil {
 		return domain.Response{}, nil, err
 	}

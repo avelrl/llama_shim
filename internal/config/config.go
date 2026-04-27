@@ -19,88 +19,149 @@ import (
 )
 
 type Config struct {
-	Addr                                           string
-	StorageBackend                                 string
-	SQLitePath                                     string
-	SQLiteMaintenanceCleanupInterval               time.Duration
-	LlamaBaseURL                                   string
-	LlamaTimeout                                   time.Duration
-	LlamaMaxConcurrentRequests                     int
-	LlamaMaxQueueWait                              time.Duration
-	LlamaHTTPMaxIdleConns                          int
-	LlamaHTTPMaxIdleConnsPerHost                   int
-	LlamaHTTPMaxConnsPerHost                       int
-	LlamaHTTPIdleConnTimeout                       time.Duration
-	LlamaHTTPDialTimeout                           time.Duration
-	LlamaHTTPKeepAlive                             time.Duration
-	LlamaHTTPTLSHandshakeTimeout                   time.Duration
-	LlamaHTTPExpectContinueTimeout                 time.Duration
-	ReadTimeout                                    time.Duration
-	WriteTimeout                                   time.Duration
-	IdleTimeout                                    time.Duration
-	ShimAuthMode                                   string
-	ShimAuthBearerTokens                           []string
-	ShimRateLimitEnabled                           bool
-	ShimRateLimitRequestsPerMinute                 int
-	ShimRateLimitBurst                             int
-	ShimMetricsEnabled                             bool
-	ShimMetricsPath                                string
-	ShimJSONBodyLimitBytes                         int64
-	RetrievalFileUploadMaxBytes                    int64
-	ChatCompletionsShadowStoreMaxBytes             int64
-	ChatCompletionsShadowStoreTimeout              time.Duration
-	ResponsesProxyBufferMaxBytes                   int64
-	ResponsesStoredLineageMaxItems                 int
-	CustomToolGrammarDefinitionMaxBytes            int64
-	CustomToolCompiledPatternMaxBytes              int64
-	RetrievalMaxConcurrentSearches                 int
-	RetrievalMaxSearchQueries                      int
-	RetrievalMaxGroundingChunks                    int
-	ResponsesCodeInterpreterMaxConcurrentRuns      int
-	ResponsesCodeInterpreterGeneratedFiles         int
-	ResponsesCodeInterpreterGeneratedFileBytes     int64
-	ResponsesCodeInterpreterGeneratedTotalBytes    int64
-	ResponsesCodeInterpreterRemoteInputFileBytes   int64
-	LogLevel                                       slog.Level
-	LogFilePath                                    string
-	RetrievalIndexBackend                          string
-	RetrievalEmbedderBackend                       string
-	RetrievalEmbedderBaseURL                       string
-	RetrievalEmbedderModel                         string
-	ResponsesWebSearchBackend                      string
-	ResponsesWebSearchBaseURL                      string
-	ResponsesWebSearchTimeout                      time.Duration
-	ResponsesWebSearchMaxResults                   int
-	ResponsesImageGenerationBackend                string
-	ResponsesImageGenerationBaseURL                string
-	ResponsesImageGenerationTimeout                time.Duration
-	ResponsesCompactionBackend                     string
-	ResponsesCompactionBaseURL                     string
-	ResponsesCompactionModel                       string
-	ResponsesCompactionTimeout                     time.Duration
-	ResponsesCompactionMaxOutputTokens             int
-	ResponsesCompactionRetainedItems               int
-	ResponsesCompactionMaxInputRunes               int
-	ResponsesComputerBackend                       string
-	ChatCompletionsStoreWhenOmitted                bool
-	ResponsesMode                                  string
-	ResponsesWebSocketEnabled                      bool
-	ResponsesCustomToolsMode                       string
-	ResponsesConstrainedDecodingBackend            string
-	ResponsesCodexEnableCompatibility              bool
-	ResponsesCodexForceToolChoiceRequired          bool
-	ResponsesCodeInterpreterBackend                string
-	ResponsesCodeInterpreterPythonBinary           string
-	ResponsesCodeInterpreterDockerBinary           string
-	ResponsesCodeInterpreterDockerImage            string
-	ResponsesCodeInterpreterDockerMemory           string
-	ResponsesCodeInterpreterDockerCPU              string
-	ResponsesCodeInterpreterDockerPids             int
-	ResponsesCodeInterpreterTimeout                time.Duration
-	ResponsesCodeInterpreterInputFileURLPolicy     string
-	ResponsesCodeInterpreterInputFileURLAllowHosts []string
-	ResponsesCodeInterpreterCleanupInterval        time.Duration
-	ConfigFile                                     string
+	Addr                                                string
+	StorageBackend                                      string
+	SQLitePath                                          string
+	SQLiteMaintenanceCleanupInterval                    time.Duration
+	LlamaBaseURL                                        string
+	LlamaTimeout                                        time.Duration
+	LlamaMaxConcurrentRequests                          int
+	LlamaMaxQueueWait                                   time.Duration
+	LlamaHTTPMaxIdleConns                               int
+	LlamaHTTPMaxIdleConnsPerHost                        int
+	LlamaHTTPMaxConnsPerHost                            int
+	LlamaHTTPIdleConnTimeout                            time.Duration
+	LlamaHTTPDialTimeout                                time.Duration
+	LlamaHTTPKeepAlive                                  time.Duration
+	LlamaHTTPTLSHandshakeTimeout                        time.Duration
+	LlamaHTTPExpectContinueTimeout                      time.Duration
+	ReadTimeout                                         time.Duration
+	WriteTimeout                                        time.Duration
+	IdleTimeout                                         time.Duration
+	ShimAuthMode                                        string
+	ShimAuthBearerTokens                                []string
+	ShimRateLimitEnabled                                bool
+	ShimRateLimitRequestsPerMinute                      int
+	ShimRateLimitBurst                                  int
+	ShimMetricsEnabled                                  bool
+	ShimMetricsPath                                     string
+	ShimJSONBodyLimitBytes                              int64
+	RetrievalFileUploadMaxBytes                         int64
+	ChatCompletionsShadowStoreMaxBytes                  int64
+	ChatCompletionsShadowStoreTimeout                   time.Duration
+	ResponsesProxyBufferMaxBytes                        int64
+	ResponsesStoredLineageMaxItems                      int
+	CustomToolGrammarDefinitionMaxBytes                 int64
+	CustomToolCompiledPatternMaxBytes                   int64
+	RetrievalMaxConcurrentSearches                      int
+	RetrievalMaxSearchQueries                           int
+	RetrievalMaxGroundingChunks                         int
+	ResponsesCodeInterpreterMaxConcurrentRuns           int
+	ResponsesCodeInterpreterGeneratedFiles              int
+	ResponsesCodeInterpreterGeneratedFileBytes          int64
+	ResponsesCodeInterpreterGeneratedTotalBytes         int64
+	ResponsesCodeInterpreterRemoteInputFileBytes        int64
+	LogLevel                                            slog.Level
+	LogFilePath                                         string
+	RetrievalIndexBackend                               string
+	RetrievalEmbedderBackend                            string
+	RetrievalEmbedderBaseURL                            string
+	RetrievalEmbedderModel                              string
+	ResponsesWebSearchBackend                           string
+	ResponsesWebSearchBaseURL                           string
+	ResponsesWebSearchTimeout                           time.Duration
+	ResponsesWebSearchMaxResults                        int
+	ResponsesImageGenerationBackend                     string
+	ResponsesImageGenerationBaseURL                     string
+	ResponsesImageGenerationTimeout                     time.Duration
+	ResponsesCompactionBackend                          string
+	ResponsesCompactionBaseURL                          string
+	ResponsesCompactionModel                            string
+	ResponsesCompactionTimeout                          time.Duration
+	ResponsesCompactionMaxOutputTokens                  int
+	ResponsesCompactionRetainedItems                    int
+	ResponsesCompactionMaxInputRunes                    int
+	ResponsesComputerBackend                            string
+	ChatCompletionsStoreWhenOmitted                     bool
+	ChatCompletionsUpstreamCompatibility                []ChatCompletionsUpstreamCompatibilityRule
+	ResponsesMode                                       string
+	ResponsesWebSocketEnabled                           bool
+	ResponsesCustomToolsMode                            string
+	ResponsesConstrainedDecodingBackend                 string
+	ResponsesUpstreamToolCompatibility                  []ResponsesUpstreamToolCompatibilityRule
+	ResponsesCodexEnableCompatibility                   bool
+	ResponsesCodexForceToolChoiceRequired               bool
+	ResponsesCodexForceToolChoiceRequiredDisabledModels []string
+	ResponsesCodexUpstreamInputCompatibility            []ResponsesCodexUpstreamInputCompatibilityRule
+	ResponsesCodexModelMetadata                         []ResponsesCodexModelMetadata
+	ResponsesCodeInterpreterBackend                     string
+	ResponsesCodeInterpreterPythonBinary                string
+	ResponsesCodeInterpreterDockerBinary                string
+	ResponsesCodeInterpreterDockerImage                 string
+	ResponsesCodeInterpreterDockerMemory                string
+	ResponsesCodeInterpreterDockerCPU                   string
+	ResponsesCodeInterpreterDockerPids                  int
+	ResponsesCodeInterpreterTimeout                     time.Duration
+	ResponsesCodeInterpreterInputFileURLPolicy          string
+	ResponsesCodeInterpreterInputFileURLAllowHosts      []string
+	ResponsesCodeInterpreterCleanupInterval             time.Duration
+	ConfigFile                                          string
+}
+
+type ResponsesUpstreamToolCompatibilityRule struct {
+	Model         string   `mapstructure:"model"`
+	DisabledTools []string `mapstructure:"disabled_tools"`
+}
+
+type ChatCompletionsUpstreamCompatibilityRule struct {
+	Model                            string `mapstructure:"model"`
+	RemapDeveloperRole               bool   `mapstructure:"remap_developer_role"`
+	DefaultThinking                  string `mapstructure:"default_thinking"`
+	DefaultMaxTokens                 int    `mapstructure:"default_max_tokens"`
+	JSONSchemaMode                   string `mapstructure:"json_schema_mode"`
+	EnsureToolParameterPropertyTypes bool   `mapstructure:"ensure_tool_parameter_property_types"`
+	OmitEmptyAssistantToolContent    bool   `mapstructure:"omit_empty_assistant_tool_content"`
+}
+
+type ResponsesCodexUpstreamInputCompatibilityRule struct {
+	Model string `mapstructure:"model"`
+	Mode  string `mapstructure:"mode"`
+}
+
+type ResponsesCodexModelMetadata struct {
+	Model                         string                         `mapstructure:"model"`
+	DisplayName                   string                         `mapstructure:"display_name"`
+	Description                   string                         `mapstructure:"description"`
+	ContextWindow                 int64                          `mapstructure:"context_window"`
+	MaxContextWindow              int64                          `mapstructure:"max_context_window"`
+	AutoCompactTokenLimit         int64                          `mapstructure:"auto_compact_token_limit"`
+	EffectiveContextWindowPercent int64                          `mapstructure:"effective_context_window_percent"`
+	DefaultReasoningLevel         string                         `mapstructure:"default_reasoning_level"`
+	SupportedReasoningLevels      []string                       `mapstructure:"supported_reasoning_levels"`
+	SupportsReasoningSummaries    bool                           `mapstructure:"supports_reasoning_summaries"`
+	DefaultReasoningSummary       string                         `mapstructure:"default_reasoning_summary"`
+	ShellType                     string                         `mapstructure:"shell_type"`
+	ApplyPatchToolType            string                         `mapstructure:"apply_patch_tool_type"`
+	WebSearchToolType             string                         `mapstructure:"web_search_tool_type"`
+	SupportsParallelToolCalls     bool                           `mapstructure:"supports_parallel_tool_calls"`
+	SupportVerbosity              bool                           `mapstructure:"support_verbosity"`
+	DefaultVerbosity              string                         `mapstructure:"default_verbosity"`
+	SupportsImageDetailOriginal   bool                           `mapstructure:"supports_image_detail_original"`
+	SupportsSearchTool            bool                           `mapstructure:"supports_search_tool"`
+	InputModalities               []string                       `mapstructure:"input_modalities"`
+	Visibility                    string                         `mapstructure:"visibility"`
+	SupportedInAPI                *bool                          `mapstructure:"supported_in_api"`
+	Priority                      *int                           `mapstructure:"priority"`
+	AdditionalSpeedTiers          []string                       `mapstructure:"additional_speed_tiers"`
+	ExperimentalSupportedTools    []string                       `mapstructure:"experimental_supported_tools"`
+	AvailabilityNuxMessage        string                         `mapstructure:"availability_nux_message"`
+	TruncationPolicy              ResponsesCodexTruncationPolicy `mapstructure:"truncation_policy"`
+	BaseInstructions              string                         `mapstructure:"base_instructions"`
+}
+
+type ResponsesCodexTruncationPolicy struct {
+	Mode  string `mapstructure:"mode"`
+	Limit int64  `mapstructure:"limit"`
 }
 
 const (
@@ -138,46 +199,47 @@ func Load(configPath string) (Config, error) {
 	}
 
 	cfg := Config{
-		Addr:                                           strings.TrimSpace(v.GetString("shim.addr")),
-		StorageBackend:                                 strings.ToLower(strings.TrimSpace(v.GetString("storage.backend"))),
-		SQLitePath:                                     strings.TrimSpace(v.GetString("sqlite.path")),
-		SQLiteMaintenanceCleanupInterval:               0,
-		LlamaBaseURL:                                   strings.TrimRight(strings.TrimSpace(v.GetString("llama.base_url")), "/"),
-		ConfigFile:                                     v.ConfigFileUsed(),
-		ShimAuthMode:                                   strings.ToLower(strings.TrimSpace(v.GetString("shim.auth.mode"))),
-		ShimAuthBearerTokens:                           parseStringList(v, "shim.auth.bearer_tokens"),
-		ShimRateLimitEnabled:                           v.GetBool("shim.rate_limit.enabled"),
-		ShimMetricsEnabled:                             v.GetBool("shim.metrics.enabled"),
-		ShimMetricsPath:                                strings.TrimSpace(v.GetString("shim.metrics.path")),
-		LogLevel:                                       slog.LevelInfo,
-		LogFilePath:                                    strings.TrimSpace(v.GetString("log.file_path")),
-		RetrievalIndexBackend:                          strings.TrimSpace(v.GetString("retrieval.index.backend")),
-		RetrievalEmbedderBackend:                       strings.TrimSpace(v.GetString("retrieval.embedder.backend")),
-		RetrievalEmbedderBaseURL:                       strings.TrimSpace(v.GetString("retrieval.embedder.base_url")),
-		RetrievalEmbedderModel:                         strings.TrimSpace(v.GetString("retrieval.embedder.model")),
-		ResponsesWebSearchBackend:                      strings.ToLower(strings.TrimSpace(v.GetString("responses.web_search.backend"))),
-		ResponsesWebSearchBaseURL:                      strings.TrimSpace(v.GetString("responses.web_search.base_url")),
-		ResponsesImageGenerationBackend:                strings.ToLower(strings.TrimSpace(v.GetString("responses.image_generation.backend"))),
-		ResponsesImageGenerationBaseURL:                strings.TrimSpace(v.GetString("responses.image_generation.base_url")),
-		ResponsesCompactionBackend:                     strings.ToLower(strings.TrimSpace(v.GetString("responses.compaction.backend"))),
-		ResponsesCompactionBaseURL:                     strings.TrimSpace(v.GetString("responses.compaction.base_url")),
-		ResponsesCompactionModel:                       strings.TrimSpace(v.GetString("responses.compaction.model")),
-		ResponsesComputerBackend:                       strings.ToLower(strings.TrimSpace(v.GetString("responses.computer.backend"))),
-		ChatCompletionsStoreWhenOmitted:                v.GetBool("chat_completions.default_store_when_omitted"),
-		ResponsesMode:                                  strings.ToLower(strings.TrimSpace(v.GetString("responses.mode"))),
-		ResponsesWebSocketEnabled:                      v.GetBool("responses.websocket.enabled"),
-		ResponsesCustomToolsMode:                       strings.ToLower(strings.TrimSpace(v.GetString("responses.custom_tools.mode"))),
-		ResponsesConstrainedDecodingBackend:            strings.ToLower(strings.TrimSpace(v.GetString("responses.constrained_decoding.backend"))),
-		ResponsesCodexEnableCompatibility:              v.GetBool("responses.codex.enable_compatibility"),
-		ResponsesCodexForceToolChoiceRequired:          v.GetBool("responses.codex.force_tool_choice_required"),
-		ResponsesCodeInterpreterBackend:                strings.ToLower(strings.TrimSpace(v.GetString("responses.code_interpreter.backend"))),
-		ResponsesCodeInterpreterPythonBinary:           strings.TrimSpace(v.GetString("responses.code_interpreter.python_binary")),
-		ResponsesCodeInterpreterDockerBinary:           strings.TrimSpace(v.GetString("responses.code_interpreter.docker.binary")),
-		ResponsesCodeInterpreterDockerImage:            strings.TrimSpace(v.GetString("responses.code_interpreter.docker.image")),
-		ResponsesCodeInterpreterDockerMemory:           strings.TrimSpace(v.GetString("responses.code_interpreter.docker.memory_limit")),
-		ResponsesCodeInterpreterDockerCPU:              strings.TrimSpace(v.GetString("responses.code_interpreter.docker.cpu_limit")),
-		ResponsesCodeInterpreterInputFileURLPolicy:     strings.ToLower(strings.TrimSpace(v.GetString("responses.code_interpreter.input_file_url_policy"))),
-		ResponsesCodeInterpreterInputFileURLAllowHosts: parseStringList(v, "responses.code_interpreter.input_file_url_allow_hosts"),
+		Addr:                                  strings.TrimSpace(v.GetString("shim.addr")),
+		StorageBackend:                        strings.ToLower(strings.TrimSpace(v.GetString("storage.backend"))),
+		SQLitePath:                            strings.TrimSpace(v.GetString("sqlite.path")),
+		SQLiteMaintenanceCleanupInterval:      0,
+		LlamaBaseURL:                          strings.TrimRight(strings.TrimSpace(v.GetString("llama.base_url")), "/"),
+		ConfigFile:                            v.ConfigFileUsed(),
+		ShimAuthMode:                          strings.ToLower(strings.TrimSpace(v.GetString("shim.auth.mode"))),
+		ShimAuthBearerTokens:                  parseStringList(v, "shim.auth.bearer_tokens"),
+		ShimRateLimitEnabled:                  v.GetBool("shim.rate_limit.enabled"),
+		ShimMetricsEnabled:                    v.GetBool("shim.metrics.enabled"),
+		ShimMetricsPath:                       strings.TrimSpace(v.GetString("shim.metrics.path")),
+		LogLevel:                              slog.LevelInfo,
+		LogFilePath:                           strings.TrimSpace(v.GetString("log.file_path")),
+		RetrievalIndexBackend:                 strings.TrimSpace(v.GetString("retrieval.index.backend")),
+		RetrievalEmbedderBackend:              strings.TrimSpace(v.GetString("retrieval.embedder.backend")),
+		RetrievalEmbedderBaseURL:              strings.TrimSpace(v.GetString("retrieval.embedder.base_url")),
+		RetrievalEmbedderModel:                strings.TrimSpace(v.GetString("retrieval.embedder.model")),
+		ResponsesWebSearchBackend:             strings.ToLower(strings.TrimSpace(v.GetString("responses.web_search.backend"))),
+		ResponsesWebSearchBaseURL:             strings.TrimSpace(v.GetString("responses.web_search.base_url")),
+		ResponsesImageGenerationBackend:       strings.ToLower(strings.TrimSpace(v.GetString("responses.image_generation.backend"))),
+		ResponsesImageGenerationBaseURL:       strings.TrimSpace(v.GetString("responses.image_generation.base_url")),
+		ResponsesCompactionBackend:            strings.ToLower(strings.TrimSpace(v.GetString("responses.compaction.backend"))),
+		ResponsesCompactionBaseURL:            strings.TrimSpace(v.GetString("responses.compaction.base_url")),
+		ResponsesCompactionModel:              strings.TrimSpace(v.GetString("responses.compaction.model")),
+		ResponsesComputerBackend:              strings.ToLower(strings.TrimSpace(v.GetString("responses.computer.backend"))),
+		ChatCompletionsStoreWhenOmitted:       v.GetBool("chat_completions.default_store_when_omitted"),
+		ResponsesMode:                         strings.ToLower(strings.TrimSpace(v.GetString("responses.mode"))),
+		ResponsesWebSocketEnabled:             v.GetBool("responses.websocket.enabled"),
+		ResponsesCustomToolsMode:              strings.ToLower(strings.TrimSpace(v.GetString("responses.custom_tools.mode"))),
+		ResponsesConstrainedDecodingBackend:   strings.ToLower(strings.TrimSpace(v.GetString("responses.constrained_decoding.backend"))),
+		ResponsesCodexEnableCompatibility:     v.GetBool("responses.codex.enable_compatibility"),
+		ResponsesCodexForceToolChoiceRequired: v.GetBool("responses.codex.force_tool_choice_required"),
+		ResponsesCodexForceToolChoiceRequiredDisabledModels: parseStringList(v, "responses.codex.force_tool_choice_required_disabled_models"),
+		ResponsesCodeInterpreterBackend:                     strings.ToLower(strings.TrimSpace(v.GetString("responses.code_interpreter.backend"))),
+		ResponsesCodeInterpreterPythonBinary:                strings.TrimSpace(v.GetString("responses.code_interpreter.python_binary")),
+		ResponsesCodeInterpreterDockerBinary:                strings.TrimSpace(v.GetString("responses.code_interpreter.docker.binary")),
+		ResponsesCodeInterpreterDockerImage:                 strings.TrimSpace(v.GetString("responses.code_interpreter.docker.image")),
+		ResponsesCodeInterpreterDockerMemory:                strings.TrimSpace(v.GetString("responses.code_interpreter.docker.memory_limit")),
+		ResponsesCodeInterpreterDockerCPU:                   strings.TrimSpace(v.GetString("responses.code_interpreter.docker.cpu_limit")),
+		ResponsesCodeInterpreterInputFileURLPolicy:          strings.ToLower(strings.TrimSpace(v.GetString("responses.code_interpreter.input_file_url_policy"))),
+		ResponsesCodeInterpreterInputFileURLAllowHosts:      parseStringList(v, "responses.code_interpreter.input_file_url_allow_hosts"),
 	}
 	if cfg.ResponsesCodeInterpreterBackend == "" {
 		if v.GetBool("responses.code_interpreter.enable_unsafe_host_executor") {
@@ -186,6 +248,26 @@ func Load(configPath string) (Config, error) {
 			cfg.ResponsesCodeInterpreterBackend = ResponsesCodeInterpreterBackendDisabled
 		}
 	}
+	chatCompletionsUpstreamCompatibility, err := parseChatCompletionsUpstreamCompatibility(v)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.ChatCompletionsUpstreamCompatibility = chatCompletionsUpstreamCompatibility
+	upstreamToolCompatibility, err := parseResponsesUpstreamToolCompatibility(v)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.ResponsesUpstreamToolCompatibility = upstreamToolCompatibility
+	codexUpstreamInputCompatibility, err := parseResponsesCodexUpstreamInputCompatibility(v)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.ResponsesCodexUpstreamInputCompatibility = codexUpstreamInputCompatibility
+	codexModelMetadata, err := parseResponsesCodexModelMetadata(v)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.ResponsesCodexModelMetadata = codexModelMetadata
 	storageBackend, err := storage.NormalizeBackend(cfg.StorageBackend)
 	if err != nil {
 		return Config{}, fmt.Errorf("parse storage.backend: %w", err)
@@ -519,12 +601,17 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("retrieval.embedder.base_url", "")
 	v.SetDefault("retrieval.embedder.model", "")
 	v.SetDefault("chat_completions.default_store_when_omitted", true)
+	v.SetDefault("chat_completions.upstream_compatibility.models", []map[string]any{})
 	v.SetDefault("responses.mode", ResponsesModePreferLocal)
 	v.SetDefault("responses.websocket.enabled", true)
 	v.SetDefault("responses.custom_tools.mode", "auto")
 	v.SetDefault("responses.constrained_decoding.backend", ResponsesConstrainedDecodingBackendShimValidateRepair)
+	v.SetDefault("responses.upstream_tool_compatibility.models", []map[string]any{})
 	v.SetDefault("responses.codex.enable_compatibility", true)
 	v.SetDefault("responses.codex.force_tool_choice_required", true)
+	v.SetDefault("responses.codex.force_tool_choice_required_disabled_models", []string{})
+	v.SetDefault("responses.codex.upstream_input_compatibility.models", []map[string]any{})
+	v.SetDefault("responses.codex.model_metadata.models", []map[string]any{})
 	v.SetDefault("responses.web_search.backend", websearch.BackendDisabled)
 	v.SetDefault("responses.web_search.base_url", "")
 	v.SetDefault("responses.web_search.timeout", "10s")
@@ -690,6 +777,226 @@ func parseConstrainedDecodingBackend(value string) error {
 	default:
 		return strconv.ErrSyntax
 	}
+}
+
+func parseChatCompletionsUpstreamCompatibility(v *viper.Viper) ([]ChatCompletionsUpstreamCompatibilityRule, error) {
+	var rules []ChatCompletionsUpstreamCompatibilityRule
+	if err := v.UnmarshalKey("chat_completions.upstream_compatibility.models", &rules); err != nil {
+		return nil, fmt.Errorf("parse chat_completions.upstream_compatibility.models: %w", err)
+	}
+
+	for i := range rules {
+		rules[i].Model = strings.TrimSpace(rules[i].Model)
+		if rules[i].Model == "" {
+			return nil, fmt.Errorf("parse chat_completions.upstream_compatibility.models: model is required")
+		}
+		defaultThinking, err := normalizeConfigEnum(rules[i].DefaultThinking, "passthrough", []string{"passthrough", "disabled"})
+		if err != nil {
+			return nil, fmt.Errorf("parse chat_completions.upstream_compatibility.models: default_thinking: %w", err)
+		}
+		jsonSchemaMode, err := normalizeConfigEnum(rules[i].JSONSchemaMode, "passthrough", []string{"passthrough", "json_object_instruction"})
+		if err != nil {
+			return nil, fmt.Errorf("parse chat_completions.upstream_compatibility.models: json_schema_mode: %w", err)
+		}
+		rules[i].DefaultThinking = defaultThinking
+		rules[i].JSONSchemaMode = jsonSchemaMode
+		if rules[i].DefaultMaxTokens < 0 {
+			return nil, fmt.Errorf("parse chat_completions.upstream_compatibility.models: default_max_tokens must be greater than or equal to 0")
+		}
+	}
+	return rules, nil
+}
+
+func parseResponsesUpstreamToolCompatibility(v *viper.Viper) ([]ResponsesUpstreamToolCompatibilityRule, error) {
+	var rules []ResponsesUpstreamToolCompatibilityRule
+	if err := v.UnmarshalKey("responses.upstream_tool_compatibility.models", &rules); err != nil {
+		return nil, fmt.Errorf("parse responses.upstream_tool_compatibility.models: %w", err)
+	}
+
+	for i := range rules {
+		rules[i].Model = strings.TrimSpace(rules[i].Model)
+		if rules[i].Model == "" {
+			return nil, fmt.Errorf("parse responses.upstream_tool_compatibility.models: model is required")
+		}
+		seen := make(map[string]struct{}, len(rules[i].DisabledTools))
+		disabled := make([]string, 0, len(rules[i].DisabledTools))
+		for _, tool := range rules[i].DisabledTools {
+			normalized := strings.ToLower(strings.TrimSpace(tool))
+			if normalized == "" {
+				continue
+			}
+			if _, ok := seen[normalized]; ok {
+				continue
+			}
+			seen[normalized] = struct{}{}
+			disabled = append(disabled, normalized)
+		}
+		rules[i].DisabledTools = disabled
+	}
+	return rules, nil
+}
+
+func parseResponsesCodexUpstreamInputCompatibility(v *viper.Viper) ([]ResponsesCodexUpstreamInputCompatibilityRule, error) {
+	var rules []ResponsesCodexUpstreamInputCompatibilityRule
+	if err := v.UnmarshalKey("responses.codex.upstream_input_compatibility.models", &rules); err != nil {
+		return nil, fmt.Errorf("parse responses.codex.upstream_input_compatibility.models: %w", err)
+	}
+
+	for i := range rules {
+		rules[i].Model = strings.TrimSpace(rules[i].Model)
+		if rules[i].Model == "" {
+			return nil, fmt.Errorf("parse responses.codex.upstream_input_compatibility.models: model is required")
+		}
+		mode, err := normalizeConfigEnum(rules[i].Mode, "auto", []string{"auto", "structured", "stringify"})
+		if err != nil {
+			return nil, fmt.Errorf("parse responses.codex.upstream_input_compatibility.models: mode: %w", err)
+		}
+		rules[i].Mode = mode
+	}
+	return rules, nil
+}
+
+func parseResponsesCodexModelMetadata(v *viper.Viper) ([]ResponsesCodexModelMetadata, error) {
+	var models []ResponsesCodexModelMetadata
+	if err := v.UnmarshalKey("responses.codex.model_metadata.models", &models); err != nil {
+		return nil, fmt.Errorf("parse responses.codex.model_metadata.models: %w", err)
+	}
+
+	for i := range models {
+		models[i].Model = strings.TrimSpace(models[i].Model)
+		if models[i].Model == "" {
+			return nil, fmt.Errorf("parse responses.codex.model_metadata.models: model is required")
+		}
+		if models[i].DisplayName = strings.TrimSpace(models[i].DisplayName); models[i].DisplayName == "" {
+			models[i].DisplayName = models[i].Model
+		}
+		if models[i].Description = strings.TrimSpace(models[i].Description); models[i].Description == "" {
+			models[i].Description = "OpenAI-compatible upstream routed through llama_shim."
+		}
+		if models[i].ContextWindow < 0 {
+			return nil, fmt.Errorf("parse responses.codex.model_metadata.models: context_window must be non-negative")
+		}
+		if models[i].MaxContextWindow < 0 {
+			return nil, fmt.Errorf("parse responses.codex.model_metadata.models: max_context_window must be non-negative")
+		}
+		if models[i].AutoCompactTokenLimit < 0 {
+			return nil, fmt.Errorf("parse responses.codex.model_metadata.models: auto_compact_token_limit must be non-negative")
+		}
+		if models[i].EffectiveContextWindowPercent < 0 {
+			return nil, fmt.Errorf("parse responses.codex.model_metadata.models: effective_context_window_percent must be non-negative")
+		}
+		if models[i].EffectiveContextWindowPercent == 0 {
+			models[i].EffectiveContextWindowPercent = 95
+		}
+		if models[i].EffectiveContextWindowPercent > 100 {
+			return nil, fmt.Errorf("parse responses.codex.model_metadata.models: effective_context_window_percent must be <= 100")
+		}
+		level, err := normalizeConfigEnum(models[i].DefaultReasoningLevel, "high", []string{"none", "minimal", "low", "medium", "high", "xhigh"})
+		if err != nil {
+			return nil, fmt.Errorf("parse responses.codex.model_metadata.models: default_reasoning_level: %w", err)
+		}
+		models[i].DefaultReasoningLevel = level
+		if len(models[i].SupportedReasoningLevels) == 0 {
+			models[i].SupportedReasoningLevels = []string{"low", "medium", "high"}
+		}
+		for j, value := range models[i].SupportedReasoningLevels {
+			level, err := normalizeConfigEnum(value, "", []string{"none", "minimal", "low", "medium", "high", "xhigh"})
+			if err != nil {
+				return nil, fmt.Errorf("parse responses.codex.model_metadata.models: supported_reasoning_levels: %w", err)
+			}
+			models[i].SupportedReasoningLevels[j] = level
+		}
+		summary, err := normalizeConfigEnum(models[i].DefaultReasoningSummary, "none", []string{"auto", "concise", "detailed", "none"})
+		if err != nil {
+			return nil, fmt.Errorf("parse responses.codex.model_metadata.models: default_reasoning_summary: %w", err)
+		}
+		models[i].DefaultReasoningSummary = summary
+		shellType, err := normalizeConfigEnum(models[i].ShellType, "shell_command", []string{"default", "local", "unified_exec", "disabled", "shell_command"})
+		if err != nil {
+			return nil, fmt.Errorf("parse responses.codex.model_metadata.models: shell_type: %w", err)
+		}
+		models[i].ShellType = shellType
+		applyPatchToolType, err := normalizeConfigEnum(models[i].ApplyPatchToolType, "", []string{"freeform", "function"})
+		if err != nil {
+			return nil, fmt.Errorf("parse responses.codex.model_metadata.models: apply_patch_tool_type: %w", err)
+		}
+		models[i].ApplyPatchToolType = applyPatchToolType
+		webSearchToolType, err := normalizeConfigEnum(models[i].WebSearchToolType, "text", []string{"text", "text_and_image"})
+		if err != nil {
+			return nil, fmt.Errorf("parse responses.codex.model_metadata.models: web_search_tool_type: %w", err)
+		}
+		models[i].WebSearchToolType = webSearchToolType
+		defaultVerbosity, err := normalizeConfigEnum(models[i].DefaultVerbosity, "", []string{"low", "medium", "high"})
+		if err != nil {
+			return nil, fmt.Errorf("parse responses.codex.model_metadata.models: default_verbosity: %w", err)
+		}
+		models[i].DefaultVerbosity = defaultVerbosity
+		if len(models[i].InputModalities) == 0 {
+			models[i].InputModalities = []string{"text"}
+		}
+		for j, value := range models[i].InputModalities {
+			modality, err := normalizeConfigEnum(value, "", []string{"text", "image"})
+			if err != nil {
+				return nil, fmt.Errorf("parse responses.codex.model_metadata.models: input_modalities: %w", err)
+			}
+			models[i].InputModalities[j] = modality
+		}
+		visibility, err := normalizeConfigEnum(models[i].Visibility, "list", []string{"list", "hide", "none"})
+		if err != nil {
+			return nil, fmt.Errorf("parse responses.codex.model_metadata.models: visibility: %w", err)
+		}
+		models[i].Visibility = visibility
+		if models[i].SupportedInAPI == nil {
+			value := true
+			models[i].SupportedInAPI = &value
+		}
+		if models[i].Priority == nil {
+			value := 100
+			models[i].Priority = &value
+		}
+		models[i].AdditionalSpeedTiers = normalizeStringList(models[i].AdditionalSpeedTiers)
+		models[i].ExperimentalSupportedTools = normalizeStringList(models[i].ExperimentalSupportedTools)
+		models[i].AvailabilityNuxMessage = strings.TrimSpace(models[i].AvailabilityNuxMessage)
+		truncationMode, err := normalizeConfigEnum(models[i].TruncationPolicy.Mode, "bytes", []string{"bytes", "tokens"})
+		if err != nil {
+			return nil, fmt.Errorf("parse responses.codex.model_metadata.models: truncation_policy.mode: %w", err)
+		}
+		models[i].TruncationPolicy.Mode = truncationMode
+		if models[i].TruncationPolicy.Limit < 0 {
+			return nil, fmt.Errorf("parse responses.codex.model_metadata.models: truncation_policy.limit must be non-negative")
+		}
+		if models[i].TruncationPolicy.Limit == 0 {
+			models[i].TruncationPolicy.Limit = 10000
+		}
+	}
+	return models, nil
+}
+
+func normalizeStringList(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := values[:0]
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
+}
+
+func normalizeConfigEnum(value string, defaultValue string, allowed []string) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	if normalized == "" {
+		return defaultValue, nil
+	}
+	for _, candidate := range allowed {
+		if normalized == candidate {
+			return normalized, nil
+		}
+	}
+	return "", strconv.ErrSyntax
 }
 
 func parseResponsesMode(value string) error {

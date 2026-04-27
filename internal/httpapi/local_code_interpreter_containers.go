@@ -10,7 +10,7 @@ import (
 
 	"llama_shim/internal/domain"
 	"llama_shim/internal/sandbox"
-	"llama_shim/internal/storage/sqlite"
+	"llama_shim/internal/storage"
 )
 
 const (
@@ -120,7 +120,7 @@ func (m localCodeInterpreterContainerManager) getContainer(ctx context.Context, 
 	}
 	owner = strings.TrimSpace(owner)
 	if owner != "" && session.Owner != owner {
-		return domain.CodeInterpreterSession{}, sqlite.ErrNotFound
+		return domain.CodeInterpreterSession{}, storage.ErrNotFound
 	}
 	session, err = m.expireIfNeeded(ctx, session)
 	if err != nil {
@@ -187,7 +187,7 @@ func (m localCodeInterpreterContainerManager) restoreContainerFiles(ctx context.
 	for _, file := range files {
 		backingFile, err := m.files.GetFile(ctx, file.BackingFileID)
 		if err != nil {
-			if errors.Is(err, sqlite.ErrNotFound) {
+			if errors.Is(err, storage.ErrNotFound) {
 				continue
 			}
 			return err
@@ -305,7 +305,7 @@ func (m localCodeInterpreterContainerManager) saveContainerFileMetadata(ctx cont
 	}
 	containerPath := localCodeInterpreterContainerPath(workspaceName)
 	replacedFile, err := m.sessions.GetCodeInterpreterContainerFileByPath(ctx, containerID, containerPath)
-	if err != nil && !errors.Is(err, sqlite.ErrNotFound) {
+	if err != nil && !errors.Is(err, storage.ErrNotFound) {
 		return domain.CodeInterpreterContainerFile{}, err
 	}
 	containerFileID, err := domain.NewPrefixedID("cfile")
@@ -517,7 +517,7 @@ func (m localCodeInterpreterContainerManager) cleanupOwnedBackingFile(ctx contex
 	if refCount > 0 {
 		return nil
 	}
-	if err := m.files.DeleteFile(ctx, file.BackingFileID); err != nil && !errors.Is(err, sqlite.ErrNotFound) {
+	if err := m.files.DeleteFile(ctx, file.BackingFileID); err != nil && !errors.Is(err, storage.ErrNotFound) {
 		return err
 	}
 	return nil

@@ -8,24 +8,32 @@ import (
 	"strings"
 
 	"llama_shim/internal/llama"
-	"llama_shim/internal/storage/sqlite"
+	"llama_shim/internal/storage"
+	"llama_shim/internal/upstreamcompat"
 )
+
+type proxyStore interface {
+	storage.ChatCompletionStore
+	storage.VectorStore
+}
 
 type proxyHandler struct {
 	logger                          *slog.Logger
 	client                          *llama.Client
-	store                           *sqlite.Store
+	store                           proxyStore
 	serviceLimits                   ServiceLimits
 	chatCompletionsStoreWhenOmitted bool
+	chatCompletionsCompatibility    upstreamcompat.ChatCompletionOptions
 }
 
-func newProxyHandler(logger *slog.Logger, client *llama.Client, store *sqlite.Store, serviceLimits ServiceLimits, chatCompletionsStoreWhenOmitted bool) *proxyHandler {
+func newProxyHandler(logger *slog.Logger, client *llama.Client, store proxyStore, serviceLimits ServiceLimits, chatCompletionsStoreWhenOmitted bool, chatCompletionsCompatibility []upstreamcompat.ChatCompletionRule) *proxyHandler {
 	return &proxyHandler{
 		logger:                          logger,
 		client:                          client,
 		store:                           store,
 		serviceLimits:                   normalizeServiceLimits(serviceLimits),
 		chatCompletionsStoreWhenOmitted: chatCompletionsStoreWhenOmitted,
+		chatCompletionsCompatibility:    upstreamcompat.ChatCompletionOptions{Rules: append([]upstreamcompat.ChatCompletionRule(nil), chatCompletionsCompatibility...)},
 	}
 }
 

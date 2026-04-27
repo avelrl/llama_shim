@@ -137,6 +137,44 @@ chat_completions:
   # current OpenAI default for new accounts
   # false: only explicit `store: true` is shadow-stored locally
   default_store_when_omitted: true
+  upstream_compatibility:
+    # Model-specific request-shape compatibility for upstream
+    # /v1/chat/completions calls. These rules affect both direct
+    # /v1/chat/completions proxying and shim-generated Chat requests used by
+    # local Responses helpers. They do not change the public OpenAI-shaped
+    # request accepted by the shim.
+    models: []
+    # Example for DeepSeek-compatible gateways:
+    # models:
+    #   - model: deepseek-*
+    #     # DeepSeek Chat accepts system/user/assistant/tool roles, while
+    #     # OpenAI Chat examples can send role=developer.
+    #     remap_developer_role: true
+    #     # passthrough: do not add a thinking field
+    #     # disabled: add thinking: {type: disabled} when the caller omitted it
+    #     default_thinking: disabled
+    #     # passthrough: forward response_format unchanged
+    #     # json_object_instruction: downgrade Chat response_format=json_schema
+    #     # to json_object and prepend the schema as a system instruction
+    #     json_schema_mode: json_object_instruction
+    # Example for Kimi/Moonshot-compatible gateways:
+    # models:
+    #   - model: Kimi-*
+    #     # Kimi CLI defaults coding sessions to thinking disabled unless the
+    #     # operator explicitly enables it. This is the safer tool-loop smoke
+    #     # default.
+    #     default_thinking: disabled
+    #     # Kimi's own CLI defaults agent Chat calls to a large generation
+    #     # budget. This value is applied only when the client omitted both
+    #     # max_tokens and max_completion_tokens.
+    #     default_max_tokens: 32000
+    #     # Kimi rejects some JSON Schema-valid function parameter properties
+    #     # that omit type, for example enum-only nested fields. This fills in
+    #     # compatible type values before forwarding tools upstream.
+    #     ensure_tool_parameter_property_types: true
+    #     # Kimi's coding compatibility layer accepts omitted assistant
+    #     # content on tool-call messages more reliably than empty content.
+    #     omit_empty_assistant_tool_content: true
 
 # Settings for the OpenAI Responses-compatible layer.
 responses:
@@ -212,12 +250,116 @@ responses:
     # grammar.syntax=regex and structured_outputs.grammar for the shim-supported
     # grammar.syntax=lark subset when the local constrained runtime is selected.
     backend: shim_validate_repair
+  upstream_tool_compatibility:
+    # Model-specific upstream compatibility filters. Exact names and `*`
+    # wildcards are supported. This does not change the OpenAI Responses
+    # contract: passive declarations of disabled tools are removed before
+    # proxying to that upstream model, while explicit tool_choice for a
+    # disabled tool is rejected.
+    models: []
+    # Example for LiteLLM/Kimi backends that reject some official/OpenAI-SDK
+    # Responses tool types. SDK NamespaceTool is sent on the wire as
+    # type: namespace; namespace_tool is accepted here as a config alias.
+    # models:
+    #   - model: Kimi-*
+    #     disabled_tools:
+    #       - image_generation
+    #       - namespace
   codex:
     # Enables Codex-compatible payload and response adaptations for /v1/responses.
     enable_compatibility: true
     # When true, Codex-like requests with tool_choice=auto are rewritten to
     # required before they are sent upstream.
     force_tool_choice_required: true
+    # Model patterns where the required-tool rewrite is disabled. This is useful
+    # for upstreams that can call tools but degrade on ordinary assistant
+    # questions when every Codex turn is forced to call a tool.
+    force_tool_choice_required_disabled_models: []
+    # Example:
+    # force_tool_choice_required_disabled_models:
+    #   - Kimi-*
+    upstream_input_compatibility:
+      # Per-model upstream request shape overrides for Codex-compatible clients.
+      # mode=auto keeps official structured Responses input and only falls back
+      # to a stringified transcript after a known upstream validation error.
+      # mode=stringify rewrites structured input to a plain text transcript
+      # before the first upstream request. Use this for OpenAI-compatible
+      # backends that reject structured Responses input after Codex tool output.
+      # mode=structured disables that pre-stringify shortcut for the model.
+      models: []
+      # Example:
+      # models:
+      #   - model: Kimi-*
+      #     mode: stringify
+    model_metadata:
+      # Optional Codex model catalog entries served only to Codex metadata
+      # requests (`/v1/models?client_version=...` or `/api/codex/models`).
+      # Ordinary OpenAI-compatible GET /v1/models stays proxied unchanged.
+      models: []
+      # Example:
+      # models:
+      #   - model: Kimi-K2.6
+      #     display_name: Kimi K2.6
+      #     description: OpenAI-compatible upstream routed through llama_shim.
+      #     context_window: 128000
+      #     max_context_window: 128000
+      #     auto_compact_token_limit: 0
+      #     effective_context_window_percent: 95
+      #     default_reasoning_level: high
+      #     supported_reasoning_levels: [low, medium, high]
+      #     supports_reasoning_summaries: false
+      #     default_reasoning_summary: none
+      #     shell_type: shell_command
+      #     apply_patch_tool_type: ""
+      #     web_search_tool_type: text
+      #     supports_parallel_tool_calls: false
+      #     support_verbosity: false
+      #     default_verbosity: ""
+      #     supports_image_detail_original: false
+      #     supports_search_tool: false
+      #     input_modalities: [text]
+      #     visibility: list
+      #     supported_in_api: true
+      #     priority: 100
+      #     additional_speed_tiers: []
+      #     experimental_supported_tools: []
+      #     availability_nux_message: ""
+      #     truncation_policy:
+      #       mode: bytes
+      #       limit: 10000
+      #     base_instructions: ""
+      # Example for a DeepSeek upstream that has passed the external tester:
+      # models:
+      #   - model: deepseek-v4-pro
+      #     display_name: DeepSeek V4 Pro
+      #     description: OpenAI-compatible DeepSeek upstream routed through llama_shim.
+      #     context_window: 128000
+      #     max_context_window: 128000
+      #     auto_compact_token_limit: 0
+      #     effective_context_window_percent: 90
+      #     default_reasoning_level: high
+      #     supported_reasoning_levels: [low, medium, high]
+      #     supports_reasoning_summaries: false
+      #     default_reasoning_summary: none
+      #     shell_type: shell_command
+      #     apply_patch_tool_type: ""
+      #     web_search_tool_type: text
+      #     supports_parallel_tool_calls: false
+      #     support_verbosity: false
+      #     default_verbosity: ""
+      #     supports_image_detail_original: false
+      #     supports_search_tool: false
+      #     input_modalities: [text]
+      #     visibility: list
+      #     supported_in_api: true
+      #     priority: 110
+      #     additional_speed_tiers: []
+      #     experimental_supported_tools: []
+      #     availability_nux_message: ""
+      #     truncation_policy:
+      #       mode: bytes
+      #       limit: 10000
+      #     base_instructions: ""
   code_interpreter:
     # disabled: reject shim-local code_interpreter execution
     # docker: hardened Docker-backed local execution and the only supported

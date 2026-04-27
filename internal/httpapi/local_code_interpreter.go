@@ -22,7 +22,6 @@ import (
 	"llama_shim/internal/sandbox"
 	"llama_shim/internal/service"
 	"llama_shim/internal/storage"
-	"llama_shim/internal/storage/sqlite"
 )
 
 const (
@@ -813,7 +812,7 @@ func (h *responseHandler) findReusableLocalCodeInterpreterSessionID(ctx context.
 		}
 		session, err := h.localCodeInterpreterSessions.GetCodeInterpreterSession(ctx, containerID)
 		if err != nil {
-			if errors.Is(err, sqlite.ErrNotFound) {
+			if errors.Is(err, storage.ErrNotFound) {
 				return "", false, nil
 			}
 			return "", false, err
@@ -861,7 +860,7 @@ func (h *responseHandler) resolveLocalCodeInterpreterPlanningFiles(ctx context.C
 	manager := h.localCodeInterpreterContainerManager()
 	session, err := manager.getContainer(ctx, containerID, false, strings.TrimSpace(container.Owner))
 	if err != nil {
-		if errors.Is(err, sqlite.ErrNotFound) {
+		if errors.Is(err, storage.ErrNotFound) {
 			return files, nil
 		}
 		var validationErr *domain.ValidationError
@@ -934,7 +933,7 @@ func (h *responseHandler) resolveLocalCodeInterpreterInputFiles(ctx context.Cont
 func (h *responseHandler) resolveLocalCodeInterpreterStoredInputFile(ctx context.Context, fileID string, usedNames map[string]int, field string) (localCodeInterpreterInputFile, error) {
 	file, err := h.localCodeInterpreterFiles.GetFile(ctx, fileID)
 	if err != nil {
-		if errors.Is(err, sqlite.ErrNotFound) {
+		if errors.Is(err, storage.ErrNotFound) {
 			if field == "input" {
 				return localCodeInterpreterInputFile{}, domain.NewValidationError(field, "unknown input_file.file_id value "+`"`+fileID+`"`+" in shim-local code_interpreter mode")
 			}

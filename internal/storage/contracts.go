@@ -13,6 +13,18 @@ type HealthStore interface {
 	Close() error
 }
 
+type Store interface {
+	HealthStore
+	ResponseStore
+	ResponseConversationStore
+	ConversationStore
+	FileStore
+	FileBackingStore
+	VectorStore
+	ChatCompletionStore
+	CodeInterpreterStore
+}
+
 type ResponseStore interface {
 	GetResponse(ctx context.Context, id string) (domain.StoredResponse, error)
 	GetResponseLineage(ctx context.Context, id string, maxItems int) ([]domain.StoredResponse, error)

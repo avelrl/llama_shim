@@ -18,6 +18,7 @@ import (
 	"llama_shim/internal/sandbox"
 	"llama_shim/internal/service"
 	"llama_shim/internal/storage/sqlite"
+	"llama_shim/internal/upstreamcompat"
 	"llama_shim/internal/websearch"
 )
 
@@ -62,8 +63,11 @@ type TestAppOptions struct {
 	ResponsesMode                         string
 	CustomToolsMode                       string
 	ResponsesConstrainedDecodingBackend   string
+	ChatCompletionsUpstreamCompatibility  []upstreamcompat.ChatCompletionRule
 	CodexCompatibilityEnabled             bool
 	ForceToolChoiceRequired               bool
+	CodexUpstreamInputCompatibility       []httpapi.CodexUpstreamInputCompatibilityRule
+	CodexModelMetadata                    []httpapi.CodexModelMetadata
 	ResponsesCompactionBackend            string
 	ResponsesCompactionModel              string
 	ResponsesCompactionRetainedItems      int
@@ -132,6 +136,7 @@ func NewTestAppWithOptions(t *testing.T, options TestAppOptions) *TestApp {
 	llamaClient := llama.NewClientWithOptions(llamaBaseURL, 200*time.Millisecond, llama.ClientOptions{
 		MaxConcurrentRequests:         llamaMaxConcurrentRequests,
 		MaxQueueWait:                  options.LlamaMaxQueueWait,
+		ChatCompletionsCompatibility:  append([]upstreamcompat.ChatCompletionRule(nil), options.ChatCompletionsUpstreamCompatibility...),
 		StartupCalibrationBearerToken: options.LlamaStartupCalibrationBearerToken,
 		Observer:                      metrics,
 	})
@@ -185,27 +190,30 @@ func NewTestAppWithOptions(t *testing.T, options TestAppOptions) *TestApp {
 			RetrievalMaxGroundingChunks:       options.RetrievalMaxGroundingChunks,
 			CodeInterpreterMaxConcurrentRuns:  options.CodeInterpreterMaxConcurrentRuns,
 		},
-		ChatCompletionsStoreWhenOmitted:       chatCompletionsStoreWhenOmitted,
-		ResponsesMode:                         responsesMode,
-		ResponsesWebSocketEnabled:             true,
-		ResponsesCustomToolsMode:              options.CustomToolsMode,
-		ResponsesConstrainedDecodingBackend:   options.ResponsesConstrainedDecodingBackend,
-		ResponsesCodexEnableCompatibility:     options.CodexCompatibilityEnabled,
-		ResponsesCodexForceToolChoiceRequired: options.ForceToolChoiceRequired,
-		ResponsesCompactionBackend:            options.ResponsesCompactionBackend,
-		ResponsesCompactionModel:              options.ResponsesCompactionModel,
-		ResponsesCompactionRetainedItems:      options.ResponsesCompactionRetainedItems,
-		ResponsesCompactionMaxInputRunes:      options.ResponsesCompactionMaxInputRunes,
-		ResponsesWebSearchBackend:             capabilityWebSearchBackend(options),
-		ResponsesImageGenerationBackend:       capabilityImageGenerationBackend(options),
-		WebSearchProvider:                     options.WebSearchProvider,
-		ImageGenerationProvider:               options.ImageGenerationProvider,
-		LocalComputer:                         localComputer,
-		LocalCodeInterpreter:                  localCodeInterpreter,
-		RetrievalIndexBackend:                 options.RetrievalConfig.IndexBackend,
-		RetrievalEmbedderBackend:              options.RetrievalConfig.Embedder.Backend,
-		RetrievalEmbedder:                     options.RetrievalEmbedder,
-		Store:                                 store,
+		ChatCompletionsStoreWhenOmitted:          chatCompletionsStoreWhenOmitted,
+		ChatCompletionsUpstreamCompatibility:     append([]upstreamcompat.ChatCompletionRule(nil), options.ChatCompletionsUpstreamCompatibility...),
+		ResponsesMode:                            responsesMode,
+		ResponsesWebSocketEnabled:                true,
+		ResponsesCustomToolsMode:                 options.CustomToolsMode,
+		ResponsesConstrainedDecodingBackend:      options.ResponsesConstrainedDecodingBackend,
+		ResponsesCodexEnableCompatibility:        options.CodexCompatibilityEnabled,
+		ResponsesCodexForceToolChoiceRequired:    options.ForceToolChoiceRequired,
+		ResponsesCodexUpstreamInputCompatibility: append([]httpapi.CodexUpstreamInputCompatibilityRule(nil), options.CodexUpstreamInputCompatibility...),
+		ResponsesCodexModelMetadata:              append([]httpapi.CodexModelMetadata(nil), options.CodexModelMetadata...),
+		ResponsesCompactionBackend:               options.ResponsesCompactionBackend,
+		ResponsesCompactionModel:                 options.ResponsesCompactionModel,
+		ResponsesCompactionRetainedItems:         options.ResponsesCompactionRetainedItems,
+		ResponsesCompactionMaxInputRunes:         options.ResponsesCompactionMaxInputRunes,
+		ResponsesWebSearchBackend:                capabilityWebSearchBackend(options),
+		ResponsesImageGenerationBackend:          capabilityImageGenerationBackend(options),
+		WebSearchProvider:                        options.WebSearchProvider,
+		ImageGenerationProvider:                  options.ImageGenerationProvider,
+		LocalComputer:                            localComputer,
+		LocalCodeInterpreter:                     localCodeInterpreter,
+		RetrievalIndexBackend:                    options.RetrievalConfig.IndexBackend,
+		RetrievalEmbedderBackend:                 options.RetrievalConfig.Embedder.Backend,
+		RetrievalEmbedder:                        options.RetrievalEmbedder,
+		Store:                                    store,
 	}))
 
 	var closeOnce sync.Once

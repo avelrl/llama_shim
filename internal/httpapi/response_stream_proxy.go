@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"llama_shim/internal/domain"
@@ -24,7 +25,12 @@ const (
 )
 
 func (h *responseHandler) proxyCreateStream(w http.ResponseWriter, r *http.Request, request CreateResponseRequest, requestJSON string, rawFields map[string]json.RawMessage, streamOptions responseStreamOptions) {
-	upstreamBody, plan, err := remapCustomToolsPayload(rawFields, h.customToolsMode, h.codexCompatibilityEnabled, h.forceCodexToolChoiceRequired)
+	upstreamBody, plan, err := remapCustomToolsPayloadWithCompatibility(rawFields, h.customToolsMode, h.codexCompatibilityEnabled, h.effectiveForceCodexToolChoiceRequired(rawFields), h.upstreamToolCompatibility)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	upstreamBody, err = h.applyConfiguredCodexUpstreamInputCompatibility(r.Context(), rawFields, upstreamBody)
 	if err != nil {
 		h.writeError(w, r, err)
 		return
@@ -212,7 +218,12 @@ func (h *responseHandler) createStreamViaUpstream(w http.ResponseWriter, r *http
 		return
 	}
 
-	upstreamBody, plan, err := buildUpstreamResponsesBody(rawFields, prepared.ContextItems, prepared.NormalizedInput, prepared.ToolCallRefs, h.customToolsMode, h.codexCompatibilityEnabled, h.forceCodexToolChoiceRequired)
+	upstreamBody, plan, err := buildUpstreamResponsesBodyWithCompatibility(rawFields, prepared.ContextItems, prepared.NormalizedInput, prepared.ToolCallRefs, h.customToolsMode, h.codexCompatibilityEnabled, h.effectiveForceCodexToolChoiceRequired(rawFields), h.upstreamToolCompatibility)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	upstreamBody, err = h.applyConfiguredCodexUpstreamInputCompatibility(r.Context(), rawFields, upstreamBody)
 	if err != nil {
 		h.writeError(w, r, err)
 		return
@@ -384,6 +395,19 @@ func (h *responseHandler) createStreamViaUpstream(w http.ResponseWriter, r *http
 }
 
 func (h *responseHandler) proxyResponseRequest(r *http.Request, body []byte) (*http.Response, error) {
+	ctx := r.Context()
+	started := time.Now()
+	logAttrs := summarizeResponsesRequestForLog(body)
+	if h.logger != nil && h.logger.Enabled(ctx, slog.LevelDebug) {
+		attrs := []any{
+			"request_id", RequestIDFromContext(ctx),
+			"client_request_id", ClientRequestIDFromContext(ctx),
+			"body_bytes", len(body),
+		}
+		attrs = append(attrs, logAttrs...)
+		h.logger.DebugContext(ctx, "responses upstream request started", attrs...)
+	}
+
 	cloned := r.Clone(r.Context())
 	cloned.Body = io.NopCloser(bytes.NewReader(body))
 	cloned.ContentLength = int64(len(body))
@@ -393,10 +417,38 @@ func (h *responseHandler) proxyResponseRequest(r *http.Request, body []byte) (*h
 	if cloned.Header.Get("X-Request-Id") == "" {
 		cloned.Header.Set("X-Request-Id", RequestIDFromContext(cloned.Context()))
 	}
-	return h.proxy.client.Proxy(cloned.Context(), cloned)
+	resp, err := h.proxy.client.Proxy(cloned.Context(), cloned)
+	duration := time.Since(started)
+	if err != nil {
+		if h.logger != nil {
+			attrs := []any{
+				"request_id", RequestIDFromContext(ctx),
+				"client_request_id", ClientRequestIDFromContext(ctx),
+				"duration_ms", duration.Milliseconds(),
+				"err", err,
+			}
+			attrs = append(attrs, logAttrs...)
+			h.logger.WarnContext(ctx, "responses upstream request failed", attrs...)
+		}
+		return nil, err
+	}
+	if h.logger != nil && h.logger.Enabled(ctx, slog.LevelDebug) {
+		attrs := []any{
+			"request_id", RequestIDFromContext(ctx),
+			"client_request_id", ClientRequestIDFromContext(ctx),
+			"duration_ms", duration.Milliseconds(),
+			"status", resp.StatusCode,
+			"content_type", resp.Header.Get("Content-Type"),
+			"upstream_request_id", upstreamRequestIDFromHeader(resp.Header),
+		}
+		attrs = append(attrs, logAttrs...)
+		h.logger.DebugContext(ctx, "responses upstream response headers", attrs...)
+	}
+	return resp, nil
 }
 
 func proxyResponsesStream(ctx context.Context, logger *slog.Logger, w http.ResponseWriter, resp *http.Response, plan customToolTransportPlan, requestJSON string, bufferLimitBytes int64, onCompleted func([]byte, []domain.ResponseReplayArtifact) error) error {
+	started := time.Now()
 	isSSE := strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "text/event-stream")
 	if logger != nil && logger.Enabled(ctx, slog.LevelDebug) {
 		logger.DebugContext(ctx, "responses stream opened",
@@ -461,9 +513,21 @@ func proxyResponsesStream(ctx context.Context, logger *slog.Logger, w http.Respo
 
 	parser := newResponseStreamEventProxy(ctx, logger, plan, requestJSON, onCompleted)
 	reader := bufio.NewReader(resp.Body)
+	var upstreamLineCount int
+	var upstreamBytes int
 	for {
 		line, err := reader.ReadString('\n')
 		if line != "" {
+			upstreamLineCount++
+			upstreamBytes += len(line)
+			if upstreamLineCount == 1 && logger != nil && logger.Enabled(ctx, slog.LevelDebug) {
+				logger.DebugContext(ctx, "responses stream first upstream line",
+					"request_id", RequestIDFromContext(ctx),
+					"duration_ms", time.Since(started).Milliseconds(),
+					"line_kind", responseStreamLineKind(line),
+					"line_bytes", len(line),
+				)
+			}
 			if flushErr := parser.WriteLine(w, line); flushErr != nil {
 				return flushErr
 			}
@@ -471,7 +535,25 @@ func proxyResponsesStream(ctx context.Context, logger *slog.Logger, w http.Respo
 		}
 		if err != nil {
 			if err == io.EOF {
-				return parser.Flush(w)
+				flushErr := parser.Flush(w)
+				if logger != nil && logger.Enabled(ctx, slog.LevelDebug) {
+					logger.DebugContext(ctx, "responses stream upstream eof",
+						"request_id", RequestIDFromContext(ctx),
+						"duration_ms", time.Since(started).Milliseconds(),
+						"upstream_line_count", upstreamLineCount,
+						"upstream_bytes", upstreamBytes,
+					)
+				}
+				return flushErr
+			}
+			if logger != nil {
+				logger.WarnContext(ctx, "responses stream read failed",
+					"request_id", RequestIDFromContext(ctx),
+					"duration_ms", time.Since(started).Milliseconds(),
+					"upstream_line_count", upstreamLineCount,
+					"upstream_bytes", upstreamBytes,
+					"err", err,
+				)
 			}
 			return err
 		}
@@ -539,6 +621,130 @@ func shouldIgnoreStreamProxyError(err error) bool {
 	return err != nil && errors.Is(err, context.Canceled)
 }
 
+func summarizeResponsesRequestForLog(body []byte) []any {
+	attrs := []any{}
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return append(attrs, "request_parse_error", err.Error())
+	}
+
+	attrs = append(attrs,
+		"model", strings.TrimSpace(asString(payload["model"])),
+		"stream", boolAttr(payload["stream"]),
+		"background", boolAttr(payload["background"]),
+		"store", boolAttr(payload["store"]),
+		"tool_choice", compactValueForLog(payload["tool_choice"], 256),
+		"previous_response_id_set", strings.TrimSpace(asString(payload["previous_response_id"])) != "",
+		"conversation_set", payload["conversation"] != nil,
+	)
+	if maxOutputTokens, ok := intAttr(payload["max_output_tokens"]); ok {
+		attrs = append(attrs, "max_output_tokens", maxOutputTokens)
+	}
+	if reasoning, ok := payload["reasoning"].(map[string]any); ok {
+		attrs = append(attrs,
+			"reasoning_effort", strings.TrimSpace(asString(reasoning["effort"])),
+			"reasoning_summary", compactValueForLog(reasoning["summary"], 128),
+		)
+	}
+	if text, ok := payload["text"].(map[string]any); ok {
+		if format, ok := text["format"].(map[string]any); ok {
+			attrs = append(attrs, "text_format", strings.TrimSpace(asString(format["type"])))
+		}
+	}
+	attrs = append(attrs, summarizeResponsesInputForLog(payload["input"])...)
+	attrs = append(attrs, summarizeResponsesToolsForLog(payload["tools"])...)
+	return attrs
+}
+
+func summarizeResponsesInputForLog(input any) []any {
+	switch typed := input.(type) {
+	case string:
+		return []any{"input_kind", "string", "input_text_len", len(typed)}
+	case []any:
+		return []any{"input_kind", "items", "input_item_count", len(typed)}
+	case map[string]any:
+		return []any{"input_kind", strings.TrimSpace(asString(typed["type"]))}
+	case nil:
+		return []any{"input_kind", "missing"}
+	default:
+		return []any{"input_kind", fmt.Sprintf("%T", typed)}
+	}
+}
+
+func summarizeResponsesToolsForLog(rawTools any) []any {
+	tools, ok := rawTools.([]any)
+	if !ok {
+		if rawTools == nil {
+			return []any{"tool_count", 0}
+		}
+		return []any{"tool_count", 0, "tools_kind", fmt.Sprintf("%T", rawTools)}
+	}
+	types := make([]string, 0, min(len(tools), 16))
+	names := make([]string, 0, min(len(tools), 16))
+	for _, rawTool := range tools {
+		tool, ok := rawTool.(map[string]any)
+		if !ok {
+			continue
+		}
+		if toolType := strings.TrimSpace(asString(tool["type"])); toolType != "" && len(types) < 16 {
+			types = append(types, toolType)
+		}
+		if name := strings.TrimSpace(asString(tool["name"])); name != "" && len(names) < 16 {
+			names = append(names, name)
+		}
+	}
+	return []any{
+		"tool_count", len(tools),
+		"tool_types", types,
+		"tool_names", names,
+	}
+}
+
+func compactValueForLog(value any, limit int) string {
+	if value == nil {
+		return ""
+	}
+	body, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Sprintf("%T", value)
+	}
+	return truncateForLog(string(body), limit)
+}
+
+func boolAttr(value any) any {
+	switch typed := value.(type) {
+	case bool:
+		return typed
+	case nil:
+		return nil
+	default:
+		return fmt.Sprintf("%T", typed)
+	}
+}
+
+func upstreamRequestIDFromHeader(header http.Header) string {
+	for _, key := range []string{"Openai-Request-Id", "OpenAI-Request-ID", "X-Request-Id", "X-Request-ID", "Request-Id", "Cf-Ray"} {
+		if value := strings.TrimSpace(header.Get(key)); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func responseStreamLineKind(line string) string {
+	trimmed := strings.TrimSpace(line)
+	switch {
+	case strings.HasPrefix(trimmed, "event:"):
+		return "event"
+	case strings.HasPrefix(trimmed, "data:"):
+		return "data"
+	case trimmed == "":
+		return "blank"
+	default:
+		return "other"
+	}
+}
+
 type responseStreamEventProxy struct {
 	ctx                          context.Context
 	logger                       *slog.Logger
@@ -556,8 +762,16 @@ type responseStreamEventProxy struct {
 	sawOutputTextAnnotationAdded bool
 	sawOutputTextDone            bool
 	sawCompleted                 bool
+	sawToolEvent                 bool
 	summaryLogged                bool
 	eventCount                   int
+	textEventCount               int
+	toolEventCount               int
+	shellEventCount              int
+	applyPatchEventCount         int
+	functionCallEventCount       int
+	customToolEventCount         int
+	mcpEventCount                int
 	lastEventType                string
 	errorType                    string
 	errorMessage                 string
@@ -1370,6 +1584,7 @@ func (p *responseStreamEventProxy) noteEvent(eventType string, payload map[strin
 
 	p.eventCount++
 	p.lastEventType = eventType
+	p.noteEventFamily(eventType, payload)
 
 	if errPayload, ok := payload["error"].(map[string]any); ok {
 		p.errorType = fallbackString(strings.TrimSpace(asString(errPayload["type"])), p.errorType)
@@ -1378,6 +1593,83 @@ func (p *responseStreamEventProxy) noteEvent(eventType string, payload map[strin
 	if artifact, payloadBytes, ok := responseReplayArtifactFromStreamEvent(eventType, payload); ok && p.allowReplayArtifact(payloadBytes) {
 		p.replayArtifactBytes += payloadBytes
 		p.replayArtifacts = append(p.replayArtifacts, artifact)
+	}
+}
+
+func (p *responseStreamEventProxy) noteEventFamily(eventType string, payload map[string]any) {
+	eventType = strings.TrimSpace(eventType)
+	if strings.HasPrefix(eventType, "response.output_text.") {
+		p.textEventCount++
+	}
+	family := responseToolFamilyFromEventType(eventType)
+	if item, ok := payload["item"].(map[string]any); ok {
+		if itemFamily := responseToolFamilyFromItemType(strings.TrimSpace(asString(item["type"]))); itemFamily != "" {
+			family = itemFamily
+		}
+	}
+	if family != "" {
+		p.noteToolFamily(family)
+	}
+}
+
+func (p *responseStreamEventProxy) noteToolFamily(family string) {
+	p.sawToolEvent = true
+	p.toolEventCount++
+	switch family {
+	case "shell":
+		p.shellEventCount++
+	case "apply_patch":
+		p.applyPatchEventCount++
+	case "function_call":
+		p.functionCallEventCount++
+	case "custom_tool":
+		p.customToolEventCount++
+	case "mcp":
+		p.mcpEventCount++
+	}
+}
+
+func responseToolFamilyFromEventType(eventType string) string {
+	switch {
+	case strings.Contains(eventType, "shell_call"):
+		return "shell"
+	case strings.Contains(eventType, "apply_patch_call"):
+		return "apply_patch"
+	case strings.Contains(eventType, "function_call"):
+		return "function_call"
+	case strings.Contains(eventType, "custom_tool_call"):
+		return "custom_tool"
+	case strings.Contains(eventType, "mcp_call") || strings.Contains(eventType, "mcp_tool_call"):
+		return "mcp"
+	case strings.Contains(eventType, "web_search_call"),
+		strings.Contains(eventType, "file_search_call"),
+		strings.Contains(eventType, "code_interpreter_call"),
+		strings.Contains(eventType, "computer_call"),
+		strings.Contains(eventType, "image_generation_call"),
+		strings.Contains(eventType, "tool_search_call"):
+		return "hosted"
+	default:
+		return ""
+	}
+}
+
+func responseToolFamilyFromItemType(itemType string) string {
+	switch strings.TrimSpace(itemType) {
+	case localBuiltinShellCallType:
+		return "shell"
+	case localBuiltinApplyPatchCallType:
+		return "apply_patch"
+	case "function_call":
+		return "function_call"
+	case "custom_tool_call":
+		return "custom_tool"
+	case "mcp_call", "mcp_tool_call":
+		return "mcp"
+	default:
+		if isSyntheticReplayOutputItemType(itemType) {
+			return "hosted"
+		}
+		return ""
 	}
 }
 
@@ -1636,9 +1928,17 @@ func (p *responseStreamEventProxy) logStreamSummary() {
 		"response_id", p.responseID,
 		"model", p.model,
 		"event_count", p.eventCount,
+		"text_event_count", p.textEventCount,
+		"tool_event_count", p.toolEventCount,
+		"shell_event_count", p.shellEventCount,
+		"apply_patch_event_count", p.applyPatchEventCount,
+		"function_call_event_count", p.functionCallEventCount,
+		"custom_tool_event_count", p.customToolEventCount,
+		"mcp_event_count", p.mcpEventCount,
 		"last_event_type", p.lastEventType,
 		"saw_created", p.sawCreated,
 		"saw_item_added", p.sawItemAdded,
+		"saw_tool_event", p.sawToolEvent,
 		"saw_output_text_done", p.sawOutputTextDone,
 		"saw_completed", p.sawCompleted,
 		"output_text_len", p.outputText.Len(),
@@ -1711,18 +2011,35 @@ func summarizeResponseEnvelopeForLog(responsePayload map[string]any) []any {
 	outputCount := 0
 	toolCount := 0
 	messageCount := 0
+	reasoningCount := 0
+	outputTypes := make([]string, 0, 8)
+	outputTypeCounts := map[string]int{}
 	if output, ok := responsePayload["output"].([]any); ok {
 		outputCount = len(output)
 		for _, rawItem := range output {
 			item, ok := rawItem.(map[string]any)
 			if !ok {
+				if outputTypeCounts["non_object"] == 0 && len(outputTypes) < 16 {
+					outputTypes = append(outputTypes, "non_object")
+				}
+				outputTypeCounts["non_object"]++
 				continue
 			}
-			switch strings.TrimSpace(asString(item["type"])) {
+			itemType := strings.TrimSpace(asString(item["type"]))
+			if itemType == "" {
+				itemType = "missing"
+			}
+			if outputTypeCounts[itemType] == 0 && len(outputTypes) < 16 {
+				outputTypes = append(outputTypes, itemType)
+			}
+			outputTypeCounts[itemType]++
+			switch itemType {
 			case "function_call", "custom_tool_call", "mcp_call", "mcp_tool_call", localBuiltinShellCallType, localBuiltinApplyPatchCallType, "mcp_approval_request", "mcp_list_tools", "tool_search_call", "tool_search_output", "web_search_call", "file_search_call", "code_interpreter_call", "computer_call", "image_generation_call":
 				toolCount++
 			case "message":
 				messageCount++
+			case "reasoning":
+				reasoningCount++
 			}
 		}
 	}
@@ -1731,8 +2048,11 @@ func summarizeResponseEnvelopeForLog(responsePayload map[string]any) []any {
 		"response_id", strings.TrimSpace(asString(responsePayload["id"])),
 		"model", strings.TrimSpace(asString(responsePayload["model"])),
 		"output_count", outputCount,
+		"output_item_types", outputTypes,
+		"output_item_type_counts", outputTypeCounts,
 		"tool_item_count", toolCount,
 		"message_item_count", messageCount,
+		"reasoning_item_count", reasoningCount,
 		"output_text_len", len(asString(responsePayload["output_text"])),
 	}
 

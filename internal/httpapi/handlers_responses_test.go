@@ -18,6 +18,18 @@ import (
 	"llama_shim/internal/llama"
 )
 
+type closeTrackingReadCloser struct {
+	*strings.Reader
+	closed *bool
+}
+
+func (r *closeTrackingReadCloser) Close() error {
+	if r.closed != nil {
+		*r.closed = true
+	}
+	return nil
+}
+
 func TestBuildUpstreamInputItemsPreservesRawItems(t *testing.T) {
 	items := []domain.Item{
 		domain.NewInputTextMessage("system", "You are a test assistant."),
@@ -432,6 +444,32 @@ func TestShouldRetryResponsesInputAsStringBody(t *testing.T) {
 	}`), []byte(`{"input":"hello"}`)))
 }
 
+func TestShouldRetryResponsesInputAsStringResponseClosesOriginalBody(t *testing.T) {
+	rawBody := `{
+		"error":{"type":"invalid_request_error","message":"Input should be a valid string"}
+	}`
+	closed := false
+	resp := &http.Response{
+		StatusCode: http.StatusBadRequest,
+		Body: &closeTrackingReadCloser{
+			Reader: strings.NewReader(rawBody),
+			closed: &closed,
+		},
+	}
+
+	retry, err := shouldRetryResponsesInputAsStringResponse(resp, []byte(`{
+		"input":[{"type":"message","role":"user","content":"hello"}]
+	}`))
+	require.NoError(t, err)
+	require.True(t, retry)
+	require.True(t, closed)
+
+	replayed, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.JSONEq(t, rawBody, string(replayed))
+	require.NoError(t, resp.Body.Close())
+}
+
 func TestRewriteResponsesInputAsStringBody(t *testing.T) {
 	body, err := rewriteResponsesInputAsStringBody([]byte(`{
 		"model":"test-model",
@@ -580,6 +618,76 @@ func TestRemapCustomToolsPayloadDropsDisabledWebSearchTool(t *testing.T) {
 	require.Equal(t, "exec_command", tool["name"])
 }
 
+func TestRemapCustomToolsPayloadDropsModelDisabledTool(t *testing.T) {
+	rawFields := map[string]json.RawMessage{
+		"model":       json.RawMessage(`"Kimi-K2.6"`),
+		"tool_choice": json.RawMessage(`"auto"`),
+		"tools": json.RawMessage(`[
+			{"type":"function","name":"exec_command","parameters":{"type":"object","properties":{"cmd":{"type":"string"}},"required":["cmd"]}},
+			{"type":"image_generation","size":"1024x1024"},
+			{"type":"namespace","name":"mcp__demo__","description":"Demo tools","tools":[{"type":"function","name":"lookup","parameters":{"type":"object","properties":{}}}]}
+		]`),
+	}
+
+	body, plan, err := remapCustomToolsPayloadWithCompatibility(rawFields, "bridge", false, false, []UpstreamToolCompatibilityRule{
+		{Model: "kimi-*", DisabledTools: []string{"image_generation", "namespace_tool"}},
+	})
+
+	require.NoError(t, err)
+	require.False(t, plan.BridgeActive())
+	require.Equal(t, []string{"image_generation", "namespace"}, plan.DroppedBuiltinTools)
+	require.Equal(t, []string{"image_generation", "namespace"}, plan.DisabledToolTypes)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(body, &payload))
+
+	tools, ok := payload["tools"].([]any)
+	require.True(t, ok)
+	require.Len(t, tools, 1)
+	tool, ok := tools[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "function", tool["type"])
+	require.Equal(t, "exec_command", tool["name"])
+}
+
+func TestRemapCustomToolsPayloadRejectsModelDisabledToolChoice(t *testing.T) {
+	rawFields := map[string]json.RawMessage{
+		"model":       json.RawMessage(`"Kimi-K2.6"`),
+		"tool_choice": json.RawMessage(`{"type":"image_generation"}`),
+		"tools": json.RawMessage(`[
+			{"type":"image_generation","size":"1024x1024"}
+		]`),
+	}
+
+	_, _, err := remapCustomToolsPayloadWithCompatibility(rawFields, "bridge", false, false, []UpstreamToolCompatibilityRule{
+		{Model: "Kimi-*", DisabledTools: []string{"image_generation"}},
+	})
+
+	var validationErr *domain.ValidationError
+	require.ErrorAs(t, err, &validationErr)
+	require.Equal(t, "tool_choice", validationErr.Param)
+	require.Contains(t, validationErr.Message, "disabled for the selected upstream model")
+}
+
+func TestRemapCustomToolsPayloadRejectsModelDisabledNamespaceToolChoice(t *testing.T) {
+	rawFields := map[string]json.RawMessage{
+		"model":       json.RawMessage(`"Kimi-K2.6"`),
+		"tool_choice": json.RawMessage(`{"type":"namespace","name":"mcp__demo__"}`),
+		"tools": json.RawMessage(`[
+			{"type":"namespace","name":"mcp__demo__","description":"Demo tools","tools":[{"type":"function","name":"lookup","parameters":{"type":"object","properties":{}}}]}
+		]`),
+	}
+
+	_, _, err := remapCustomToolsPayloadWithCompatibility(rawFields, "bridge", false, false, []UpstreamToolCompatibilityRule{
+		{Model: "Kimi-*", DisabledTools: []string{"namespace_tool"}},
+	})
+
+	var validationErr *domain.ValidationError
+	require.ErrorAs(t, err, &validationErr)
+	require.Equal(t, "tool_choice", validationErr.Param)
+	require.Contains(t, validationErr.Message, "disabled for the selected upstream model")
+}
+
 func TestRemapCustomToolsPayloadPreservesSupportedWebSearchBuiltIn(t *testing.T) {
 	rawFields := map[string]json.RawMessage{
 		"tool_choice": json.RawMessage(`{"type":"web_search"}`),
@@ -610,6 +718,7 @@ func TestRemapCustomToolsPayloadPreservesSupportedWebSearchBuiltIn(t *testing.T)
 func TestRemapCustomToolsPayloadForcesRequiredToolChoiceForCodexAuto(t *testing.T) {
 	rawFields := map[string]json.RawMessage{
 		"instructions": json.RawMessage(`"You are a coding agent running in the Codex CLI, a terminal-based coding assistant."`),
+		"model":        json.RawMessage(`"devstack-model"`),
 		"tool_choice":  json.RawMessage(`"auto"`),
 		"tools": json.RawMessage(`[
 			{"type":"function","name":"exec_command","parameters":{"type":"object","properties":{"cmd":{"type":"string"}},"required":["cmd"]}}
@@ -624,6 +733,30 @@ func TestRemapCustomToolsPayloadForcesRequiredToolChoiceForCodexAuto(t *testing.
 	require.NoError(t, json.Unmarshal(body, &payload))
 	require.Equal(t, "required", payload["tool_choice"])
 	require.Equal(t, toolChoiceContractRequiredAny, plan.ToolChoiceContract.Mode)
+}
+
+func TestRemapCustomToolsPayloadKeepsAutoForCodexForceDisabledModel(t *testing.T) {
+	rawFields := map[string]json.RawMessage{
+		"instructions": json.RawMessage(`"You are a coding agent running in the Codex CLI, a terminal-based coding assistant."`),
+		"model":        json.RawMessage(`"Kimi-K2.6"`),
+		"tool_choice":  json.RawMessage(`"auto"`),
+		"tools": json.RawMessage(`[
+			{"type":"function","name":"exec_command","parameters":{"type":"object","properties":{"cmd":{"type":"string"}},"required":["cmd"]}}
+		]`),
+	}
+	handler := &responseHandler{
+		forceCodexToolChoiceRequired:               true,
+		forceCodexToolChoiceRequiredDisabledModels: []string{"Kimi-*"},
+	}
+
+	body, plan, err := remapCustomToolsPayload(rawFields, "bridge", true, handler.effectiveForceCodexToolChoiceRequired(rawFields))
+
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(body, &payload))
+	require.Equal(t, "auto", payload["tool_choice"])
+	require.False(t, plan.ToolChoiceContract.Active())
 }
 
 func TestRemapCustomToolsPayloadKeepsAutoToolChoiceForCodexToolOutputFollowUp(t *testing.T) {
@@ -740,7 +873,7 @@ func TestProxyCreateWithShadowStoreRetriesNamedToolChoiceRejection(t *testing.T)
 
 	handler := &responseHandler{
 		logger:          slog.New(slog.NewTextHandler(io.Discard, nil)),
-		proxy:           newProxyHandler(nil, llama.NewClient(upstream.URL, time.Second), nil, ServiceLimits{}, false),
+		proxy:           newProxyHandler(nil, llama.NewClient(upstream.URL, time.Second), nil, ServiceLimits{}, false, nil),
 		customToolsMode: "bridge",
 	}
 
@@ -1201,7 +1334,7 @@ func TestProxyCreateWithShadowStoreHydratesContinuationFieldsInResponseBody(t *t
 
 	handler := &responseHandler{
 		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
-		proxy:  newProxyHandler(nil, llama.NewClient(upstream.URL, time.Second), nil, ServiceLimits{}, false),
+		proxy:  newProxyHandler(nil, llama.NewClient(upstream.URL, time.Second), nil, ServiceLimits{}, false, nil),
 	}
 
 	rawFields := map[string]json.RawMessage{
@@ -1379,4 +1512,46 @@ func TestBuildUpstreamResponsesBodyReplaysBridgeCustomToolsWithoutCurrentTools(t
 	require.Equal(t, "function_call_output", outputItem["type"])
 	require.Equal(t, "call_1", outputItem["call_id"])
 	require.Equal(t, "tool says hi", outputItem["output"])
+}
+
+func TestApplyConfiguredCodexUpstreamInputCompatibilityStringifiesMatchingModel(t *testing.T) {
+	handler := &responseHandler{
+		codexUpstreamInputCompatibility: []CodexUpstreamInputCompatibilityRule{
+			{Model: "Kimi-*", Mode: "stringify"},
+		},
+	}
+	rawFields := map[string]json.RawMessage{
+		"model": json.RawMessage(`"Kimi-K2.6"`),
+	}
+	upstreamBody := []byte(`{
+		"model":"Kimi-K2.6",
+		"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"read hello.txt"}]}],
+		"tools":[{"type":"function","name":"shell"}]
+	}`)
+
+	body, err := handler.applyConfiguredCodexUpstreamInputCompatibility(context.Background(), rawFields, upstreamBody)
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(body, &payload))
+	input, ok := payload["input"].(string)
+	require.True(t, ok)
+	require.Contains(t, input, "USER:\nread hello.txt")
+	require.Equal(t, "Kimi-K2.6", payload["model"])
+}
+
+func TestApplyConfiguredCodexUpstreamInputCompatibilityKeepsStructuredInputByDefault(t *testing.T) {
+	handler := &responseHandler{
+		codexUpstreamInputCompatibility: []CodexUpstreamInputCompatibilityRule{
+			{Model: "Kimi-*", Mode: "auto"},
+		},
+	}
+	rawFields := map[string]json.RawMessage{
+		"model": json.RawMessage(`"Kimi-K2.6"`),
+	}
+	upstreamBody := []byte(`{"model":"Kimi-K2.6","input":[{"role":"user","content":"hi"}]}`)
+
+	body, err := handler.applyConfiguredCodexUpstreamInputCompatibility(context.Background(), rawFields, upstreamBody)
+	require.NoError(t, err)
+	require.JSONEq(t, string(upstreamBody), string(body))
 }

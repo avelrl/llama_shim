@@ -74,6 +74,22 @@ Then use the stored-resource routes:
 - Shadow-store persistence uses the internal
   `shim.limits.chat_completions_shadow_store_timeout` budget and is detached
   from client disconnect cancellation after the upstream response has completed.
+- Model-specific upstream request compatibility lives under
+  `chat_completions.upstream_compatibility.models[]`. Use it for upstreams that
+  are OpenAI-like but reject specific Chat request details before generation.
+  For example, a DeepSeek-compatible gateway can remap OpenAI `developer`
+  messages to upstream `system`, add `thinking: {type: disabled}` only when the
+  caller omitted `thinking`, and downgrade Chat `response_format=json_schema`
+  to JSON mode plus a schema instruction. This affects only the request sent to
+  upstream; the shim still accepts the OpenAI-shaped client request.
+- The same compatibility block can cover Kimi/Moonshot dialect edges observed
+  in the official Kimi docs and Kimi CLI implementation: apply a model-specific
+  `thinking: {type: disabled}` default when the caller omitted `thinking`,
+  apply a model-specific default `max_tokens` only when the caller omitted token
+  limits, fill missing nested `type` fields in function tool parameter schemas,
+  and omit empty assistant `content` fields on tool-call messages before
+  forwarding upstream. These are upstream transport fixes, not broader OpenAI
+  contract changes.
 
 ## Gotchas
 

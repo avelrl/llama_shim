@@ -158,7 +158,7 @@ func TestShadowStoreChatCompletionBestEffortIgnoresCanceledRequestContext(t *tes
 
 	handler := newProxyHandler(nil, nil, store, ServiceLimits{
 		ChatCompletionsShadowStoreTimeout: time.Second,
-	}, false)
+	}, false, nil)
 	requestCtx, cancel := context.WithCancel(context.Background())
 	cancel()
 

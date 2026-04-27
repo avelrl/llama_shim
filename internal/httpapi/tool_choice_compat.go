@@ -167,11 +167,10 @@ func shouldRetryToolChoiceWithAutoResponse(resp *http.Response, plan customToolT
 		return false, nil
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := readAndReplaceResponseBody(resp)
 	if err != nil {
 		return false, err
 	}
-	resp.Body = io.NopCloser(bytes.NewReader(body))
 	return shouldRetryToolChoiceWithAutoBody(resp.StatusCode, body, plan), nil
 }
 
@@ -180,11 +179,10 @@ func shouldRetryToolChoiceWithRequiredResponse(resp *http.Response, plan customT
 		return false, nil
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := readAndReplaceResponseBody(resp)
 	if err != nil {
 		return false, err
 	}
-	resp.Body = io.NopCloser(bytes.NewReader(body))
 	return shouldRetryToolChoiceWithRequiredBody(resp.StatusCode, body, plan), nil
 }
 
@@ -236,11 +234,10 @@ func shouldRetryCustomToolsWithBridgeResponse(resp *http.Response, plan customTo
 		return false, nil
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := readAndReplaceResponseBody(resp)
 	if err != nil {
 		return false, err
 	}
-	resp.Body = io.NopCloser(bytes.NewReader(body))
 	return shouldRetryCustomToolsWithBridgeBody(resp.StatusCode, body, plan), nil
 }
 
@@ -272,11 +269,10 @@ func shouldRetryLocalStateWithDirectProxyResponse(resp *http.Response, request C
 		return false, nil
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := readAndReplaceResponseBody(resp)
 	if err != nil {
 		return false, err
 	}
-	resp.Body = io.NopCloser(bytes.NewReader(body))
 	return shouldRetryLocalStateWithDirectProxyBody(resp.StatusCode, body, request), nil
 }
 
@@ -307,12 +303,28 @@ func shouldRetryResponsesInputAsStringResponse(resp *http.Response, requestBody 
 		return false, nil
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := readAndReplaceResponseBody(resp)
 	if err != nil {
 		return false, err
 	}
-	resp.Body = io.NopCloser(bytes.NewReader(body))
 	return shouldRetryResponsesInputAsStringBody(resp.StatusCode, body, requestBody), nil
+}
+
+func readAndReplaceResponseBody(resp *http.Response) ([]byte, error) {
+	if resp == nil || resp.Body == nil {
+		return nil, nil
+	}
+
+	body, readErr := io.ReadAll(resp.Body)
+	closeErr := resp.Body.Close()
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	if readErr != nil {
+		return nil, readErr
+	}
+	if closeErr != nil {
+		return nil, closeErr
+	}
+	return body, nil
 }
 
 func shouldRetryResponsesInputAsStringBody(status int, body []byte, requestBody []byte) bool {

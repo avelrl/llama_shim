@@ -1,6 +1,6 @@
 # V2 Compatibility Matrix
 
-Last updated: April 26, 2026.
+Last updated: April 27, 2026.
 
 This document is the source of truth for the current V2-compatible surface of
 `llama_shim`.
@@ -46,6 +46,13 @@ Current external evidence:
   (`finish_reason: "length"`, `message.content: null`). Responses remained
   green. This does not strengthen or weaken the Responses `Broad subset` claim;
   it is tracked as upstream/model behavior for the broader Chat profile.
+- April 27, 2026: DeepSeek V4 Pro strict diagnostic run passed the core
+  Responses state/stream/structured-output cases but exposed raw Chat upstream
+  dialect gaps. The shim now has a config-driven upstream-only Chat
+  compatibility bridge for OpenAI `developer` role forwarding, model-specific
+  thinking defaults, and JSON-mode fallback for Chat `json_schema` requests.
+  This remains a practical bridge, not a stronger native DeepSeek
+  `json_schema` or forced tool-choice parity claim.
 
 ## Responses And Conversations
 
@@ -69,7 +76,7 @@ Current external evidence:
 
 | Surface | Current shim status | Freeze guidance | Notes |
 | --- | --- | --- | --- |
-| `POST /v1/chat/completions` | Broad subset | Keep sanitization, streaming, and store policy explicit | Still a major compatibility surface even though Responses is primary. Real-upstream `compat` testing can expose model-budget-dependent tool follow-up failures that are outside the current Responses gate. |
+| `POST /v1/chat/completions` | Broad subset | Keep sanitization, streaming, upstream-dialect bridges, and store policy explicit | Still a major compatibility surface even though Responses is primary. Real-upstream `compat` testing can expose model-budget-dependent tool follow-up failures that are outside the current Responses gate. Configured upstream compatibility rules can normalize forwarded `developer` roles and map Chat `json_schema` to JSON mode plus schema instructions for selected upstream models such as DeepSeek; native strict JSON Schema parity is not claimed. |
 | stored Chat Completions `list/get/update/delete/messages` | Broad subset | Keep the local-first compatibility contract explicit | Shim-owned shadow-stored resources cover the core surface even when upstream stored-chat routes are absent. Local list uses SQL keyset pagination and SQL metadata filtering; new message snapshots use SQL pagination, with legacy request-JSON fallback only for older rows. |
 | stored Chat Completions upstream merge/fallback behavior | Broad subset | Keep implemented vs upstream-only behavior explicit in docs and tests | Upstream history remains an optional compatibility bridge; the shim does not imply full hosted stored-chat ownership |
 | streamed shadow-store reconstruction | Broad subset | Keep current boundaries explicit | Current subset covers practical assistant-text and tool-call-heavy flows, not every possible hosted chunk shape. Oversized best-effort capture skips local persistence without changing the proxied client response. |

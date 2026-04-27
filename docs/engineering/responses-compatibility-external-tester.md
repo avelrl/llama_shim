@@ -1,6 +1,6 @@
 # Responses Compatibility External Tester
 
-Last updated: April 26, 2026.
+Last updated: April 27, 2026.
 
 Status: repo-owned runner and Broad subset profile are in place. This is an
 engineering runbook, not a stronger hosted-parity claim.
@@ -9,7 +9,9 @@ engineering runbook, not a stronger hosted-parity claim.
 
 This runbook was checked against the local docs index in
 [`openapi/llms.txt`](../../openapi/llms.txt), the OpenAI Docs MCP, and the
-official OpenAI docs on April 26, 2026.
+official OpenAI docs on April 27, 2026.
+Official DeepSeek upstream dialect notes were checked on April 27, 2026.
+Official Kimi/Moonshot upstream dialect notes were checked on April 27, 2026.
 
 Relevant official pages:
 
@@ -17,6 +19,18 @@ Relevant official pages:
 - [Streaming API responses](https://developers.openai.com/api/docs/guides/streaming-responses)
 - [Responses API reference](https://platform.openai.com/docs/api-reference/responses)
 - [Chat Completions API reference](https://platform.openai.com/docs/api-reference/chat/create)
+- [DeepSeek Tool Calls](https://api-docs.deepseek.com/guides/tool_calls)
+- [DeepSeek Thinking Mode](https://api-docs.deepseek.com/guides/thinking_mode)
+- [DeepSeek Chat Completion](https://api-docs.deepseek.com/api/create-chat-completion/)
+- [DeepSeek JSON Output](https://api-docs.deepseek.com/guides/json_mode)
+- [DeepSeek Models & Pricing](https://api-docs.deepseek.com/quick_start/pricing)
+- [DeepSeek First API Call](https://api-docs.deepseek.com/)
+- [Kimi API Overview](https://platform.kimi.ai/docs/overview)
+- [Kimi K2.6 Quickstart](https://platform.kimi.ai/docs/guide/kimi-k2-6-quickstart)
+- [Kimi Thinking Model Guide](https://platform.kimi.ai/docs/guide/use-kimi-k2-thinking-model)
+- [Kimi Tool Calls](https://platform.kimi.ai/docs/guide/use-kimi-api-to-complete-tool-calls)
+- [Kimi Chat Completion](https://platform.kimi.ai/docs/api/chat)
+- [Kimi Agent Support](https://platform.kimi.ai/docs/guide/agent-support)
 
 The docs-backed baseline is:
 
@@ -32,7 +46,130 @@ The docs-backed baseline is:
 
 ## Latest Real-Upstream Ledger
 
-Last real-upstream check: April 26, 2026.
+Last real-upstream check: April 27, 2026.
+
+### April 27, 2026 DeepSeek Diagnostic Run
+
+Configuration:
+
+- harness mode: operator-run real upstream through the shim
+- tester mode: `strict`
+- tester profile: DeepSeek V4 Pro profile
+- shim command: `go run ./cmd/shim -config ./config.yaml`
+
+Result:
+
+- Responses core cases passed through the shim, including basic create,
+  storage/retrieve, streaming, structured output, previous-response state,
+  conversations, input-items, and compaction cases.
+- Direct Chat Completions exposed upstream-dialect mismatches:
+  DeepSeek-compatible gateways accepted OpenAI-shaped Responses traffic through
+  the shim but rejected some raw Chat Completions details, including the
+  OpenAI `developer` role, OpenAI `response_format.type=json_schema`, and a
+  thinking/tool-choice combination that returned an upstream
+  `deepseek-reasoner does not support this tool_choice` error.
+
+Shim-owned follow-up:
+
+- Direct `/v1/chat/completions` proxy requests can normalize OpenAI
+  `developer` messages to upstream `system` messages before forwarding when a
+  matching `chat_completions.upstream_compatibility.models[]` rule enables
+  `remap_developer_role`.
+- Shim-generated Chat Completions requests, including local Responses tool and
+  constrained-output helper paths, use the same upstream compatibility
+  normalizer.
+- A DeepSeek-style rule can add `thinking: {"type":"disabled"}` when the caller
+  did not provide an explicit `thinking` value.
+- A DeepSeek-style rule can downgrade upstream Chat Completions
+  `response_format.type=json_schema` to JSON mode
+  (`response_format.type=json_object`) and prepend the schema as a system
+  instruction. This is an upstream transport compatibility bridge only; it is
+  not a native strict JSON Schema guarantee.
+- Generic upstream failures now report `upstream request failed` /
+  `upstream request timed out` instead of llama.cpp-specific wording.
+
+Example config:
+
+```yaml
+chat_completions:
+  upstream_compatibility:
+    models:
+      - model: deepseek-*
+        remap_developer_role: true
+        default_thinking: disabled
+        json_schema_mode: json_object_instruction
+```
+
+Remaining boundary:
+
+- DeepSeek JSON mode can produce valid JSON, but it does not provide OpenAI
+  Structured Outputs parity for `json_schema`.
+- Tool-choice behavior can still fail when the configured gateway/model rejects
+  forced tool calls or tool calls while thinking is enabled. Treat those as
+  real-upstream/model constraints until a rerun proves otherwise.
+
+Follow-up strict rerun:
+
+- A later strict rerun improved the Responses side but exposed two shim-local
+  bugs: direct Chat proxy responses could arrive gzip-compressed while the shim
+  tried to sanitize them as raw JSON, and Responses function-call replay used a
+  response item `id` as the Chat `tool_calls[].id` instead of the Responses
+  `call_id` that `function_call_output` references.
+- The fix keeps `Accept-Encoding` under the Go transport's control so upstream
+  responses are transparently decoded before sanitize/shadow-store work, and it
+  maps Responses function calls to Chat tool calls with the same `call_id` that
+  subsequent tool output messages reference.
+
+### April 27, 2026 DeepSeek V4 Pro Green Rerun
+
+Configuration:
+
+- harness mode: operator-run real upstream through the shim
+- tester mode: `strict`
+- tester profile: DeepSeek V4 Pro profile
+- shim command: `go run ./cmd/shim -config ./config.yaml`
+- operator report name: `llama_shim_deepseek_4_pro_20260427_204544`
+
+Result:
+
+- `chat`: `READY`
+- `responses`: `READY`
+- flaky cases: `0`
+- unsupported cases: `0`
+- incompatibilities: `0`
+- Direct Chat Completions passed basic text, streaming, memory, tool-call,
+  forced-tool-call, JSON Schema compatibility, and JSON object cases.
+- Responses passed basic create, store/retrieve, streaming, structured output,
+  function/custom tools, forced tool calls, grammar/custom-tool paths,
+  conversations, compaction, input-items, and previous-response cases.
+
+Evidence from shim logs:
+
+- The configured DeepSeek compatibility rule was loaded.
+- `developer` roles were remapped for direct Chat requests.
+- `thinking` was disabled when the caller did not provide an explicit value.
+- Chat `json_schema` requests were bridged to upstream JSON mode plus a schema
+  instruction.
+- Direct Chat proxy responses no longer hit gzip/sanitizer decode failures.
+- Responses function-call replay used matching tool-call IDs and completed the
+  tool-result follow-up path.
+
+Current interpretation:
+
+- This is a green real-upstream compatibility gate for the shim's current
+  strict external tester profile against DeepSeek V4 Pro.
+- It does not upgrade DeepSeek JSON mode to native OpenAI Structured Outputs
+  parity. The `json_schema` behavior remains a compatibility bridge.
+- It does not prove Codex task reliability. Codex adds a harder agent loop:
+  longer prompts, repeated shell/file operations, model planning quality,
+  timeout behavior, and CLI-specific configuration.
+- DeepSeek's public model table currently lists `deepseek-v4-flash` and
+  `deepseek-v4-pro` with the same relevant API feature flags for this profile:
+  JSON Output and Tool Calls. Treat `flash` vs `pro` Codex smoke differences as
+  model quality, latency, cost, or timeout behavior until a run proves an API
+  contract difference.
+
+### April 26, 2026 Kimi K2.6 Green Gate
 
 Configuration:
 
@@ -58,6 +195,55 @@ returned `finish_reason: "length"` with `message.content: null`. Treat this as
 an upstream/model budget edge for the broader Chat profile, not as a failure of
 the V3 Responses `Broad subset` gate. Use `strict` as the current gate for the
 Responses compatibility claim.
+
+### April 27, 2026 Kimi Dialect Notes
+
+Inputs checked:
+
+- Official Kimi/Moonshot docs listed in the source check.
+- Local Kimi CLI provider implementation from the operator-owned checkout.
+
+Useful Kimi-specific observations:
+
+- Kimi Chat Completions is OpenAI-compatible enough to use the standard
+  `/v1/chat/completions` path, but Kimi CLI still performs provider-specific
+  request shaping.
+- Kimi CLI defaults agent Chat calls to `max_tokens: 32000`. This is relevant
+  for Codex-like and tester tool loops because short upstream output budgets can
+  surface as `finish_reason: "length"` instead of a final answer after a tool
+  result.
+- Kimi thinking mode uses `reasoning_effort` plus a Moonshot-specific
+  `thinking` body object. For coding/tool smoke runs, disabling thinking is
+  safer unless the run is explicitly testing Kimi preserved thinking.
+- Kimi streams and non-stream responses can carry `reasoning_content`; this is
+  useful to Kimi clients but should not be overclaimed as OpenAI Chat parity.
+- Kimi CLI normalizes function tool schemas by adding missing `type` values to
+  nested parameter properties. This covers JSON Schema-valid enum-only fields
+  that some OpenAI-compatible upstream validators reject.
+- Kimi CLI omits assistant `content` entirely for assistant tool-call messages
+  when visible content is empty. This avoids upstream rejection of empty content
+  in coding/tool loops.
+
+Shim-owned compatibility now available:
+
+```yaml
+chat_completions:
+  upstream_compatibility:
+    models:
+      - model: Kimi-*
+        default_thinking: disabled
+        default_max_tokens: 32000
+        ensure_tool_parameter_property_types: true
+        omit_empty_assistant_tool_content: true
+```
+
+Current boundary:
+
+- This is request-shape compatibility for upstream Chat calls. It does not prove
+  Kimi/Codex agent-task reliability.
+- Kimi `reasoning_content` round-tripping is not currently a stronger OpenAI
+  Chat compatibility claim. For tool-heavy smoke runs, keep Kimi thinking off
+  unless preserved-thinking behavior is the subject of the test.
 
 ## Goal
 

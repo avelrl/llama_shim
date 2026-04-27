@@ -12,7 +12,7 @@ import (
 	"llama_shim/internal/domain"
 	"llama_shim/internal/llama"
 	"llama_shim/internal/service"
-	"llama_shim/internal/storage/sqlite"
+	"llama_shim/internal/storage"
 )
 
 type apiErrorPayload struct {
@@ -57,14 +57,14 @@ func MapError(ctx context.Context, logger *slog.Logger, err error) (int, apiErro
 		return http.StatusNotImplemented, newAPIError("server_error", toolChoiceErr.Error(), "tool_choice", "tool_choice_incompatible_backend")
 	case errors.As(mappedErr, &rateLimitErr):
 		return http.StatusTooManyRequests, newAPIError("rate_limit_error", rateLimitErr.Error(), "", rateLimitErr.Code)
-	case errors.Is(mappedErr, sqlite.ErrNotFound), errors.Is(mappedErr, service.ErrNotFound):
+	case errors.Is(mappedErr, storage.ErrNotFound), errors.Is(mappedErr, service.ErrNotFound):
 		return http.StatusNotFound, newAPIError("not_found_error", mappedErr.Error(), "", "")
-	case errors.Is(mappedErr, sqlite.ErrConflict), errors.Is(mappedErr, service.ErrConflict):
+	case errors.Is(mappedErr, storage.ErrConflict), errors.Is(mappedErr, service.ErrConflict):
 		return http.StatusConflict, newAPIError("conflict_error", "conversation state changed during generation, retry the request", "", "")
 	case errors.Is(mappedErr, service.ErrUpstreamTimeout):
-		return http.StatusGatewayTimeout, newAPIError("upstream_timeout_error", "llama.cpp request timed out", "", "")
+		return http.StatusGatewayTimeout, newAPIError("upstream_timeout_error", "upstream request timed out", "", "")
 	case errors.Is(mappedErr, service.ErrUpstreamFailure):
-		return http.StatusBadGateway, newAPIError("upstream_error", "llama.cpp request failed", "", "")
+		return http.StatusBadGateway, newAPIError("upstream_error", "upstream request failed", "", "")
 	default:
 		logger.ErrorContext(ctx, "unhandled error", "err", err)
 		return http.StatusInternalServerError, newAPIError("internal_error", "internal server error", "", "")

@@ -1,6 +1,6 @@
 # V3 Storage And Retrieval Backends
 
-Last updated: April 26, 2026.
+Last updated: April 27, 2026.
 
 This is the V3 plan for expanding durable storage and retrieval backends
 without changing the public OpenAI-shaped HTTP surface.
@@ -112,8 +112,12 @@ flowchart TB
   futurePgVector -. future .-> embedder
 ```
 
-The first code slice now adds `internal/storage` contracts and compile-time
-SQLite conformance checks. It does not introduce a second runtime backend yet.
+The first code slices now add `internal/storage` contracts, a composite
+`storage.Store` boundary, compile-time SQLite conformance checks, and HTTP
+handler wiring that depends on storage interfaces for router health,
+chat-completion shadow storage, retrieval routes, vector-store search, and
+code-interpreter file/session stores. They do not introduce a second runtime
+backend yet.
 
 ## Configuration
 
@@ -181,7 +185,7 @@ capability claim, not a hosted OpenAI ranking claim.
 
 ### 0. Foundation
 
-Status: started.
+Status: implemented for the SQLite-only foundation.
 
 - Add `storage.backend` with `sqlite` as the only supported value.
 - Add `internal/storage` contracts for the existing durable surfaces.
@@ -191,6 +195,8 @@ Status: started.
   backend visibility.
 
 ### 1. Interface Boundary Hardening
+
+Status: in progress.
 
 Move route and service dependencies gradually from concrete `*sqlite.Store` to
 the narrowest `internal/storage` interface each path needs.
@@ -202,6 +208,21 @@ Rules:
   coupling
 - keep ready checks and maintenance paths explicit
 - keep tests focused on unchanged HTTP behavior
+
+Current completed slice:
+
+- `RouterDeps.Store` is `storage.Store`, not `*sqlite.Store`
+- proxy/chat paths use storage contracts and shared storage errors
+- retrieval routes use `storage.FileStore` plus `storage.VectorStore`
+- local code-interpreter container/file paths use storage contracts and shared
+  storage errors
+
+Still intentionally SQLite-specific:
+
+- startup store opening and maintenance loops
+- SQLite migrations, backup/restore, optimize, and vacuum operations
+- concrete SQLite retrieval-index internals until phase 2 extracts a retrieval
+  index contract
 
 ### 2. Retrieval Index Contract
 

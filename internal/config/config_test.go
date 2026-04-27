@@ -82,6 +82,15 @@ retrieval:
     model: snowflake-arctic-embed-l-v2.0
 chat_completions:
   default_store_when_omitted: false
+  upstream_compatibility:
+    models:
+      - model: deepseek-*
+        remap_developer_role: true
+        default_thinking: disabled
+        default_max_tokens: 32000
+        json_schema_mode: json_object_instruction
+        ensure_tool_parameter_property_types: true
+        omit_empty_assistant_tool_content: true
 responses:
   mode: prefer_upstream
   websocket:
@@ -109,9 +118,55 @@ responses:
     mode: bridge
   constrained_decoding:
     backend: vllm
+  upstream_tool_compatibility:
+    models:
+      - model: Kimi-*
+        disabled_tools:
+          - image_generation
+          - namespace_tool
+          - computer
+          - image_generation
   codex:
     enable_compatibility: true
     force_tool_choice_required: true
+    force_tool_choice_required_disabled_models:
+      - Kimi-*
+      - qwen3-*
+    upstream_input_compatibility:
+      models:
+        - model: Kimi-*
+          mode: stringify
+    model_metadata:
+      models:
+        - model: Kimi-K2.6
+          display_name: Kimi K2.6
+          context_window: 128000
+          max_context_window: 256000
+          auto_compact_token_limit: 100000
+          effective_context_window_percent: 90
+          default_reasoning_level: high
+          supported_reasoning_levels: [low, medium, high]
+          supports_reasoning_summaries: true
+          default_reasoning_summary: none
+          shell_type: shell_command
+          apply_patch_tool_type: freeform
+          web_search_tool_type: text_and_image
+          supports_parallel_tool_calls: true
+          support_verbosity: true
+          default_verbosity: medium
+          supports_image_detail_original: true
+          supports_search_tool: true
+          input_modalities: [text]
+          visibility: list
+          supported_in_api: true
+          priority: 0
+          additional_speed_tiers: [fast]
+          experimental_supported_tools: [list_dir]
+          availability_nux_message: Available through llama_shim.
+          truncation_policy:
+            mode: tokens
+            limit: 12000
+          base_instructions: Custom Codex instructions.
   code_interpreter:
     backend: docker
     python_binary: /opt/homebrew/bin/python3
@@ -180,6 +235,17 @@ responses:
 	require.Equal(t, "http://127.0.0.1:9099", cfg.RetrievalEmbedderBaseURL)
 	require.Equal(t, "snowflake-arctic-embed-l-v2.0", cfg.RetrievalEmbedderModel)
 	require.False(t, cfg.ChatCompletionsStoreWhenOmitted)
+	require.Equal(t, []config.ChatCompletionsUpstreamCompatibilityRule{
+		{
+			Model:                            "deepseek-*",
+			RemapDeveloperRole:               true,
+			DefaultThinking:                  "disabled",
+			DefaultMaxTokens:                 32000,
+			JSONSchemaMode:                   "json_object_instruction",
+			EnsureToolParameterPropertyTypes: true,
+			OmitEmptyAssistantToolContent:    true,
+		},
+	}, cfg.ChatCompletionsUpstreamCompatibility)
 	require.Equal(t, config.ResponsesModePreferUpstream, cfg.ResponsesMode)
 	require.False(t, cfg.ResponsesWebSocketEnabled)
 	require.Equal(t, "searxng", cfg.ResponsesWebSearchBackend)
@@ -199,8 +265,47 @@ responses:
 	require.Equal(t, config.ResponsesComputerBackendChatCompletions, cfg.ResponsesComputerBackend)
 	require.Equal(t, "bridge", cfg.ResponsesCustomToolsMode)
 	require.Equal(t, config.ResponsesConstrainedDecodingBackendVLLM, cfg.ResponsesConstrainedDecodingBackend)
+	require.Equal(t, []config.ResponsesUpstreamToolCompatibilityRule{
+		{Model: "Kimi-*", DisabledTools: []string{"image_generation", "namespace_tool", "computer"}},
+	}, cfg.ResponsesUpstreamToolCompatibility)
 	require.True(t, cfg.ResponsesCodexEnableCompatibility)
 	require.True(t, cfg.ResponsesCodexForceToolChoiceRequired)
+	require.Equal(t, []string{"Kimi-*", "qwen3-*"}, cfg.ResponsesCodexForceToolChoiceRequiredDisabledModels)
+	require.Equal(t, []config.ResponsesCodexUpstreamInputCompatibilityRule{
+		{Model: "Kimi-*", Mode: "stringify"},
+	}, cfg.ResponsesCodexUpstreamInputCompatibility)
+	require.Len(t, cfg.ResponsesCodexModelMetadata, 1)
+	codexMetadata := cfg.ResponsesCodexModelMetadata[0]
+	require.Equal(t, "Kimi-K2.6", codexMetadata.Model)
+	require.Equal(t, "Kimi K2.6", codexMetadata.DisplayName)
+	require.Equal(t, "OpenAI-compatible upstream routed through llama_shim.", codexMetadata.Description)
+	require.EqualValues(t, 128000, codexMetadata.ContextWindow)
+	require.EqualValues(t, 256000, codexMetadata.MaxContextWindow)
+	require.EqualValues(t, 100000, codexMetadata.AutoCompactTokenLimit)
+	require.EqualValues(t, 90, codexMetadata.EffectiveContextWindowPercent)
+	require.Equal(t, "high", codexMetadata.DefaultReasoningLevel)
+	require.Equal(t, []string{"low", "medium", "high"}, codexMetadata.SupportedReasoningLevels)
+	require.True(t, codexMetadata.SupportsReasoningSummaries)
+	require.Equal(t, "none", codexMetadata.DefaultReasoningSummary)
+	require.Equal(t, "shell_command", codexMetadata.ShellType)
+	require.Equal(t, "freeform", codexMetadata.ApplyPatchToolType)
+	require.Equal(t, "text_and_image", codexMetadata.WebSearchToolType)
+	require.True(t, codexMetadata.SupportsParallelToolCalls)
+	require.True(t, codexMetadata.SupportVerbosity)
+	require.Equal(t, "medium", codexMetadata.DefaultVerbosity)
+	require.True(t, codexMetadata.SupportsImageDetailOriginal)
+	require.True(t, codexMetadata.SupportsSearchTool)
+	require.Equal(t, []string{"text"}, codexMetadata.InputModalities)
+	require.Equal(t, "list", codexMetadata.Visibility)
+	require.NotNil(t, codexMetadata.SupportedInAPI)
+	require.True(t, *codexMetadata.SupportedInAPI)
+	require.NotNil(t, codexMetadata.Priority)
+	require.Equal(t, 0, *codexMetadata.Priority)
+	require.Equal(t, []string{"fast"}, codexMetadata.AdditionalSpeedTiers)
+	require.Equal(t, []string{"list_dir"}, codexMetadata.ExperimentalSupportedTools)
+	require.Equal(t, "Available through llama_shim.", codexMetadata.AvailabilityNuxMessage)
+	require.Equal(t, config.ResponsesCodexTruncationPolicy{Mode: "tokens", Limit: 12000}, codexMetadata.TruncationPolicy)
+	require.Equal(t, "Custom Codex instructions.", codexMetadata.BaseInstructions)
 	require.Equal(t, config.ResponsesCodeInterpreterBackendDocker, cfg.ResponsesCodeInterpreterBackend)
 	require.Equal(t, "/opt/homebrew/bin/python3", cfg.ResponsesCodeInterpreterPythonBinary)
 	require.Equal(t, "/usr/local/bin/docker", cfg.ResponsesCodeInterpreterDockerBinary)
@@ -304,6 +409,7 @@ responses:
 	t.Setenv("RESPONSES_COMPUTER_BACKEND", "chat_completions")
 	t.Setenv("RESPONSES_CODEX_ENABLE_COMPATIBILITY", "true")
 	t.Setenv("RESPONSES_CODEX_FORCE_TOOL_CHOICE_REQUIRED", "true")
+	t.Setenv("RESPONSES_CODEX_FORCE_TOOL_CHOICE_REQUIRED_DISABLED_MODELS", "Kimi-*,qwen3-*")
 	t.Setenv("RESPONSES_CODE_INTERPRETER_BACKEND", "docker")
 	t.Setenv("RESPONSES_CODE_INTERPRETER_PYTHON_BINARY", "/usr/bin/python3")
 	t.Setenv("RESPONSES_CODE_INTERPRETER_DOCKER_BINARY", "/usr/bin/docker")
@@ -361,6 +467,7 @@ responses:
 	require.Equal(t, "http://127.0.0.1:8082", cfg.RetrievalEmbedderBaseURL)
 	require.Equal(t, "text-embedding-3-small", cfg.RetrievalEmbedderModel)
 	require.True(t, cfg.ChatCompletionsStoreWhenOmitted)
+	require.Empty(t, cfg.ChatCompletionsUpstreamCompatibility)
 	require.Equal(t, config.ResponsesModeLocalOnly, cfg.ResponsesMode)
 	require.Equal(t, config.ResponsesConstrainedDecodingBackendVLLM, cfg.ResponsesConstrainedDecodingBackend)
 	require.Equal(t, "searxng", cfg.ResponsesWebSearchBackend)
@@ -380,6 +487,7 @@ responses:
 	require.Equal(t, config.ResponsesComputerBackendChatCompletions, cfg.ResponsesComputerBackend)
 	require.True(t, cfg.ResponsesCodexEnableCompatibility)
 	require.True(t, cfg.ResponsesCodexForceToolChoiceRequired)
+	require.Equal(t, []string{"Kimi-*", "qwen3-*"}, cfg.ResponsesCodexForceToolChoiceRequiredDisabledModels)
 	require.Equal(t, config.ResponsesCodeInterpreterBackendDocker, cfg.ResponsesCodeInterpreterBackend)
 	require.Equal(t, "/usr/bin/python3", cfg.ResponsesCodeInterpreterPythonBinary)
 	require.Equal(t, "/usr/bin/docker", cfg.ResponsesCodeInterpreterDockerBinary)
@@ -448,6 +556,7 @@ func TestLoadUsesCodexSafeDefaults(t *testing.T) {
 	require.Equal(t, config.ResponsesConstrainedDecodingBackendShimValidateRepair, cfg.ResponsesConstrainedDecodingBackend)
 	require.True(t, cfg.ResponsesCodexEnableCompatibility)
 	require.True(t, cfg.ResponsesCodexForceToolChoiceRequired)
+	require.Empty(t, cfg.ResponsesCodexUpstreamInputCompatibility)
 	require.Equal(t, config.ResponsesCodeInterpreterBackendDisabled, cfg.ResponsesCodeInterpreterBackend)
 	require.Equal(t, "python3", cfg.ResponsesCodeInterpreterPythonBinary)
 	require.Equal(t, "docker", cfg.ResponsesCodeInterpreterDockerBinary)

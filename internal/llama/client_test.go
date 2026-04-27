@@ -2,6 +2,7 @@ package llama
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"llama_shim/internal/domain"
+	"llama_shim/internal/upstreamcompat"
 )
 
 func TestBuildChatCompletionRequestPreservesAdjacentRoles(t *testing.T) {
@@ -130,6 +132,121 @@ func TestCreateChatCompletionTextExtractsAssistantContent(t *testing.T) {
 	text, err := client.CreateChatCompletionText(context.Background(), []byte(`{"model":"test-model","messages":[{"role":"user","content":"ping"}]}`))
 	require.NoError(t, err)
 	require.Equal(t, `{"input":"hello 42"}`, text)
+}
+
+func TestCreateChatCompletionNormalizesDeepSeekRequestForUpstream(t *testing.T) {
+	var captured map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, http.MethodPost, r.Method)
+		require.Equal(t, "/v1/chat/completions", r.URL.Path)
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		require.NoError(t, json.Unmarshal(body, &captured))
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{
+				{
+					"message": map[string]any{
+						"content": "OK",
+					},
+				},
+			},
+		}))
+	}))
+	defer server.Close()
+
+	client := NewClientWithOptions(server.URL, time.Second, ClientOptions{
+		ChatCompletionsCompatibility: []upstreamcompat.ChatCompletionRule{
+			{
+				Model:              "deepseek-*",
+				RemapDeveloperRole: true,
+				DefaultThinking:    upstreamcompat.DefaultThinkingDisabled,
+				JSONSchemaMode:     upstreamcompat.JSONSchemaModeObjectInstruction,
+			},
+		},
+	})
+	text, err := client.CreateChatCompletionText(context.Background(), []byte(`{
+		"model":"deepseek-v4-pro",
+		"messages":[
+			{"role":"developer","content":"Be precise."},
+			{"role":"user","content":"Return status."}
+		],
+		"response_format":{
+			"type":"json_schema",
+			"json_schema":{
+				"name":"status",
+				"schema":{"type":"object","properties":{"status":{"type":"string"}}}
+			}
+		},
+		"json_schema":{"type":"object","properties":{"legacy_hint":{"type":"string"}}}
+	}`))
+	require.NoError(t, err)
+	require.Equal(t, "OK", text)
+
+	thinking := captured["thinking"].(map[string]any)
+	require.Equal(t, "disabled", thinking["type"])
+	responseFormat := captured["response_format"].(map[string]any)
+	require.Equal(t, "json_object", responseFormat["type"])
+	require.NotContains(t, captured, "json_schema")
+	messages := captured["messages"].([]any)
+	require.Equal(t, "system", messages[0].(map[string]any)["role"])
+	require.Contains(t, messages[0].(map[string]any)["content"], "JSON Schema")
+	require.Equal(t, "system", messages[1].(map[string]any)["role"])
+	require.Equal(t, "user", messages[2].(map[string]any)["role"])
+}
+
+func TestGenerateStreamNormalizesDeepSeekRequestForUpstream(t *testing.T) {
+	var captured map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, http.MethodPost, r.Method)
+		require.Equal(t, "/v1/chat/completions", r.URL.Path)
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		require.NoError(t, json.Unmarshal(body, &captured))
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{
+				{
+					"message": map[string]any{
+						"content": "OK",
+					},
+				},
+			},
+		}))
+	}))
+	defer server.Close()
+
+	client := NewClientWithOptions(server.URL, time.Second, ClientOptions{
+		ChatCompletionsCompatibility: []upstreamcompat.ChatCompletionRule{
+			{
+				Model:           "deepseek-*",
+				DefaultThinking: upstreamcompat.DefaultThinkingDisabled,
+				JSONSchemaMode:  upstreamcompat.JSONSchemaModeObjectInstruction,
+			},
+		},
+	})
+	var text string
+	err := client.GenerateStream(
+		context.Background(),
+		"deepseek-chat",
+		[]domain.Item{domain.NewInputTextMessage("user", "Return status.")},
+		map[string]json.RawMessage{
+			"thinking":        json.RawMessage(`{"type":"enabled"}`),
+			"response_format": json.RawMessage(`{"type":"json_schema","json_schema":{"name":"status","schema":{"type":"object","properties":{"status":{"type":"string"}}}}}`),
+			"json_schema":     json.RawMessage(`{"type":"object","properties":{"legacy_hint":{"type":"string"}}}`),
+		},
+		func(delta string) error {
+			text += delta
+			return nil
+		},
+	)
+	require.NoError(t, err)
+	require.Equal(t, "OK", text)
+
+	thinking := captured["thinking"].(map[string]any)
+	require.Equal(t, "enabled", thinking["type"])
+	responseFormat := captured["response_format"].(map[string]any)
+	require.Equal(t, "json_object", responseFormat["type"])
+	require.NotContains(t, captured, "json_schema")
+	require.True(t, captured["stream"].(bool))
 }
 
 func TestCreateChatCompletionTextExtractsTypedAssistantContent(t *testing.T) {
@@ -439,6 +556,32 @@ func TestProxyAdmissionSlotHeldUntilBodyClose(t *testing.T) {
 	resp, err = client.Proxy(context.Background(), httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader([]byte(`{"model":"test"}`))))
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
+}
+
+func TestProxyLetsTransportDecodeUpstreamCompression(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/v1/chat/completions", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Encoding", "gzip")
+		gz := gzip.NewWriter(w)
+		_, writeErr := io.WriteString(gz, `{"ok":true}`)
+		require.NoError(t, writeErr)
+		require.NoError(t, gz.Close())
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, time.Second)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader([]byte(`{"model":"test"}`)))
+	req.Header.Set("Accept-Encoding", "gzip")
+	resp, err := client.Proxy(context.Background(), req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equal(t, `{"ok":true}`, string(body))
+	require.Empty(t, resp.Header.Get("Content-Encoding"))
 }
 
 func TestRunStartupCalibrationCompletesWithRecommendations(t *testing.T) {

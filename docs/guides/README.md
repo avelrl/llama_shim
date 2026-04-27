@@ -21,6 +21,8 @@ Assumptions:
 - [Responses](responses.md): primary API for new work
 - [Codex CLI](codex-cli.md): using Codex through the shim, including WebSocket
   mode
+- [Codex Testing Plan](codex-testing-plan.md): phased manual testing for real
+  Codex CLI and model/upstream triage
 - [Conversations](conversations.md): durable conversation state
 - [Chat Completions](chat-completions.md): legacy-compatible surface
 - [Retrieval and File Search](retrieval.md): files, vector stores, and RAG

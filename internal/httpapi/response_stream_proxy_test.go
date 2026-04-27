@@ -31,7 +31,7 @@ func TestResponseStreamEventProxyLogsOutputTextAndSummary(t *testing.T) {
 		"data: {\"type\":\"response.output_text.done\",\"response_id\":\"resp_test\",\"item_id\":\"msg_test\",\"output_index\":0,\"content_index\":0,\"text\":\"You are a coding agent...\"}\n",
 		"\n",
 		"event: response.completed\n",
-		"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_test\",\"model\":\"google/gemma-4-26b-a4b:latest\",\"output_text\":\"You are a coding agent...\",\"output\":[]}}\n",
+		"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_test\",\"model\":\"google/gemma-4-26b-a4b:latest\",\"output_text\":\"You are a coding agent...\",\"output\":[{\"id\":\"rs_test\",\"type\":\"reasoning\",\"summary\":[]},{\"id\":\"msg_test\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"You are a coding agent...\"}]}]}}\n",
 		"\n",
 	}
 
@@ -47,6 +47,39 @@ func TestResponseStreamEventProxyLogsOutputTextAndSummary(t *testing.T) {
 	require.Contains(t, output, `"msg":"responses stream summary"`)
 	require.Contains(t, output, `"output_text_preview":"You are a coding agent..."`)
 	require.Contains(t, output, `"event_count":5`)
+}
+
+func TestSummarizeResponseEnvelopeForLogIncludesOutputItemTypes(t *testing.T) {
+	attrs := summarizeResponseEnvelopeForLog(map[string]any{
+		"id":          "resp_test",
+		"model":       "test-model",
+		"output_text": "",
+		"output": []any{
+			map[string]any{"type": "reasoning"},
+			map[string]any{"type": "message"},
+			map[string]any{"type": "function_call"},
+			map[string]any{},
+		},
+	})
+
+	values := attrsToMap(attrs)
+	require.Equal(t, 4, values["output_count"])
+	require.Equal(t, []string{"reasoning", "message", "function_call", "missing"}, values["output_item_types"])
+	require.Equal(t, 1, values["reasoning_item_count"])
+	require.Equal(t, 1, values["message_item_count"])
+	require.Equal(t, 1, values["tool_item_count"])
+}
+
+func attrsToMap(attrs []any) map[string]any {
+	out := make(map[string]any, len(attrs)/2)
+	for i := 0; i+1 < len(attrs); i += 2 {
+		key, ok := attrs[i].(string)
+		if !ok {
+			continue
+		}
+		out[key] = attrs[i+1]
+	}
+	return out
 }
 
 func TestResponseStreamEventProxyKeepsStreamedMessageIDOnCompleted(t *testing.T) {

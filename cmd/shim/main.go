@@ -19,6 +19,7 @@ import (
 	"llama_shim/internal/sandbox"
 	"llama_shim/internal/service"
 	"llama_shim/internal/storage/sqlite"
+	"llama_shim/internal/upstreamcompat"
 	"llama_shim/internal/websearch"
 )
 
@@ -66,10 +67,11 @@ func main() {
 	defer store.Close()
 
 	llamaClient := llama.NewClientWithOptions(cfg.LlamaBaseURL, cfg.LlamaTimeout, llama.ClientOptions{
-		MaxConcurrentRequests: cfg.LlamaMaxConcurrentRequests,
-		MaxQueueWait:          cfg.LlamaMaxQueueWait,
-		Logger:                logger,
-		Observer:              metrics,
+		MaxConcurrentRequests:        cfg.LlamaMaxConcurrentRequests,
+		MaxQueueWait:                 cfg.LlamaMaxQueueWait,
+		Logger:                       logger,
+		Observer:                     metrics,
+		ChatCompletionsCompatibility: mapChatCompletionsCompatibilityRules(cfg.ChatCompletionsUpstreamCompatibility),
 		Transport: llama.TransportOptions{
 			MaxIdleConns:          cfg.LlamaHTTPMaxIdleConns,
 			MaxIdleConnsPerHost:   cfg.LlamaHTTPMaxIdleConnsPerHost,
@@ -157,27 +159,32 @@ func main() {
 				RetrievalMaxGroundingChunks:       cfg.RetrievalMaxGroundingChunks,
 				CodeInterpreterMaxConcurrentRuns:  cfg.ResponsesCodeInterpreterMaxConcurrentRuns,
 			},
-			ChatCompletionsStoreWhenOmitted:       cfg.ChatCompletionsStoreWhenOmitted,
-			ResponsesMode:                         cfg.ResponsesMode,
-			ResponsesWebSocketEnabled:             cfg.ResponsesWebSocketEnabled,
-			ResponsesCustomToolsMode:              cfg.ResponsesCustomToolsMode,
-			ResponsesConstrainedDecodingBackend:   cfg.ResponsesConstrainedDecodingBackend,
-			ResponsesCodexEnableCompatibility:     cfg.ResponsesCodexEnableCompatibility,
-			ResponsesCodexForceToolChoiceRequired: cfg.ResponsesCodexForceToolChoiceRequired,
-			ResponsesCompactionBackend:            cfg.ResponsesCompactionBackend,
-			ResponsesCompactionModel:              cfg.ResponsesCompactionModel,
-			ResponsesCompactionRetainedItems:      cfg.ResponsesCompactionRetainedItems,
-			ResponsesCompactionMaxInputRunes:      cfg.ResponsesCompactionMaxInputRunes,
-			ResponsesWebSearchBackend:             cfg.ResponsesWebSearchBackend,
-			ResponsesImageGenerationBackend:       cfg.ResponsesImageGenerationBackend,
-			WebSearchProvider:                     webSearchProvider,
-			ImageGenerationProvider:               imageGenerationProvider,
-			LocalComputer:                         localComputer,
-			LocalCodeInterpreter:                  localCodeInterpreter,
-			RetrievalIndexBackend:                 cfg.RetrievalIndexBackend,
-			RetrievalEmbedderBackend:              cfg.RetrievalEmbedderBackend,
-			RetrievalEmbedder:                     retrievalEmbedder,
-			Store:                                 store,
+			ChatCompletionsStoreWhenOmitted:                     cfg.ChatCompletionsStoreWhenOmitted,
+			ChatCompletionsUpstreamCompatibility:                mapChatCompletionsCompatibilityRules(cfg.ChatCompletionsUpstreamCompatibility),
+			ResponsesMode:                                       cfg.ResponsesMode,
+			ResponsesWebSocketEnabled:                           cfg.ResponsesWebSocketEnabled,
+			ResponsesCustomToolsMode:                            cfg.ResponsesCustomToolsMode,
+			ResponsesConstrainedDecodingBackend:                 cfg.ResponsesConstrainedDecodingBackend,
+			ResponsesUpstreamToolCompatibility:                  mapUpstreamToolCompatibilityRules(cfg.ResponsesUpstreamToolCompatibility),
+			ResponsesCodexEnableCompatibility:                   cfg.ResponsesCodexEnableCompatibility,
+			ResponsesCodexForceToolChoiceRequired:               cfg.ResponsesCodexForceToolChoiceRequired,
+			ResponsesCodexForceToolChoiceRequiredDisabledModels: cfg.ResponsesCodexForceToolChoiceRequiredDisabledModels,
+			ResponsesCodexUpstreamInputCompatibility:            mapCodexUpstreamInputCompatibilityRules(cfg.ResponsesCodexUpstreamInputCompatibility),
+			ResponsesCodexModelMetadata:                         mapCodexModelMetadata(cfg.ResponsesCodexModelMetadata),
+			ResponsesCompactionBackend:                          cfg.ResponsesCompactionBackend,
+			ResponsesCompactionModel:                            cfg.ResponsesCompactionModel,
+			ResponsesCompactionRetainedItems:                    cfg.ResponsesCompactionRetainedItems,
+			ResponsesCompactionMaxInputRunes:                    cfg.ResponsesCompactionMaxInputRunes,
+			ResponsesWebSearchBackend:                           cfg.ResponsesWebSearchBackend,
+			ResponsesImageGenerationBackend:                     cfg.ResponsesImageGenerationBackend,
+			WebSearchProvider:                                   webSearchProvider,
+			ImageGenerationProvider:                             imageGenerationProvider,
+			LocalComputer:                                       localComputer,
+			LocalCodeInterpreter:                                localCodeInterpreter,
+			RetrievalIndexBackend:                               cfg.RetrievalIndexBackend,
+			RetrievalEmbedderBackend:                            cfg.RetrievalEmbedderBackend,
+			RetrievalEmbedder:                                   retrievalEmbedder,
+			Store:                                               store,
 		}),
 		ReadTimeout:  cfg.ReadTimeout,
 		WriteTimeout: cfg.WriteTimeout,
@@ -227,12 +234,17 @@ func main() {
 		"retrieval_embedder_base_url", cfg.RetrievalEmbedderBaseURL,
 		"retrieval_embedder_model", cfg.RetrievalEmbedderModel,
 		"chat_completions_default_store_when_omitted", cfg.ChatCompletionsStoreWhenOmitted,
+		"chat_completions_upstream_compatibility_rule_count", len(cfg.ChatCompletionsUpstreamCompatibility),
 		"responses_mode", cfg.ResponsesMode,
 		"responses_websocket_enabled", cfg.ResponsesWebSocketEnabled,
 		"responses_custom_tools_mode", cfg.ResponsesCustomToolsMode,
 		"responses_constrained_decoding_backend", cfg.ResponsesConstrainedDecodingBackend,
+		"responses_upstream_tool_compatibility_rule_count", len(cfg.ResponsesUpstreamToolCompatibility),
 		"responses_codex_enable_compatibility", cfg.ResponsesCodexEnableCompatibility,
 		"responses_codex_force_tool_choice_required", cfg.ResponsesCodexForceToolChoiceRequired,
+		"responses_codex_force_tool_choice_required_disabled_model_count", len(cfg.ResponsesCodexForceToolChoiceRequiredDisabledModels),
+		"responses_codex_upstream_input_compatibility_rule_count", len(cfg.ResponsesCodexUpstreamInputCompatibility),
+		"responses_codex_model_metadata_count", len(cfg.ResponsesCodexModelMetadata),
 		"responses_web_search_backend", cfg.ResponsesWebSearchBackend,
 		"responses_web_search_base_url", cfg.ResponsesWebSearchBaseURL,
 		"responses_web_search_timeout", cfg.ResponsesWebSearchTimeout,
@@ -329,6 +341,98 @@ func buildLocalCodeInterpreterRuntimeConfig(cfg config.Config) (httpapi.LocalCod
 	default:
 		return httpapi.LocalCodeInterpreterRuntimeConfig{}, fmt.Errorf("unsupported code interpreter backend %q", cfg.ResponsesCodeInterpreterBackend)
 	}
+}
+
+func mapUpstreamToolCompatibilityRules(rules []config.ResponsesUpstreamToolCompatibilityRule) []httpapi.UpstreamToolCompatibilityRule {
+	if len(rules) == 0 {
+		return nil
+	}
+	out := make([]httpapi.UpstreamToolCompatibilityRule, 0, len(rules))
+	for _, rule := range rules {
+		out = append(out, httpapi.UpstreamToolCompatibilityRule{
+			Model:         rule.Model,
+			DisabledTools: append([]string(nil), rule.DisabledTools...),
+		})
+	}
+	return out
+}
+
+func mapChatCompletionsCompatibilityRules(rules []config.ChatCompletionsUpstreamCompatibilityRule) []upstreamcompat.ChatCompletionRule {
+	if len(rules) == 0 {
+		return nil
+	}
+	out := make([]upstreamcompat.ChatCompletionRule, 0, len(rules))
+	for _, rule := range rules {
+		out = append(out, upstreamcompat.ChatCompletionRule{
+			Model:                            rule.Model,
+			RemapDeveloperRole:               rule.RemapDeveloperRole,
+			DefaultThinking:                  rule.DefaultThinking,
+			DefaultMaxTokens:                 rule.DefaultMaxTokens,
+			JSONSchemaMode:                   rule.JSONSchemaMode,
+			EnsureToolParameterPropertyTypes: rule.EnsureToolParameterPropertyTypes,
+			OmitEmptyAssistantToolContent:    rule.OmitEmptyAssistantToolContent,
+		})
+	}
+	return out
+}
+
+func mapCodexUpstreamInputCompatibilityRules(rules []config.ResponsesCodexUpstreamInputCompatibilityRule) []httpapi.CodexUpstreamInputCompatibilityRule {
+	if len(rules) == 0 {
+		return nil
+	}
+	out := make([]httpapi.CodexUpstreamInputCompatibilityRule, 0, len(rules))
+	for _, rule := range rules {
+		out = append(out, httpapi.CodexUpstreamInputCompatibilityRule{
+			Model: rule.Model,
+			Mode:  rule.Mode,
+		})
+	}
+	return out
+}
+
+func mapCodexModelMetadata(models []config.ResponsesCodexModelMetadata) []httpapi.CodexModelMetadata {
+	if len(models) == 0 {
+		return nil
+	}
+	out := make([]httpapi.CodexModelMetadata, 0, len(models))
+	for _, model := range models {
+		priority := 100
+		if model.Priority != nil {
+			priority = *model.Priority
+		}
+		out = append(out, httpapi.CodexModelMetadata{
+			Model:                         model.Model,
+			DisplayName:                   model.DisplayName,
+			Description:                   model.Description,
+			ContextWindow:                 model.ContextWindow,
+			MaxContextWindow:              model.MaxContextWindow,
+			AutoCompactTokenLimit:         model.AutoCompactTokenLimit,
+			EffectiveContextWindowPercent: model.EffectiveContextWindowPercent,
+			DefaultReasoningLevel:         model.DefaultReasoningLevel,
+			SupportedReasoningLevels:      append([]string(nil), model.SupportedReasoningLevels...),
+			SupportsReasoningSummaries:    model.SupportsReasoningSummaries,
+			DefaultReasoningSummary:       model.DefaultReasoningSummary,
+			ShellType:                     model.ShellType,
+			ApplyPatchToolType:            model.ApplyPatchToolType,
+			WebSearchToolType:             model.WebSearchToolType,
+			SupportsParallelToolCalls:     model.SupportsParallelToolCalls,
+			SupportVerbosity:              model.SupportVerbosity,
+			DefaultVerbosity:              model.DefaultVerbosity,
+			SupportsImageDetailOriginal:   model.SupportsImageDetailOriginal,
+			SupportsSearchTool:            model.SupportsSearchTool,
+			InputModalities:               append([]string(nil), model.InputModalities...),
+			Visibility:                    model.Visibility,
+			SupportedInAPI:                model.SupportedInAPI,
+			Priority:                      priority,
+			AdditionalSpeedTiers:          append([]string(nil), model.AdditionalSpeedTiers...),
+			ExperimentalSupportedTools:    append([]string(nil), model.ExperimentalSupportedTools...),
+			AvailabilityNuxMessage:        model.AvailabilityNuxMessage,
+			TruncationPolicyMode:          model.TruncationPolicy.Mode,
+			TruncationPolicyLimit:         model.TruncationPolicy.Limit,
+			BaseInstructions:              model.BaseInstructions,
+		})
+	}
+	return out
 }
 
 func buildLogWriter(logFilePath string) (io.Writer, *os.File, error) {

@@ -10,42 +10,48 @@ import (
 	"llama_shim/internal/llama"
 	"llama_shim/internal/retrieval"
 	"llama_shim/internal/service"
-	"llama_shim/internal/storage/sqlite"
+	"llama_shim/internal/storage"
+	"llama_shim/internal/upstreamcompat"
 	"llama_shim/internal/websearch"
 )
 
 type RouterDeps struct {
-	Logger                                *slog.Logger
-	LlamaClient                           *llama.Client
-	ResponseService                       *service.ResponseService
-	ConversationService                   *service.ConversationService
-	Auth                                  StaticBearerAuthConfig
-	RateLimit                             RateLimitConfig
-	MetricsConfig                         MetricsConfig
-	Metrics                               *Metrics
-	ServiceLimits                         ServiceLimits
-	StorageBackend                        string
-	ChatCompletionsStoreWhenOmitted       bool
-	ResponsesMode                         string
-	ResponsesWebSocketEnabled             bool
-	ResponsesCustomToolsMode              string
-	ResponsesConstrainedDecodingBackend   string
-	ResponsesCodexEnableCompatibility     bool
-	ResponsesCodexForceToolChoiceRequired bool
-	ResponsesCompactionBackend            string
-	ResponsesCompactionModel              string
-	ResponsesCompactionRetainedItems      int
-	ResponsesCompactionMaxInputRunes      int
-	ResponsesWebSearchBackend             string
-	ResponsesImageGenerationBackend       string
-	WebSearchProvider                     websearch.Provider
-	ImageGenerationProvider               imagegen.Provider
-	LocalComputer                         LocalComputerRuntimeConfig
-	LocalCodeInterpreter                  LocalCodeInterpreterRuntimeConfig
-	RetrievalIndexBackend                 string
-	RetrievalEmbedderBackend              string
-	RetrievalEmbedder                     retrieval.Embedder
-	Store                                 *sqlite.Store
+	Logger                                              *slog.Logger
+	LlamaClient                                         *llama.Client
+	ResponseService                                     *service.ResponseService
+	ConversationService                                 *service.ConversationService
+	Auth                                                StaticBearerAuthConfig
+	RateLimit                                           RateLimitConfig
+	MetricsConfig                                       MetricsConfig
+	Metrics                                             *Metrics
+	ServiceLimits                                       ServiceLimits
+	StorageBackend                                      string
+	ChatCompletionsStoreWhenOmitted                     bool
+	ChatCompletionsUpstreamCompatibility                []upstreamcompat.ChatCompletionRule
+	ResponsesMode                                       string
+	ResponsesWebSocketEnabled                           bool
+	ResponsesCustomToolsMode                            string
+	ResponsesConstrainedDecodingBackend                 string
+	ResponsesUpstreamToolCompatibility                  []UpstreamToolCompatibilityRule
+	ResponsesCodexEnableCompatibility                   bool
+	ResponsesCodexForceToolChoiceRequired               bool
+	ResponsesCodexForceToolChoiceRequiredDisabledModels []string
+	ResponsesCodexUpstreamInputCompatibility            []CodexUpstreamInputCompatibilityRule
+	ResponsesCodexModelMetadata                         []CodexModelMetadata
+	ResponsesCompactionBackend                          string
+	ResponsesCompactionModel                            string
+	ResponsesCompactionRetainedItems                    int
+	ResponsesCompactionMaxInputRunes                    int
+	ResponsesWebSearchBackend                           string
+	ResponsesImageGenerationBackend                     string
+	WebSearchProvider                                   websearch.Provider
+	ImageGenerationProvider                             imagegen.Provider
+	LocalComputer                                       LocalComputerRuntimeConfig
+	LocalCodeInterpreter                                LocalCodeInterpreterRuntimeConfig
+	RetrievalIndexBackend                               string
+	RetrievalEmbedderBackend                            string
+	RetrievalEmbedder                                   retrieval.Embedder
+	Store                                               storage.Store
 }
 
 const readyzUpstreamTimeout = 2 * time.Second
@@ -64,7 +70,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 	retrievalGate := newConcurrencyGate("retrieval_search", serviceLimits.RetrievalMaxConcurrentSearches, deps.Metrics)
 	codeInterpreterGate := newConcurrencyGate("local_code_interpreter", serviceLimits.CodeInterpreterMaxConcurrentRuns, deps.Metrics)
 
-	proxyHandler := newProxyHandler(deps.Logger, deps.LlamaClient, deps.Store, serviceLimits, deps.ChatCompletionsStoreWhenOmitted)
+	proxyHandler := newProxyHandler(deps.Logger, deps.LlamaClient, deps.Store, serviceLimits, deps.ChatCompletionsStoreWhenOmitted, deps.ChatCompletionsUpstreamCompatibility)
 	responseHandler := newResponseHandler(
 		deps.Logger,
 		deps.ResponseService,
@@ -72,8 +78,11 @@ func NewRouter(deps RouterDeps) http.Handler {
 		deps.ResponsesMode,
 		deps.ResponsesCustomToolsMode,
 		deps.ResponsesConstrainedDecodingBackend,
+		deps.ResponsesUpstreamToolCompatibility,
 		deps.ResponsesCodexEnableCompatibility,
 		deps.ResponsesCodexForceToolChoiceRequired,
+		deps.ResponsesCodexForceToolChoiceRequiredDisabledModels,
+		deps.ResponsesCodexUpstreamInputCompatibility,
 		deps.WebSearchProvider,
 		deps.ImageGenerationProvider,
 		deps.LocalComputer,
@@ -103,7 +112,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 			return
 		}
 		if err := deps.Store.PingContext(r.Context()); err != nil {
-			WriteError(w, http.StatusServiceUnavailable, "service_unavailable", "sqlite is not ready", "")
+			WriteError(w, http.StatusServiceUnavailable, "service_unavailable", "storage backend is not ready", "")
 			return
 		}
 		if deps.LlamaClient == nil {
@@ -150,6 +159,24 @@ func NewRouter(deps RouterDeps) http.Handler {
 	if metricsConfig.Enabled && deps.Metrics != nil {
 		mux.Handle(metricsConfig.Path, deps.Metrics.Handler())
 	}
+	mux.HandleFunc("/api/codex/models", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			WriteError(w, http.StatusMethodNotAllowed, "invalid_request_error", "method not allowed", "")
+			return
+		}
+		if writeCodexModels(w, deps.ResponsesCodexModelMetadata) {
+			return
+		}
+		proxyHandler.forward(w, r)
+	})
+	mux.HandleFunc("/v1/models", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Query().Get("client_version") != "" {
+			if writeCodexModels(w, deps.ResponsesCodexModelMetadata) {
+				return
+			}
+		}
+		proxyHandler.forward(w, r)
+	})
 	mux.HandleFunc("/v1/responses", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && isWebSocketUpgrade(r) {
 			if !deps.ResponsesWebSocketEnabled {

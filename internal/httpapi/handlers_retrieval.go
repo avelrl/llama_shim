@@ -14,7 +14,7 @@ import (
 
 	"llama_shim/internal/domain"
 	"llama_shim/internal/retrieval"
-	"llama_shim/internal/storage/sqlite"
+	"llama_shim/internal/storage"
 )
 
 const (
@@ -30,10 +30,15 @@ const (
 
 type retrievalHandler struct {
 	logger        *slog.Logger
-	store         *sqlite.Store
+	store         retrievalStore
 	metrics       *Metrics
 	serviceLimits ServiceLimits
 	searchGate    *concurrencyGate
+}
+
+type retrievalStore interface {
+	storage.FileStore
+	storage.VectorStore
 }
 
 type fileObjectResponse struct {
@@ -118,7 +123,7 @@ type vectorStoreSearchResponse struct {
 	NextPage    *string                          `json:"next_page"`
 }
 
-func newRetrievalHandler(logger *slog.Logger, store *sqlite.Store, metrics *Metrics, serviceLimits ServiceLimits, searchGate *concurrencyGate) *retrievalHandler {
+func newRetrievalHandler(logger *slog.Logger, store retrievalStore, metrics *Metrics, serviceLimits ServiceLimits, searchGate *concurrencyGate) *retrievalHandler {
 	return &retrievalHandler{
 		logger:        logger,
 		store:         store,

@@ -30,6 +30,7 @@ func TestMapError(t *testing.T) {
 	status, payload = httpapi.MapError(context.Background(), logger, service.ErrUpstreamTimeout)
 	require.Equal(t, 504, status)
 	require.Equal(t, "upstream_timeout_error", payload.Type)
+	require.Equal(t, "upstream request timed out", payload.Message)
 
 	status, payload = httpapi.MapError(context.Background(), logger, &llama.UpstreamError{
 		StatusCode: 400,
@@ -37,6 +38,7 @@ func TestMapError(t *testing.T) {
 	})
 	require.Equal(t, 502, status)
 	require.Equal(t, "upstream_error", payload.Type)
+	require.Equal(t, "upstream request failed", payload.Message)
 }
 
 func TestWriteErrorUsesCanonicalOpenAIShape(t *testing.T) {

@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"llama_shim/internal/domain"
 )
 
 func TestBuildLocalToolLoopTransportPlanConvertsNamedFunctionToolChoiceToChatShape(t *testing.T) {
@@ -69,4 +71,33 @@ func TestBuildLocalToolLoopTransportPlanConvertsShellToolChoiceToChatShape(t *te
 	function, ok := payload["function"].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, localBuiltinShellSyntheticName, function["name"])
+}
+
+func TestBuildChatCompletionMessagesFromItemsUsesResponsesCallIDForToolCalls(t *testing.T) {
+	items := []domain.Item{
+		mustDomainItem(t, `{"type":"message","role":"user","content":"Call add."}`),
+		mustDomainItem(t, `{"type":"function_call","id":"item_123","call_id":"call_abc","name":"add","arguments":"{\"a\":40,\"b\":2}"}`),
+		mustDomainItem(t, `{"type":"function_call_output","call_id":"call_abc","output":"{\"result\":42}"}`),
+		mustDomainItem(t, `{"type":"message","role":"user","content":"Reply with the result."}`),
+	}
+
+	messages, err := buildChatCompletionMessagesFromItems(items)
+
+	require.NoError(t, err)
+	require.Len(t, messages, 4)
+
+	toolCalls, ok := messages[1]["tool_calls"].([]map[string]any)
+	require.True(t, ok)
+	require.Len(t, toolCalls, 1)
+	require.Equal(t, "call_abc", toolCalls[0]["id"])
+	require.Equal(t, "tool", messages[2]["role"])
+	require.Equal(t, "call_abc", messages[2]["tool_call_id"])
+}
+
+func mustDomainItem(t *testing.T, raw string) domain.Item {
+	t.Helper()
+
+	item, err := domain.NewItem([]byte(raw))
+	require.NoError(t, err)
+	return item
 }

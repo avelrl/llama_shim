@@ -34,6 +34,7 @@ import (
 	"llama_shim/internal/sandbox"
 	"llama_shim/internal/storage/sqlite"
 	"llama_shim/internal/testutil"
+	"llama_shim/internal/upstreamcompat"
 	"llama_shim/internal/websearch"
 )
 
@@ -379,6 +380,74 @@ func TestChatCompletionsCreateDoesNotUseStartupCalibrationToken(t *testing.T) {
 	require.NotEmpty(t, strings.TrimSpace(string(body)))
 }
 
+func TestChatCompletionsProxyAppliesConfiguredUpstreamCompatibility(t *testing.T) {
+	var captured map[string]any
+	llamaServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, http.MethodPost, r.Method)
+		require.Equal(t, "/v1/chat/completions", r.URL.Path)
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		require.NoError(t, json.Unmarshal(body, &captured))
+		w.Header().Set("Content-Type", "application/json")
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"id":     "chatcmpl_compat",
+			"object": "chat.completion",
+			"choices": []map[string]any{
+				{
+					"index": 0,
+					"message": map[string]any{
+						"role":    "assistant",
+						"content": `{"status":"ok"}`,
+					},
+					"finish_reason": "stop",
+				},
+			},
+		}))
+	}))
+	defer llamaServer.Close()
+
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		LlamaBaseURL: llamaServer.URL,
+		ChatCompletionsUpstreamCompatibility: []upstreamcompat.ChatCompletionRule{
+			{
+				Model:              "deepseek-*",
+				RemapDeveloperRole: true,
+				DefaultThinking:    upstreamcompat.DefaultThinkingDisabled,
+				JSONSchemaMode:     upstreamcompat.JSONSchemaModeObjectInstruction,
+			},
+		},
+	})
+
+	status, _ := rawRequest(t, app, http.MethodPost, "/v1/chat/completions", map[string]any{
+		"model": "deepseek-chat",
+		"messages": []map[string]any{
+			{"role": "developer", "content": "Return JSON only."},
+			{"role": "user", "content": "Return status."},
+		},
+		"response_format": map[string]any{
+			"type": "json_schema",
+			"json_schema": map[string]any{
+				"name": "status",
+				"schema": map[string]any{
+					"type":       "object",
+					"properties": map[string]any{"status": map[string]any{"type": "string"}},
+				},
+			},
+		},
+	})
+
+	require.Equal(t, http.StatusOK, status)
+	thinking := captured["thinking"].(map[string]any)
+	require.Equal(t, "disabled", thinking["type"])
+	responseFormat := captured["response_format"].(map[string]any)
+	require.Equal(t, "json_object", responseFormat["type"])
+	messages := captured["messages"].([]any)
+	require.Equal(t, "system", messages[0].(map[string]any)["role"])
+	require.Contains(t, messages[0].(map[string]any)["content"], "JSON Schema")
+	require.Equal(t, "system", messages[1].(map[string]any)["role"])
+	require.Equal(t, "user", messages[2].(map[string]any)["role"])
+}
+
 func TestCapabilitiesEndpointReportsConfiguredRuntime(t *testing.T) {
 	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
 		ResponsesMode:                     config.ResponsesModeLocalOnly,
@@ -429,6 +498,7 @@ func TestCapabilitiesEndpointReportsConfiguredRuntime(t *testing.T) {
 	runtime := payload["runtime"].(map[string]any)
 	require.Equal(t, config.ResponsesModeLocalOnly, asStringAny(runtime["responses_mode"]))
 	require.Equal(t, "bridge", asStringAny(runtime["custom_tools_mode"]))
+	require.Equal(t, float64(0), runtime["chat_completions_upstream_compatibility_rules"])
 
 	compaction := runtime["compaction"].(map[string]any)
 	require.Equal(t, true, compaction["enabled"])
@@ -479,6 +549,7 @@ func TestCapabilitiesEndpointReportsConfiguredRuntime(t *testing.T) {
 	codex := runtime["codex"].(map[string]any)
 	require.Equal(t, true, codex["compatibility_enabled"])
 	require.Equal(t, true, codex["force_tool_choice_required"])
+	require.Equal(t, float64(0), codex["upstream_input_compatibility_rules"])
 
 	persistence := runtime["persistence"].(map[string]any)
 	require.Equal(t, "sqlite", asStringAny(persistence["backend"]))
@@ -3768,6 +3839,119 @@ func TestModelsAreProxied(t *testing.T) {
 	data, ok := payload["data"].([]any)
 	require.True(t, ok)
 	require.NotEmpty(t, data)
+}
+
+func TestCodexModelsClientVersionQueryUsesShimMetadata(t *testing.T) {
+	supportedInAPI := false
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		CodexModelMetadata: []httpapi.CodexModelMetadata{{
+			Model:                         "Kimi-K2.6",
+			DisplayName:                   "Kimi K2.6",
+			Description:                   "Kimi through shim",
+			ContextWindow:                 128000,
+			MaxContextWindow:              256000,
+			AutoCompactTokenLimit:         100000,
+			EffectiveContextWindowPercent: 90,
+			DefaultReasoningLevel:         "high",
+			SupportedReasoningLevels:      []string{"low", "medium", "high"},
+			SupportsReasoningSummaries:    true,
+			DefaultReasoningSummary:       "none",
+			ShellType:                     "shell_command",
+			ApplyPatchToolType:            "freeform",
+			WebSearchToolType:             "text_and_image",
+			SupportsParallelToolCalls:     true,
+			SupportVerbosity:              true,
+			DefaultVerbosity:              "medium",
+			SupportsImageDetailOriginal:   true,
+			SupportsSearchTool:            true,
+			InputModalities:               []string{"text"},
+			Visibility:                    "hide",
+			SupportedInAPI:                &supportedInAPI,
+			Priority:                      0,
+			AdditionalSpeedTiers:          []string{"fast"},
+			ExperimentalSupportedTools:    []string{"list_dir"},
+			AvailabilityNuxMessage:        "Available through llama_shim.",
+			TruncationPolicyMode:          "tokens",
+			TruncationPolicyLimit:         12000,
+			BaseInstructions:              "Custom Codex instructions.",
+		}},
+	})
+
+	req, err := http.NewRequest(http.MethodGet, app.Server.URL+"/v1/models?client_version=0.125.0", nil)
+	require.NoError(t, err)
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Contains(t, resp.Header.Get("Content-Type"), "application/json")
+
+	var payload map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&payload))
+	models, ok := payload["models"].([]any)
+	require.True(t, ok)
+	require.Len(t, models, 1)
+	model := models[0].(map[string]any)
+	require.Equal(t, "Kimi-K2.6", model["slug"])
+	require.Equal(t, "Kimi K2.6", model["display_name"])
+	require.Equal(t, float64(128000), model["context_window"])
+	require.Equal(t, float64(256000), model["max_context_window"])
+	require.Equal(t, float64(100000), model["auto_compact_token_limit"])
+	require.Equal(t, float64(90), model["effective_context_window_percent"])
+	require.Equal(t, "high", model["default_reasoning_level"])
+	require.Equal(t, true, model["supports_reasoning_summaries"])
+	require.Equal(t, "none", model["default_reasoning_summary"])
+	require.Equal(t, "shell_command", model["shell_type"])
+	require.Equal(t, "freeform", model["apply_patch_tool_type"])
+	require.Equal(t, "text_and_image", model["web_search_tool_type"])
+	require.Equal(t, true, model["supports_parallel_tool_calls"])
+	require.Equal(t, true, model["support_verbosity"])
+	require.Equal(t, "medium", model["default_verbosity"])
+	require.Equal(t, true, model["supports_image_detail_original"])
+	require.Equal(t, true, model["supports_search_tool"])
+	require.Equal(t, "hide", model["visibility"])
+	require.Equal(t, false, model["supported_in_api"])
+	require.Equal(t, float64(0), model["priority"])
+	require.Equal(t, []any{"fast"}, model["additional_speed_tiers"])
+	require.Equal(t, []any{"list_dir"}, model["experimental_supported_tools"])
+	require.Equal(t, map[string]any{"message": "Available through llama_shim."}, model["availability_nux"])
+	require.Equal(t, map[string]any{"limit": float64(12000), "mode": "tokens"}, model["truncation_policy"])
+	require.Equal(t, "Custom Codex instructions.", model["base_instructions"])
+	require.NotContains(t, payload, "data")
+}
+
+func TestCodexModelsEndpointUsesShimMetadata(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		CodexModelMetadata: []httpapi.CodexModelMetadata{{
+			Model:                    "Kimi-K2.6",
+			DisplayName:              "Kimi K2.6",
+			Description:              "Kimi through shim",
+			DefaultReasoningLevel:    "high",
+			SupportedReasoningLevels: []string{"low", "medium", "high"},
+			DefaultReasoningSummary:  "none",
+			ShellType:                "shell_command",
+			WebSearchToolType:        "text",
+			InputModalities:          []string{"text"},
+			Priority:                 100,
+		}},
+	})
+
+	req, err := http.NewRequest(http.MethodGet, app.Server.URL+"/api/codex/models?client_version=0.125.0", nil)
+	require.NoError(t, err)
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var payload map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&payload))
+	models, ok := payload["models"].([]any)
+	require.True(t, ok)
+	require.Len(t, models, 1)
+	require.Equal(t, "Kimi-K2.6", models[0].(map[string]any)["slug"])
 }
 
 func TestUnknownPostRouteIsProxied(t *testing.T) {
