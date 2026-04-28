@@ -1,6 +1,6 @@
 # V3 Expansion Staging
 
-Last updated: April 26, 2026.
+Last updated: April 29, 2026.
 
 This document is the parking lot for work that did not make the V2 ship bar
 and should not be reintroduced into the frozen V2 scope.
@@ -192,7 +192,31 @@ contract. Exact hosted close codes, upstream WebSocket proxying, hosted cache
 edge cases, and Realtime API WebSocket compatibility are deferred to
 [v5-scope.md](v5-scope.md).
 
-### 8. Ops and deployment expansion
+### 8. Codex eval harness and auto-regression loop
+
+Status: proposed. See
+[v3-codex-eval-harness.md](v3-codex-eval-harness.md).
+
+The existing Codex CLI smokes are useful canaries, but manual Codex sessions
+are not a scalable compatibility strategy. V3 should add a repo-owned eval
+harness that runs real `codex exec --json` through the shim, captures Codex
+JSONL, shim log slices, workspace diffs, deterministic checker output, and
+machine-readable failure buckets.
+
+The goal is a practical auto-regression loop for local and OpenAI-compatible
+upstreams such as Qwen 3.6:
+
+- run a curated task suite through Codex and the shim
+- classify failures as shim, transport, Codex tool registration, upstream
+  model/tool-following, checker, or harness bugs
+- use frontier-model review only for root-cause analysis and patch proposals
+- convert manual failures into permanent deterministic tasks
+- keep pass/fail owned by task checkers, not by an LLM judge
+
+This is a quality and automation track. It does not strengthen any hosted
+OpenAI parity claim by itself.
+
+### 9. Ops and deployment expansion
 
 - multi-tenant authz / tenant isolation
 - richer exporters and dashboards
