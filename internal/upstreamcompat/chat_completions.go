@@ -15,6 +15,7 @@ type ChatCompletionCompatibility struct {
 	DefaultMaxTokensApplied           bool
 	JSONSchemaDowngraded              bool
 	ToolParameterPropertyTypesEnsured bool
+	MoonshotToolSchemaSanitized       bool
 	EmptyAssistantToolContentOmitted  int
 }
 
@@ -29,14 +30,19 @@ type ChatCompletionRule struct {
 	DefaultMaxTokens                 int
 	JSONSchemaMode                   string
 	EnsureToolParameterPropertyTypes bool
+	SanitizeMoonshotToolSchema       bool
 	OmitEmptyAssistantToolContent    bool
+	RetryInvalidToolArguments        bool
+	InvalidToolArgumentsFallback     string
 }
 
 const (
-	DefaultThinkingPassthrough      = "passthrough"
-	DefaultThinkingDisabled         = "disabled"
-	JSONSchemaModePassthrough       = "passthrough"
-	JSONSchemaModeObjectInstruction = "json_object_instruction"
+	DefaultThinkingPassthrough            = "passthrough"
+	DefaultThinkingDisabled               = "disabled"
+	JSONSchemaModePassthrough             = "passthrough"
+	JSONSchemaModeObjectInstruction       = "json_object_instruction"
+	InvalidToolArgumentsFallbackNone      = "none"
+	InvalidToolArgumentsFallbackFinalText = "final_text"
 )
 
 func (c ChatCompletionCompatibility) Applied() bool {
@@ -45,7 +51,26 @@ func (c ChatCompletionCompatibility) Applied() bool {
 		c.DefaultMaxTokensApplied ||
 		c.JSONSchemaDowngraded ||
 		c.ToolParameterPropertyTypesEnsured ||
+		c.MoonshotToolSchemaSanitized ||
 		c.EmptyAssistantToolContentOmitted > 0
+}
+
+func (o ChatCompletionOptions) RetryInvalidToolArguments(model string) bool {
+	rule, ok := chatCompletionRuleForModel(model, o.Rules)
+	return ok && rule.RetryInvalidToolArguments
+}
+
+func (o ChatCompletionOptions) InvalidToolArgumentsFallback(model string) string {
+	rule, ok := chatCompletionRuleForModel(model, o.Rules)
+	if !ok {
+		return InvalidToolArgumentsFallbackNone
+	}
+	switch strings.TrimSpace(rule.InvalidToolArgumentsFallback) {
+	case InvalidToolArgumentsFallbackFinalText:
+		return InvalidToolArgumentsFallbackFinalText
+	default:
+		return InvalidToolArgumentsFallbackNone
+	}
 }
 
 func NormalizeChatCompletionRequest(rawBody []byte, options ChatCompletionOptions) ([]byte, ChatCompletionCompatibility, error) {
@@ -104,6 +129,15 @@ func NormalizeChatCompletionRequest(rawBody []byte, options ChatCompletionOption
 			} else if changed {
 				rawFields["tools"] = normalized
 				compatibility.ToolParameterPropertyTypesEnsured = true
+			}
+		}
+
+		if rule.SanitizeMoonshotToolSchema {
+			if normalized, changed, err := sanitizeMoonshotToolSchemas(rawFields["tools"]); err != nil {
+				return nil, ChatCompletionCompatibility{}, err
+			} else if changed {
+				rawFields["tools"] = normalized
+				compatibility.MoonshotToolSchemaSanitized = true
 			}
 		}
 
@@ -201,14 +235,17 @@ func downgradeJSONSchemaToJSONObjectInstruction(rawResponseFormat json.RawMessag
 		return rawResponseFormat, "", false, nil
 	}
 
-	schemaRaw := responseFormat["json_schema"]
+	schemaRaw := bytes.TrimSpace(responseFormat["json_schema"])
+	if len(schemaRaw) == 0 || bytes.Equal(schemaRaw, []byte("null")) {
+		schemaRaw = bytes.TrimSpace(responseFormat["schema"])
+	}
 	var schemaEnvelope map[string]json.RawMessage
 	if len(bytes.TrimSpace(schemaRaw)) > 0 && json.Unmarshal(schemaRaw, &schemaEnvelope) == nil {
 		if nestedSchema := bytes.TrimSpace(schemaEnvelope["schema"]); len(nestedSchema) > 0 && !bytes.Equal(nestedSchema, []byte("null")) {
 			schemaRaw = nestedSchema
 		}
 	}
-	schemaInstruction := "Return JSON only. The JSON object must match this JSON Schema: " + string(bytes.TrimSpace(schemaRaw)) + ". Do not include markdown or prose."
+	schemaInstruction := "Return JSON only. The JSON object must match this JSON Schema: " + string(schemaRaw) + ". Do not include markdown or prose."
 	return json.RawMessage(`{"type":"json_object"}`), schemaInstruction, true, nil
 }
 
@@ -303,6 +340,71 @@ func ensureToolParameterPropertyTypes(rawTools json.RawMessage) (json.RawMessage
 	}
 	out, err := json.Marshal(tools)
 	return out, true, err
+}
+
+func sanitizeMoonshotToolSchemas(rawTools json.RawMessage) (json.RawMessage, bool, error) {
+	trimmed := bytes.TrimSpace(rawTools)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return rawTools, false, nil
+	}
+	var tools []map[string]any
+	if err := json.Unmarshal(trimmed, &tools); err != nil {
+		return nil, false, domain.NewValidationError("tools", "tools must be an array")
+	}
+	changed := false
+	for _, tool := range tools {
+		if stringValue(tool["type"]) != "function" {
+			continue
+		}
+		function, ok := tool["function"].(map[string]any)
+		if !ok {
+			continue
+		}
+		parameters, ok := function["parameters"].(map[string]any)
+		if !ok {
+			continue
+		}
+		function["parameters"] = sanitizeMoonshotSchemaNode(parameters, &changed)
+	}
+	if !changed {
+		return rawTools, false, nil
+	}
+	out, err := json.Marshal(tools)
+	return out, true, err
+}
+
+func sanitizeMoonshotSchemaNode(node any, changed *bool) any {
+	switch typed := node.(type) {
+	case []any:
+		for i, item := range typed {
+			typed[i] = sanitizeMoonshotSchemaNode(item, changed)
+		}
+		return typed
+	case map[string]any:
+		if ref, ok := typed["$ref"].(string); ok && strings.TrimSpace(ref) != "" {
+			if len(typed) != 1 {
+				*changed = true
+			}
+			return map[string]any{"$ref": ref}
+		}
+		for key, value := range typed {
+			if key == "items" {
+				if tupleItems, ok := value.([]any); ok {
+					if len(tupleItems) == 0 {
+						typed[key] = map[string]any{}
+					} else {
+						typed[key] = sanitizeMoonshotSchemaNode(tupleItems[0], changed)
+					}
+					*changed = true
+					continue
+				}
+			}
+			typed[key] = sanitizeMoonshotSchemaNode(value, changed)
+		}
+		return typed
+	default:
+		return typed
+	}
 }
 
 func normalizeSchemaContainer(node any, changed *bool) {

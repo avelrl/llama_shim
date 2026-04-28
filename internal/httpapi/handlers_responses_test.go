@@ -16,6 +16,8 @@ import (
 	"llama_shim/internal/config"
 	"llama_shim/internal/domain"
 	"llama_shim/internal/llama"
+	"llama_shim/internal/service"
+	"llama_shim/internal/upstreamcompat"
 )
 
 type closeTrackingReadCloser struct {
@@ -187,6 +189,251 @@ func TestShouldFallbackLocalState(t *testing.T) {
 	require.True(t, shouldFallbackLocalState(config.ResponsesModePreferLocal, domain.ErrUnsupportedShape))
 	require.False(t, shouldFallbackLocalState(config.ResponsesModeLocalOnly, domain.ErrUnsupportedShape))
 	require.False(t, shouldFallbackLocalState(config.ResponsesModePreferLocal, domain.NewValidationError("input", "input is required")))
+}
+
+func TestShouldRetryLocalToolLoopInvalidToolArgumentsRequiresConfiguredModel(t *testing.T) {
+	handler := &responseHandler{
+		proxy: newProxyHandler(nil, nil, nil, ServiceLimits{}, false, []upstreamcompat.ChatCompletionRule{
+			{Model: "Kimi-*", RetryInvalidToolArguments: true},
+		}),
+	}
+	err := &llama.UpstreamError{
+		StatusCode: 400,
+		Message:    `{"error":{"message":"litellm.BadRequestError: Expecting value: line 1 column 1 (char 0)"}}`,
+	}
+
+	require.True(t, handler.shouldRetryLocalToolLoopInvalidToolArguments(service.CreateResponseInput{Model: "Kimi-K2.6"}, err))
+	require.False(t, handler.shouldRetryLocalToolLoopInvalidToolArguments(service.CreateResponseInput{Model: "deepseek-v4"}, err))
+	require.False(t, handler.shouldRetryLocalToolLoopInvalidToolArguments(service.CreateResponseInput{Model: "Kimi-K2.6"}, &llama.UpstreamError{
+		StatusCode: 500,
+		Message:    "Expecting value: line 1 column 1 (char 0)",
+	}))
+	require.False(t, handler.shouldRetryLocalToolLoopInvalidToolArguments(service.CreateResponseInput{Model: "Kimi-K2.6"}, &llama.UpstreamError{
+		StatusCode: 400,
+		Message:    "tool_choice is invalid",
+	}))
+}
+
+func TestRunPreparedLocalToolLoopRetriesConfiguredInvalidToolArguments(t *testing.T) {
+	var requestBodies []map[string]any
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, http.MethodPost, r.Method)
+		require.Equal(t, "/v1/chat/completions", r.URL.Path)
+
+		var payload map[string]any
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+		requestBodies = append(requestBodies, payload)
+
+		w.Header().Set("Content-Type", "application/json")
+		if len(requestBodies) == 1 {
+			w.WriteHeader(http.StatusBadRequest)
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+				"error": map[string]any{
+					"message": "litellm.BadRequestError: OpenAIException - Expecting value: line 1 column 1 (char 0)",
+				},
+			}))
+			return
+		}
+
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{
+				{
+					"message": map[string]any{
+						"content": "DONE",
+					},
+				},
+			},
+		}))
+	}))
+	defer upstream.Close()
+
+	rules := []upstreamcompat.ChatCompletionRule{
+		{Model: "Kimi-*", RetryInvalidToolArguments: true},
+	}
+	handler := &responseHandler{
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		service: service.NewResponseService(nil, nil, llama.NewClientWithOptions(upstream.URL, time.Second, llama.ClientOptions{
+			ChatCompletionsCompatibility: rules,
+		})),
+		proxy: newProxyHandler(nil, llama.NewClientWithOptions(upstream.URL, time.Second, llama.ClientOptions{
+			ChatCompletionsCompatibility: rules,
+		}), nil, ServiceLimits{}, false, rules),
+	}
+	input := service.CreateResponseInput{Model: "Kimi-K2.6"}
+	prepared := service.PreparedResponseContext{
+		NormalizedInput: []domain.Item{domain.NewInputTextMessage("user", "Say DONE.")},
+		ContextItems:    []domain.Item{domain.NewInputTextMessage("user", "Say DONE.")},
+		ToolCallRefs:    map[string]domain.ToolCallReference{},
+	}
+	rawFields := map[string]json.RawMessage{
+		"model": json.RawMessage(`"Kimi-K2.6"`),
+		"input": json.RawMessage(`"Say DONE."`),
+		"tools": json.RawMessage(`[
+			{"type":"function","name":"touch_file","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}}
+		]`),
+	}
+
+	response, err := handler.runPreparedLocalToolLoopResponse(context.Background(), input, prepared, rawFields)
+
+	require.NoError(t, err)
+	require.Equal(t, "DONE", response.OutputText)
+	require.Len(t, requestBodies, 2)
+	messages := requestBodies[1]["messages"].([]any)
+	require.Contains(t, messages[0].(map[string]any)["content"], "function.arguments must be a valid JSON object string")
+}
+
+func TestRunPreparedLocalToolLoopFallsBackToFinalTextAfterInvalidToolArgumentsRetry(t *testing.T) {
+	var requestBodies []map[string]any
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, http.MethodPost, r.Method)
+		require.Equal(t, "/v1/chat/completions", r.URL.Path)
+
+		var payload map[string]any
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+		requestBodies = append(requestBodies, payload)
+
+		w.Header().Set("Content-Type", "application/json")
+		if len(requestBodies) <= 2 {
+			require.Contains(t, payload, "tools")
+			w.WriteHeader(http.StatusBadRequest)
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+				"error": map[string]any{
+					"message": "litellm.BadRequestError: OpenAIException - Expecting value: line 1 column 1 (char 0)",
+				},
+			}))
+			return
+		}
+
+		require.NotContains(t, payload, "tools")
+		messages := payload["messages"].([]any)
+		require.Contains(t, messages[0].(map[string]any)["content"], "Local tool outputs are provided below")
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{
+				{
+					"message": map[string]any{
+						"content": "BUGFIX_OK",
+					},
+				},
+			},
+		}))
+	}))
+	defer upstream.Close()
+
+	rules := []upstreamcompat.ChatCompletionRule{
+		{
+			Model:                        "Kimi-*",
+			RetryInvalidToolArguments:    true,
+			InvalidToolArgumentsFallback: upstreamcompat.InvalidToolArgumentsFallbackFinalText,
+		},
+	}
+	handler := &responseHandler{
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		service: service.NewResponseService(nil, nil, llama.NewClientWithOptions(upstream.URL, time.Second, llama.ClientOptions{
+			ChatCompletionsCompatibility: rules,
+		})),
+		proxy: newProxyHandler(nil, llama.NewClientWithOptions(upstream.URL, time.Second, llama.ClientOptions{
+			ChatCompletionsCompatibility: rules,
+		}), nil, ServiceLimits{}, false, rules),
+	}
+	input := service.CreateResponseInput{Model: "Kimi-K2.6"}
+	prepared := service.PreparedResponseContext{
+		NormalizedInput: []domain.Item{domain.NewInputTextMessage("user", "Fix Add and answer BUGFIX_OK.")},
+		ContextItems: []domain.Item{
+			domain.NewInputTextMessage("user", "Fix Add and answer BUGFIX_OK."),
+			mustDomainItem(t, `{"type":"shell_call_output","call_id":"call_test","output":"ok  codexsmoke\\n"}`),
+		},
+		ToolCallRefs: map[string]domain.ToolCallReference{},
+	}
+	rawFields := map[string]json.RawMessage{
+		"model": json.RawMessage(`"Kimi-K2.6"`),
+		"input": json.RawMessage(`"Fix Add and answer BUGFIX_OK."`),
+		"tools": json.RawMessage(`[
+			{"type":"function","name":"apply_patch","parameters":{"type":"object","properties":{"patch":{"type":"string"}},"required":["patch"]}}
+		]`),
+	}
+
+	response, err := handler.runPreparedLocalToolLoopResponse(context.Background(), input, prepared, rawFields)
+
+	require.NoError(t, err)
+	require.Equal(t, "BUGFIX_OK", response.OutputText)
+	require.Len(t, requestBodies, 3)
+}
+
+func TestRunPreparedLocalToolLoopFallsBackToFinalTextAfterEmptyAssistantResponse(t *testing.T) {
+	var requestBodies []map[string]any
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, http.MethodPost, r.Method)
+		require.Equal(t, "/v1/chat/completions", r.URL.Path)
+
+		var payload map[string]any
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+		requestBodies = append(requestBodies, payload)
+
+		w.Header().Set("Content-Type", "application/json")
+		if len(requestBodies) == 1 {
+			require.Contains(t, payload, "tools")
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+				"choices": []map[string]any{
+					{
+						"message": map[string]any{
+							"content": "",
+						},
+					},
+				},
+			}))
+			return
+		}
+
+		require.NotContains(t, payload, "tools")
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{
+				{
+					"message": map[string]any{
+						"content": "BUGFIX_OK",
+					},
+				},
+			},
+		}))
+	}))
+	defer upstream.Close()
+
+	rules := []upstreamcompat.ChatCompletionRule{
+		{
+			Model:                        "Kimi-*",
+			InvalidToolArgumentsFallback: upstreamcompat.InvalidToolArgumentsFallbackFinalText,
+		},
+	}
+	handler := &responseHandler{
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		service: service.NewResponseService(nil, nil, llama.NewClientWithOptions(upstream.URL, time.Second, llama.ClientOptions{
+			ChatCompletionsCompatibility: rules,
+		})),
+		proxy: newProxyHandler(nil, llama.NewClientWithOptions(upstream.URL, time.Second, llama.ClientOptions{
+			ChatCompletionsCompatibility: rules,
+		}), nil, ServiceLimits{}, false, rules),
+	}
+	input := service.CreateResponseInput{Model: "Kimi-K2.6"}
+	prepared := service.PreparedResponseContext{
+		NormalizedInput: []domain.Item{domain.NewInputTextMessage("user", "Fix Add and answer BUGFIX_OK.")},
+		ContextItems: []domain.Item{
+			domain.NewInputTextMessage("user", "Fix Add and answer BUGFIX_OK."),
+			mustDomainItem(t, `{"type":"shell_call_output","call_id":"call_test","output":"ok  codexsmoke\\n"}`),
+		},
+		ToolCallRefs: map[string]domain.ToolCallReference{},
+	}
+	rawFields := map[string]json.RawMessage{
+		"model": json.RawMessage(`"Kimi-K2.6"`),
+		"input": json.RawMessage(`"Fix Add and answer BUGFIX_OK."`),
+		"tools": json.RawMessage(`[
+			{"type":"function","name":"apply_patch","parameters":{"type":"object","properties":{"patch":{"type":"string"}},"required":["patch"]}}
+		]`),
+	}
+
+	response, err := handler.runPreparedLocalToolLoopResponse(context.Background(), input, prepared, rawFields)
+
+	require.NoError(t, err)
+	require.Equal(t, "BUGFIX_OK", response.OutputText)
+	require.Len(t, requestBodies, 2)
 }
 
 func TestSelectResponsesCreateRoute(t *testing.T) {
@@ -1059,6 +1306,22 @@ func TestParseLocalToolLoopChatCompletionRemapsLocalBuiltinApplyPatchTool(t *tes
 	require.Equal(t, "main.go", operation["path"])
 	require.NotNil(t, response.Output[0].Meta)
 	require.Equal(t, localBuiltinApplyPatchSyntheticName, response.Output[0].Meta.SyntheticName)
+}
+
+func TestParseLocalToolLoopChatCompletionRejectsRawToolCallMarkupText(t *testing.T) {
+	raw := []byte(`{
+		"choices": [{
+			"message": {
+				"content": "<|tool_calls_section_begin|> <|tool_call_begin|> functions.shell:0 <|tool_call_argument_begin|> {\"command\":\"cat README.md\"} <|tool_call_end|> <|tool_calls_section_end|>"
+			}
+		}]
+	}`)
+
+	_, err := parseLocalToolLoopChatCompletion(raw, "resp_test", "test-model", "", "", customToolTransportPlan{})
+
+	var markupErr *rawToolCallMarkupError
+	require.ErrorAs(t, err, &markupErr)
+	require.Contains(t, markupErr.Content, "functions.shell")
 }
 
 func TestRemapCustomToolsPayloadAppendsCodexCompatibilityHint(t *testing.T) {

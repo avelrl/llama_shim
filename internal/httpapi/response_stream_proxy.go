@@ -22,6 +22,7 @@ const (
 	responseReplayArtifactMaxCount             = 64
 	responseReplayArtifactMaxPayloadBytes      = 1 << 20 // 1 MiB
 	responseReplayArtifactMaxTotalPayloadBytes = 8 << 20 // 8 MiB
+	responsesUpstreamErrorBodyLogLimit         = 2048
 )
 
 func (h *responseHandler) proxyCreateStream(w http.ResponseWriter, r *http.Request, request CreateResponseRequest, requestJSON string, rawFields map[string]json.RawMessage, streamOptions responseStreamOptions) {
@@ -447,6 +448,24 @@ func (h *responseHandler) proxyResponseRequest(r *http.Request, body []byte) (*h
 	return resp, nil
 }
 
+func logResponsesUpstreamHTTPError(ctx context.Context, logger *slog.Logger, operation string, resp *http.Response, body []byte, bodyTruncated bool) {
+	if logger == nil || resp == nil || resp.StatusCode < http.StatusBadRequest {
+		return
+	}
+
+	logger.WarnContext(ctx, "responses upstream returned error",
+		"request_id", RequestIDFromContext(ctx),
+		"client_request_id", ClientRequestIDFromContext(ctx),
+		"operation", operation,
+		"status", resp.StatusCode,
+		"content_type", resp.Header.Get("Content-Type"),
+		"upstream_request_id", upstreamRequestIDFromHeader(resp.Header),
+		"body_bytes", len(body),
+		"body_truncated", bodyTruncated || len(body) > responsesUpstreamErrorBodyLogLimit,
+		"body_preview", bodyPreviewForLog(body, responsesUpstreamErrorBodyLogLimit),
+	)
+}
+
 func proxyResponsesStream(ctx context.Context, logger *slog.Logger, w http.ResponseWriter, resp *http.Response, plan customToolTransportPlan, requestJSON string, bufferLimitBytes int64, onCompleted func([]byte, []domain.ResponseReplayArtifact) error) error {
 	started := time.Now()
 	isSSE := strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "text/event-stream")
@@ -467,6 +486,7 @@ func proxyResponsesStream(ctx context.Context, logger *slog.Logger, w http.Respo
 			return err
 		}
 		if overflowed {
+			logResponsesUpstreamHTTPError(ctx, logger, "responses_proxy_stream", resp, body, true)
 			if logger != nil {
 				logger.WarnContext(ctx, "responses stream fallback body buffer skipped",
 					"request_id", RequestIDFromContext(ctx),
@@ -485,6 +505,7 @@ func proxyResponsesStream(ctx context.Context, logger *slog.Logger, w http.Respo
 			return err
 		}
 		originalBody := body
+		logResponsesUpstreamHTTPError(ctx, logger, "responses_proxy_stream", resp, body, false)
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			if canonical, ok, err := canonicalizeAPIErrorBody(resp.StatusCode, body); err == nil && ok {
 				body = canonical

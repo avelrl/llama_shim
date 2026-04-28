@@ -3,6 +3,8 @@ package service_test
 import (
 	"context"
 	"encoding/json"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -412,6 +414,111 @@ func TestCreateResponseStreamAutomaticCompactionEmitsCompactionPrefix(t *testing
 	require.Equal(t, "message", response.Output[1].Type)
 }
 
+func TestCreateResponseProjectsToolOutputIntoLocalGenerationContext(t *testing.T) {
+	t.Parallel()
+
+	generator := &sequenceGenerator{outputs: []string{"READ_OK"}}
+	svc := service.NewResponseService(noopResponseStore{}, noopConversationStore{}, generator)
+
+	response, err := svc.Create(context.Background(), service.CreateResponseInput{
+		Model: "test-model",
+		Input: json.RawMessage(`[
+			{"type":"message","role":"user","content":"Read README.md and answer with READ_OK."},
+			{"type":"shell_call_output","call_id":"call_read","output":"codex-smoke-token: llama-shim-42\n"}
+		]`),
+		RequestJSON: `{"model":"test-model"}`,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "READ_OK", response.OutputText)
+
+	require.Len(t, generator.contexts, 1)
+	require.Len(t, generator.contexts[0], 3)
+	require.Equal(t, "system", generator.contexts[0][0].Role)
+	require.Contains(t, domain.MessageText(generator.contexts[0][0]), "Do not call tools")
+	require.Equal(t, "user", generator.contexts[0][1].Role)
+	require.Equal(t, "Read README.md and answer with READ_OK.", domain.MessageText(generator.contexts[0][1]))
+	require.Equal(t, "user", generator.contexts[0][2].Role)
+	require.Contains(t, domain.MessageText(generator.contexts[0][2]), "SHELL CALL OUTPUT (call_read)")
+	require.Contains(t, domain.MessageText(generator.contexts[0][2]), "codex-smoke-token: llama-shim-42")
+}
+
+func TestCreateResponseTruncatesToolOutputSummaryForLocalGeneration(t *testing.T) {
+	t.Parallel()
+
+	generator := &sequenceGenerator{outputs: []string{"READ_OK"}}
+	svc := service.NewResponseServiceWithLimits(noopResponseStore{}, noopConversationStore{}, generator, service.ResponseServiceLimits{
+		LocalToolOutputSummaryMaxBytes: 96,
+	})
+
+	_, err := svc.Create(context.Background(), service.CreateResponseInput{
+		Model: "test-model",
+		Input: json.RawMessage(`[
+			{"type":"message","role":"user","content":"Read the large output."},
+			{"type":"shell_call_output","call_id":"call_large","output":` + strconv.Quote(strings.Repeat("x", 256)) + `}
+		]`),
+		RequestJSON: `{"model":"test-model"}`,
+	})
+	require.NoError(t, err)
+
+	require.Len(t, generator.contexts, 1)
+	summary := domain.MessageText(generator.contexts[0][2])
+	require.LessOrEqual(t, len(summary), 96)
+	require.Contains(t, summary, "truncated")
+}
+
+func TestCreateResponseRepairsRawToolMarkupAfterToolOutput(t *testing.T) {
+	t.Parallel()
+
+	generator := &sequenceGenerator{outputs: []string{
+		`<|tool_calls_section_begin|><|tool_call_begin|>functions.command:0<|tool_call_argument_begin|>{"command":"cat README.md"}<|tool_call_end|><|tool_calls_section_end|>`,
+		"READ_OK",
+	}}
+	svc := service.NewResponseService(noopResponseStore{}, noopConversationStore{}, generator)
+
+	response, err := svc.Create(context.Background(), service.CreateResponseInput{
+		Model: "test-model",
+		Input: json.RawMessage(`[
+			{"type":"message","role":"user","content":"Read README.md and answer with READ_OK."},
+			{"type":"shell_call_output","call_id":"call_read","output":"codex-smoke-token: llama-shim-42\n"}
+		]`),
+		RequestJSON: `{"model":"test-model"}`,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "READ_OK", response.OutputText)
+
+	require.Len(t, generator.contexts, 2)
+	require.Contains(t, domain.MessageText(generator.contexts[1][len(generator.contexts[1])-1]), "previous draft attempted to print internal tool-call markup")
+}
+
+func TestCreateStreamBuffersPostToolAnswerAndRepairsBeforeDelta(t *testing.T) {
+	t.Parallel()
+
+	generator := &sequenceGenerator{outputs: []string{
+		`<|tool_calls_section_begin|><|tool_call_begin|>functions.command:0<|tool_call_argument_begin|>{"command":"cat README.md"}<|tool_call_end|><|tool_calls_section_end|>`,
+		"READ_OK",
+	}}
+	svc := service.NewResponseService(noopResponseStore{}, noopConversationStore{}, generator)
+	var deltas []string
+
+	response, err := svc.CreateStream(context.Background(), service.CreateResponseInput{
+		Model: "test-model",
+		Input: json.RawMessage(`[
+			{"type":"message","role":"user","content":"Read README.md and answer with READ_OK."},
+			{"type":"shell_call_output","call_id":"call_read","output":"codex-smoke-token: llama-shim-42\n"}
+		]`),
+		RequestJSON: `{"model":"test-model"}`,
+	}, service.StreamHooks{
+		OnDelta: func(delta string) error {
+			deltas = append(deltas, delta)
+			return nil
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, "READ_OK", response.OutputText)
+	require.Equal(t, []string{"READ_OK"}, deltas)
+	require.Equal(t, 0, generator.streamCalls)
+}
+
 type noopGenerator struct{}
 
 func (noopGenerator) Generate(context.Context, string, []domain.Item, map[string]json.RawMessage) (string, error) {
@@ -439,6 +546,38 @@ func (g *recordingGenerator) GenerateStream(_ context.Context, _ string, items [
 	output := g.streamOutput
 	if output == "" {
 		output = "OK"
+	}
+	if onDelta != nil {
+		return onDelta(output)
+	}
+	return nil
+}
+
+type sequenceGenerator struct {
+	outputs     []string
+	contexts    [][]domain.Item
+	streamCalls int
+}
+
+func (g *sequenceGenerator) Generate(_ context.Context, _ string, items []domain.Item, _ map[string]json.RawMessage) (string, error) {
+	copied := append([]domain.Item(nil), items...)
+	g.contexts = append(g.contexts, copied)
+	if len(g.outputs) == 0 {
+		return "OK", nil
+	}
+	output := g.outputs[0]
+	g.outputs = g.outputs[1:]
+	return output, nil
+}
+
+func (g *sequenceGenerator) GenerateStream(_ context.Context, _ string, items []domain.Item, _ map[string]json.RawMessage, onDelta func(string) error) error {
+	g.streamCalls++
+	copied := append([]domain.Item(nil), items...)
+	g.contexts = append(g.contexts, copied)
+	output := "OK"
+	if len(g.outputs) > 0 {
+		output = g.outputs[0]
+		g.outputs = g.outputs[1:]
 	}
 	if onDelta != nil {
 		return onDelta(output)

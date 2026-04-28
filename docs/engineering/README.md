@@ -14,6 +14,8 @@ not practical user guides and are not release scope documents.
 - [Responses Compatibility External Tester](responses-compatibility-external-tester.md):
   Broad subset tester profile, capability-gating rules, and repo-owned runner
   contract for external API-surface compatibility tests.
+- [Codex Upstream Model Matrix](codex-upstream-model-matrix.md): practical
+  DeepSeek, Qwen, and Kimi comparison for Codex-through-shim smoke testing.
 - [V3 Storage and Retrieval Backends](../v3-storage-retrieval-backends.md):
   backend-expansion plan, storage contracts, capability reporting, and
   Postgres/pgvector staging.

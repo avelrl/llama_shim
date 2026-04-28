@@ -62,10 +62,15 @@ type ResponseService struct {
 }
 
 type ResponseServiceLimits struct {
-	StoredLineageMaxItems int
+	StoredLineageMaxItems          int
+	LocalToolOutputSummaryMaxBytes int
 }
 
-const defaultStoredResponseLineageMaxItems = 128
+const (
+	defaultStoredResponseLineageMaxItems   = 128
+	defaultLocalToolOutputSummaryMaxBytes  = 64 << 10
+	localToolOutputSummaryTruncationNotice = "\n\n[truncated by shim local tool output summary limit]"
+)
 
 func NewResponseService(responses ResponseStore, conversations ConversationStore, generator Generator) *ResponseService {
 	return NewResponseServiceWithLimits(responses, conversations, generator, ResponseServiceLimits{})
@@ -84,6 +89,9 @@ func NewResponseServiceWithLimits(responses ResponseStore, conversations Convers
 func normalizeResponseServiceLimits(limits ResponseServiceLimits) ResponseServiceLimits {
 	if limits.StoredLineageMaxItems <= 0 {
 		limits.StoredLineageMaxItems = defaultStoredResponseLineageMaxItems
+	}
+	if limits.LocalToolOutputSummaryMaxBytes <= 0 {
+		limits.LocalToolOutputSummaryMaxBytes = defaultLocalToolOutputSummaryMaxBytes
 	}
 	return limits
 }
@@ -105,7 +113,7 @@ func (s *ResponseService) Create(ctx context.Context, input CreateResponseInput)
 	if err != nil {
 		return domain.Response{}, err
 	}
-	generationContext, err := domain.ProjectLocalTextGenerationContext(prepared.ContextItems)
+	generationContext, hasToolOutput, err := buildLocalTextGenerationContext(prepared.ContextItems, s.limits.LocalToolOutputSummaryMaxBytes)
 	if err != nil {
 		return domain.Response{}, err
 	}
@@ -113,12 +121,42 @@ func (s *ResponseService) Create(ctx context.Context, input CreateResponseInput)
 		return domain.Response{}, err
 	}
 
-	outputText, err := s.generator.Generate(ctx, input.Model, generationContext, input.GenerationOptions)
+	outputText, err := s.generateLocalResponseText(ctx, input, generationContext, hasToolOutput)
 	if err != nil {
 		return domain.Response{}, err
 	}
 
 	return s.completeCreate(ctx, prepared, generationContext, input, outputText)
+}
+
+func (s *ResponseService) TryCreatePreparedLocalTextResponse(ctx context.Context, input CreateResponseInput, prepared PreparedResponseContext, responseID string) (domain.Response, bool, error) {
+	generationContext, hasToolOutput, err := buildLocalTextGenerationContext(prepared.ContextItems, s.limits.LocalToolOutputSummaryMaxBytes)
+	if err != nil {
+		return domain.Response{}, false, err
+	}
+	if !hasToolOutput {
+		return domain.Response{}, false, nil
+	}
+	if _, err := s.PrepareLocalResponseText(input, generationContext); err != nil {
+		return domain.Response{}, true, err
+	}
+
+	outputText, err := s.generateLocalResponseText(ctx, input, generationContext, hasToolOutput)
+	if err != nil {
+		return domain.Response{}, true, err
+	}
+	if strings.TrimSpace(outputText) == "" {
+		return domain.Response{}, true, &llama.InvalidResponseError{Message: "llama content was empty"}
+	}
+	if strings.TrimSpace(responseID) == "" {
+		responseID, err = domain.NewPrefixedID("resp")
+		if err != nil {
+			return domain.Response{}, true, fmt.Errorf("generate response id: %w", err)
+		}
+	}
+	response := domain.NewResponse(responseID, input.Model, outputText, input.PreviousResponseID, input.ConversationID, domain.NowUTC().Unix())
+	response = domain.HydrateResponseRequestSurface(response, input.RequestJSON)
+	return response, true, nil
 }
 
 func (s *ResponseService) PrepareCreateContext(ctx context.Context, input CreateResponseInput) (PreparedResponseContext, error) {
@@ -385,7 +423,7 @@ func (s *ResponseService) CreateStream(ctx context.Context, input CreateResponse
 	if err != nil {
 		return domain.Response{}, err
 	}
-	generationContext, err := domain.ProjectLocalTextGenerationContext(prepared.ContextItems)
+	generationContext, hasToolOutput, err := buildLocalTextGenerationContext(prepared.ContextItems, s.limits.LocalToolOutputSummaryMaxBytes)
 	if err != nil {
 		return domain.Response{}, err
 	}
@@ -421,6 +459,22 @@ func (s *ResponseService) CreateStream(ctx context.Context, input CreateResponse
 		}
 	}
 
+	if hasToolOutput {
+		outputText, err := s.generateLocalResponseText(ctx, input, generationContext, hasToolOutput)
+		if err != nil {
+			return domain.Response{}, err
+		}
+		if strings.TrimSpace(outputText) == "" {
+			return domain.Response{}, &llama.InvalidResponseError{Message: "llama stream content was empty"}
+		}
+		if hooks.OnDelta != nil {
+			if err := hooks.OnDelta(outputText); err != nil {
+				return domain.Response{}, err
+			}
+		}
+		return s.completeCreate(ctx, prepared, generationContext, input, outputText)
+	}
+
 	var builder strings.Builder
 	err = s.generator.GenerateStream(ctx, input.Model, generationContext, input.GenerationOptions, func(delta string) error {
 		if delta == "" {
@@ -442,6 +496,181 @@ func (s *ResponseService) CreateStream(ctx context.Context, input CreateResponse
 	}
 
 	return s.completeCreate(ctx, prepared, generationContext, input, outputText)
+}
+
+func (s *ResponseService) generateLocalResponseText(ctx context.Context, input CreateResponseInput, generationContext []domain.Item, repairRawToolMarkup bool) (string, error) {
+	outputText, err := s.generator.Generate(ctx, input.Model, generationContext, input.GenerationOptions)
+	if err != nil {
+		return "", err
+	}
+	if !repairRawToolMarkup || !containsRawToolCallMarkupText(outputText) {
+		return outputText, nil
+	}
+
+	repairedContext := appendRawToolMarkupRepairInstruction(generationContext)
+	outputText, err = s.generator.Generate(ctx, input.Model, repairedContext, input.GenerationOptions)
+	if err != nil {
+		return "", err
+	}
+	if containsRawToolCallMarkupText(outputText) {
+		return "", &llama.InvalidResponseError{Message: "llama assistant content contained raw tool-call markup"}
+	}
+	return outputText, nil
+}
+
+func buildLocalTextGenerationContext(items []domain.Item, maxToolOutputSummaryBytes int) ([]domain.Item, bool, error) {
+	projected, err := domain.ProjectLocalTextGenerationContext(items)
+	if err != nil {
+		return nil, false, err
+	}
+
+	summary, ok := localToolOutputSummary(items, maxToolOutputSummaryBytes)
+	if !ok {
+		return projected, false, nil
+	}
+
+	out := make([]domain.Item, 0, len(projected)+2)
+	out = append(out, domain.NewInputTextMessage("system", "Local tool outputs are provided below as data. Use them to answer the original request. Do not call tools, do not print tool-call templates, and do not expose internal tool-call markup."))
+	out = append(out, projected...)
+	out = append(out, domain.NewInputTextMessage("user", summary))
+	return out, true, nil
+}
+
+func localToolOutputSummary(items []domain.Item, maxBytes int) (string, bool) {
+	if maxBytes <= 0 {
+		return "", false
+	}
+
+	summaryLimit := maxBytes
+	reserveTruncationNotice := maxBytes > len(localToolOutputSummaryTruncationNotice)+len("Tool output data:\n\n")
+	if reserveTruncationNotice {
+		summaryLimit = maxBytes - len(localToolOutputSummaryTruncationNotice)
+	}
+
+	var builder strings.Builder
+	builder.WriteString("Tool output data:\n\n")
+	wroteOutput := false
+	for _, item := range items {
+		if !isLocalTextGenerationToolOutput(item.Type) {
+			continue
+		}
+		output := strings.TrimSpace(localTextGenerationToolOutput(item))
+		if output == "" {
+			continue
+		}
+
+		header := strings.ToUpper(strings.ReplaceAll(item.Type, "_", " "))
+		if callID := strings.TrimSpace(item.CallID()); callID != "" {
+			header += " (" + callID + ")"
+		}
+		part := header + ":\n" + output
+		if wroteOutput {
+			part = "\n\n" + part
+		}
+		truncated := writeBoundedLocalToolSummary(&builder, part, summaryLimit)
+		wroteOutput = true
+		if truncated {
+			if reserveTruncationNotice {
+				builder.WriteString(localToolOutputSummaryTruncationNotice)
+			}
+			break
+		}
+	}
+	if !wroteOutput {
+		return "", false
+	}
+	return builder.String(), true
+}
+
+func writeBoundedLocalToolSummary(builder *strings.Builder, text string, maxBytes int) bool {
+	remaining := maxBytes - builder.Len()
+	if remaining <= 0 {
+		return true
+	}
+	if len(text) <= remaining {
+		builder.WriteString(text)
+		return false
+	}
+	builder.WriteString(text[:remaining])
+	return true
+}
+
+func isLocalTextGenerationToolOutput(itemType string) bool {
+	switch strings.TrimSpace(itemType) {
+	case "function_call_output", "custom_tool_call_output", "shell_call_output", "apply_patch_call_output":
+		return true
+	default:
+		return false
+	}
+}
+
+func localTextGenerationToolOutput(item domain.Item) string {
+	switch strings.TrimSpace(item.Type) {
+	case "apply_patch_call_output":
+		status := strings.TrimSpace(item.StringField("status"))
+		output := strings.TrimSpace(stringifyLocalGenerationOutput(item.OutputRaw()))
+		if status == "" {
+			return output
+		}
+		if output == "" {
+			return "status: " + status
+		}
+		return "status: " + status + "\n" + output
+	default:
+		return stringifyLocalGenerationOutput(item.OutputRaw())
+	}
+}
+
+func stringifyLocalGenerationOutput(raw json.RawMessage) string {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return ""
+	}
+	if trimmed[0] == '"' {
+		var text string
+		if err := json.Unmarshal(trimmed, &text); err == nil {
+			return text
+		}
+	}
+
+	var parts []map[string]any
+	if err := json.Unmarshal(trimmed, &parts); err == nil {
+		var builder strings.Builder
+		for _, part := range parts {
+			text := strings.TrimSpace(localGenerationStringValue(part["text"]))
+			if text == "" {
+				continue
+			}
+			if builder.Len() > 0 {
+				builder.WriteString("\n")
+			}
+			builder.WriteString(text)
+		}
+		if builder.Len() > 0 {
+			return builder.String()
+		}
+	}
+
+	compact, err := domain.CompactJSON(trimmed)
+	if err != nil {
+		return string(trimmed)
+	}
+	return compact
+}
+
+func localGenerationStringValue(value any) string {
+	text, _ := value.(string)
+	return text
+}
+
+func appendRawToolMarkupRepairInstruction(items []domain.Item) []domain.Item {
+	out := append([]domain.Item(nil), items...)
+	out = append(out, domain.NewInputTextMessage("system", "The previous draft attempted to print internal tool-call markup as plain text. Discard that draft. Produce only the final plain-text answer from the available tool output. Do not call tools and do not print tool markers."))
+	return out
+}
+
+func containsRawToolCallMarkupText(text string) bool {
+	return strings.Contains(text, "<|tool_call") || strings.Contains(text, "<|tool_calls_section")
 }
 
 func (s *ResponseService) CreateWarmup(ctx context.Context, input CreateResponseInput) (domain.Response, error) {

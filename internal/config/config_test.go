@@ -17,6 +17,17 @@ func disableDotEnv(t *testing.T) {
 	t.Setenv("SHIM_DOTENV", filepath.Join(t.TempDir(), "missing.env"))
 }
 
+func requireCodexMetadata(t *testing.T, models []config.ResponsesCodexModelMetadata, model string) config.ResponsesCodexModelMetadata {
+	t.Helper()
+	for _, metadata := range models {
+		if metadata.Model == model {
+			return metadata
+		}
+	}
+	require.Failf(t, "missing Codex model metadata", "model %q was not loaded", model)
+	return config.ResponsesCodexModelMetadata{}
+}
+
 func TestLoadFromYAMLFile(t *testing.T) {
 	disableDotEnv(t)
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
@@ -44,6 +55,7 @@ shim:
     chat_completions_shadow_store_timeout: 3s
     responses_proxy_buffer_bytes: 96MiB
     responses_stored_lineage_max_items: 32
+    responses_local_tool_output_summary_bytes: 48KiB
     custom_tool_grammar_definition_bytes: 24KiB
     custom_tool_compiled_pattern_bytes: 40KiB
     retrieval_max_concurrent_searches: 6
@@ -90,7 +102,10 @@ chat_completions:
         default_max_tokens: 32000
         json_schema_mode: json_object_instruction
         ensure_tool_parameter_property_types: true
+        sanitize_moonshot_tool_schema: true
         omit_empty_assistant_tool_content: true
+        retry_invalid_tool_arguments: true
+        invalid_tool_arguments_fallback: final_text
 responses:
   mode: prefer_upstream
   websocket:
@@ -140,8 +155,8 @@ responses:
       models:
         - model: Kimi-K2.6
           display_name: Kimi K2.6
-          context_window: 128000
-          max_context_window: 256000
+          context_window: 262144
+          max_context_window: 262144
           auto_compact_token_limit: 100000
           effective_context_window_percent: 90
           default_reasoning_level: high
@@ -167,6 +182,22 @@ responses:
             mode: tokens
             limit: 12000
           base_instructions: Custom Codex instructions.
+        - model: deepseek-v4-pro
+          display_name: DeepSeek V4 Pro
+          context_window: 1000000
+          max_context_window: 1000000
+          effective_context_window_percent: 90
+          shell_type: shell_command
+          apply_patch_tool_type: freeform
+          input_modalities: [text]
+        - model: Qwen3.6-35B-A3B
+          display_name: Qwen3.6 35B A3B
+          context_window: 262144
+          max_context_window: 262144
+          effective_context_window_percent: 90
+          shell_type: shell_command
+          apply_patch_tool_type: freeform
+          input_modalities: [text]
   code_interpreter:
     backend: docker
     python_binary: /opt/homebrew/bin/python3
@@ -222,6 +253,7 @@ responses:
 	require.Equal(t, 3*time.Second, cfg.ChatCompletionsShadowStoreTimeout)
 	require.EqualValues(t, 96<<20, cfg.ResponsesProxyBufferMaxBytes)
 	require.Equal(t, 32, cfg.ResponsesStoredLineageMaxItems)
+	require.EqualValues(t, 48<<10, cfg.ResponsesLocalToolOutputSummaryMaxBytes)
 	require.EqualValues(t, 24<<10, cfg.CustomToolGrammarDefinitionMaxBytes)
 	require.EqualValues(t, 40<<10, cfg.CustomToolCompiledPatternMaxBytes)
 	require.Equal(t, 6, cfg.RetrievalMaxConcurrentSearches)
@@ -243,7 +275,10 @@ responses:
 			DefaultMaxTokens:                 32000,
 			JSONSchemaMode:                   "json_object_instruction",
 			EnsureToolParameterPropertyTypes: true,
+			SanitizeMoonshotToolSchema:       true,
 			OmitEmptyAssistantToolContent:    true,
+			RetryInvalidToolArguments:        true,
+			InvalidToolArgumentsFallback:     "final_text",
 		},
 	}, cfg.ChatCompletionsUpstreamCompatibility)
 	require.Equal(t, config.ResponsesModePreferUpstream, cfg.ResponsesMode)
@@ -274,13 +309,13 @@ responses:
 	require.Equal(t, []config.ResponsesCodexUpstreamInputCompatibilityRule{
 		{Model: "Kimi-*", Mode: "stringify"},
 	}, cfg.ResponsesCodexUpstreamInputCompatibility)
-	require.Len(t, cfg.ResponsesCodexModelMetadata, 1)
-	codexMetadata := cfg.ResponsesCodexModelMetadata[0]
+	require.Len(t, cfg.ResponsesCodexModelMetadata, 3)
+	codexMetadata := requireCodexMetadata(t, cfg.ResponsesCodexModelMetadata, "Kimi-K2.6")
 	require.Equal(t, "Kimi-K2.6", codexMetadata.Model)
 	require.Equal(t, "Kimi K2.6", codexMetadata.DisplayName)
 	require.Equal(t, "OpenAI-compatible upstream routed through llama_shim.", codexMetadata.Description)
-	require.EqualValues(t, 128000, codexMetadata.ContextWindow)
-	require.EqualValues(t, 256000, codexMetadata.MaxContextWindow)
+	require.EqualValues(t, 262144, codexMetadata.ContextWindow)
+	require.EqualValues(t, 262144, codexMetadata.MaxContextWindow)
 	require.EqualValues(t, 100000, codexMetadata.AutoCompactTokenLimit)
 	require.EqualValues(t, 90, codexMetadata.EffectiveContextWindowPercent)
 	require.Equal(t, "high", codexMetadata.DefaultReasoningLevel)
@@ -306,6 +341,18 @@ responses:
 	require.Equal(t, "Available through llama_shim.", codexMetadata.AvailabilityNuxMessage)
 	require.Equal(t, config.ResponsesCodexTruncationPolicy{Mode: "tokens", Limit: 12000}, codexMetadata.TruncationPolicy)
 	require.Equal(t, "Custom Codex instructions.", codexMetadata.BaseInstructions)
+	deepseekMetadata := requireCodexMetadata(t, cfg.ResponsesCodexModelMetadata, "deepseek-v4-pro")
+	require.Equal(t, "DeepSeek V4 Pro", deepseekMetadata.DisplayName)
+	require.EqualValues(t, 1000000, deepseekMetadata.ContextWindow)
+	require.EqualValues(t, 1000000, deepseekMetadata.MaxContextWindow)
+	require.EqualValues(t, 90, deepseekMetadata.EffectiveContextWindowPercent)
+	require.Equal(t, "freeform", deepseekMetadata.ApplyPatchToolType)
+	qwenMetadata := requireCodexMetadata(t, cfg.ResponsesCodexModelMetadata, "Qwen3.6-35B-A3B")
+	require.Equal(t, "Qwen3.6 35B A3B", qwenMetadata.DisplayName)
+	require.EqualValues(t, 262144, qwenMetadata.ContextWindow)
+	require.EqualValues(t, 262144, qwenMetadata.MaxContextWindow)
+	require.EqualValues(t, 90, qwenMetadata.EffectiveContextWindowPercent)
+	require.Equal(t, "freeform", qwenMetadata.ApplyPatchToolType)
 	require.Equal(t, config.ResponsesCodeInterpreterBackendDocker, cfg.ResponsesCodeInterpreterBackend)
 	require.Equal(t, "/opt/homebrew/bin/python3", cfg.ResponsesCodeInterpreterPythonBinary)
 	require.Equal(t, "/usr/local/bin/docker", cfg.ResponsesCodeInterpreterDockerBinary)
@@ -365,6 +412,7 @@ responses:
 	t.Setenv("SHIM_LIMITS_CHAT_COMPLETIONS_SHADOW_STORE_TIMEOUT", "4s")
 	t.Setenv("SHIM_LIMITS_RESPONSES_PROXY_BUFFER_BYTES", "80MiB")
 	t.Setenv("SHIM_LIMITS_RESPONSES_STORED_LINEAGE_MAX_ITEMS", "24")
+	t.Setenv("SHIM_LIMITS_RESPONSES_LOCAL_TOOL_OUTPUT_SUMMARY_BYTES", "40KiB")
 	t.Setenv("SHIM_LIMITS_CUSTOM_TOOL_GRAMMAR_DEFINITION_BYTES", "20KiB")
 	t.Setenv("SHIM_LIMITS_CUSTOM_TOOL_COMPILED_PATTERN_BYTES", "36KiB")
 	t.Setenv("SHIM_LIMITS_RETRIEVAL_MAX_CONCURRENT_SEARCHES", "9")
@@ -443,6 +491,7 @@ responses:
 	require.Equal(t, 4*time.Second, cfg.ChatCompletionsShadowStoreTimeout)
 	require.EqualValues(t, 80<<20, cfg.ResponsesProxyBufferMaxBytes)
 	require.Equal(t, 24, cfg.ResponsesStoredLineageMaxItems)
+	require.EqualValues(t, 40<<10, cfg.ResponsesLocalToolOutputSummaryMaxBytes)
 	require.EqualValues(t, 20<<10, cfg.CustomToolGrammarDefinitionMaxBytes)
 	require.EqualValues(t, 36<<10, cfg.CustomToolCompiledPatternMaxBytes)
 	require.Equal(t, 9, cfg.RetrievalMaxConcurrentSearches)
@@ -528,6 +577,7 @@ func TestLoadUsesCodexSafeDefaults(t *testing.T) {
 	require.EqualValues(t, 64<<20, cfg.RetrievalFileUploadMaxBytes)
 	require.EqualValues(t, 64<<20, cfg.ResponsesProxyBufferMaxBytes)
 	require.Equal(t, 128, cfg.ResponsesStoredLineageMaxItems)
+	require.EqualValues(t, 64<<10, cfg.ResponsesLocalToolOutputSummaryMaxBytes)
 	require.EqualValues(t, 16<<10, cfg.CustomToolGrammarDefinitionMaxBytes)
 	require.EqualValues(t, 32<<10, cfg.CustomToolCompiledPatternMaxBytes)
 	require.Equal(t, 8, cfg.RetrievalMaxConcurrentSearches)

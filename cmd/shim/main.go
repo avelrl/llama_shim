@@ -84,7 +84,8 @@ func main() {
 		},
 	})
 	responseService := service.NewResponseServiceWithLimits(store, store, llamaClient, service.ResponseServiceLimits{
-		StoredLineageMaxItems: cfg.ResponsesStoredLineageMaxItems,
+		StoredLineageMaxItems:          cfg.ResponsesStoredLineageMaxItems,
+		LocalToolOutputSummaryMaxBytes: int(cfg.ResponsesLocalToolOutputSummaryMaxBytes),
 	})
 	responseCompactor, err := compactor.New(compactor.Config{
 		Backend:         cfg.ResponsesCompactionBackend,
@@ -223,6 +224,7 @@ func main() {
 		"shim_chat_completions_shadow_store_max_bytes", cfg.ChatCompletionsShadowStoreMaxBytes,
 		"shim_chat_completions_shadow_store_timeout", cfg.ChatCompletionsShadowStoreTimeout,
 		"shim_responses_proxy_buffer_max_bytes", cfg.ResponsesProxyBufferMaxBytes,
+		"shim_responses_local_tool_output_summary_max_bytes", cfg.ResponsesLocalToolOutputSummaryMaxBytes,
 		"shim_custom_tool_grammar_definition_max_bytes", cfg.CustomToolGrammarDefinitionMaxBytes,
 		"shim_custom_tool_compiled_pattern_max_bytes", cfg.CustomToolCompiledPatternMaxBytes,
 		"shim_retrieval_max_concurrent_searches", cfg.RetrievalMaxConcurrentSearches,
@@ -370,7 +372,10 @@ func mapChatCompletionsCompatibilityRules(rules []config.ChatCompletionsUpstream
 			DefaultMaxTokens:                 rule.DefaultMaxTokens,
 			JSONSchemaMode:                   rule.JSONSchemaMode,
 			EnsureToolParameterPropertyTypes: rule.EnsureToolParameterPropertyTypes,
+			SanitizeMoonshotToolSchema:       rule.SanitizeMoonshotToolSchema,
 			OmitEmptyAssistantToolContent:    rule.OmitEmptyAssistantToolContent,
+			RetryInvalidToolArguments:        rule.RetryInvalidToolArguments,
+			InvalidToolArgumentsFallback:     rule.InvalidToolArgumentsFallback,
 		})
 	}
 	return out

@@ -48,6 +48,10 @@ shim:
     # previous_response_id local context and legacy input_items fallback.
     # This is an internal storage/context cap, not an OpenAI request parameter.
     responses_stored_lineage_max_items: 128
+    # Maximum tool-output text injected into shim-local final Responses generation
+    # after client-executed tool results. This is an internal prompt cap, not an
+    # OpenAI request parameter.
+    responses_local_tool_output_summary_bytes: 64KiB
     # Maximum grammar definition size accepted by shim-local constrained custom tools.
     custom_tool_grammar_definition_bytes: 16KiB
     # Maximum compiled regex/pattern size accepted after regex or Lark expansion.
@@ -160,10 +164,14 @@ chat_completions:
     # Example for Kimi/Moonshot-compatible gateways:
     # models:
     #   - model: Kimi-*
-    #     # Kimi CLI defaults coding sessions to thinking disabled unless the
-    #     # operator explicitly enables it. This is the safer tool-loop smoke
-    #     # default.
-    #     default_thinking: disabled
+    #     # Some Kimi/LiteLLM model groups reject a Chat Completions `thinking`
+    #     # request field. Keep passthrough unless the upstream explicitly
+    #     # supports the Kimi/Moonshot thinking body shape.
+    #     default_thinking: passthrough
+    #     # Some Kimi/LiteLLM deployments reject OpenAI Chat
+    #     # response_format=json_schema in Codex local tool loops. Downgrade
+    #     # to JSON mode and prepend the schema instruction before upstream.
+    #     json_schema_mode: json_object_instruction
     #     # Kimi's own CLI defaults agent Chat calls to a large generation
     #     # budget. This value is applied only when the client omitted both
     #     # max_tokens and max_completion_tokens.
@@ -172,9 +180,32 @@ chat_completions:
     #     # that omit type, for example enum-only nested fields. This fills in
     #     # compatible type values before forwarding tools upstream.
     #     ensure_tool_parameter_property_types: true
+    #     # Moonshot/Kimi rejects some schema forms that other OpenAI-like
+    #     # providers accept: sibling keywords next to `$ref`, and tuple-style
+    #     # array `items`. Keep this model-scoped.
+    #     sanitize_moonshot_tool_schema: true
     #     # Kimi's coding compatibility layer accepts omitted assistant
     #     # content on tool-call messages more reliably than empty content.
     #     omit_empty_assistant_tool_content: true
+    #     # Retry one shim-local tool-loop Chat call when a Kimi/LiteLLM
+    #     # upstream rejects generated tool arguments as empty/invalid JSON.
+    #     # This is a model-scoped compatibility workaround, not OpenAI API behavior.
+    #     retry_invalid_tool_arguments: true
+    #     # If the retry is exhausted after local tool outputs already exist,
+    #     # ask upstream for final plain text without tools instead of
+    #     # surfacing a 502. Supported values: none, final_text.
+    #     invalid_tool_arguments_fallback: final_text
+    # Example for Qwen/DashScope-compatible gateways:
+    # models:
+    #   - model: Qwen*
+    #     # Qwen Code exposes thinking through OpenAI-compatible extra_body
+    #     # options such as enable_thinking. Do not inject a generic thinking
+    #     # field unless the exact upstream accepts it.
+    #     default_thinking: passthrough
+    #     # Some Qwen/LiteLLM gateways reject Chat response_format=json_schema
+    #     # when the schema is provided by shim-local constrained helpers.
+    #     # Downgrade to JSON mode and prepend the schema instruction upstream.
+    #     json_schema_mode: json_object_instruction
 
 # Settings for the OpenAI Responses-compatible layer.
 responses:
@@ -296,15 +327,16 @@ responses:
       # requests (`/v1/models?client_version=...` or `/api/codex/models`).
       # Ordinary OpenAI-compatible GET /v1/models stays proxied unchanged.
       models: []
-      # Example:
+      # Examples. Replace `models: []` with one list containing the entries
+      # needed by your Codex upstreams.
       # models:
       #   - model: Kimi-K2.6
       #     display_name: Kimi K2.6
       #     description: OpenAI-compatible upstream routed through llama_shim.
-      #     context_window: 128000
-      #     max_context_window: 128000
+      #     context_window: 262144
+      #     max_context_window: 262144
       #     auto_compact_token_limit: 0
-      #     effective_context_window_percent: 95
+      #     effective_context_window_percent: 90
       #     default_reasoning_level: high
       #     supported_reasoning_levels: [low, medium, high]
       #     supports_reasoning_summaries: false
@@ -328,13 +360,12 @@ responses:
       #       mode: bytes
       #       limit: 10000
       #     base_instructions: ""
-      # Example for a DeepSeek upstream that has passed the external tester:
-      # models:
+      #   # DeepSeek upstream that has passed the external tester:
       #   - model: deepseek-v4-pro
       #     display_name: DeepSeek V4 Pro
       #     description: OpenAI-compatible DeepSeek upstream routed through llama_shim.
-      #     context_window: 128000
-      #     max_context_window: 128000
+      #     context_window: 1000000
+      #     max_context_window: 1000000
       #     auto_compact_token_limit: 0
       #     effective_context_window_percent: 90
       #     default_reasoning_level: high
@@ -353,6 +384,39 @@ responses:
       #     visibility: list
       #     supported_in_api: true
       #     priority: 110
+      #     additional_speed_tiers: []
+      #     experimental_supported_tools: []
+      #     availability_nux_message: ""
+      #     truncation_policy:
+      #       mode: bytes
+      #       limit: 10000
+      #     base_instructions: ""
+      #   # Tested Qwen3.6 gateway path:
+      #   - model: Qwen3.6-35B-A3B
+      #     display_name: Qwen3.6 35B A3B
+      #     description: OpenAI-compatible Qwen3.6 upstream routed through llama_shim.
+      #     # Conservative tested default. Raise only after the exact upstream
+      #     # deployment proves a larger long-context setting end to end.
+      #     context_window: 262144
+      #     max_context_window: 262144
+      #     auto_compact_token_limit: 0
+      #     effective_context_window_percent: 90
+      #     default_reasoning_level: high
+      #     supported_reasoning_levels: [low, medium, high]
+      #     supports_reasoning_summaries: false
+      #     default_reasoning_summary: none
+      #     shell_type: shell_command
+      #     apply_patch_tool_type: freeform
+      #     web_search_tool_type: text
+      #     supports_parallel_tool_calls: false
+      #     support_verbosity: false
+      #     default_verbosity: ""
+      #     supports_image_detail_original: false
+      #     supports_search_tool: false
+      #     input_modalities: [text]
+      #     visibility: list
+      #     supported_in_api: true
+      #     priority: 105
       #     additional_speed_tiers: []
       #     experimental_supported_tools: []
       #     availability_nux_message: ""

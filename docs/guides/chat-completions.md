@@ -83,13 +83,22 @@ Then use the stored-resource routes:
   to JSON mode plus a schema instruction. This affects only the request sent to
   upstream; the shim still accepts the OpenAI-shaped client request.
 - The same compatibility block can cover Kimi/Moonshot dialect edges observed
-  in the official Kimi docs and Kimi CLI implementation: apply a model-specific
-  `thinking: {type: disabled}` default when the caller omitted `thinking`,
+  in the official Kimi docs, Kimi CLI implementation, and LiteLLM-backed
+  Kimi runs: keep `thinking` passthrough unless the exact upstream is known to
+  accept the Moonshot-specific body field,
+  downgrade Chat `response_format=json_schema` to JSON mode plus a schema
+  instruction for Kimi/LiteLLM Chat transports that reject the OpenAI structured
+  output shape used by Codex local tool loops,
   apply a model-specific default `max_tokens` only when the caller omitted token
   limits, fill missing nested `type` fields in function tool parameter schemas,
-  and omit empty assistant `content` fields on tool-call messages before
-  forwarding upstream. These are upstream transport fixes, not broader OpenAI
-  contract changes.
+  sanitize Moonshot/Kimi tool schemas that contain `$ref` siblings or
+  tuple-style array `items`,
+  omit empty assistant `content` fields on tool-call messages before forwarding
+  upstream, and optionally retry one shim-local tool-loop call when Kimi/LiteLLM
+  rejects generated tool arguments as empty/invalid JSON. For configured Kimi
+  models, `invalid_tool_arguments_fallback: final_text` can then finish the
+  turn from already captured local tool outputs without sending tools again.
+  These are upstream transport fixes, not broader OpenAI contract changes.
 
 ## Gotchas
 

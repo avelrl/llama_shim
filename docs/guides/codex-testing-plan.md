@@ -88,6 +88,8 @@ Important knobs:
 | `CODEX_API_KEY_ENV` | `GW_API_KEY` | Environment variable name used by the generated Codex provider. |
 | `CODEX_API_KEY` | unset | Optional direct key value if the named env var is not already set. |
 | `CODEX_REAL_SMOKE_WORKDIR` | `.tmp/codex-real-upstream-smoke` | Disposable smoke workspace and logs. |
+| `CODEX_REAL_SMOKE_CASE_ATTEMPTS` | `2` | Retry each selected real-upstream case with a fresh workspace. Set `1` for strict no-retry debugging. |
+| `CODEX_REAL_SMOKE_REASONING_EFFORT` | `minimal` | Reasoning effort used by automated tiny tasks. Raise to `high` only when testing that model mode. |
 | `CODEX_REAL_SMOKE_WEBSOCKETS` | `false` | Keep HTTP-first unless intentionally testing WS. |
 | `CODEX_REAL_SMOKE_UNIFIED_EXEC` | `true` | Use Codex unified exec command tools. Set `false` to test fallback shell mode. |
 
@@ -96,6 +98,8 @@ Pass criteria:
 - all selected cases emit Codex JSON events and complete a turn
 - read/write/bugfix cases show local command execution events
 - write and bugfix cases pass filesystem/test verification after Codex exits
+- repeated raw tool-call markup or missing sentinel answers fail after the
+  configured attempts
 
 This smoke does not prove the full devstack matrix and does not claim exact
 OpenAI hosted tool choreography. It is the practical real-upstream gate for

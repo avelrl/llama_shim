@@ -24,6 +24,18 @@ separate shim compatibility problems from upstream model quality problems.
 In the shim config, keep Responses WebSocket enabled:
 
 ```yaml
+chat_completions:
+  upstream_compatibility:
+    models:
+      - model: Kimi-*
+        default_thinking: passthrough
+        json_schema_mode: json_object_instruction
+        default_max_tokens: 32000
+        ensure_tool_parameter_property_types: true
+        sanitize_moonshot_tool_schema: true
+        omit_empty_assistant_tool_content: true
+        retry_invalid_tool_arguments: true
+        invalid_tool_arguments_fallback: final_text
 responses:
   mode: prefer_local
   websocket:
@@ -40,14 +52,29 @@ responses:
       models:
         - model: Kimi-*
           mode: stringify
+shim:
+  limits:
+    # Internal cap for tool-output text injected into shim-local final
+    # generation after Codex has executed shell/apply_patch locally.
+    responses_local_tool_output_summary_bytes: 64KiB
 ```
 
 WebSocket and Codex compatibility are enabled by default in
-`config.yaml.example`; the `Kimi-*` exclusion is a provider-specific local
-setting. The `upstream_input_compatibility` entry is also provider-specific: it
-keeps the shim's OpenAI-facing request contract unchanged, but sends matching
-upstream models a plain text transcript on the first try instead of waiting for
-a structured-input validation `400` and retrying.
+`config.yaml.example`; the `Kimi-*` Chat and Responses entries are
+provider-specific local settings. The `upstream_input_compatibility` entry is
+also provider-specific: it keeps the shim's OpenAI-facing request contract
+unchanged, but sends matching upstream models a plain text transcript on the
+first try instead of waiting for a structured-input validation `400` and
+retrying.
+For Kimi/Moonshot schema edges, `sanitize_moonshot_tool_schema` removes `$ref`
+sibling keywords and converts tuple-style array `items` before forwarding tools
+upstream. For Kimi/LiteLLM tool-loop flaps,
+`retry_invalid_tool_arguments` retries one
+invalid empty-arguments turn with an explicit repair instruction. If that still
+fails after local tool outputs already exist,
+`invalid_tool_arguments_fallback: final_text` asks upstream for a final
+plain-text answer without exposing tools
+again.
 HTTP-first Codex config can still leave shim WebSocket enabled; it only tells
 Codex not to choose WebSocket for that provider while debugging.
 
@@ -79,6 +106,16 @@ look for these messages with the same `request_id` or Codex
   `response.completed` summaries include `output_item_types` plus message,
   reasoning, and tool item counts, so an empty final answer shows whether the
   upstream returned only a reasoning/tool item or a real assistant message.
+- `repairing chat completion raw tool-call markup emitted as assistant text`:
+  the local Chat Completions tool loop rejected upstream text like
+  `<|tool_calls_section_begin|>` and retried with a repair instruction. If that
+  markup still reaches Codex, the running shim is old or the upstream failed the
+  bounded repair attempt.
+- For client-executed Codex tools, the final local Responses answer receives a
+  bounded text summary of tool output before generation. Streaming post-tool
+  answers are buffered long enough to reject or repair raw tool-call markers
+  before any text delta is sent to Codex. The prompt cap is
+  `shim.limits.responses_local_tool_output_summary_bytes`.
 - `responses upstream request failed`: upstream connection/setup failures such
   as EOF before response headers.
 
@@ -142,7 +179,7 @@ shim bearer tokens.
 If Codex prints:
 
 ```text
-Model metadata for `Kimi-K2.6` not found. Defaulting to fallback metadata
+Model metadata for `<model>` not found. Defaulting to fallback metadata
 ```
 
 the request can still work, but Codex is using fallback local assumptions for
@@ -157,10 +194,10 @@ responses:
         - model: Kimi-K2.6
           display_name: Kimi K2.6
           description: OpenAI-compatible upstream routed through llama_shim.
-          context_window: 128000
-          max_context_window: 128000
+          context_window: 262144
+          max_context_window: 262144
           auto_compact_token_limit: 0
-          effective_context_window_percent: 95
+          effective_context_window_percent: 90
           default_reasoning_level: high
           supported_reasoning_levels: [low, medium, high]
           supports_reasoning_summaries: false
@@ -185,6 +222,16 @@ responses:
             limit: 10000
           base_instructions: ""
 ```
+
+Current tested metadata starts:
+
+- `Kimi-K2.6`: `context_window: 262144`, `max_context_window: 262144`.
+- `deepseek-v4-pro`: `context_window: 1000000`, `max_context_window: 1000000`.
+- `Qwen3.6-35B-A3B`: `context_window: 262144`, `max_context_window: 262144`.
+
+The Qwen value is intentionally conservative for the tested gateway path. Only
+raise it after the exact upstream deployment proves the larger long-context
+setting through Codex smoke and ordinary API tests.
 
 Codex sends `GET /v1/models?client_version=...`; for that Codex-specific query
 shim returns a Codex model catalog (`{"models":[...]}`). A normal
@@ -270,14 +317,65 @@ chat_completions:
         remap_developer_role: true
         default_thinking: disabled
         json_schema_mode: json_object_instruction
+      # Kimi-compatible gateways usually do not need developer-role remapping,
+      # but some Kimi/LiteLLM deployments reject OpenAI Chat json_schema in the
+      # local Codex tool loop.
+      - model: Kimi-*
+        default_thinking: passthrough
+        json_schema_mode: json_object_instruction
+        default_max_tokens: 32000
+        ensure_tool_parameter_property_types: true
+        sanitize_moonshot_tool_schema: true
+        omit_empty_assistant_tool_content: true
+        retry_invalid_tool_arguments: true
+        invalid_tool_arguments_fallback: final_text
+      # Qwen-compatible gateways can expose thinking through provider-specific
+      # extra_body.enable_thinking. The Codex smoke path should not inject a
+      # generic thinking field, but it should downgrade Chat json_schema for
+      # shim-local constrained helper calls.
+      - model: Qwen*
+        default_thinking: passthrough
+        json_schema_mode: json_object_instruction
 responses:
   codex:
     model_metadata:
       models:
         - model: Kimi-K2.6
           display_name: Kimi K2.6
-          context_window: 128000
-          max_context_window: 128000
+          context_window: 262144
+          max_context_window: 262144
+          default_reasoning_level: high
+          supported_reasoning_levels: [low, medium, high]
+          supports_reasoning_summaries: false
+          default_reasoning_summary: none
+          shell_type: shell_command
+          apply_patch_tool_type: freeform
+          supports_parallel_tool_calls: false
+          support_verbosity: false
+          input_modalities: [text]
+          truncation_policy:
+            mode: bytes
+            limit: 10000
+        - model: deepseek-v4-pro
+          display_name: DeepSeek V4 Pro
+          context_window: 1000000
+          max_context_window: 1000000
+          default_reasoning_level: high
+          supported_reasoning_levels: [low, medium, high]
+          supports_reasoning_summaries: false
+          default_reasoning_summary: none
+          shell_type: shell_command
+          apply_patch_tool_type: freeform
+          supports_parallel_tool_calls: false
+          support_verbosity: false
+          input_modalities: [text]
+          truncation_policy:
+            mode: bytes
+            limit: 10000
+        - model: Qwen3.6-35B-A3B
+          display_name: Qwen3.6 35B A3B
+          context_window: 262144
+          max_context_window: 262144
           default_reasoning_level: high
           supported_reasoning_levels: [low, medium, high]
           supports_reasoning_summaries: false
@@ -553,7 +651,14 @@ default, and validates local file/test results after Codex exits. It also fails
 if Codex reports `unsupported call: apply_patch`, because that means the model
 attempted patch execution but the local Codex handler was not registered. The
 bugfix case also requires a `file_change` event so the smoke cannot pass only
-through shell text replacement. The script waits for `/healthz` and then
+through shell text replacement. Each selected case is retried with a fresh
+workspace up to `CODEX_REAL_SMOKE_CASE_ATTEMPTS` times, default `2`, because
+real upstream model formatting can occasionally produce one bad sample. Set it
+to `1` for strict no-retry debugging. The script uses
+`CODEX_REAL_SMOKE_REASONING_EFFORT=minimal` by default because the tasks are
+tiny and higher reasoning modes can make some upstreams continue emitting tool
+calls instead of the requested final sentinel. Override it to `high` only when
+that is the behavior under test. The script waits for `/healthz` and then
 probes `/v1/models` with the configured Codex
 bearer key; it does not block on `/readyz`, because
 auth-required real upstream gateways can fail the unauthenticated readiness
@@ -648,6 +753,31 @@ request explicitly sets `tool_choice` to a disabled tool, the shim returns a
 local validation error instead of pretending the upstream can execute it.
 SDK `NamespaceTool` is serialized as `{"type":"namespace"}` on the wire;
 `namespace_tool` is also accepted as a config alias.
+
+If the shim log repeatedly shows an upstream Chat Completions error like:
+
+```text
+When response_format type is 'json_schema', the 'json_schema' field must be provided
+```
+
+add a model-scoped Chat compatibility rule. This keeps the client-facing
+OpenAI request accepted by the shim, but sends Kimi/LiteLLM JSON mode plus a
+prepended schema instruction upstream:
+
+```yaml
+chat_completions:
+  upstream_compatibility:
+    models:
+      - model: Kimi-*
+        default_thinking: passthrough
+        json_schema_mode: json_object_instruction
+        default_max_tokens: 32000
+        ensure_tool_parameter_property_types: true
+        sanitize_moonshot_tool_schema: true
+        omit_empty_assistant_tool_content: true
+        retry_invalid_tool_arguments: true
+        invalid_tool_arguments_fallback: final_text
+```
 
 If Codex runs a command for a plain question and then prints no final answer,
 check the shim startup log for:

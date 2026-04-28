@@ -86,6 +86,7 @@ type TestAppOptions struct {
 	ChatCompletionsShadowStoreTimeout     time.Duration
 	ResponsesProxyBufferMaxBytes          int64
 	ResponsesStoredLineageMaxItems        int
+	ResponsesLocalToolOutputSummaryBytes  int
 	RetrievalMaxConcurrentSearches        int
 	RetrievalMaxSearchQueries             int
 	RetrievalMaxGroundingChunks           int
@@ -139,9 +140,11 @@ func NewTestAppWithOptions(t *testing.T, options TestAppOptions) *TestApp {
 		ChatCompletionsCompatibility:  append([]upstreamcompat.ChatCompletionRule(nil), options.ChatCompletionsUpstreamCompatibility...),
 		StartupCalibrationBearerToken: options.LlamaStartupCalibrationBearerToken,
 		Observer:                      metrics,
+		Logger:                        logger,
 	})
 	responseService := service.NewResponseServiceWithLimits(store, store, llamaClient, service.ResponseServiceLimits{
-		StoredLineageMaxItems: options.ResponsesStoredLineageMaxItems,
+		StoredLineageMaxItems:          options.ResponsesStoredLineageMaxItems,
+		LocalToolOutputSummaryMaxBytes: options.ResponsesLocalToolOutputSummaryBytes,
 	})
 	conversationService := service.NewConversationService(store)
 	testCtx, cancel := context.WithCancel(context.Background())

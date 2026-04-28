@@ -314,6 +314,15 @@ func logDetailedError(ctx context.Context, logger *slog.Logger, err error) {
 			"request_id", RequestIDFromContext(ctx),
 			"err", timeoutErr.Error(),
 		)
+		return
+	}
+
+	var invalidResponseErr *llama.InvalidResponseError
+	if errors.As(err, &invalidResponseErr) {
+		logger.ErrorContext(ctx, "upstream invalid response",
+			"request_id", RequestIDFromContext(ctx),
+			"err", invalidResponseErr.Error(),
+		)
 	}
 }
 

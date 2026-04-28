@@ -10,8 +10,10 @@ import (
 	"strings"
 
 	"llama_shim/internal/domain"
+	"llama_shim/internal/llama"
 	"llama_shim/internal/retrieval"
 	"llama_shim/internal/service"
+	"llama_shim/internal/upstreamcompat"
 )
 
 const localToolSearchMaxLoadedPaths = 3
@@ -536,6 +538,48 @@ func (h *responseHandler) runPreparedLocalToolLoopResponse(ctx context.Context, 
 
 		rawResponse, err := h.proxy.client.CreateChatCompletion(ctx, chatBody)
 		if err != nil {
+			if h.shouldRetryLocalToolLoopInvalidToolArguments(input, err) {
+				if attempt < maxLocalInvalidToolArgumentsRepairAttempts {
+					if h.logger != nil {
+						h.logger.DebugContext(ctx, "repairing chat completion invalid tool-call arguments",
+							"attempt", attempt,
+							"model", input.Model,
+						)
+					}
+					repairPrompt = buildInvalidToolArgumentsRepairPrompt()
+					continue
+				}
+				if h.shouldFallbackLocalToolLoopInvalidToolArguments(input) {
+					if h.logger != nil {
+						h.logger.DebugContext(ctx, "local tool loop invalid tool arguments retry exhausted; trying final-text fallback",
+							"request_id", RequestIDFromContext(ctx),
+							"attempt", attempt,
+							"model", input.Model,
+						)
+					}
+					response, handled, fallbackErr := h.service.TryCreatePreparedLocalTextResponse(ctx, input, prepared, responseID)
+					if fallbackErr != nil {
+						return domain.Response{}, fallbackErr
+					}
+					if handled {
+						if h.logger != nil {
+							h.logger.DebugContext(ctx, "completed local tool loop with final-text fallback after invalid tool arguments",
+								"request_id", RequestIDFromContext(ctx),
+								"attempt", attempt,
+								"model", input.Model,
+							)
+						}
+						return response, nil
+					}
+					if h.logger != nil {
+						h.logger.DebugContext(ctx, "local tool loop final-text fallback skipped after invalid tool arguments because no local tool output was available",
+							"request_id", RequestIDFromContext(ctx),
+							"attempt", attempt,
+							"model", input.Model,
+						)
+					}
+				}
+			}
 			return domain.Response{}, err
 		}
 
@@ -545,6 +589,37 @@ func (h *responseHandler) runPreparedLocalToolLoopResponse(ctx context.Context, 
 				return domain.Response{}, err
 			}
 			return response, nil
+		}
+
+		if h.shouldFallbackLocalToolLoopEmptyAssistantResponse(input, err) {
+			if h.logger != nil {
+				h.logger.DebugContext(ctx, "local tool loop received empty assistant response; trying final-text fallback",
+					"request_id", RequestIDFromContext(ctx),
+					"attempt", attempt,
+					"model", input.Model,
+				)
+			}
+			response, handled, fallbackErr := h.service.TryCreatePreparedLocalTextResponse(ctx, input, prepared, responseID)
+			if fallbackErr != nil {
+				return domain.Response{}, fallbackErr
+			}
+			if handled {
+				if h.logger != nil {
+					h.logger.DebugContext(ctx, "completed local tool loop with final-text fallback after empty assistant response",
+						"request_id", RequestIDFromContext(ctx),
+						"attempt", attempt,
+						"model", input.Model,
+					)
+				}
+				return response, nil
+			}
+			if h.logger != nil {
+				h.logger.DebugContext(ctx, "local tool loop final-text fallback skipped after empty assistant response because no local tool output was available",
+					"request_id", RequestIDFromContext(ctx),
+					"attempt", attempt,
+					"model", input.Model,
+				)
+			}
 		}
 
 		var validationErr *constrainedCustomToolValidationError
@@ -563,8 +638,63 @@ func (h *responseHandler) runPreparedLocalToolLoopResponse(ctx context.Context, 
 		if errors.As(err, &validationErr) {
 			return domain.Response{}, buildConstrainedCustomToolRepairExhaustedError(validationErr, attempt)
 		}
+		var rawMarkupErr *rawToolCallMarkupError
+		if errors.As(err, &rawMarkupErr) && attempt < maxLocalRawToolCallMarkupRepairAttempts {
+			if h.logger != nil {
+				h.logger.DebugContext(ctx, "repairing chat completion raw tool-call markup emitted as assistant text",
+					"attempt", attempt,
+				)
+			}
+			repairPrompt = buildRawToolCallMarkupRepairPrompt()
+			continue
+		}
 		return domain.Response{}, err
 	}
+}
+
+func (h *responseHandler) shouldRetryLocalToolLoopInvalidToolArguments(input service.CreateResponseInput, err error) bool {
+	if h == nil || h.proxy == nil {
+		return false
+	}
+	if !h.proxy.chatCompletionsCompatibility.RetryInvalidToolArguments(input.Model) {
+		return false
+	}
+
+	var upstreamErr *llama.UpstreamError
+	if !errors.As(err, &upstreamErr) || upstreamErr.StatusCode != invalidToolArgumentsUpstreamErrorStatusCode {
+		return false
+	}
+	return looksLikeInvalidToolArgumentsUpstreamError(upstreamErr.Message)
+}
+
+func (h *responseHandler) shouldFallbackLocalToolLoopInvalidToolArguments(input service.CreateResponseInput) bool {
+	if h == nil || h.proxy == nil {
+		return false
+	}
+	return h.proxy.chatCompletionsCompatibility.InvalidToolArgumentsFallback(input.Model) == upstreamcompat.InvalidToolArgumentsFallbackFinalText
+}
+
+func (h *responseHandler) shouldFallbackLocalToolLoopEmptyAssistantResponse(input service.CreateResponseInput, err error) bool {
+	if !h.shouldFallbackLocalToolLoopInvalidToolArguments(input) {
+		return false
+	}
+	var invalidResponseErr *llama.InvalidResponseError
+	if !errors.As(err, &invalidResponseErr) {
+		return false
+	}
+	return strings.Contains(invalidResponseErr.Message, "did not include assistant text or tool calls")
+}
+
+func looksLikeInvalidToolArgumentsUpstreamError(message string) bool {
+	message = strings.ToLower(message)
+	if !strings.Contains(message, "expecting value") {
+		return false
+	}
+	return strings.Contains(message, "line 1 column 1") || strings.Contains(message, "char 0")
+}
+
+func buildInvalidToolArgumentsRepairPrompt() string {
+	return "Your previous tool-call attempt was rejected because function arguments were not valid JSON. For every tool call, function.arguments must be a valid JSON object string. Use {} only for a true zero-argument tool. For shell, apply_patch, and functions with required fields, include all required fields. If no valid tool call is needed, reply with final plain text only."
 }
 
 func annotateLocalToolSearchNamespaces(items []domain.Item, namespaceByToolName map[string]string) ([]domain.Item, error) {

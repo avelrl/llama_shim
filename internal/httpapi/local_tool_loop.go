@@ -33,6 +33,20 @@ var shimLocalToolLoopNoopFields = map[string]struct{}{
 	"prompt_cache_key": {},
 }
 
+const (
+	maxLocalRawToolCallMarkupRepairAttempts     = 2
+	maxLocalInvalidToolArgumentsRepairAttempts  = 2
+	invalidToolArgumentsUpstreamErrorStatusCode = 400
+)
+
+type rawToolCallMarkupError struct {
+	Content string
+}
+
+func (e *rawToolCallMarkupError) Error() string {
+	return "chat completion assistant content contained raw tool-call markup"
+}
+
 type localChatCompletionResponse struct {
 	Choices []localChatCompletionChoice `json:"choices"`
 }
@@ -639,6 +653,9 @@ func parseLocalToolLoopChatCompletion(raw []byte, responseID string, model strin
 
 	message := payload.Choices[0].Message
 	content := extractChatCompletionContent(message.Content)
+	if containsRawToolCallMarkup(content) {
+		return domain.Response{}, &rawToolCallMarkupError{Content: content}
+	}
 	toolCalls := make([]domain.Item, 0, len(message.ToolCalls)+1)
 	if len(message.ToolCalls) > 0 && strings.TrimSpace(content) != "" {
 		reasoning, err := newLocalReasoningItem(content)
@@ -714,6 +731,14 @@ func parseLocalToolLoopChatCompletion(raw []byte, responseID string, model strin
 	}
 
 	return domain.NewResponse(responseID, model, content, previousResponseID, conversationID, domain.NowUTC().Unix()), nil
+}
+
+func containsRawToolCallMarkup(text string) bool {
+	return strings.Contains(text, "<|tool_call") || strings.Contains(text, "<|tool_calls_section")
+}
+
+func buildRawToolCallMarkupRepairPrompt() string {
+	return "Your previous assistant message printed internal tool-call markup as text. That is invalid. If you still need a tool, emit a structured function tool call through the tools interface. If the task is complete, reply with final plain text only. Do not include <|tool_call, <|tool_calls_section, or function-call templates in assistant text."
 }
 
 func extractChatCompletionContent(raw json.RawMessage) string {

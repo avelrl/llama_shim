@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -110,6 +111,37 @@ func TestGenerateDoesNotUseStartupCalibrationTokenWithoutContextAuthorization(t 
 	require.ErrorAs(t, err, &upstreamErr)
 	require.Equal(t, http.StatusUnauthorized, upstreamErr.StatusCode)
 	require.Empty(t, seenAuth)
+}
+
+func TestCreateChatCompletionLogsUpstreamErrorBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, http.MethodPost, r.Method)
+		require.Equal(t, "/v1/chat/completions", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Request-Id", "up_req_test")
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte(`{"error":{"message":"context length exceeded","type":"upstream_error"}}`))
+	}))
+	defer server.Close()
+
+	var logs bytes.Buffer
+	client := NewClientWithOptions(server.URL, time.Second, ClientOptions{
+		Logger: slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
+	})
+
+	_, err := client.CreateChatCompletion(context.Background(), []byte(`{"model":"test-model","messages":[{"role":"user","content":"ping"}]}`))
+	var upstreamErr *UpstreamError
+	require.ErrorAs(t, err, &upstreamErr)
+	require.Equal(t, http.StatusBadGateway, upstreamErr.StatusCode)
+
+	output := logs.String()
+	require.Contains(t, output, `"msg":"llama upstream returned error"`)
+	require.Contains(t, output, `"method":"POST"`)
+	require.Contains(t, output, `"path":"/v1/chat/completions"`)
+	require.Contains(t, output, `"scope":"upstream_chat_completions"`)
+	require.Contains(t, output, `"status":502`)
+	require.Contains(t, output, `"upstream_request_id":"up_req_test"`)
+	require.Contains(t, output, `context length exceeded`)
 }
 
 func TestCreateChatCompletionTextExtractsAssistantContent(t *testing.T) {

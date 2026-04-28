@@ -80,6 +80,40 @@ func TestNormalizeChatCompletionRequestAppliesDeepSeekCompatibility(t *testing.T
 	require.Equal(t, "system", messages[1].(map[string]any)["role"])
 }
 
+func TestNormalizeChatCompletionRequestDowngradesTopLevelSchemaEnvelope(t *testing.T) {
+	upstreamBody, compatibility, err := NormalizeChatCompletionRequest([]byte(`{
+		"model":"Qwen3.6-35B-A3B",
+		"messages":[{"role":"user","content":"Select a tool."}],
+		"response_format":{
+			"type":"json_schema",
+			"strict":true,
+			"schema":{
+				"type":"object",
+				"properties":{"selection":{"type":"string","enum":["shell","apply_patch"]}},
+				"required":["selection"],
+				"additionalProperties":false
+			}
+		}
+	}`), ChatCompletionOptions{Rules: []ChatCompletionRule{{
+		Model:          "Qwen*",
+		JSONSchemaMode: JSONSchemaModeObjectInstruction,
+	}}})
+	require.NoError(t, err)
+	require.True(t, compatibility.JSONSchemaDowngraded)
+
+	var request map[string]any
+	require.NoError(t, json.Unmarshal(upstreamBody, &request))
+	responseFormat := request["response_format"].(map[string]any)
+	require.Equal(t, "json_object", responseFormat["type"])
+	require.NotContains(t, responseFormat, "json_schema")
+
+	messages := request["messages"].([]any)
+	first := messages[0].(map[string]any)
+	require.Equal(t, "system", first["role"])
+	require.Contains(t, first["content"], "JSON Schema")
+	require.Contains(t, first["content"], `"selection"`)
+}
+
 func TestNormalizeChatCompletionRequestPreservesExplicitDeepSeekThinking(t *testing.T) {
 	upstreamBody, compatibility, err := NormalizeChatCompletionRequest([]byte(`{
 		"model":"deepseek-chat",
@@ -114,6 +148,18 @@ func TestNormalizeChatCompletionRequestAppliesKimiCompatibility(t *testing.T) {
 			},
 			{"role":"tool","tool_call_id":"call_abc","content":"ok"}
 		],
+		"response_format":{
+			"type":"json_schema",
+			"json_schema":{
+				"name":"status",
+				"schema":{
+					"type":"object",
+					"properties":{"status":{"type":"string"}},
+					"required":["status"],
+					"additionalProperties":false
+				}
+			}
+		},
 		"tools":[{
 			"type":"function",
 			"function":{
@@ -125,29 +171,58 @@ func TestNormalizeChatCompletionRequestAppliesKimiCompatibility(t *testing.T) {
 						"path":{"type":"string"},
 						"truncateMode":{"description":"How to truncate","enum":["smart","full","none"]},
 						"options":{"properties":{"encoding":{"enum":["utf8","base64"]}}},
-						"ranges":{"items":{"minimum":1}}
+						"ranges":{"items":{"minimum":1}},
+						"variantOptions":{"$ref":"#/$defs/VariantOptions","description":"Moonshot rejects ref siblings."},
+						"renderedSize":{"type":"array","items":[{"type":"number"},{"type":"number"}]}
 					},
-					"required":["path"]
+					"required":["path"],
+					"$defs":{"VariantOptions":{"type":"object","description":"Description stays on definition."}}
 				}
 			}
 		}]
 	}`), ChatCompletionOptions{Rules: []ChatCompletionRule{{
 		Model:                            "Kimi-*",
+		DefaultThinking:                  DefaultThinkingPassthrough,
 		DefaultMaxTokens:                 32000,
+		JSONSchemaMode:                   JSONSchemaModeObjectInstruction,
 		EnsureToolParameterPropertyTypes: true,
+		SanitizeMoonshotToolSchema:       true,
 		OmitEmptyAssistantToolContent:    true,
+		RetryInvalidToolArguments:        true,
 	}}})
 	require.NoError(t, err)
 	require.True(t, compatibility.DefaultMaxTokensApplied)
+	require.True(t, compatibility.JSONSchemaDowngraded)
 	require.True(t, compatibility.ToolParameterPropertyTypesEnsured)
+	require.True(t, compatibility.MoonshotToolSchemaSanitized)
 	require.Equal(t, 1, compatibility.EmptyAssistantToolContentOmitted)
+	require.True(t, (ChatCompletionOptions{Rules: []ChatCompletionRule{{
+		Model:                     "Kimi-*",
+		RetryInvalidToolArguments: true,
+	}}}).RetryInvalidToolArguments("Kimi-K2.6"))
+	require.Equal(t, InvalidToolArgumentsFallbackFinalText, (ChatCompletionOptions{Rules: []ChatCompletionRule{{
+		Model:                        "Kimi-*",
+		InvalidToolArgumentsFallback: InvalidToolArgumentsFallbackFinalText,
+	}}}).InvalidToolArgumentsFallback("Kimi-K2.6"))
+	require.Equal(t, InvalidToolArgumentsFallbackNone, (ChatCompletionOptions{Rules: []ChatCompletionRule{{
+		Model:                        "Kimi-*",
+		InvalidToolArgumentsFallback: "unknown",
+	}}}).InvalidToolArgumentsFallback("Kimi-K2.6"))
 
 	var request map[string]any
 	require.NoError(t, json.Unmarshal(upstreamBody, &request))
+	require.NotContains(t, request, "thinking")
 	require.Equal(t, float64(32000), request["max_tokens"])
+	responseFormat := request["response_format"].(map[string]any)
+	require.Equal(t, "json_object", responseFormat["type"])
+	require.NotContains(t, responseFormat, "json_schema")
 
 	messages := request["messages"].([]any)
-	assistant := messages[1].(map[string]any)
+	first := messages[0].(map[string]any)
+	require.Equal(t, "system", first["role"])
+	require.Contains(t, first["content"], "JSON Schema")
+	require.Contains(t, first["content"], `"status"`)
+	assistant := messages[2].(map[string]any)
 	require.Equal(t, "assistant", assistant["role"])
 	require.NotContains(t, assistant, "content")
 
@@ -160,6 +235,10 @@ func TestNormalizeChatCompletionRequestAppliesKimiCompatibility(t *testing.T) {
 	require.Equal(t, "string", optionsProps["encoding"].(map[string]any)["type"])
 	require.Equal(t, "array", properties["ranges"].(map[string]any)["type"])
 	require.Equal(t, "number", properties["ranges"].(map[string]any)["items"].(map[string]any)["type"])
+	require.Equal(t, map[string]any{"$ref": "#/$defs/VariantOptions"}, properties["variantOptions"].(map[string]any))
+	require.Equal(t, map[string]any{"type": "number"}, properties["renderedSize"].(map[string]any)["items"].(map[string]any))
+	defs := parameters["$defs"].(map[string]any)
+	require.Equal(t, "Description stays on definition.", defs["VariantOptions"].(map[string]any)["description"])
 }
 
 func TestNormalizeChatCompletionRequestPreservesExplicitMaxTokens(t *testing.T) {

@@ -1178,6 +1178,7 @@ func (h *responseHandler) cancel(w http.ResponseWriter, r *http.Request) {
 		h.writeResponsesProxyOverflowPassthrough(w, r, upstreamResp, body, remaining)
 		return
 	}
+	logResponsesUpstreamHTTPError(r.Context(), h.logger, "responses_cancel", upstreamResp, body, false)
 	if canonical, ok, err := canonicalizeAPIErrorBody(upstreamResp.StatusCode, body); err == nil && ok {
 		body = canonical
 	}
@@ -1252,6 +1253,7 @@ func (h *responseHandler) proxyBufferedJSONRequest(w http.ResponseWriter, r *htt
 		h.writeResponsesProxyOverflowPassthrough(w, r, resp, responseBody, remaining)
 		return
 	}
+	logResponsesUpstreamHTTPError(r.Context(), h.logger, "responses_proxy_buffered", resp, responseBody, false)
 	if canonical, ok, err := canonicalizeAPIErrorBody(resp.StatusCode, responseBody); err == nil && ok {
 		responseBody = canonical
 	}
@@ -1275,6 +1277,7 @@ func (h *responseHandler) readResponsesProxyBody(resp *http.Response) ([]byte, *
 
 func (h *responseHandler) writeResponsesProxyOverflowPassthrough(w http.ResponseWriter, r *http.Request, resp *http.Response, prefix []byte, remaining io.Reader) {
 	limit := normalizeServiceLimits(h.serviceLimits).ResponsesProxyBufferBytes
+	logResponsesUpstreamHTTPError(r.Context(), h.logger, "responses_proxy_overflow", resp, prefix, true)
 	h.logger.WarnContext(r.Context(), "responses proxy body buffer skipped",
 		"request_id", RequestIDFromContext(r.Context()),
 		"reason", "response_too_large",
@@ -1878,7 +1881,10 @@ func (h *responseHandler) proxyCreateWithShadowStore(w http.ResponseWriter, r *h
 		}
 		return
 	} else if canonical, ok, err := canonicalizeAPIErrorBody(response.StatusCode, body); err == nil && ok {
+		logResponsesUpstreamHTTPError(r.Context(), h.logger, "responses_proxy_create", response, body, false)
 		responseBody = canonical
+	} else {
+		logResponsesUpstreamHTTPError(r.Context(), h.logger, "responses_proxy_create", response, body, false)
 	}
 
 	copyResponseHeaders(w.Header(), response.Header)

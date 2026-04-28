@@ -132,6 +132,35 @@ func TestProxyResponsesStreamCanonicalizesErrorBody(t *testing.T) {
 	require.JSONEq(t, `{"error":{"message":"messages is required","type":"invalid_request_error","param":null,"code":null}}`, recorder.Body.String())
 }
 
+func TestProxyResponsesStreamLogsUpstreamErrorBody(t *testing.T) {
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	ctx := context.WithValue(context.Background(), requestIDKey, "req_test")
+	ctx = context.WithValue(ctx, clientRequestIDKey, "client_req_test")
+	resp := &http.Response{
+		StatusCode: http.StatusBadGateway,
+		Header: http.Header{
+			"Content-Type": []string{"application/json"},
+			"X-Request-Id": []string{"up_req_test"},
+		},
+		Body: io.NopCloser(strings.NewReader(`{"error":{"message":"context length exceeded","type":"upstream_error"}}`)),
+	}
+
+	recorder := httptest.NewRecorder()
+	err := proxyResponsesStream(ctx, logger, recorder, resp, customToolTransportPlan{}, "", 0, nil)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusBadGateway, recorder.Code)
+
+	output := logs.String()
+	require.Contains(t, output, `"msg":"responses upstream returned error"`)
+	require.Contains(t, output, `"request_id":"req_test"`)
+	require.Contains(t, output, `"client_request_id":"client_req_test"`)
+	require.Contains(t, output, `"operation":"responses_proxy_stream"`)
+	require.Contains(t, output, `"status":502`)
+	require.Contains(t, output, `"upstream_request_id":"up_req_test"`)
+	require.Contains(t, output, `context length exceeded`)
+}
+
 func TestProxyResponsesStreamLargeFallbackProxiesUnchangedWhenBufferOverflows(t *testing.T) {
 	body := strings.Repeat("A", 32)
 	resp := &http.Response{

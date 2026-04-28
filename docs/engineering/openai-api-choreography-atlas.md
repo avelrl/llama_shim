@@ -879,6 +879,9 @@ Practical finding:
   fallback function `shell`, and a deterministic task matrix.
 - They do not prove that current Codex emits native Responses `shell` or
   `apply_patch` declarations.
+- Practical model/provider quality is tracked separately in
+  [Codex Upstream Model Matrix](codex-upstream-model-matrix.md); those ratings
+  are smoke-test guidance, not OpenAI wire-contract claims.
 
 ## 19. Routing Modes
 

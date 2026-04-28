@@ -51,6 +51,7 @@ type Config struct {
 	ChatCompletionsShadowStoreTimeout                   time.Duration
 	ResponsesProxyBufferMaxBytes                        int64
 	ResponsesStoredLineageMaxItems                      int
+	ResponsesLocalToolOutputSummaryMaxBytes             int64
 	CustomToolGrammarDefinitionMaxBytes                 int64
 	CustomToolCompiledPatternMaxBytes                   int64
 	RetrievalMaxConcurrentSearches                      int
@@ -120,7 +121,10 @@ type ChatCompletionsUpstreamCompatibilityRule struct {
 	DefaultMaxTokens                 int    `mapstructure:"default_max_tokens"`
 	JSONSchemaMode                   string `mapstructure:"json_schema_mode"`
 	EnsureToolParameterPropertyTypes bool   `mapstructure:"ensure_tool_parameter_property_types"`
+	SanitizeMoonshotToolSchema       bool   `mapstructure:"sanitize_moonshot_tool_schema"`
 	OmitEmptyAssistantToolContent    bool   `mapstructure:"omit_empty_assistant_tool_content"`
+	RetryInvalidToolArguments        bool   `mapstructure:"retry_invalid_tool_arguments"`
+	InvalidToolArgumentsFallback     string `mapstructure:"invalid_tool_arguments_fallback"`
 }
 
 type ResponsesCodexUpstreamInputCompatibilityRule struct {
@@ -404,6 +408,11 @@ func Load(configPath string) (Config, error) {
 		return Config{}, fmt.Errorf("parse shim.limits.responses_stored_lineage_max_items: %w", err)
 	}
 	cfg.ResponsesStoredLineageMaxItems = responsesStoredLineageMaxItems
+	responsesLocalToolOutputSummaryLimit, err := parseByteSize(v.GetString("shim.limits.responses_local_tool_output_summary_bytes"))
+	if err != nil {
+		return Config{}, fmt.Errorf("parse shim.limits.responses_local_tool_output_summary_bytes: %w", err)
+	}
+	cfg.ResponsesLocalToolOutputSummaryMaxBytes = responsesLocalToolOutputSummaryLimit
 	customToolGrammarDefinitionLimit, err := parseByteSize(v.GetString("shim.limits.custom_tool_grammar_definition_bytes"))
 	if err != nil {
 		return Config{}, fmt.Errorf("parse shim.limits.custom_tool_grammar_definition_bytes: %w", err)
@@ -573,6 +582,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("shim.limits.chat_completions_shadow_store_timeout", "5s")
 	v.SetDefault("shim.limits.responses_proxy_buffer_bytes", "64MiB")
 	v.SetDefault("shim.limits.responses_stored_lineage_max_items", "128")
+	v.SetDefault("shim.limits.responses_local_tool_output_summary_bytes", "64KiB")
 	v.SetDefault("shim.limits.custom_tool_grammar_definition_bytes", "16KiB")
 	v.SetDefault("shim.limits.custom_tool_compiled_pattern_bytes", "32KiB")
 	v.SetDefault("shim.limits.retrieval_max_concurrent_searches", "8")

@@ -1,6 +1,6 @@
 # Responses Compatibility External Tester
 
-Last updated: April 27, 2026.
+Last updated: April 28, 2026.
 
 Status: repo-owned runner and Broad subset profile are in place. This is an
 engineering runbook, not a stronger hosted-parity claim.
@@ -12,6 +12,7 @@ This runbook was checked against the local docs index in
 official OpenAI docs on April 27, 2026.
 Official DeepSeek upstream dialect notes were checked on April 27, 2026.
 Official Kimi/Moonshot upstream dialect notes were checked on April 27, 2026.
+Official Qwen Code upstream dialect notes were checked on April 28, 2026.
 
 Relevant official pages:
 
@@ -31,6 +32,15 @@ Relevant official pages:
 - [Kimi Tool Calls](https://platform.kimi.ai/docs/guide/use-kimi-api-to-complete-tool-calls)
 - [Kimi Chat Completion](https://platform.kimi.ai/docs/api/chat)
 - [Kimi Agent Support](https://platform.kimi.ai/docs/guide/agent-support)
+- [Qwen Code Architecture](https://qwenlm.github.io/qwen-code-docs/en/developers/architecture/)
+- [Qwen Code Model Providers](https://qwenlm.github.io/qwen-code-docs/en/users/configuration/model-providers/)
+
+Implementation references:
+
+- [OpenAI Codex](https://github.com/openai/codex)
+- [Kimi CLI](https://github.com/MoonshotAI/kimi-cli)
+- [Qwen Code](https://github.com/QwenLM/qwen-code)
+- [OpenCode](https://github.com/anomalyco/opencode)
 
 The docs-backed baseline is:
 
@@ -46,7 +56,7 @@ The docs-backed baseline is:
 
 ## Latest Real-Upstream Ledger
 
-Last real-upstream check: April 27, 2026.
+Last real-upstream check: April 28, 2026.
 
 ### April 27, 2026 DeepSeek Diagnostic Run
 
@@ -212,9 +222,10 @@ Useful Kimi-specific observations:
   for Codex-like and tester tool loops because short upstream output budgets can
   surface as `finish_reason: "length"` instead of a final answer after a tool
   result.
-- Kimi thinking mode uses `reasoning_effort` plus a Moonshot-specific
-  `thinking` body object. For coding/tool smoke runs, disabling thinking is
-  safer unless the run is explicitly testing Kimi preserved thinking.
+- Kimi thinking mode can use `reasoning_effort` plus a Moonshot-specific
+  `thinking` body object on compatible upstreams. LiteLLM/OpenAI-provider
+  Kimi model groups can reject that field, so the shim should not inject a
+  default `thinking` value for generic Kimi/Codex smoke runs.
 - Kimi streams and non-stream responses can carry `reasoning_content`; this is
   useful to Kimi clients but should not be overclaimed as OpenAI Chat parity.
 - Kimi CLI normalizes function tool schemas by adding missing `type` values to
@@ -231,19 +242,95 @@ chat_completions:
   upstream_compatibility:
     models:
       - model: Kimi-*
-        default_thinking: disabled
+        default_thinking: passthrough
+        json_schema_mode: json_object_instruction
         default_max_tokens: 32000
         ensure_tool_parameter_property_types: true
+        sanitize_moonshot_tool_schema: true
         omit_empty_assistant_tool_content: true
+        retry_invalid_tool_arguments: true
+        invalid_tool_arguments_fallback: final_text
 ```
 
 Current boundary:
 
 - This is request-shape compatibility for upstream Chat calls. It does not prove
   Kimi/Codex agent-task reliability.
+- `sanitize_moonshot_tool_schema` is a Kimi/Moonshot transport workaround for
+  schemas with `$ref` siblings or tuple-style array `items`; it is model-scoped
+  and does not change the shim's OpenAI-facing request shape.
+- `retry_invalid_tool_arguments` is a narrow shim-local tool-loop workaround for
+  Kimi/LiteLLM `Expecting value: line 1 column 1` failures after malformed
+  generated tool-call arguments. It retries once with an explicit JSON-arguments
+  repair instruction and does not silently drop tool calls.
+- `invalid_tool_arguments_fallback: final_text` is a Kimi-scoped continuation
+  path for the same failure after local tool outputs already exist. It asks
+  upstream for final plain text without tools instead of surfacing a 502.
 - Kimi `reasoning_content` round-tripping is not currently a stronger OpenAI
-  Chat compatibility claim. For tool-heavy smoke runs, keep Kimi thinking off
-  unless preserved-thinking behavior is the subject of the test.
+  Chat compatibility claim. For tool-heavy smoke runs, keep Kimi thinking
+  passthrough unless preserved-thinking behavior is the subject of the test and
+  the exact upstream is known to accept the `thinking` body field.
+
+### April 28, 2026 Qwen 3.6 Codex Smoke
+
+Inputs:
+
+- model: `Qwen3.6-35B-A3B`
+- shim route: Codex CLI through `/v1/responses`
+- smoke command: `scripts/codex-cli-real-upstream-smoke.sh`
+- local source check: operator-owned Qwen Code checkout plus the official Qwen
+  Code architecture and model-provider docs listed above.
+
+Observed result:
+
+- The Codex real-upstream smoke passed boot, read, write, and bugfix.
+- Qwen emitted visible assistant text with leading newlines before the expected
+  markers; the smoke already treats marker matching whitespace-tolerantly.
+- Codex printed `ReasoningRawContentDelta without active item` during the
+  bugfix case. This matched the DeepSeek warning class and did not break the
+  final response.
+- The shim log showed repeated upstream Chat 400s from the local constrained
+  helper path: the upstream rejected `response_format.type=json_schema` when no
+  nested `response_format.json_schema` field was present.
+- After the Qwen compatibility rule was added and the shim was restarted, a
+  rerun passed boot, read, write, and bugfix again. The shim log showed
+  `json_schema_downgraded=true` and no repeated upstream 400s for that
+  `response_format` shape.
+- Remaining visible smoke noise was not a shim transport failure:
+  `ReasoningRawContentDelta without active item` came from Codex CLI handling
+  reasoning deltas, `cat -A` was a GNU/BSD command mismatch on macOS, and
+  `go test ... | tail` masked the command exit code through shell pipeline
+  semantics.
+
+Useful Qwen-specific observations:
+
+- Qwen Code configures OpenAI-compatible providers with `extra_body`.
+  Thinking-capable Qwen deployments use provider-specific
+  `extra_body.enable_thinking`, not the Kimi/DeepSeek `thinking` request shape.
+- Qwen Code explicitly disables thinking for background/forked paths by
+  overriding `enable_thinking: false` and removing generic reasoning config.
+- OpenCode uses Qwen-specific sampling defaults (`temperature` around `0.55`,
+  `top_p: 1`) and enables DashScope `enable_thinking` only for
+  reasoning-capable Alibaba/Qwen-style providers.
+
+Recommended shim config:
+
+```yaml
+chat_completions:
+  upstream_compatibility:
+    models:
+      - model: Qwen*
+        default_thinking: passthrough
+        json_schema_mode: json_object_instruction
+```
+
+This is a scoped transport workaround for Qwen/LiteLLM/DashScope-like
+Chat Completions backends. It preserves the OpenAI-shaped public request at the
+shim boundary, avoids a noisy upstream retry in shim-local constrained helpers,
+and does not claim native OpenAI Structured Outputs parity for Qwen.
+
+For practical model ranking and manual-smoke order, see
+[Codex Upstream Model Matrix](codex-upstream-model-matrix.md).
 
 ## Goal
 

@@ -207,6 +207,28 @@ implemented, but they must stay conservative:
   large input-item pagination and bounded legacy lineage fallback; config
   parsing/default/env tests; `go test ./...`; `make lint`; `git diff --check`
 
+### 2026-04-28: Responses local tool-output final-answer context
+
+- Status: implemented
+- Symptom: client-executed Codex tool outputs were dropped from shim-local
+  final Responses generation because the generic local-text projector keeps
+  only message items. Some upstreams then tried to call the same tool again and
+  surfaced raw tool-call template markers as assistant text.
+- Invariant: tool output may be used as local generation context, but it must
+  remain an internal prompt aid, not a new OpenAI request field or unbounded
+  prompt amplification path.
+- Change:
+  inject a bounded text summary of function/custom/shell/apply_patch output
+  items into shim-local final generation, repair raw tool-call marker drafts
+  once, and buffer post-tool streaming final answers until raw marker checks
+  pass.
+- Operator surface:
+  `shim.limits.responses_local_tool_output_summary_bytes` caps the internal
+  tool-output summary injected into local generation.
+- Verification used:
+  service tests for tool-output projection, summary truncation, raw marker
+  repair, and streaming post-tool buffering; config parsing/default/env tests.
+
 ### 2026-04-25: Stored Chat Completions pagination
 
 - Status: implemented

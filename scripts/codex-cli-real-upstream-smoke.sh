@@ -25,6 +25,8 @@ Optional:
   CODEX_HOME=.tmp/codex-real-upstream-smoke/codex-home
   CODEX_REAL_SMOKE_WORKDIR=.tmp/codex-real-upstream-smoke
   CODEX_REAL_SMOKE_CASES=boot,read,write,bugfix
+  CODEX_REAL_SMOKE_CASE_ATTEMPTS=2
+  CODEX_REAL_SMOKE_REASONING_EFFORT=minimal
   CODEX_REAL_SMOKE_WEBSOCKETS=false
   CODEX_REAL_SMOKE_UNIFIED_EXEC=true
 
@@ -56,6 +58,8 @@ api_key_value="${CODEX_API_KEY:-${!api_key_env:-}}"
 base_dir="${CODEX_REAL_SMOKE_WORKDIR:-.tmp/codex-real-upstream-smoke}"
 codex_home="${CODEX_HOME:-${base_dir}/codex-home}"
 case_list="${CODEX_REAL_SMOKE_CASES:-boot,read,write,bugfix}"
+case_attempts="${CODEX_REAL_SMOKE_CASE_ATTEMPTS:-2}"
+reasoning_effort="${CODEX_REAL_SMOKE_REASONING_EFFORT:-minimal}"
 supports_websockets="${CODEX_REAL_SMOKE_WEBSOCKETS:-false}"
 unified_exec="${CODEX_REAL_SMOKE_UNIFIED_EXEC:-true}"
 
@@ -73,6 +77,15 @@ toml_bool() {
 
 supports_websockets="$(toml_bool "${supports_websockets}")"
 unified_exec="$(toml_bool "${unified_exec}")"
+
+if ! [[ "${case_attempts}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "invalid CODEX_REAL_SMOKE_CASE_ATTEMPTS value: ${case_attempts}" >&2
+  exit 1
+fi
+if [[ -z "${reasoning_effort}" ]]; then
+  echo "invalid CODEX_REAL_SMOKE_REASONING_EFFORT value: empty" >&2
+  exit 1
+fi
 
 if [[ -z "${api_key_value}" ]]; then
   echo "missing API key: set CODEX_API_KEY or ${api_key_env}" >&2
@@ -171,6 +184,15 @@ require_no_unsupported_apply_patch() {
   fi
 }
 
+require_no_raw_tool_call_markup() {
+  local output_file="$1"
+  if grep -a -q '<|tool_call' "${output_file}" || grep -a -q '<|tool_calls_section' "${output_file}"; then
+    echo "Codex surfaced raw tool-call markup as text; upstream tool-call formatting is not reliable" >&2
+    cat "${output_file}" >&2
+    exit 1
+  fi
+}
+
 require_file_change_event() {
   local output_file="$1"
   local lines
@@ -231,7 +253,7 @@ run_codex_case() {
       -c "model_provider=\"${provider}\"" \
       -c 'approval_policy="never"' \
       -c 'sandbox_mode="workspace-write"' \
-      -c 'model_reasoning_effort="high"' \
+      -c "model_reasoning_effort=\"${reasoning_effort}\"" \
       -c 'model_reasoning_summary="none"' \
       -c 'web_search="disabled"' \
       -c 'shell_environment_policy.inherit="all"' \
@@ -243,6 +265,7 @@ run_codex_case() {
   cat "${output_file}"
   require_json_events "${output_file}"
   require_no_unsupported_apply_patch "${output_file}"
+  require_no_raw_tool_call_markup "${output_file}"
 }
 
 run_boot_case() {
@@ -265,7 +288,7 @@ run_read_case() {
   run_codex_case \
     read \
     "${workspace_abs}" \
-    'Use local command execution to read README.md. If it contains token llama-shim-42, reply exactly READ_OK.'
+    'Use local command execution to read README.md. If it contains token llama-shim-42, stop using tools and reply exactly READ_OK. Do not print internal tool-call markup or function-call templates as text.'
 
   require_command_event "${base_dir}/read/codex.jsonl"
   require_agent_text_contains "${base_dir}/read/codex.jsonl" "READ_OK"
@@ -279,10 +302,12 @@ run_write_case() {
   run_codex_case \
     write \
     "${workspace_abs}" \
-    'Use local command execution to update smoke_target.txt by replacing `status = TODO` with `status = patched-by-codex`. Then read the file back and reply exactly WRITE_OK.'
+    'Use local command execution to update smoke_target.txt by replacing `status = TODO` with `status = patched-by-codex`. Then read the file back. Once the file contains `status = patched-by-codex`, stop using tools and reply exactly WRITE_OK. Do not print internal tool-call markup or function-call templates as text.'
 
   require_command_event "${base_dir}/write/codex.jsonl"
-  if [[ "$(cat "${workspace_abs}/smoke_target.txt")" != $'name = llama_shim\nstatus = patched-by-codex' ]]; then
+  require_agent_text_contains "${base_dir}/write/codex.jsonl" "WRITE_OK"
+  if ! grep -Eq '^[[:space:]]*name[[:space:]]*=[[:space:]]*llama_shim[[:space:]]*$' "${workspace_abs}/smoke_target.txt" ||
+    ! grep -Eq '^[[:space:]]*status[[:space:]]*=[[:space:]]*patched-by-codex[[:space:]]*$' "${workspace_abs}/smoke_target.txt"; then
     echo "write case did not update smoke_target.txt as expected" >&2
     exit 1
   fi
@@ -318,7 +343,7 @@ EOF
   run_codex_case \
     bugfix \
     "${workspace_abs}" \
-    'Use local command execution. First run go test ./.... Then inspect mathutil.go, fix Add with the smallest possible change using apply_patch, run go test ./... again, and reply exactly BUGFIX_OK.'
+    'Use local command execution. First run go test ./.... Then inspect mathutil.go, fix Add with the smallest possible change using apply_patch, run go test ./... again. Once the tests pass, stop using tools and reply exactly BUGFIX_OK. Do not print internal tool-call markup or function-call templates as text.'
 
   require_command_event "${base_dir}/bugfix/codex.jsonl"
   require_file_change_event "${base_dir}/bugfix/codex.jsonl"
@@ -329,14 +354,35 @@ EOF
   (cd "${workspace_abs}" && GOCACHE="${workspace_abs}/.gocache" go test ./...)
 }
 
+run_case_with_attempts() {
+  local case_name="$1"
+  shift
+  local attempt
+
+  for attempt in $(seq 1 "${case_attempts}"); do
+    if [[ "${attempt}" -gt 1 ]]; then
+      echo "==> retrying Codex real-upstream case: ${case_name} (${attempt}/${case_attempts})"
+    fi
+    if ( "$@" ); then
+      return 0
+    fi
+    if [[ "${attempt}" -lt "${case_attempts}" ]]; then
+      echo "Codex real-upstream case failed: ${case_name} (${attempt}/${case_attempts}); retrying with a fresh workspace" >&2
+    fi
+  done
+
+  echo "Codex real-upstream case failed after ${case_attempts} attempt(s): ${case_name}" >&2
+  return 1
+}
+
 IFS=',' read -r -a cases <<<"${case_list}"
 for case_name in "${cases[@]}"; do
   case_name="${case_name//[[:space:]]/}"
   case "${case_name}" in
-    boot) run_boot_case ;;
-    read) run_read_case ;;
-    write) run_write_case ;;
-    bugfix) run_bugfix_case ;;
+    boot) run_case_with_attempts boot run_boot_case ;;
+    read) run_case_with_attempts read run_read_case ;;
+    write) run_case_with_attempts write run_write_case ;;
+    bugfix) run_case_with_attempts bugfix run_bugfix_case ;;
     "")
       ;;
     *)

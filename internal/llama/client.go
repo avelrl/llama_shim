@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"llama_shim/internal/domain"
 	"llama_shim/internal/upstreamcompat"
@@ -66,6 +67,8 @@ type admissionController struct {
 	logger       *slog.Logger
 	observer     AdmissionObserver
 }
+
+const upstreamErrorBodyLogLimit = 2048
 
 var hopByHopHeaders = map[string]struct{}{
 	"Connection":          {},
@@ -207,6 +210,7 @@ func (c *Client) listModelsDetailedWithBearerToken(ctx context.Context, bearerTo
 		Body:       body,
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		c.logUpstreamHTTPError(ctx, http.MethodGet, "/v1/models", "upstream_models", resp, body, len(body) >= 1<<20)
 		return result, &UpstreamError{
 			StatusCode: resp.StatusCode,
 			Message:    string(bytes.TrimSpace(body)),
@@ -266,6 +270,7 @@ func (c *Client) GenerateStream(ctx context.Context, model string, items []domai
 		if readErr != nil {
 			return fmt.Errorf("read llama error response: %w", readErr)
 		}
+		c.logUpstreamHTTPError(ctx, http.MethodPost, "/v1/chat/completions", "upstream_chat_completions_stream", resp, body, len(body) >= 1<<20)
 		return &UpstreamError{
 			StatusCode: resp.StatusCode,
 			Message:    string(bytes.TrimSpace(body)),
@@ -361,9 +366,12 @@ func (c *Client) doJSONRequestDetailedWithBearerToken(ctx context.Context, metho
 	resp, err := c.requestClient.Do(req)
 	if err != nil {
 		if mappedErr := mapTimeoutError(err); mappedErr != nil {
+			c.logUpstreamRequestError(ctx, method, path, scope, mappedErr)
 			return jsonRequestResult{}, mappedErr
 		}
-		return jsonRequestResult{}, fmt.Errorf("call llama: %w", err)
+		wrappedErr := fmt.Errorf("call llama: %w", err)
+		c.logUpstreamRequestError(ctx, method, path, scope, wrappedErr)
+		return jsonRequestResult{}, wrappedErr
 	}
 	defer resp.Body.Close()
 
@@ -376,6 +384,7 @@ func (c *Client) doJSONRequestDetailedWithBearerToken(ctx context.Context, metho
 		Body:       body,
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		c.logUpstreamHTTPError(ctx, method, path, scope, resp, body, int64(len(body)) >= maxBodyBytes)
 		return result, &UpstreamError{
 			StatusCode: resp.StatusCode,
 			Message:    string(bytes.TrimSpace(body)),
@@ -409,12 +418,83 @@ func (c *Client) doStreamingRequest(ctx context.Context, path string, requestBod
 	if err != nil {
 		release()
 		if mappedErr := mapTimeoutError(err); mappedErr != nil {
+			c.logUpstreamRequestError(ctx, http.MethodPost, path, scope, mappedErr)
 			return nil, nil, mappedErr
 		}
-		return nil, nil, fmt.Errorf("call llama: %w", err)
+		wrappedErr := fmt.Errorf("call llama: %w", err)
+		c.logUpstreamRequestError(ctx, http.MethodPost, path, scope, wrappedErr)
+		return nil, nil, wrappedErr
 	}
 
 	return resp, release, nil
+}
+
+func (c *Client) logUpstreamRequestError(ctx context.Context, method string, path string, scope string, err error) {
+	if c == nil || c.logger == nil || err == nil {
+		return
+	}
+	c.logger.WarnContext(ctx, "llama upstream request failed",
+		"method", method,
+		"path", path,
+		"scope", scope,
+		"err", err,
+	)
+}
+
+func (c *Client) logUpstreamHTTPError(ctx context.Context, method string, path string, scope string, resp *http.Response, body []byte, bodyTruncated bool) {
+	if c == nil || c.logger == nil || resp == nil || resp.StatusCode < http.StatusBadRequest {
+		return
+	}
+
+	c.logger.WarnContext(ctx, "llama upstream returned error",
+		"method", method,
+		"path", path,
+		"scope", scope,
+		"status", resp.StatusCode,
+		"content_type", resp.Header.Get("Content-Type"),
+		"upstream_request_id", firstResponseHeader(resp.Header, "Openai-Request-Id", "OpenAI-Request-ID", "X-Request-Id", "X-Request-ID", "Request-Id", "Cf-Ray"),
+		"body_bytes", len(body),
+		"body_truncated", bodyTruncated || len(body) > upstreamErrorBodyLogLimit,
+		"body_preview", bodyPreviewForLog(body, upstreamErrorBodyLogLimit),
+	)
+}
+
+func firstResponseHeader(header http.Header, keys ...string) string {
+	for _, key := range keys {
+		if value := strings.TrimSpace(header.Get(key)); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func bodyPreviewForLog(body []byte, limit int) string {
+	if limit <= 0 {
+		return formatBodyForLog(nil, len(body) > 0)
+	}
+	truncated := len(body) > limit
+	if truncated {
+		body = body[:limit]
+	}
+	return formatBodyForLog(body, truncated)
+}
+
+func formatBodyForLog(body []byte, truncated bool) string {
+	if len(body) == 0 {
+		return ""
+	}
+	if !utf8.Valid(body) {
+		if truncated {
+			return "[non-utf8 body omitted]...(truncated)"
+		}
+		return "[non-utf8 body omitted]"
+	}
+
+	value := string(body)
+	if truncated {
+		return value + "...(truncated)"
+	}
+	return value
 }
 
 func (c *Client) normalizeChatCompletionRequestForUpstream(ctx context.Context, path string, scope string, requestBody []byte) []byte {
@@ -439,6 +519,7 @@ func (c *Client) normalizeChatCompletionRequestForUpstream(ctx context.Context, 
 			"default_max_tokens_applied", compatibility.DefaultMaxTokensApplied,
 			"json_schema_downgraded", compatibility.JSONSchemaDowngraded,
 			"tool_parameter_property_types_ensured", compatibility.ToolParameterPropertyTypesEnsured,
+			"moonshot_tool_schema_sanitized", compatibility.MoonshotToolSchemaSanitized,
 			"empty_assistant_tool_content_omitted", compatibility.EmptyAssistantToolContentOmitted,
 		)
 	}
