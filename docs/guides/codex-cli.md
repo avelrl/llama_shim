@@ -636,8 +636,10 @@ GW_API_KEY=shim-dev-key \
 make codex-cli-real-upstream-smoke
 ```
 
-The default case list is `boot,read,write,bugfix`. To debug a stuck model
-incrementally:
+The default case list is `boot,read,write,bugfix,bugfix_mixed`. The
+`bugfix_mixed` case asks Codex to explain the cause before applying a patch, so
+it catches mixed text-plus-tool stream regressions where completed-only tool
+items can otherwise be lost. To debug a stuck model incrementally:
 
 ```bash
 CODEX_REAL_SMOKE_CASES=boot,read \

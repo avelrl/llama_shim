@@ -24,7 +24,7 @@ Optional:
   CODEX_API_KEY=shim-dev-key
   CODEX_HOME=.tmp/codex-real-upstream-smoke/codex-home
   CODEX_REAL_SMOKE_WORKDIR=.tmp/codex-real-upstream-smoke
-  CODEX_REAL_SMOKE_CASES=boot,read,write,bugfix
+  CODEX_REAL_SMOKE_CASES=boot,read,write,bugfix,bugfix_mixed
   CODEX_REAL_SMOKE_CASE_ATTEMPTS=2
   CODEX_REAL_SMOKE_REASONING_EFFORT=minimal
   CODEX_REAL_SMOKE_WEBSOCKETS=false
@@ -57,7 +57,7 @@ api_key_env="${CODEX_API_KEY_ENV:-GW_API_KEY}"
 api_key_value="${CODEX_API_KEY:-${!api_key_env:-}}"
 base_dir="${CODEX_REAL_SMOKE_WORKDIR:-.tmp/codex-real-upstream-smoke}"
 codex_home="${CODEX_HOME:-${base_dir}/codex-home}"
-case_list="${CODEX_REAL_SMOKE_CASES:-boot,read,write,bugfix}"
+case_list="${CODEX_REAL_SMOKE_CASES:-boot,read,write,bugfix,bugfix_mixed}"
 case_attempts="${CODEX_REAL_SMOKE_CASE_ATTEMPTS:-2}"
 reasoning_effort="${CODEX_REAL_SMOKE_REASONING_EFFORT:-minimal}"
 supports_websockets="${CODEX_REAL_SMOKE_WEBSOCKETS:-false}"
@@ -205,6 +205,23 @@ require_file_change_event() {
   fi
 }
 
+require_agent_text_before_file_change() {
+  local output_file="$1"
+  local marker="$2"
+  local lines
+  lines="$(json_lines "${output_file}")"
+  if ! printf '%s\n' "${lines}" \
+    | jq -s -e --arg marker "${marker}" '
+        (map(.type == "item.completed" and .item.type == "agent_message" and ((.item.text // "") | contains($marker))) | index(true)) as $message_index
+        | (map((.type == "item.started" or .type == "item.completed") and .item.type == "file_change") | index(true)) as $file_change_index
+        | ($message_index != null and $file_change_index != null and $message_index < $file_change_index)
+      ' >/dev/null; then
+    echo "Codex did not emit agent text marker ${marker} before a file_change event" >&2
+    cat "${output_file}" >&2
+    exit 1
+  fi
+}
+
 agent_text() {
   local output_file="$1"
   json_lines "${output_file}" \
@@ -231,6 +248,33 @@ prepare_case_dir() {
   rm -rf "${case_dir}"
   mkdir -p "${case_dir}/workspace"
   cd "${case_dir}/workspace" && pwd
+}
+
+seed_bugfix_workspace() {
+  local workspace_abs="$1"
+  cat >"${workspace_abs}/go.mod" <<'EOF'
+module codexsmoke
+
+go 1.22
+EOF
+  cat >"${workspace_abs}/mathutil.go" <<'EOF'
+package codexsmoke
+
+func Add(a, b int) int {
+	return a - b
+}
+EOF
+  cat >"${workspace_abs}/mathutil_test.go" <<'EOF'
+package codexsmoke
+
+import "testing"
+
+func TestAdd(t *testing.T) {
+	if got := Add(2, 3); got != 5 {
+		t.Fatalf("Add(2, 3) = %d, want 5", got)
+	}
+}
+EOF
 }
 
 run_codex_case() {
@@ -316,29 +360,7 @@ run_write_case() {
 run_bugfix_case() {
   local workspace_abs
   workspace_abs="$(prepare_case_dir bugfix)"
-  cat >"${workspace_abs}/go.mod" <<'EOF'
-module codexsmoke
-
-go 1.22
-EOF
-  cat >"${workspace_abs}/mathutil.go" <<'EOF'
-package codexsmoke
-
-func Add(a, b int) int {
-	return a - b
-}
-EOF
-  cat >"${workspace_abs}/mathutil_test.go" <<'EOF'
-package codexsmoke
-
-import "testing"
-
-func TestAdd(t *testing.T) {
-	if got := Add(2, 3); got != 5 {
-		t.Fatalf("Add(2, 3) = %d, want 5", got)
-	}
-}
-EOF
+  seed_bugfix_workspace "${workspace_abs}"
 
   run_codex_case \
     bugfix \
@@ -349,6 +371,27 @@ EOF
   require_file_change_event "${base_dir}/bugfix/codex.jsonl"
   if ! grep -q 'return a + b' "${workspace_abs}/mathutil.go"; then
     echo "bugfix case did not patch mathutil.go as expected" >&2
+    exit 1
+  fi
+  (cd "${workspace_abs}" && GOCACHE="${workspace_abs}/.gocache" go test ./...)
+}
+
+run_bugfix_mixed_case() {
+  local workspace_abs
+  workspace_abs="$(prepare_case_dir bugfix_mixed)"
+  seed_bugfix_workspace "${workspace_abs}"
+
+  run_codex_case \
+    bugfix_mixed \
+    "${workspace_abs}" \
+    'Use local command execution. First run go test ./.... Then inspect mathutil.go and identify the Add bug. Before editing, emit a short assistant message containing MIXED_CAUSE_FOUND and the cause. Then use apply_patch, not sed/perl/cat redirection, to make the smallest possible fix. Run go test ./... again. If the Go build cache is outside writable roots, create /tmp/gocache and /tmp/gotmp and rerun with GOCACHE=/tmp/gocache GOTMPDIR=/tmp/gotmp. Once tests pass, stop using tools and reply exactly MIXED_BUGFIX_OK. Do not print internal tool-call markup or function-call templates as text.'
+
+  require_command_event "${base_dir}/bugfix_mixed/codex.jsonl"
+  require_file_change_event "${base_dir}/bugfix_mixed/codex.jsonl"
+  require_agent_text_before_file_change "${base_dir}/bugfix_mixed/codex.jsonl" "MIXED_CAUSE_FOUND"
+  require_agent_text_contains "${base_dir}/bugfix_mixed/codex.jsonl" "MIXED_BUGFIX_OK"
+  if ! grep -q 'return a + b' "${workspace_abs}/mathutil.go"; then
+    echo "bugfix_mixed case did not patch mathutil.go as expected" >&2
     exit 1
   fi
   (cd "${workspace_abs}" && GOCACHE="${workspace_abs}/.gocache" go test ./...)
@@ -383,6 +426,7 @@ for case_name in "${cases[@]}"; do
     read) run_case_with_attempts read run_read_case ;;
     write) run_case_with_attempts write run_write_case ;;
     bugfix) run_case_with_attempts bugfix run_bugfix_case ;;
+    bugfix_mixed) run_case_with_attempts bugfix_mixed run_bugfix_mixed_case ;;
     "")
       ;;
     *)

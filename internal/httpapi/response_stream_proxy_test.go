@@ -110,6 +110,48 @@ func TestResponseStreamEventProxyKeepsStreamedMessageIDOnCompleted(t *testing.T)
 	require.Equal(t, 1, strings.Count(output, "event: response.output_item.done\n"))
 }
 
+func TestResponseStreamEventProxyPreservesCompletedOnlyCustomToolWhenSynthesizingTextCompletion(t *testing.T) {
+	plan := customToolTransportPlan{
+		Mode: customToolsModePassthrough,
+		PassthroughCustomTools: passthroughCustomToolBridge([]customToolDescriptor{
+			{
+				Name:          "apply_patch",
+				SyntheticName: syntheticCustomToolName("", "apply_patch"),
+				Transport:     "passthrough",
+			},
+		}, nil),
+	}
+	proxy := newResponseStreamEventProxy(context.Background(), nil, plan, "", nil)
+
+	var out bytes.Buffer
+	lines := []string{
+		"event: response.created\n",
+		"data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_test\",\"model\":\"test-model\",\"output_text\":\"\",\"output\":[]}}\n",
+		"\n",
+		"event: response.output_item.added\n",
+		"data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"msg_test\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[]}}\n",
+		"\n",
+		"event: response.output_text.done\n",
+		"data: {\"type\":\"response.output_text.done\",\"response_id\":\"resp_test\",\"item_id\":\"msg_test\",\"output_index\":0,\"content_index\":0,\"text\":\"I found the bug.\"}\n",
+		"\n",
+		"event: response.completed\n",
+		"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_test\",\"model\":\"test-model\",\"output_text\":\"I found the bug.\",\"output\":[{\"id\":\"msg_test\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"I found the bug.\"}]},{\"id\":\"fc_patch\",\"type\":\"function_call\",\"call_id\":\"call_patch\",\"name\":\"apply_patch\",\"arguments\":\"{\\\"format\\\":\\\"PATCH_TEXT\\\"}\",\"status\":\"completed\"}]}}\n",
+		"\n",
+	}
+
+	for _, line := range lines {
+		require.NoError(t, proxy.WriteLine(&out, line))
+	}
+	require.NoError(t, proxy.Flush(io.Discard))
+
+	output := out.String()
+	require.Contains(t, output, "event: response.custom_tool_call_input.done\n")
+	require.Contains(t, output, `"input":"PATCH_TEXT"`)
+	require.Contains(t, output, "event: response.output_item.done\n")
+	require.Contains(t, output, `"type":"custom_tool_call"`)
+	require.Contains(t, output, `"call_id":"call_patch"`)
+}
+
 func TestLooksLikeSSEPayload(t *testing.T) {
 	require.True(t, looksLikeSSEPayload("text/event-stream", nil))
 	require.True(t, looksLikeSSEPayload("application/octet-stream", []byte("event: response.created\n")))
@@ -584,6 +626,54 @@ func TestNormalizeCompletedToolCallEventSynthesizesLocalApplyPatchReplayEvents(t
 	finalItem, ok := output[0].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, "call_patch", asString(finalItem["id"]))
+}
+
+func TestRemapEventRepairsPassthroughCustomToolFunctionCallFallback(t *testing.T) {
+	plan := customToolTransportPlan{
+		Mode: customToolsModePassthrough,
+		PassthroughCustomTools: passthroughCustomToolBridge([]customToolDescriptor{
+			{
+				Name:          "apply_patch",
+				SyntheticName: syntheticCustomToolName("", "apply_patch"),
+				Transport:     "passthrough",
+			},
+		}, nil),
+	}
+	proxy := newResponseStreamEventProxy(context.Background(), nil, plan, "", nil)
+
+	eventType, payload := proxy.remapEvent("response.output_item.added", map[string]any{
+		"type":         "response.output_item.added",
+		"output_index": 0,
+		"item": map[string]any{
+			"id":        "fc_patch",
+			"type":      "function_call",
+			"call_id":   "call_patch",
+			"name":      "apply_patch",
+			"arguments": "",
+			"status":    "in_progress",
+		},
+	})
+
+	require.Equal(t, "response.output_item.added", eventType)
+	addedItem, ok := payload["item"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "custom_tool_call", addedItem["type"])
+	require.Equal(t, "apply_patch", addedItem["name"])
+	require.Equal(t, "fc_patch", addedItem["id"])
+	require.Equal(t, "", addedItem["input"])
+
+	patch := "*** Begin Patch\n*** Update File: mathutil.go\n@@\n-return a - b\n+return a + b\n*** End Patch\n"
+	escapedPatch := strings.ReplaceAll(strings.ReplaceAll(patch, "\\", "\\\\"), "\n", "\\n")
+	eventType, payload = proxy.remapEvent("response.function_call_arguments.done", map[string]any{
+		"type":      "response.function_call_arguments.done",
+		"item_id":   "fc_patch",
+		"arguments": `{"format":"` + escapedPatch + `"}`,
+	})
+
+	require.Equal(t, "response.custom_tool_call_input.done", eventType)
+	require.Equal(t, "response.custom_tool_call_input.done", payload["type"])
+	require.Equal(t, strings.TrimSpace(patch), payload["input"])
+	require.NotContains(t, payload, "arguments")
 }
 
 func TestNormalizeTextStreamEventSynthesizesAnnotationReplayFromCompletedResponse(t *testing.T) {

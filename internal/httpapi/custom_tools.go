@@ -46,12 +46,13 @@ type CodexUpstreamInputCompatibilityRule struct {
 }
 
 type customToolTransportPlan struct {
-	Mode                customToolsMode
-	Bridge              customToolBridge
-	BridgeFallbackSafe  bool
-	DroppedBuiltinTools []string
-	DisabledToolTypes   []string
-	ToolChoiceContract  toolChoiceContract
+	Mode                   customToolsMode
+	Bridge                 customToolBridge
+	PassthroughCustomTools customToolBridge
+	BridgeFallbackSafe     bool
+	DroppedBuiltinTools    []string
+	DisabledToolTypes      []string
+	ToolChoiceContract     toolChoiceContract
 }
 
 func (b customToolBridge) Active() bool {
@@ -75,6 +76,16 @@ func (b customToolBridge) BySyntheticName(name string) (customToolDescriptor, bo
 
 func (p customToolTransportPlan) BridgeActive() bool {
 	return p.Mode == customToolsModeBridge && p.Bridge.Active()
+}
+
+func (p customToolTransportPlan) customToolOutputRemapBridge() customToolBridge {
+	if p.BridgeActive() {
+		return p.Bridge
+	}
+	if p.Mode == customToolsModePassthrough && p.PassthroughCustomTools.Active() {
+		return p.PassthroughCustomTools
+	}
+	return customToolBridge{}
 }
 
 func parseCustomToolsMode(value string) customToolsMode {
@@ -237,18 +248,20 @@ func buildCustomToolTransportPlanWithCompatibility(rawFields map[string]json.Raw
 	switch mode {
 	case customToolsModePassthrough:
 		return customToolTransportPlan{
-			Mode:                customToolsModePassthrough,
-			BridgeFallbackSafe:  bridgeFallbackSafe,
-			DroppedBuiltinTools: droppedBuiltinTools,
-			DisabledToolTypes:   disabledToolTypes,
+			Mode:                   customToolsModePassthrough,
+			PassthroughCustomTools: passthroughCustomToolBridge(customDescriptors, usedNames),
+			BridgeFallbackSafe:     bridgeFallbackSafe,
+			DroppedBuiltinTools:    droppedBuiltinTools,
+			DisabledToolTypes:      disabledToolTypes,
 		}, filteredTools, nil
 	case customToolsModeAuto:
 		if requiresPassthrough {
 			return customToolTransportPlan{
-				Mode:                customToolsModePassthrough,
-				BridgeFallbackSafe:  bridgeFallbackSafe,
-				DroppedBuiltinTools: droppedBuiltinTools,
-				DisabledToolTypes:   disabledToolTypes,
+				Mode:                   customToolsModePassthrough,
+				PassthroughCustomTools: passthroughCustomToolBridge(customDescriptors, usedNames),
+				BridgeFallbackSafe:     bridgeFallbackSafe,
+				DroppedBuiltinTools:    droppedBuiltinTools,
+				DisabledToolTypes:      disabledToolTypes,
 			}, filteredTools, nil
 		}
 	case customToolsModeBridge:
@@ -277,6 +290,35 @@ func buildCustomToolTransportPlanWithCompatibility(rawFields map[string]json.Raw
 		DroppedBuiltinTools: droppedBuiltinTools,
 		DisabledToolTypes:   disabledToolTypes,
 	}, filteredTools, nil
+}
+
+func passthroughCustomToolBridge(descriptors []customToolDescriptor, usedFunctionNames map[string]struct{}) customToolBridge {
+	bridge := customToolBridge{
+		ByModelName: make(map[string]customToolDescriptor),
+		BySynthetic: make(map[string]customToolDescriptor),
+		ByCanonical: make(map[string]customToolDescriptor),
+	}
+	if len(descriptors) == 0 {
+		return bridge
+	}
+
+	nameCounts := make(map[string]int, len(descriptors))
+	for _, descriptor := range descriptors {
+		nameCounts[descriptor.Name]++
+	}
+	for _, descriptor := range descriptors {
+		descriptor.Transport = "passthrough"
+		bridge.ByCanonical[canonicalCustomToolKey(descriptor.Namespace, descriptor.Name)] = descriptor
+		bridge.BySynthetic[descriptor.SyntheticName] = descriptor
+		if descriptor.Name == "" || nameCounts[descriptor.Name] != 1 {
+			continue
+		}
+		if _, conflict := usedFunctionNames[descriptor.Name]; conflict {
+			continue
+		}
+		bridge.ByModelName[descriptor.Name] = descriptor
+	}
+	return bridge
 }
 
 func effectiveModeWithoutTools(mode customToolsMode) customToolsMode {
@@ -460,7 +502,7 @@ func shouldForceRequiredToolChoice(rawFields map[string]json.RawMessage, tools [
 	if rawInput, ok := rawFields["input"]; ok && inputContainsToolOutput(rawInput) {
 		return false
 	}
-	return isCodexCLIRequest(rawFields) && hasFunctionToolNamed(tools, "exec_command")
+	return isCodexCLIRequestWithTools(rawFields, tools) && hasFunctionToolNamed(tools, "exec_command")
 }
 
 func inputContainsToolOutput(raw json.RawMessage) bool {
@@ -477,12 +519,32 @@ func inputContainsToolOutput(raw json.RawMessage) bool {
 }
 
 func isCodexCLIRequest(rawFields map[string]json.RawMessage) bool {
-	return strings.Contains(rawStringField(rawFields, "instructions"), codexCLIRequestMarker)
+	if strings.Contains(rawStringField(rawFields, "instructions"), codexCLIRequestMarker) {
+		return true
+	}
+	return rawFieldContainsString(rawFields, "input", codexCLIRequestMarker)
+}
+
+func isCodexCLIRequestWithTools(rawFields map[string]json.RawMessage, tools []map[string]any) bool {
+	if isCodexCLIRequest(rawFields) {
+		return true
+	}
+	return looksLikeCodexCLIToolSet(tools)
+}
+
+func looksLikeCodexCLIToolSet(tools []map[string]any) bool {
+	return hasFunctionToolNamed(tools, "exec_command") &&
+		hasFunctionToolNamed(tools, "write_stdin") &&
+		hasToolNamed(tools, "custom", "apply_patch")
 }
 
 func hasFunctionToolNamed(tools []map[string]any, name string) bool {
+	return hasToolNamed(tools, "function", name)
+}
+
+func hasToolNamed(tools []map[string]any, toolType, name string) bool {
 	for _, tool := range tools {
-		if !strings.EqualFold(strings.TrimSpace(asString(tool["type"])), "function") {
+		if !strings.EqualFold(strings.TrimSpace(asString(tool["type"])), toolType) {
 			continue
 		}
 		if strings.EqualFold(strings.TrimSpace(asString(tool["name"])), name) {
@@ -502,6 +564,17 @@ func rawStringField(fields map[string]json.RawMessage, key string) string {
 		return ""
 	}
 	return value
+}
+
+func rawFieldContainsString(fields map[string]json.RawMessage, key, needle string) bool {
+	if strings.TrimSpace(needle) == "" {
+		return false
+	}
+	raw, ok := fields[key]
+	if !ok {
+		return false
+	}
+	return strings.Contains(string(raw), needle)
 }
 
 func remapCustomToolResponseBody(raw []byte, plan customToolTransportPlan) ([]byte, error) {
@@ -526,13 +599,14 @@ func remapCustomToolResponseBody(raw []byte, plan customToolTransportPlan) ([]by
 			changed = true
 		}
 	}
+	outputRemapBridge := plan.customToolOutputRemapBridge()
 	for index, entry := range output {
 		item, ok := entry.(map[string]any)
 		if !ok {
 			continue
 		}
-		if plan.BridgeActive() {
-			rewritten, didChange := remapFunctionCallItemToCustom(item, plan.Bridge)
+		if outputRemapBridge.Active() {
+			rewritten, didChange := remapFunctionCallItemToCustom(item, outputRemapBridge)
 			if didChange {
 				output[index] = rewritten
 				changed = true
@@ -1033,13 +1107,14 @@ func logCustomToolTransport(ctx context.Context, logger *slog.Logger, rawFields 
 	rawInstructions := rawStringField(rawFields, "instructions")
 	upstreamInstructions := bodyStringField(upstreamBody, "instructions")
 	tools := decodeToolList(rawFields)
-	codexCompatRequested := isCodexCLIRequest(rawFields) && hasFunctionToolNamed(tools, "exec_command")
+	codexCompatRequested := isCodexCLIRequestWithTools(rawFields, tools) && hasFunctionToolNamed(tools, "exec_command")
 	codexCompatApplied := shouldApplyCodexCompatibility(rawFields, tools, codexCompatibilityEnabled)
 
 	logger.DebugContext(ctx, "responses custom tools transport",
 		"mode", plan.Mode,
 		"bridge_active", plan.BridgeActive(),
 		"bridge_tool_count", len(plan.Bridge.ByCanonical),
+		"passthrough_custom_tool_count", len(plan.PassthroughCustomTools.ByCanonical),
 		"dropped_builtin_tools", plan.DroppedBuiltinTools,
 		"disabled_upstream_tool_types", plan.DisabledToolTypes,
 		"tool_choice_contract_mode", plan.ToolChoiceContract.Mode,

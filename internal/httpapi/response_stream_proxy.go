@@ -916,12 +916,14 @@ func (p *responseStreamEventProxy) remapEvent(eventType string, payload map[stri
 	if eventType == "" {
 		eventType = strings.TrimSpace(asString(payload["type"]))
 	}
+	outputRemapBridge := p.plan.customToolOutputRemapBridge()
 
 	switch eventType {
 	case "response.output_item.added", "response.output_item.done":
 		if item, ok := payload["item"].(map[string]any); ok {
-			if rewritten, descriptor, changed := remapStreamOutputItem(item, p.plan.Bridge); changed {
+			if rewritten, descriptor, changed := remapStreamOutputItem(item, outputRemapBridge); changed {
 				payload["item"] = rewritten
+				p.logCustomToolOutputRepair(eventType, item, rewritten, descriptor)
 				if descriptor.Name != "" {
 					if itemID := strings.TrimSpace(asString(rewritten["id"])); itemID != "" {
 						p.customItemByID[itemID] = descriptor
@@ -931,7 +933,7 @@ func (p *responseStreamEventProxy) remapEvent(eventType string, payload map[stri
 		}
 	}
 
-	if p.plan.BridgeActive() {
+	if outputRemapBridge.Active() {
 		switch eventType {
 		case "response.function_call_arguments.delta":
 			itemID := strings.TrimSpace(asString(payload["item_id"]))
@@ -942,8 +944,9 @@ func (p *responseStreamEventProxy) remapEvent(eventType string, payload map[stri
 		case "response.function_call_arguments.done":
 			changed := false
 			if item, ok := payload["item"].(map[string]any); ok {
-				if rewritten, descriptor, didChange := remapStreamOutputItem(item, p.plan.Bridge); didChange {
+				if rewritten, descriptor, didChange := remapStreamOutputItem(item, outputRemapBridge); didChange {
 					payload["item"] = rewritten
+					p.logCustomToolOutputRepair(eventType, item, rewritten, descriptor)
 					if itemID := strings.TrimSpace(asString(rewritten["id"])); itemID != "" {
 						p.customItemByID[itemID] = descriptor
 					}
@@ -978,8 +981,9 @@ func (p *responseStreamEventProxy) remapEvent(eventType string, payload map[stri
 						if !ok {
 							continue
 						}
-						if rewritten, _, changed := remapStreamOutputItem(item, p.plan.Bridge); changed {
+						if rewritten, descriptor, changed := remapStreamOutputItem(item, outputRemapBridge); changed {
 							output[index] = rewritten
+							p.logCustomToolOutputRepair(eventType, item, rewritten, descriptor)
 						}
 					}
 					responsePayload["output"] = output
@@ -994,8 +998,9 @@ func (p *responseStreamEventProxy) remapEvent(eventType string, payload map[stri
 			payload["input"] = extractCustomToolInput(input)
 		}
 		if item, ok := payload["item"].(map[string]any); ok {
-			if rewritten, descriptor, changed := remapStreamOutputItem(item, p.plan.Bridge); changed {
+			if rewritten, descriptor, changed := remapStreamOutputItem(item, outputRemapBridge); changed {
 				payload["item"] = rewritten
+				p.logCustomToolOutputRepair(eventType, item, rewritten, descriptor)
 				if descriptor.Name != "" {
 					if itemID := strings.TrimSpace(asString(rewritten["id"])); itemID != "" {
 						p.customItemByID[itemID] = descriptor
@@ -1011,8 +1016,9 @@ func (p *responseStreamEventProxy) remapEvent(eventType string, payload map[stri
 					if !ok {
 						continue
 					}
-					if rewritten, descriptor, changed := remapStreamOutputItem(item, p.plan.Bridge); changed {
+					if rewritten, descriptor, changed := remapStreamOutputItem(item, outputRemapBridge); changed {
 						output[index] = rewritten
+						p.logCustomToolOutputRepair(eventType, item, rewritten, descriptor)
 						if descriptor.Name != "" {
 							if itemID := strings.TrimSpace(asString(rewritten["id"])); itemID != "" {
 								p.customItemByID[itemID] = descriptor
@@ -1035,6 +1041,28 @@ func (p *responseStreamEventProxy) remapEvent(eventType string, payload map[stri
 
 	p.observeTextStreamEvent(eventType, payload)
 	return eventType, payload
+}
+
+func (p *responseStreamEventProxy) logCustomToolOutputRepair(eventType string, before, after map[string]any, descriptor customToolDescriptor) {
+	if p.logger == nil || !p.logger.Enabled(p.ctx, slog.LevelDebug) {
+		return
+	}
+	beforeType := strings.TrimSpace(asString(before["type"]))
+	afterType := strings.TrimSpace(asString(after["type"]))
+	if beforeType == afterType {
+		return
+	}
+	p.logger.DebugContext(p.ctx, "responses custom tool output remapped",
+		"request_id", RequestIDFromContext(p.ctx),
+		"event_type", eventType,
+		"from_item_type", beforeType,
+		"to_item_type", afterType,
+		"item_id", strings.TrimSpace(asString(after["id"])),
+		"call_id", customToolCallID(after),
+		"tool_name", descriptor.Name,
+		"tool_namespace", descriptor.Namespace,
+		"transport", descriptor.Transport,
+	)
 }
 
 type pendingSSEEvent struct {
@@ -1070,6 +1098,7 @@ func (p *responseStreamEventProxy) normalizeTextStreamEvent(eventType string, pa
 	if eventType == "" {
 		return nil, eventType, payload
 	}
+	var completedResponsePayload map[string]any
 	if eventType == "response.created" {
 		p.sawCreated = true
 		return nil, eventType, payload
@@ -1084,6 +1113,7 @@ func (p *responseStreamEventProxy) normalizeTextStreamEvent(eventType string, pa
 	if eventType == "response.completed" {
 		p.sawCompleted = true
 		if responsePayload, ok := payload["response"].(map[string]any); ok {
+			completedResponsePayload = responsePayload
 			p.captureResponseEnvelope(responsePayload)
 		}
 	}
@@ -1161,10 +1191,66 @@ func (p *responseStreamEventProxy) normalizeTextStreamEvent(eventType string, pa
 			payload["text"] = p.outputText.String()
 		}
 	case "response.completed":
-		payload["response"] = p.syntheticResponseEnvelope(true)
+		payload["response"] = p.syntheticResponseEnvelopeWithReplayItems(completedResponsePayload)
 	}
 	payload["type"] = eventType
 	return before, eventType, payload
+}
+
+func (p *responseStreamEventProxy) syntheticResponseEnvelopeWithReplayItems(completedResponsePayload map[string]any) map[string]any {
+	response := p.syntheticResponseEnvelope(true)
+	if completedResponsePayload == nil {
+		return response
+	}
+	originalOutput, ok := completedResponsePayload["output"].([]any)
+	if !ok || len(originalOutput) == 0 {
+		return response
+	}
+
+	output := make([]any, 0, 1+len(originalOutput))
+	seenIDs := make(map[string]struct{}, 1+len(originalOutput))
+	if existing, ok := response["output"].([]map[string]any); ok {
+		for _, item := range existing {
+			output = append(output, item)
+			if itemID := strings.TrimSpace(asString(item["id"])); itemID != "" {
+				seenIDs[itemID] = struct{}{}
+			}
+		}
+	} else if existing, ok := response["output"].([]any); ok {
+		for _, item := range existing {
+			output = append(output, item)
+			if itemMap, ok := item.(map[string]any); ok {
+				if itemID := strings.TrimSpace(asString(itemMap["id"])); itemID != "" {
+					seenIDs[itemID] = struct{}{}
+				}
+			}
+		}
+	}
+
+	appendedReplayItem := false
+	for _, entry := range originalOutput {
+		item, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		itemType := strings.TrimSpace(asString(item["type"]))
+		if !isSyntheticReplayOutputItemType(itemType) {
+			continue
+		}
+		if itemID := strings.TrimSpace(asString(item["id"])); itemID != "" {
+			if _, seen := seenIDs[itemID]; seen {
+				continue
+			}
+			seenIDs[itemID] = struct{}{}
+		}
+		output = append(output, item)
+		appendedReplayItem = true
+	}
+	if !appendedReplayItem {
+		return response
+	}
+	response["output"] = output
+	return response
 }
 
 func (p *responseStreamEventProxy) normalizeCompletedToolCallEvent(eventType string, payload map[string]any) ([]pendingSSEEvent, string, map[string]any) {

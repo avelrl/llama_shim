@@ -72,6 +72,9 @@ Default cases:
 - `read`: local command execution reads a seed file.
 - `write`: local command execution updates one seed file.
 - `bugfix`: fixes a tiny Go bug and verifies `go test ./...`.
+- `bugfix_mixed`: asks Codex to emit a brief explanation before patching,
+  then verifies the stream still delivers an executable `apply_patch`
+  `file_change` event and the final Go test passes.
 
 To bisect a failure without changing prompts, narrow the case list:
 
@@ -98,6 +101,8 @@ Pass criteria:
 - all selected cases emit Codex JSON events and complete a turn
 - read/write/bugfix cases show local command execution events
 - write and bugfix cases pass filesystem/test verification after Codex exits
+- `bugfix_mixed` emits an agent message before the file change, catching
+  mixed text-plus-tool stream regressions
 - repeated raw tool-call markup or missing sentinel answers fail after the
   configured attempts
 

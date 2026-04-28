@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1355,6 +1356,69 @@ func TestRemapCustomToolsPayloadAppendsCodexCompatibilityHint(t *testing.T) {
 	require.Contains(t, applyPatch["description"], "use this tool directly")
 }
 
+func TestRemapCustomToolsPayloadDetectsCodexCompatibilityFromInput(t *testing.T) {
+	rawFields := map[string]json.RawMessage{
+		"input": json.RawMessage(`[
+			{
+				"type":"message",
+				"role":"developer",
+				"content":[
+					{"type":"input_text","text":"You are a coding agent running in the Codex CLI, a terminal-based coding assistant."}
+				]
+			}
+		]`),
+		"tools": json.RawMessage(`[
+			{"type":"function","name":"exec_command","description":"Runs a command in a PTY.","parameters":{"type":"object","properties":{"cmd":{"type":"string"}},"required":["cmd"]}},
+			{"type":"custom","name":"apply_patch","description":"Patch files.","format":{"type":"grammar","syntax":"lark","definition":"start: /.+/"}}
+		]`),
+	}
+
+	body, plan, err := remapCustomToolsPayload(rawFields, "auto", true, false)
+
+	require.NoError(t, err)
+	require.Equal(t, customToolsModePassthrough, plan.Mode)
+	require.True(t, plan.PassthroughCustomTools.Active())
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(body, &payload))
+	require.Contains(t, payload["instructions"], codexCompatibilityHint)
+	require.Contains(t, payload["instructions"], "GOCACHE")
+
+	tools, ok := payload["tools"].([]any)
+	require.True(t, ok)
+	require.Len(t, tools, 2)
+	execCommand, ok := tools[0].(map[string]any)
+	require.True(t, ok)
+	require.Contains(t, execCommand["description"], "single shell string")
+}
+
+func TestRemapCustomToolsPayloadDetectsCodexCompatibilityFromToolSet(t *testing.T) {
+	rawFields := map[string]json.RawMessage{
+		"tools": json.RawMessage(`[
+			{"type":"function","name":"exec_command","description":"Runs a command in a PTY.","parameters":{"type":"object","properties":{"cmd":{"type":"string"}},"required":["cmd"]}},
+			{"type":"function","name":"write_stdin","description":"Writes to an existing exec session.","parameters":{"type":"object","properties":{"session_id":{"type":"number"}},"required":["session_id"]}},
+			{"type":"custom","name":"apply_patch","description":"Patch files.","format":{"type":"grammar","syntax":"lark","definition":"start: /.+/"}}
+		]`),
+	}
+
+	body, plan, err := remapCustomToolsPayload(rawFields, "auto", true, false)
+
+	require.NoError(t, err)
+	require.Equal(t, customToolsModePassthrough, plan.Mode)
+	require.True(t, plan.PassthroughCustomTools.Active())
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(body, &payload))
+	require.Contains(t, payload["instructions"], codexCompatibilityHint)
+
+	tools, ok := payload["tools"].([]any)
+	require.True(t, ok)
+	require.Len(t, tools, 3)
+	execCommand, ok := tools[0].(map[string]any)
+	require.True(t, ok)
+	require.Contains(t, execCommand["description"], "single shell string")
+}
+
 func TestRemapCustomToolsPayloadSkipsCodexCompatibilityWhenDisabled(t *testing.T) {
 	rawFields := map[string]json.RawMessage{
 		"instructions": json.RawMessage(`"You are a coding agent running in the Codex CLI, a terminal-based coding assistant."`),
@@ -1491,6 +1555,52 @@ func TestNormalizeUpstreamResponseBodyUnwrapsNativeCustomToolCallInput(t *testin
 	item := output[0].(map[string]any)
 	require.Equal(t, "custom_tool_call", item["type"])
 	require.Equal(t, `print("hello world")`, item["input"])
+}
+
+func TestNormalizeUpstreamResponseBodyRepairsPassthroughCustomToolFunctionCallFallback(t *testing.T) {
+	rawFields := map[string]json.RawMessage{
+		"tools": json.RawMessage(`[
+			{"type":"custom","name":"apply_patch","format":{"type":"grammar","syntax":"lark","definition":"start: /.+/"}}
+		]`),
+	}
+	_, plan, err := remapCustomToolsPayload(rawFields, "passthrough", false, false)
+	require.NoError(t, err)
+	require.Equal(t, customToolsModePassthrough, plan.Mode)
+	require.True(t, plan.PassthroughCustomTools.Active())
+
+	patch := "*** Begin Patch\n*** Update File: mathutil.go\n@@\n-return a - b\n+return a + b\n*** End Patch\n"
+	args, err := json.Marshal(map[string]any{"format": patch})
+	require.NoError(t, err)
+	raw := []byte(`{
+		"id":"upstream_resp_custom_function_fallback",
+		"object":"response",
+		"model":"test-model",
+		"output_text":"",
+		"output":[
+			{
+				"id":"fc_patch",
+				"type":"function_call",
+				"call_id":"call_patch",
+				"name":"apply_patch",
+				"arguments":` + strconv.Quote(string(args)) + `,
+				"status":"completed"
+			}
+		]
+	}`)
+
+	body, err := normalizeUpstreamResponseBody(raw, plan)
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(body, &payload))
+
+	output := payload["output"].([]any)
+	require.Len(t, output, 1)
+	item := output[0].(map[string]any)
+	require.Equal(t, "custom_tool_call", item["type"])
+	require.Equal(t, "apply_patch", item["name"])
+	require.Equal(t, patch, item["input"])
+	require.Equal(t, "call_patch", item["call_id"])
 }
 
 func TestRemapCustomToolResponseBodyRestoresOnlyCustomTools(t *testing.T) {

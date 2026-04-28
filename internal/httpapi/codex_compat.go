@@ -9,7 +9,7 @@ import (
 
 const (
 	codexCLIRequestMarker  = "You are a coding agent running in the Codex CLI"
-	codexCompatibilityHint = "Codex compatibility rules for this environment: use exec_command in the sandbox by default for normal workspace reads, writes, and local commands. Only request sandbox_permissions=require_escalated for real sandbox limits such as network access, GUI apps, destructive actions, or writes outside the workspace. For file edits, use the apply_patch tool directly for existing files and use exec_command mainly for reads, builds, tests, and other shell tasks. Never invoke apply_patch through exec_command. The exec_command.cmd field must be a single shell string, not an argv array. Avoid rewriting an existing file with heredocs, `cat > file`, `echo ... | base64 -d`, or similar whole-file shell writes when a targeted patch is possible. When using exec_command, prefer structured arguments such as workdir instead of `cd ... &&`. For test or lint commands, set a generous yield_time_ms so the command can finish without extra polling. After the final tool result, always send a brief assistant message to the user and do not end the turn with only reasoning or plan updates."
+	codexCompatibilityHint = "Codex compatibility rules for this environment: use exec_command in the sandbox by default for normal workspace reads, writes, and local commands. Only request sandbox_permissions=require_escalated for real sandbox limits such as network access, GUI apps, destructive actions, or writes outside the workspace; if approval policy is never, do not request escalation. For file edits, use the apply_patch tool directly for existing files and use exec_command mainly for reads, builds, tests, and other shell tasks. Never invoke apply_patch through exec_command. The exec_command.cmd field must be a single shell string, not an argv array. Avoid rewriting an existing file with heredocs, `cat > file`, `echo ... | base64 -d`, or similar whole-file shell writes when a targeted patch is possible. When using exec_command, prefer structured arguments such as workdir instead of `cd ... &&`. For Go tests that fail because the default Go build cache is outside writable roots, rerun with GOCACHE and GOTMPDIR under /tmp, then continue diagnosing the actual test failure. For test or lint commands, set a generous yield_time_ms so the command can finish without extra polling. After the final tool result, always send a brief assistant message to the user and do not end the turn with only reasoning or plan updates."
 )
 
 const (
@@ -21,7 +21,7 @@ func shouldApplyCodexCompatibility(rawFields map[string]json.RawMessage, tools [
 	if !enabled {
 		return false
 	}
-	return isCodexCLIRequest(rawFields) && hasFunctionToolNamed(tools, "exec_command")
+	return isCodexCLIRequestWithTools(rawFields, tools) && hasFunctionToolNamed(tools, "exec_command")
 }
 
 func appendCodexCompatibilityInstructions(instructions string) string {
