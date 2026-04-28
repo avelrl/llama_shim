@@ -1,6 +1,6 @@
 # V6 Model Routing Runtime
 
-Last updated: April 27, 2026.
+Last updated: April 28, 2026.
 
 This document stages a future shim-owned runtime for routing work across
 multiple internal model roles behind one public OpenAI-compatible request.
@@ -18,8 +18,60 @@ Official references checked for this plan:
 - [Streaming API responses](https://developers.openai.com/api/docs/guides/streaming-responses)
 - [Apply Patch](https://developers.openai.com/api/docs/guides/tools-apply-patch)
 - [Orchestration and handoffs](https://developers.openai.com/api/docs/guides/agents/orchestration)
+- [Guardrails and human review](https://developers.openai.com/api/docs/guides/agents/guardrails-approvals)
+- [Evaluate agent workflows](https://developers.openai.com/api/docs/guides/agent-evals)
 - [Codex configuration reference](https://developers.openai.com/codex/config-reference)
 - [Codex App Server API overview](https://developers.openai.com/codex/app-server#api-overview)
+
+Review and research inputs:
+
+- [V6 reviewed implementation plan](v6-routing-runtime-review.md) is the
+  normative Stage 0 hardening addendum. Stage 0 implementation must fold in its
+  P0 requirements before code is marked ready.
+- [External research addendum](research/v6-routing/external-research-addendum.md)
+  is a research backlog. Only the explicitly promoted items in this document
+  are part of the V6 implementation plan.
+- [Mahoraga addendum](research/v6-routing/mahoraga-addendum.md) is Stage 2
+  adaptive-routing research. Stage 0 borrows only the internal policy seam and
+  routing telemetry; learned routing remains disabled.
+
+## Implementation Flow At A Glance
+
+Use this as the execution order before dropping into the detailed stage text:
+
+1. Lock the Stage 0 public contract: alias behavior, supported request fields,
+   public response shape, `response.model`, `usage`, errors, and no-leak policy.
+2. Add config normalization, startup validation, and alias detection.
+3. Add `AliasRequestCompatibilityGate`; reject unsupported alias requests before
+   private worker calls.
+4. Add `PublicSurfaceMapper` and golden public response snapshots.
+5. Add durable private run/event/blob storage with redaction, TTL, paging, and
+   routing telemetry.
+6. Add `WorkerCapabilityRegistry`, `RoutingPolicy`, and deterministic
+   `StaticRoutingPolicy`.
+7. Add guardrail matrix wiring, untrusted-content envelopes, and stuck detector.
+8. Add role invocation, context packs, structured executive/coder/repair
+   schemas, and validators.
+9. Add the deterministic non-streaming phase machine.
+10. Add continuation, public `call_id` ownership checks, idempotency,
+    concurrency, cancellation, and crash-recovery behavior.
+11. Wire `model=Auto` into `prefer_local` and `local_only`; keep every non-alias
+    model on the existing path.
+12. Add fake-upstream integration tests, golden snapshots, no-private-leak
+    tests, tool-loop tests, unsupported-field tests, continuation tests,
+    idempotency/concurrency tests, budget/stuck tests, and prompt-injection
+    tests.
+13. Add redacted observability and eval skeletons.
+14. Update docs, compatibility matrix, OpenAPI wording if public behavior
+    changed, and the choreography atlas if routing behavior changed.
+
+Research notes are not a final backlog to revisit only after V6 is "done."
+They are stage-gated idea sources. Stage 0 may only import stability
+foundations that are explicitly promoted here. Stage 1/2 should re-open the
+research notes when adding eval datasets, baseline gates, streaming,
+provider failover, shadow policies, cascades, MCP prototypes, or adaptive
+routing. Stage 3 is where still-experimental ideas remain until a separate
+review promotes them.
 
 ## Why V6 Exists
 
@@ -77,8 +129,14 @@ This stage should be intentionally narrow.
 - existing compaction backend for `summary_model`
 - one internal coder role for patch drafting
 - one repair role for structured-output repair
-- private trace rows for internal events
+- alias compatibility gate for unsupported or ambiguous Responses features
+- deterministic static routing policy over a versioned worker capability
+  registry
+- durable private event log for internal events
+- guardrail matrix, stuck detector, and untrusted-content envelopes for data
+  entering private worker context
 - public final response shaped like a normal single-assistant response
+- contract, no-leak, idempotency, continuation, and security eval skeletons
 
 ### Non-Goals
 
@@ -88,6 +146,9 @@ This stage should be intentionally narrow.
 - no fourth model judging every decision
 - no public `worker_attempt` Responses item
 - no automatic use on ordinary model names
+- no learned, semantic, or adaptive routing that affects production decisions
+- no private cascade, parallel worker team, MCP execution, or public output cache
+  unless a later stage explicitly enables and tests it
 
 ### Minimal Config Shape
 
@@ -100,18 +161,138 @@ responses:
     enabled: true
     aliases:
       - model: Auto
-        executive_model: Kimi-K2.6
-        code_model: qwen-coder
-        repair_model: small-json-repair
-        summary_model: local-compact
-        max_steps: 24
-        max_worker_attempts: 3
-        max_context_pack_chars: 120000
-        stream: false
+        enabled: true
+        strategy: coding_agent_stage0
+
+        roles:
+          executive:
+            model: Kimi-K2.6
+            provider: primary
+            temperature: 0.2
+            max_output_tokens: 4096
+            timeout_ms: 45000
+          coder:
+            model: qwen-coder
+            provider: coding
+            temperature: 0.1
+            max_output_tokens: 12000
+            timeout_ms: 60000
+          repair:
+            model: small-json-repair
+            provider: primary
+            temperature: 0
+            max_output_tokens: 4096
+            timeout_ms: 15000
+          summary:
+            model: local-compact
+            provider: compaction
+            temperature: 0
+            max_output_tokens: 4096
+            timeout_ms: 30000
+
+        compatibility:
+          stream: reject
+          background: reject
+          hosted_tools: reject_unless_existing_shim_support
+          apply_patch: public_client_owned_only
+          multimodal_inputs: reject
+          strict_text_format: validate_final_output
+          include_allowlist:
+            - message.output_text.logprobs
+
+        limits:
+          max_steps: 24
+          max_model_calls: 12
+          max_public_tool_calls: 8
+          max_worker_attempts: 3
+          max_repair_attempts: 2
+          max_context_pack_chars: 120000
+          max_trace_bytes: 8388608
+          max_total_runtime_ms: 120000
+          max_total_input_tokens: 500000
+          max_total_output_tokens: 64000
+          max_cost_usd: 1.00
+
+        trace:
+          enabled: true
+          payload_mode: refs_only
+          redact: true
+          ttl_hours: 168
+          debug_export_enabled: false
+
+        fallback:
+          prefer_upstream_model: ""
+          on_role_unavailable: fail_closed
 ```
 
 The exact model names are operator-owned. The important part is that the alias
 is distinct from the underlying provider model names.
+
+### Worker Capability Registry And Static Policy
+
+Stage 0 should describe worker capabilities separately from alias wiring. The
+registry is internal, versioned, and recorded on every private run. It should
+include, at minimum:
+
+- worker role and provider model
+- supported input/output modalities
+- support for Responses, tool calling, strict JSON schema, patch generation,
+  patch validation, and private streaming deltas
+- maximum context and output limits
+- data-zone or retention constraints
+- whether the worker may emit public tool calls, touch public state, call
+  private tools, or require a sandbox
+- cost and latency metadata when known
+
+Stage 0 uses `StaticRoutingPolicy` only. Add an internal `RoutingPolicy`
+interface now so Stage 2 can experiment with shadow/adaptive policies without
+rewiring request handling, but learned policies must not affect active worker
+selection in Stage 0.
+
+Each routing decision should write private telemetry:
+
+- policy name and version
+- worker pool version
+- candidate count
+- selected role and model
+- feature schema version
+- selected reason
+- outcome signals such as schema validity, validation result, latency, usage,
+  and public leak-check result
+
+These fields are operator/private trace data only. They must not appear in
+public response objects or `/input_items`.
+
+### Alias Compatibility Gate
+
+Run a deterministic compatibility gate before private worker calls. The gate
+classifies each relevant Responses request feature as supported, rejected,
+preserved, shim-owned, or unsupported for Stage 0.
+
+Recommended Stage 0 behavior:
+
+| Request feature | Alias behavior |
+| --- | --- |
+| `stream=false` or omitted | Supported |
+| `stream=true` | Rejected until Stage 1 streaming mapper exists |
+| `background=true` | Rejected |
+| `previous_response_id` | Supported through existing public state |
+| `conversation` | Supported with serialization or version checks |
+| both `previous_response_id` and `conversation` | Rejected |
+| function tools | Supported as public client-owned calls |
+| custom tools | Supported only if the current shim already supports them |
+| hosted built-in tools | Rejected unless an existing shim implementation explicitly supports them |
+| `apply_patch` | Public and client-owned only |
+| `tool_choice` | Preserved where supported; rejected for unsupported forced choices |
+| `parallel_tool_calls` | Preserved or rejected; never used to privately parallelize side effects |
+| strict `text.format` or JSON schema | Supported only with final public output validation |
+| multimodal inputs | Rejected until context-pack builders handle them deterministically |
+| `include` | Allowlist only |
+| `context_management` | Public semantics preserved; private summaries remain separate |
+| `store=false` | Public storage semantics preserved; private operational trace policy must be explicit |
+
+Unsupported combinations should fail before private worker calls. The rejection
+must be stable, documented, and covered by tests.
 
 ### Runtime Shape
 
@@ -141,33 +322,99 @@ executive_model decides next public action
 The executive owns public action selection. The coder answers only: "Given this
 bounded code context and edit objective, what patch should be proposed?"
 
-### Private Event Log
+### Public Surface Mapping
+
+Internal phases must map to ordinary public Responses shapes. Private worker
+events are not public item types.
+
+| Internal event | Public output behavior |
+| --- | --- |
+| `executive_decide -> final_message` | ordinary assistant `message` item |
+| `executive_decide -> public_tool_call` | ordinary public tool call items using client-provided tool schema |
+| `delegate_code_edit` | no public item |
+| `code_draft` | no public item |
+| `patch_validate` success | no public item unless executive later exposes a public action |
+| `patch_validate` failure | no public item unless executive explains failure |
+| `repair_structured_output` | no public item |
+| budget exhaustion before public action | public failed or incomplete response according to existing shim conventions |
+| upstream or role failure | public error/status according to existing behavior; private cause stays in trace |
+
+Stage 0 public field policy:
+
+- `response.model` remains the requested alias, for example `Auto`; underlying
+  role models stay private.
+- `response.output` contains only public assistant messages, public tool calls,
+  and public tool outputs accepted from the client.
+- `/input_items` returns public input items only.
+- public `call_id` values are stable and reusable when the client returns tool
+  outputs.
+- public `item.id` values are generated by the public response service, not by
+  private workers.
+- public `usage` aggregates role calls according to the documented shim policy;
+  private per-role usage is stored in trace.
+
+### Durable Private Event Log
 
 Do not store the V6 trace as one growing JSON array in memory. Use append-only
 rows or JSONL-style records with bounded payload references.
 
 Candidate fields:
 
-- `run_id`
-- `response_id`
-- `turn_id`
-- `sequence`
-- `phase`
-- `role`
-- `model`
-- `parent_event_id`
-- `public_item_id`
-- `tool_call_id`
-- `input_ref`
-- `output_ref`
-- `status`
-- `usage_json`
-- `error_json`
-- `created_at`
+- `event_id`, `run_id`, `response_id`, `turn_id`, `sequence`
+- `event_type` and `phase`
+- `role`, `model`, `provider`, `routing_policy`, `worker_pool_version`
+- `parent_event_id`, `public_item_id`, `tool_call_id`
+- `input_ref`, `output_ref`, `redacted_payload_ref`
+- `prompt_template_version`, `context_pack_version`, `feature_schema_version`
+- `request_hash`, `idempotency_key`, and replay-safety flags
+- `status`, `usage_json`, `error_json`, `outcome_json`, `created_at`
 
 Large model inputs, outputs, file snapshots, and tool logs should be stored as
 bounded blobs or content-addressed references with internal size limits. Listing
 or replay paths must not require full materialization of every blob.
+
+Replay rules:
+
+- never re-run a completed model call during operational replay if its result
+  is already persisted
+- never re-execute side effects during replay
+- public tools remain client-owned, so replay can only reproduce emitted public
+  tool call items
+- replay under a different worker pool, prompt template, or policy version is
+  an eval, not operational recovery
+- private events remain invisible to public create, retrieve, streaming, and
+  `/input_items`
+
+### Guardrails, Trust Boundaries, And Termination
+
+Stage 0 should define where each guardrail runs:
+
+| Guardrail | Runs before or after | Blocks |
+| --- | --- | --- |
+| input | before compatibility gate | malformed or disallowed request classes |
+| compatibility | before private worker calls | unsupported feature combinations |
+| private handoff | before worker delegation | role, tool ownership, or budget violation |
+| validator | after private worker output | schema, patch, or private-leak failure |
+| public mapper | before response persistence | unknown public item type or unstable IDs |
+| output | before response return | final schema failure or sensitive disclosure |
+
+External content entering private context must be wrapped as untrusted data with
+provenance and authority metadata. File content, public tool output, web or MCP
+content, and worker drafts cannot override system/developer instructions, call
+tools, change routing policy, or request secret disclosure merely because their
+text says so.
+
+The phase machine should use one stop engine with explicit termination signals:
+
+- max steps, model calls, tokens, runtime, cost, and repair attempts
+- public tool call emitted
+- external cancellation
+- repeated same action or no-progress detection
+- repeated validation failure
+- unsupported action requested
+
+Every termination reason should map to stable public error/status behavior and
+private diagnostic trace fields.
 
 ### Context Packs
 
@@ -212,6 +459,8 @@ Start with a small deterministic phase machine:
 
 | Phase | Owner | Purpose |
 | --- | --- | --- |
+| `compatibility_check` | runtime | accept or reject alias request before worker calls |
+| `load_public_state` | runtime | load public state and private summary refs |
 | `executive_decide` | executive model | choose public tool call, private delegation, or final |
 | `await_public_tool_output` | client or configured local tool runtime | wait for tool result |
 | `code_draft` | coder model | produce patch proposal from bounded context |
@@ -223,6 +472,10 @@ Start with a small deterministic phase machine:
 The runtime should prefer explicit executive delegation over fragile heuristics
 such as "a file was read, therefore call the coder." A private internal command
 like `delegate_code_edit` makes phase transitions easier to test.
+
+The executive decision itself must be structured and validated. Stage 0 should
+allow only a small action set such as `final_message`, `public_tool_call`,
+`delegate_code_edit`, `repair_structured_output`, and `fail`.
 
 ### Public Tool Boundary
 
@@ -275,32 +528,64 @@ resulting public action or public final response, not the worker chatter.
 
 ### Implementation Steps
 
-1. Add routing config types, defaults, normalization, and tests.
-2. Add a `ModelAliasRouter` that detects configured aliases and resolves role
-   models.
-3. Add a `RoleInvoker` wrapper over the existing model client.
-4. Add private event-log storage and tests for bounded append/list behavior.
-5. Add context-pack builders for executive, coder, repair, and summary roles.
-6. Add strict coder output schema and validator.
-7. Add the Stage 0 phase machine for non-streaming create.
-8. Route `model=Auto` through the runtime in `prefer_local` and `local_only`.
-9. Preserve existing paths for all non-alias models.
-10. Add integration tests with fake upstreams asserting which role model was
-    called and which public response shape was returned.
-11. Add Codex-style tool-loop tests where public tool calls remain client-owned.
-12. Document the new shim-owned capability and keep compatibility wording
+1. Consolidate this plan, the reviewed implementation plan, and research
+   addenda into a single Stage 0 contract and staged roadmap.
+2. Add routing config types, defaults, normalization, startup validation, and
+   tests.
+3. Add `ModelAliasRouter` and `AliasRequestCompatibilityGate`.
+4. Add `WorkerCapabilityRegistry`, `RoutingPolicy`, and Stage 0
+   `StaticRoutingPolicy`.
+5. Add `PublicSurfaceMapper` with golden public response snapshots.
+6. Add durable private run/event/blob storage with paging, byte limits,
+   redaction, TTL, GC hooks, version refs, and routing telemetry.
+7. Add guardrail matrix wiring, untrusted-content envelopes, and stuck detector.
+8. Add `RoleInvoker` wrapper over the existing model client with per-role
+   timeout, retry, usage capture, and fail-closed behavior.
+9. Add context-pack builders for executive, coder, repair, and summary roles.
+10. Add structured executive decision, coder patch proposal, repair output, and
+    final public structured-output validators.
+11. Add the deterministic Stage 0 phase machine for non-streaming create.
+12. Add continuation, `call_id` ownership checks, conversation locking or
+    optimistic versioning, idempotency, crash-recovery, and cancellation
+    semantics.
+13. Route `model=Auto` through the runtime in `prefer_local` and `local_only`;
+    preserve existing paths for all non-alias models.
+14. Add fake-upstream integration tests, no-private-leak tests, tool-loop tests,
+    unsupported-field tests, continuation tests, idempotency tests, concurrency
+    tests, budget/stuck tests, and prompt-injection tests.
+15. Add redacted observability and eval skeletons: contract golden lane,
+    security lane, routing baseline gate skeleton, and fault-injection lane.
+16. Document the new shim-owned capability and keep compatibility wording
     conservative.
 
 ### Stage 0 Exit Criteria
 
 - non-alias Responses behavior is unchanged
+- alias compatibility gate has explicit tests for every supported and rejected
+  request class
 - alias requests produce valid OpenAI-shaped response objects
+- public response golden snapshots prove no private items, role metadata,
+  prompts, raw worker outputs, or trace refs leak
+- public `response.model` and `usage` aggregation policy are fixed and
+  documented
 - public tool calls still round-trip through the client/tool-output flow
+- tool-call continuation validates `call_id` ownership
 - private worker attempts are visible only in shim-owned trace/debug surfaces
 - `previous_response_id` continuation works for alias responses
 - `conversation` continuation works for alias responses
+- concurrent requests on the same conversation are serialized or rejected with
+  a retryable conflict
+- retried alias requests do not duplicate public tool calls or private side
+  effects
+- private trace storage has TTL, redaction, byte limits, paging, and GC behavior
+- role unavailability fails closed unless explicit fallback is configured
+- all public errors are redacted and stable
+- untrusted file/tool-output content cannot override routing or tool policy
 - the runtime stops on budget, loop, validation, and model errors with useful
   public error behavior
+- final output validation works when strict structured output is requested
+- debug-disabled mode has no-private-leak coverage across create, retrieve, and
+  `/input_items`
 - focused tests pass
 - `go test ./...`, `make lint`, and `git diff --check` pass before merge
 
@@ -415,6 +700,12 @@ Add operator-visible tracing without logging sensitive data by default:
 Debug endpoints or trace exports should require explicit enablement and should
 redact large payloads, secrets, and file contents by default.
 
+Stage 1 should also add an OTel-compatible redacted exporter over the private
+trace schema. The internal event log remains the source of truth; exported
+spans and metrics should carry route, phase, role, model, latency, usage,
+budget, rejection, and leak-block counters without raw prompts or file content
+unless an operator explicitly opts in.
+
 ### Evaluation Harness
 
 Stage 1 needs evals before becoming default for any serious workflow.
@@ -440,6 +731,29 @@ Useful test sets:
 - Codex CLI public tool-loop smokes
 - `previous_response_id` and `conversation` continuation cases
 
+Add a private `RouterEvalDataset` export from redacted traces. Each row should
+capture normalized public request features, private routing features, allowed
+worker constraints, observed public snapshot hash, status, usage, latency,
+tool-call count, validation signals, and leak-check result.
+
+Any router policy beyond static rules must pass a baseline gate before it can
+affect production decisions. Required baselines:
+
+- strongest eligible worker
+- cheapest valid worker
+- Stage 0 static rules
+- fixed-seed random valid worker
+- shadow candidate policy
+
+Required gates:
+
+- no public snapshot regressions
+- no private trace leaks
+- no unsupported-request false accepts
+- no client-owned tool-loop takeover
+- cost or latency improvement against static rules, if that is the goal
+- quality no worse than static rules beyond the agreed margin
+
 ### Stage 1 Exit Criteria
 
 - multiple aliases can be configured independently
@@ -447,6 +761,12 @@ Useful test sets:
 - streaming works for the shim-owned subset
 - private trace storage is bounded, pageable, and redacted by default
 - context packs are deterministic enough to reproduce failures
+- redacted OTel export exists for route, phase, worker, usage, latency, and
+  termination metrics
+- provider failover stays within compatible capability classes and does not
+  silently change schema, tool, or privacy assumptions
+- router eval dataset export can be generated from private traces without
+  violating trace retention policy
 - evals show a measurable gain on at least one target workflow
 - `/debug/capabilities` reports the routing runtime as shim-owned
 - docs, OpenAPI, compatibility matrix, and choreography atlas stay aligned
@@ -492,6 +812,35 @@ Replace static "always use coder after delegation" with measured routing:
 
 This should be code-driven and eval-backed, not an extra model making every
 decision by default.
+
+Learned or adaptive policies start in shadow mode only. A shadow policy can
+score candidates and write private diagnostics, but it cannot choose active
+workers until replay proves no public contract regression. Policy state must be
+versioned, seedable, exportable, and rollbackable.
+
+Activation gates for an adaptive policy:
+
+- fixed-seed replay produces identical decisions for deterministic request
+  classes
+- no public response snapshot regressions across the golden corpus
+- no private features or scores leak into public responses or `/input_items`
+- no increase in unsupported-request false accepts
+- cost, latency, or quality improves by the configured threshold
+- worker pool, feature schema, and policy state versions match
+
+### 2a. Private Cascade Policy
+
+Add private cascades only after validator signals are stable. A cascade can try
+a cheaper or faster private worker first, then escalate on schema failure,
+patch validation failure, uncertainty, timeout, or explicit validator signal.
+
+Cascade rules:
+
+- never execute public client-owned tools
+- never rely on model self-confidence as the only escalation signal
+- include every internal call in the chosen usage policy
+- require executive approval or synthesis before any public output is emitted
+- cap total cascade steps, cost, latency, and retries
 
 ### 3. Parallel Workers And Ensembles
 
@@ -591,6 +940,13 @@ Make permissions and approvals first-class routing inputs:
 This is the line that keeps model routing from becoming a hidden security
 regression.
 
+MCP needs its own boundary matrix before any implementation. Stage 0 rejects
+MCP tools, resources, prompts, sampling, and elicitation on the alias path
+unless an existing shim surface explicitly supports them. Future MCP support
+must distinguish `mcp.server_url` from `mcp.connector_id`, forbid token
+passthrough by default, preserve request association, and keep client-owned
+model/tool permissions distinct from shim-owned internal tools.
+
 ### 9. Multi-Transport Support
 
 After HTTP non-stream and SSE are stable, extend the same runtime to:
@@ -620,7 +976,7 @@ the core runtime.
 ### Stage 2 Exit Criteria
 
 - routing strategy plugins are stable internal APIs
-- dynamic routing beats static Stage 1 routing in evals
+- dynamic routing beats static Stage 1 routing in evals and passes replay gates
 - parallel workers improve success rate or latency enough to justify cost
 - validation pipeline prevents malformed or unsafe private outputs from
   becoming public actions
@@ -628,20 +984,35 @@ the core runtime.
 - policy boundaries are tested for client-owned and shim-owned tools
 - docs clearly distinguish shim-owned routing from OpenAI compatibility
 
+## Stage 3: Research Runtime
+
+Stage 3 is explicitly research and should not be enabled by default.
+
+Candidate experiments:
+
+- active adaptive routing after Stage 2 shadow gates pass
+- multi-round router or aggregator policies
+- parallel private worker teams with conflict and merge controls
+- semantic feature extraction promoted from shadow diagnostics to gated routing
+- semantic caching under strict retention and `store=false` policies
+- role marketplace packages with eval packs and policy bundles
+
+Promotion from Stage 3 to an implementation stage requires a new design review,
+golden replay corpus, rollback plan, public no-leak proof, and compatibility
+matrix update.
+
 ## Open Questions
 
-- Should `response.model` for alias requests remain the requested alias, or
-  expose the executive model? Stage 0 should prefer the requested alias and keep
-  underlying role models in private trace/debug surfaces.
-- Should alias routing be available in `prefer_upstream`, or should aliases be
-  local-runtime-only? Stage 0 should avoid raw-proxying aliases unless an
-  explicit fallback model is configured.
-- How much private trace should be retained by default, and for how long?
-- Should the coder produce native `apply_patch_call` items, or private patch
-  proposals that the executive later turns into public tool calls? Stage 0
-  should prefer private proposals and executive-owned public actions.
+- What exact public error codes and bodies should each compatibility,
+  validation, budget, storage, cancellation, and role-failure class return?
+- What exact aggregation policy should public `usage` use for multi-role calls,
+  and how should per-role usage be exposed in private trace/debug surfaces?
+- What default private trace TTL and byte limits should ship in example config
+  versus production docs?
 - Which eval set is the first gate: Codex CLI scratch tasks, repo-owned Go
   bugfix tasks, or generic Responses tool-loop tests?
+- Should Stage 0 include a minimal redacted debug export endpoint, or keep
+  private trace access storage-only until Stage 1?
 
 ## Promotion Rule
 

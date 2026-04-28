@@ -1,6 +1,6 @@
 # V5 Hosted Parity And Advanced Transports
 
-Last updated: April 24, 2026.
+Last updated: April 28, 2026.
 
 This document is the parking lot for compatibility work that should not be
 folded into V3 and should not be mixed into V4 extension/plugin/security work.
@@ -27,6 +27,15 @@ deeper compatibility fidelity.
 
 ## Candidate V5 Tracks
 
+April 28, 2026 recheck: the OpenAI engineering article
+[Speeding up agentic workflows with WebSockets in the Responses API](https://openai.com/index/speeding-up-agentic-workflows-with-websockets/)
+does not change the public V3 shim contract. It reinforces that the launched
+shape uses repeated `response.create` messages plus `previous_response_id`, not
+the historical prototype `response.append` shape. Treat article details about
+cached prior items, tool definitions, namespaces, reusable sampling artifacts,
+and model routing as hosted implementation context, not as OpenAI wire-contract
+claims unless fixtures or official API docs pin observable behavior.
+
 ### 1. Exact Responses WebSocket Hosted Parity
 
 V3 implements WebSocket mode for the current shim-local Responses subset. V5
@@ -46,6 +55,10 @@ Candidate work:
 - exact connection-local cache hydration and eviction timing
 - exact behavior when a persisted `store=true` response is continued from a new
   socket
+- exact `generate=false` warmup behavior, response id chaining, and cache
+  impact over WebSocket
+- exact WebSocket continuation behavior after standalone `/responses/compact`,
+  reconnect, or `previous_response_not_found` recovery
 
 Do not claim these from inference. Add live upstream fixtures or direct
 observations before changing matrix wording.
