@@ -450,9 +450,18 @@ func TestSelectResponsesCreateRoute(t *testing.T) {
 			name: "prefer upstream proxies standalone hosted requests",
 			mode: config.ResponsesModePreferUpstream,
 			profile: responsesCreateRouteInputs{
-				LocalWebSearch: true,
+				NativeResponsesProxy: true,
+				LocalWebSearch:       true,
 			},
 			want: responsesCreateRouteProxy,
+		},
+		{
+			name: "prefer upstream without native responses proxy runs supported local route",
+			mode: config.ResponsesModePreferUpstream,
+			profile: responsesCreateRouteInputs{
+				LocalWebSearch: true,
+			},
+			want: responsesCreateRouteLocalWebSearch,
 		},
 		{
 			name: "prefer local runs local file search",
@@ -1323,6 +1332,22 @@ func TestParseLocalToolLoopChatCompletionRejectsRawToolCallMarkupText(t *testing
 	var markupErr *rawToolCallMarkupError
 	require.ErrorAs(t, err, &markupErr)
 	require.Contains(t, markupErr.Content, "functions.shell")
+}
+
+func TestParseLocalToolLoopChatCompletionRejectsPseudoShellMarkupText(t *testing.T) {
+	raw := []byte(`{
+		"choices": [{
+			"message": {
+				"content": "Let me inspect it.\n\n<bash>cat mathutil.go</bash>"
+			}
+		}]
+	}`)
+
+	_, err := parseLocalToolLoopChatCompletion(raw, "resp_test", "test-model", "", "", customToolTransportPlan{})
+
+	var markupErr *rawToolCallMarkupError
+	require.ErrorAs(t, err, &markupErr)
+	require.Contains(t, markupErr.Content, "<bash>")
 }
 
 func TestRemapCustomToolsPayloadAppendsCodexCompatibilityHint(t *testing.T) {

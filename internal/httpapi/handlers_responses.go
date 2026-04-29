@@ -44,6 +44,7 @@ type responseHandler struct {
 	retrievalGate                              *concurrencyGate
 	codeInterpreterGate                        *concurrencyGate
 	responsesMode                              string
+	responsesUpstreamTransport                 string
 	customToolsMode                            string
 	constrainedDecodingBackend                 string
 	upstreamToolCompatibility                  []UpstreamToolCompatibilityRule
@@ -59,7 +60,7 @@ type responseHandler struct {
 	localCodeInterpreterSessions               LocalCodeInterpreterSessionStore
 }
 
-func newResponseHandler(logger *slog.Logger, service *service.ResponseService, proxy *proxyHandler, responsesMode string, customToolsMode string, constrainedDecodingBackend string, upstreamToolCompatibility []UpstreamToolCompatibilityRule, codexCompatibilityEnabled bool, forceCodexToolChoiceRequired bool, forceCodexToolChoiceRequiredDisabledModels []string, codexUpstreamInputCompatibility []CodexUpstreamInputCompatibilityRule, webSearchProvider websearch.Provider, imageGenerationProvider imagegen.Provider, localComputer LocalComputerRuntimeConfig, localCodeInterpreter LocalCodeInterpreterRuntimeConfig, localCodeInterpreterFiles LocalCodeInterpreterFileStore, localCodeInterpreterSessions LocalCodeInterpreterSessionStore, metrics *Metrics, serviceLimits ServiceLimits, retrievalGate *concurrencyGate, codeInterpreterGate *concurrencyGate) *responseHandler {
+func newResponseHandler(logger *slog.Logger, service *service.ResponseService, proxy *proxyHandler, responsesMode string, responsesUpstreamTransport string, customToolsMode string, constrainedDecodingBackend string, upstreamToolCompatibility []UpstreamToolCompatibilityRule, codexCompatibilityEnabled bool, forceCodexToolChoiceRequired bool, forceCodexToolChoiceRequiredDisabledModels []string, codexUpstreamInputCompatibility []CodexUpstreamInputCompatibilityRule, webSearchProvider websearch.Provider, imageGenerationProvider imagegen.Provider, localComputer LocalComputerRuntimeConfig, localCodeInterpreter LocalCodeInterpreterRuntimeConfig, localCodeInterpreterFiles LocalCodeInterpreterFileStore, localCodeInterpreterSessions LocalCodeInterpreterSessionStore, metrics *Metrics, serviceLimits ServiceLimits, retrievalGate *concurrencyGate, codeInterpreterGate *concurrencyGate) *responseHandler {
 	return &responseHandler{
 		logger:                       logger,
 		service:                      service,
@@ -69,6 +70,7 @@ func newResponseHandler(logger *slog.Logger, service *service.ResponseService, p
 		retrievalGate:                retrievalGate,
 		codeInterpreterGate:          codeInterpreterGate,
 		responsesMode:                normalizeResponsesMode(responsesMode),
+		responsesUpstreamTransport:   normalizeResponsesUpstreamTransport(responsesUpstreamTransport),
 		customToolsMode:              customToolsMode,
 		constrainedDecodingBackend:   normalizeConstrainedDecodingBackend(constrainedDecodingBackend),
 		upstreamToolCompatibility:    upstreamToolCompatibility,
@@ -156,6 +158,10 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if request.PreviousResponseID != "" && !hasLocalState {
+		if !h.canProxyNativeResponses() {
+			h.writeError(w, r, service.ErrNotFound)
+			return
+		}
 		if request.Stream != nil && *request.Stream {
 			h.proxyCreateStream(w, r, request, requestJSON, rawFields, streamOptions)
 			return
@@ -165,7 +171,7 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	localMCPState := h.hasLocalMCPState(r.Context(), request)
-	createRoute := selectResponsesCreateRoute(h.responsesMode, buildResponsesCreateRouteInputs(
+	createInputs := buildResponsesCreateRouteInputs(
 		hasLocalState,
 		rawFields,
 		h.webSearchProvider,
@@ -173,7 +179,9 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 		h.localComputer,
 		h.localCodeInterpreter,
 		localMCPState,
-	))
+	)
+	createInputs.NativeResponsesProxy = h.canProxyNativeResponses()
+	createRoute := selectResponsesCreateRoute(h.responsesMode, createInputs)
 	generationOptions := buildGenerationOptions(rawFields)
 	if request.Stream != nil && *request.Stream {
 		switch createRoute {
@@ -182,7 +190,7 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 		case responsesCreateRouteLocalWebSearch:
 			response, err := h.createLocalWebSearchResponse(r.Context(), request, requestJSON, rawFields)
 			if err != nil {
-				if shouldFallbackLocalState(h.responsesMode, err) {
+				if h.shouldFallbackLocalState(err) {
 					if hasLocalState {
 						h.createStreamViaUpstream(w, r, request, requestJSON, rawFields, streamOptions)
 						return
@@ -208,7 +216,7 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 		case responsesCreateRouteLocalImageGeneration:
 			response, artifacts, err := h.createLocalImageGenerationResponse(r.Context(), request, requestJSON, rawFields)
 			if err != nil {
-				if shouldFallbackLocalState(h.responsesMode, err) {
+				if h.shouldFallbackLocalState(err) {
 					if hasLocalState {
 						h.createStreamViaUpstream(w, r, request, requestJSON, rawFields, streamOptions)
 						return
@@ -256,7 +264,7 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 		case responsesCreateRouteLocalMCP:
 			response, err := h.createLocalMCPResponse(r.Context(), request, requestJSON, rawFields)
 			if err != nil {
-				if shouldFallbackLocalState(h.responsesMode, err) {
+				if h.shouldFallbackLocalState(err) {
 					if hasLocalState {
 						h.createStreamViaUpstream(w, r, request, requestJSON, rawFields, streamOptions)
 						return
@@ -319,7 +327,7 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 				}
 				return
 			}
-			if shouldFallbackLocalState(h.responsesMode, err) {
+			if h.shouldFallbackLocalState(err) {
 				if hasLocalState {
 					h.createStreamViaUpstream(w, r, request, requestJSON, rawFields, streamOptions)
 					return
@@ -339,7 +347,7 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 			return
 		case responsesCreateRouteLocalState:
 			if err := h.createStream(w, r, request, requestJSON, generationOptions, streamOptions); err != nil {
-				if shouldFallbackLocalState(h.responsesMode, err) {
+				if h.shouldFallbackLocalState(err) {
 					h.createStreamViaUpstream(w, r, request, requestJSON, rawFields, streamOptions)
 					return
 				}
@@ -360,7 +368,7 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 	case responsesCreateRouteLocalWebSearch:
 		response, err := h.createLocalWebSearchResponse(r.Context(), request, requestJSON, rawFields)
 		if err != nil {
-			if shouldFallbackLocalState(h.responsesMode, err) {
+			if h.shouldFallbackLocalState(err) {
 				var response domain.Response
 				var fallbackErr error
 				if hasLocalState {
@@ -382,7 +390,7 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 	case responsesCreateRouteLocalImageGeneration:
 		response, _, err := h.createLocalImageGenerationResponse(r.Context(), request, requestJSON, rawFields)
 		if err != nil {
-			if shouldFallbackLocalState(h.responsesMode, err) {
+			if h.shouldFallbackLocalState(err) {
 				var response domain.Response
 				var fallbackErr error
 				if hasLocalState {
@@ -426,7 +434,7 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 	case responsesCreateRouteLocalMCP:
 		response, err := h.createLocalMCPResponse(r.Context(), request, requestJSON, rawFields)
 		if err != nil {
-			if shouldFallbackLocalState(h.responsesMode, err) {
+			if h.shouldFallbackLocalState(err) {
 				var response domain.Response
 				var fallbackErr error
 				if hasLocalState {
@@ -467,7 +475,7 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 			WriteJSON(w, http.StatusOK, response)
 			return
 		}
-		if shouldFallbackLocalState(h.responsesMode, err) {
+		if h.shouldFallbackLocalState(err) {
 			var response domain.Response
 			var fallbackErr error
 			if hasLocalState {
@@ -503,7 +511,7 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 			WriteJSON(w, http.StatusOK, response)
 			return
 		}
-		if shouldFallbackLocalState(h.responsesMode, err) {
+		if h.shouldFallbackLocalState(err) {
 			response, fallbackErr := h.createLocalStateViaUpstream(r.Context(), request, requestJSON, rawFields)
 			if fallbackErr == nil {
 				WriteJSON(w, http.StatusOK, response)
@@ -560,7 +568,7 @@ func (h *responseHandler) inputTokens(w http.ResponseWriter, r *http.Request) {
 	localSupported := supportsLocalDerivedResponsesState(rawFields)
 
 	switch {
-	case h.responsesMode == config.ResponsesModePreferUpstream && !hasLocalState:
+	case h.responsesMode == config.ResponsesModePreferUpstream && !hasLocalState && h.canProxyNativeResponses():
 		h.proxyBufferedJSONRequest(w, r, rawBody)
 		return
 	case localSupported:
@@ -578,7 +586,7 @@ func (h *responseHandler) inputTokens(w http.ResponseWriter, r *http.Request) {
 			WriteJSON(w, http.StatusOK, response)
 			return
 		}
-		if !hasLocalState && shouldFallbackLocalState(h.responsesMode, err) {
+		if !hasLocalState && h.shouldFallbackLocalState(err) {
 			h.proxyBufferedJSONRequest(w, r, rawBody)
 			return
 		}
@@ -590,8 +598,10 @@ func (h *responseHandler) inputTokens(w http.ResponseWriter, r *http.Request) {
 	case h.responsesMode == config.ResponsesModeLocalOnly:
 		h.writeError(w, r, newLocalOnlyUnsupportedDerivedFieldsError("/v1/responses/input_tokens", rawFields))
 		return
-	default:
+	case h.canProxyNativeResponses():
 		h.proxyBufferedJSONRequest(w, r, rawBody)
+	default:
+		h.writeError(w, r, newLocalOnlyUnsupportedDerivedFieldsError("/v1/responses/input_tokens", rawFields))
 	}
 }
 
@@ -620,7 +630,7 @@ func (h *responseHandler) compact(w http.ResponseWriter, r *http.Request) {
 	localSupported := supportsLocalDerivedResponsesState(rawFields)
 
 	switch {
-	case h.responsesMode == config.ResponsesModePreferUpstream && !hasLocalState:
+	case h.responsesMode == config.ResponsesModePreferUpstream && !hasLocalState && h.canProxyNativeResponses():
 		h.proxyBufferedJSONRequest(w, r, rawBody)
 		return
 	case localSupported:
@@ -638,7 +648,7 @@ func (h *responseHandler) compact(w http.ResponseWriter, r *http.Request) {
 			WriteJSON(w, http.StatusOK, response)
 			return
 		}
-		if !hasLocalState && shouldFallbackLocalState(h.responsesMode, err) {
+		if !hasLocalState && h.shouldFallbackLocalState(err) {
 			h.proxyBufferedJSONRequest(w, r, rawBody)
 			return
 		}
@@ -650,8 +660,10 @@ func (h *responseHandler) compact(w http.ResponseWriter, r *http.Request) {
 	case h.responsesMode == config.ResponsesModeLocalOnly:
 		h.writeError(w, r, newLocalOnlyUnsupportedDerivedFieldsError("/v1/responses/compact", rawFields))
 		return
-	default:
+	case h.canProxyNativeResponses():
 		h.proxyBufferedJSONRequest(w, r, rawBody)
+	default:
+		h.writeError(w, r, newLocalOnlyUnsupportedDerivedFieldsError("/v1/responses/compact", rawFields))
 	}
 }
 
@@ -1099,6 +1111,10 @@ func (h *responseHandler) get(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		mapped := service.MapStorageError(err)
 		if errors.Is(mapped, service.ErrNotFound) {
+			if !h.canProxyNativeResponses() {
+				h.writeError(w, r, mapped)
+				return
+			}
 			h.proxy.forward(w, r)
 			return
 		}
@@ -1130,6 +1146,10 @@ func (h *responseHandler) delete(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		mapped := service.MapStorageError(err)
 		if errors.Is(mapped, service.ErrNotFound) {
+			if !h.canProxyNativeResponses() {
+				h.writeError(w, r, mapped)
+				return
+			}
 			h.proxy.forward(w, r)
 			return
 		}
@@ -1145,6 +1165,10 @@ func (h *responseHandler) cancel(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		mapped := service.MapStorageError(err)
 		if errors.Is(mapped, service.ErrNotFound) {
+			if !h.canProxyNativeResponses() {
+				h.writeError(w, r, mapped)
+				return
+			}
 			h.proxy.forward(w, r)
 			return
 		}
@@ -1153,6 +1177,10 @@ func (h *responseHandler) cancel(w http.ResponseWriter, r *http.Request) {
 	}
 	if response.Background == nil || !*response.Background {
 		WriteError(w, http.StatusBadRequest, "invalid_request_error", "only background responses can be cancelled", "background")
+		return
+	}
+	if !h.canProxyNativeResponses() {
+		WriteError(w, http.StatusBadRequest, "invalid_request_error", "cancel requires native upstream /v1/responses; responses.upstream_transport=chat_completions owns completed local responses only", "")
 		return
 	}
 
@@ -1215,6 +1243,10 @@ func (h *responseHandler) getInputItems(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		mapped := service.MapStorageError(err)
 		if errors.Is(mapped, service.ErrNotFound) {
+			if !h.canProxyNativeResponses() {
+				h.writeError(w, r, mapped)
+				return
+			}
 			h.proxy.forward(w, r)
 			return
 		}
@@ -1462,6 +1494,7 @@ var shimLocalGenerationFields = map[string]struct{}{
 	"presence_penalty":  {},
 	"stop":              {},
 	"reasoning":         {},
+	"thinking":          {},
 	"max_output_tokens": {},
 }
 
@@ -1504,7 +1537,44 @@ func buildGenerationOptions(rawFields map[string]json.RawMessage) map[string]jso
 			options[key] = value
 		}
 	}
+	if responseFormat, ok := buildChatResponseFormatFromResponsesText(rawFields["text"]); ok {
+		options["response_format"] = responseFormat
+	}
 	return options
+}
+
+func buildChatResponseFormatFromResponsesText(raw json.RawMessage) (json.RawMessage, bool) {
+	config, err := domain.ParseResponseTextConfig(raw)
+	if err != nil {
+		return nil, false
+	}
+	switch config.Format.Type {
+	case "json_object":
+		return json.RawMessage(`{"type":"json_object"}`), true
+	case "json_schema":
+		name := strings.TrimSpace(config.Format.Name)
+		if name == "" {
+			name = "response"
+		}
+		schema := map[string]any{
+			"name":   name,
+			"schema": json.RawMessage(config.Format.Schema),
+		}
+		if config.Format.Strict != nil {
+			schema["strict"] = *config.Format.Strict
+		}
+		payload := map[string]any{
+			"type":        "json_schema",
+			"json_schema": schema,
+		}
+		encoded, err := json.Marshal(payload)
+		if err != nil {
+			return nil, false
+		}
+		return encoded, true
+	default:
+		return nil, false
+	}
 }
 
 func supportsLocalShimState(rawFields map[string]json.RawMessage) bool {
@@ -1515,6 +1585,9 @@ func supportsLocalShimState(rawFields map[string]json.RawMessage) bool {
 		if _, ok := shimLocalGenerationFields[key]; ok {
 			continue
 		}
+		if key == "include" && isEmptyJSONArray(rawFields[key]) {
+			continue
+		}
 		return false
 	}
 	return true
@@ -1523,6 +1596,12 @@ func supportsLocalShimState(rawFields map[string]json.RawMessage) bool {
 func supportsLocalDerivedResponsesState(rawFields map[string]json.RawMessage) bool {
 	for key := range rawFields {
 		if _, ok := shimLocalDerivedResponsesBaseFields[key]; ok {
+			continue
+		}
+		if _, ok := shimLocalGenerationFields[key]; ok {
+			continue
+		}
+		if key == "include" && isEmptyJSONArray(rawFields[key]) {
 			continue
 		}
 		return false
@@ -1548,6 +1627,9 @@ func unsupportedLocalShimFields(rawFields map[string]json.RawMessage) []string {
 		if _, ok := shimLocalGenerationFields[key]; ok {
 			continue
 		}
+		if key == "include" && isEmptyJSONArray(rawFields[key]) {
+			continue
+		}
 		unsupported = append(unsupported, key)
 	}
 	sort.Strings(unsupported)
@@ -1558,6 +1640,12 @@ func unsupportedLocalDerivedFields(rawFields map[string]json.RawMessage) []strin
 	unsupported := make([]string, 0)
 	for key := range rawFields {
 		if _, ok := shimLocalDerivedResponsesBaseFields[key]; ok {
+			continue
+		}
+		if _, ok := shimLocalGenerationFields[key]; ok {
+			continue
+		}
+		if key == "include" && isEmptyJSONArray(rawFields[key]) {
 			continue
 		}
 		unsupported = append(unsupported, key)
@@ -1607,6 +1695,23 @@ func normalizeResponsesMode(value string) string {
 	default:
 		return config.ResponsesModePreferLocal
 	}
+}
+
+func normalizeResponsesUpstreamTransport(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case config.ResponsesUpstreamTransportChatCompletions:
+		return config.ResponsesUpstreamTransportChatCompletions
+	default:
+		return config.ResponsesUpstreamTransportResponses
+	}
+}
+
+func (h *responseHandler) canProxyNativeResponses() bool {
+	return h.responsesUpstreamTransport == config.ResponsesUpstreamTransportResponses
+}
+
+func (h *responseHandler) shouldFallbackLocalState(err error) bool {
+	return h.canProxyNativeResponses() && shouldFallbackLocalState(h.responsesMode, err)
 }
 
 func newLocalOnlyUnsupportedFieldsError(rawFields map[string]json.RawMessage) error {

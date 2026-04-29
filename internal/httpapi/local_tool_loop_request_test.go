@@ -94,6 +94,33 @@ func TestBuildChatCompletionMessagesFromItemsUsesResponsesCallIDForToolCalls(t *
 	require.Equal(t, "call_abc", messages[2]["tool_call_id"])
 }
 
+func TestBuildChatCompletionMessagesFromItemsGroupsParallelToolCalls(t *testing.T) {
+	items := []domain.Item{
+		mustDomainItem(t, `{"type":"message","role":"user","content":"Inspect and test."}`),
+		mustDomainItem(t, `{"type":"shell_call","id":"item_read","call_id":"call_read","action":{"commands":["cat calc.go"]},"status":"completed"}`),
+		mustDomainItem(t, `{"type":"shell_call","id":"item_test","call_id":"call_test","action":{"commands":["go test ./..."]},"status":"completed"}`),
+		mustDomainItem(t, `{"type":"shell_call_output","call_id":"call_read","output":"package sample\n","status":"completed"}`),
+		mustDomainItem(t, `{"type":"shell_call_output","call_id":"call_test","output":"FAIL\n","status":"failed"}`),
+		mustDomainItem(t, `{"type":"message","role":"user","content":"Continue."}`),
+	}
+
+	messages, err := buildChatCompletionMessagesFromItems(items)
+
+	require.NoError(t, err)
+	require.Len(t, messages, 5)
+	require.Equal(t, "assistant", messages[1]["role"])
+	toolCalls, ok := messages[1]["tool_calls"].([]map[string]any)
+	require.True(t, ok)
+	require.Len(t, toolCalls, 2)
+	require.Equal(t, "call_read", toolCalls[0]["id"])
+	require.Equal(t, "call_test", toolCalls[1]["id"])
+	require.Equal(t, "tool", messages[2]["role"])
+	require.Equal(t, "call_read", messages[2]["tool_call_id"])
+	require.Equal(t, "tool", messages[3]["role"])
+	require.Equal(t, "call_test", messages[3]["tool_call_id"])
+	require.Equal(t, "user", messages[4]["role"])
+}
+
 func TestBuildChatCompletionMessagesFromItemsSynthesizesMissingToolOutput(t *testing.T) {
 	items := []domain.Item{
 		mustDomainItem(t, `{"type":"message","role":"user","content":"Call add."}`),

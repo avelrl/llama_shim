@@ -1,0 +1,32 @@
+id: plan_doc
+title: Deterministic plan document
+category: docs
+suites:
+  - codex-smoke
+  - codex-core
+  - codex-real-upstream
+timeout: 180s
+attempts: 2
+env:
+  LLAMA_SHIM_CODEX_MATRIX_WORKDIR: ${workspace}
+prompt: |
+  This is the Codex task matrix plan doc case. Use exec_command to write PLAN.md with an implementation checklist.
+  The file must explicitly mention requirements, the smallest compatible change, and a regression test.
+  Then reply PLANNED.
+expected:
+  final_text_contains:
+    - PLANNED
+  files:
+    - path: PLAN.md
+      matches: "(?i)(implementation|plan|checklist)"
+    - path: PLAN.md
+      matches: "(?i)(requirements|api notes|compatible change|minimal modification|smallest compatible)"
+    - path: PLAN.md
+      matches: "(?i)regression"
+  codex_events:
+    - item.started:command_execution
+    - item.completed:agent_message
+    - turn.completed
+  forbidden_output:
+    - "<|tool_call"
+    - "<|tool_calls_section"

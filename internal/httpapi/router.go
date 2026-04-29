@@ -29,6 +29,7 @@ type RouterDeps struct {
 	ChatCompletionsStoreWhenOmitted                     bool
 	ChatCompletionsUpstreamCompatibility                []upstreamcompat.ChatCompletionRule
 	ResponsesMode                                       string
+	ResponsesUpstreamTransport                          string
 	ResponsesWebSocketEnabled                           bool
 	ResponsesCustomToolsMode                            string
 	ResponsesConstrainedDecodingBackend                 string
@@ -76,6 +77,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 		deps.ResponseService,
 		proxyHandler,
 		deps.ResponsesMode,
+		deps.ResponsesUpstreamTransport,
 		deps.ResponsesCustomToolsMode,
 		deps.ResponsesConstrainedDecodingBackend,
 		deps.ResponsesUpstreamToolCompatibility,

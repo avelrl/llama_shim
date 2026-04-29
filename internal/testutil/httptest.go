@@ -61,6 +61,7 @@ func NewTestAppWithResponsesAndCodexSettings(t *testing.T, responsesMode string,
 
 type TestAppOptions struct {
 	ResponsesMode                         string
+	ResponsesUpstreamTransport            string
 	CustomToolsMode                       string
 	ResponsesConstrainedDecodingBackend   string
 	ChatCompletionsUpstreamCompatibility  []upstreamcompat.ChatCompletionRule
@@ -196,6 +197,7 @@ func NewTestAppWithOptions(t *testing.T, options TestAppOptions) *TestApp {
 		ChatCompletionsStoreWhenOmitted:          chatCompletionsStoreWhenOmitted,
 		ChatCompletionsUpstreamCompatibility:     append([]upstreamcompat.ChatCompletionRule(nil), options.ChatCompletionsUpstreamCompatibility...),
 		ResponsesMode:                            responsesMode,
+		ResponsesUpstreamTransport:               options.ResponsesUpstreamTransport,
 		ResponsesWebSocketEnabled:                true,
 		ResponsesCustomToolsMode:                 options.CustomToolsMode,
 		ResponsesConstrainedDecodingBackend:      options.ResponsesConstrainedDecodingBackend,

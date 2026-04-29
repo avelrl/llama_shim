@@ -194,13 +194,13 @@ edge cases, and Realtime API WebSocket compatibility are deferred to
 
 ### 8. Codex eval harness and auto-regression loop
 
-Status: proposed. See
+Status: Phase 1 implemented. See
 [v3-codex-eval-harness.md](v3-codex-eval-harness.md).
 
 The existing Codex CLI smokes are useful canaries, but manual Codex sessions
-are not a scalable compatibility strategy. V3 should add a repo-owned eval
+are not a scalable compatibility strategy. V3 now has a repo-owned eval
 harness that runs real `codex exec --json` through the shim, captures Codex
-JSONL, shim log slices, workspace diffs, deterministic checker output, and
+JSONL, workspace snapshots, diffs, deterministic checker output, and
 machine-readable failure buckets.
 
 The goal is a practical auto-regression loop for local and OpenAI-compatible
@@ -212,6 +212,22 @@ upstreams such as Qwen 3.6:
 - use frontier-model review only for root-cause analysis and patch proposals
 - convert manual failures into permanent deterministic tasks
 - keep pass/fail owned by task checkers, not by an LLM judge
+
+Implemented Phase 1 slice:
+
+- `cmd/codex-eval-runner`
+- manifest-backed task definitions under `internal/codexeval/testdata/tasks`
+- isolated workspace and `CODEX_HOME` per task attempt
+- generated Codex custom-provider config
+- deterministic file, command, Codex event, and forbidden-output checkers
+- `summary.json`, `summary.md`, `environment.json`, `checker.json`,
+  `failure.md`, workspace snapshots, and `git.diff` artifacts
+- `make codex-eval-smoke`, `make codex-eval-core`, and
+  `make codex-eval-real-upstream`
+
+Remaining V3 work is the larger core suite expansion, failed-task rerun/import
+workflow, shim-log slicing, model/profile comparison summaries, and
+benchmark-lite import.
 
 This is a quality and automation track. It does not strengthen any hosted
 OpenAI parity claim by itself.

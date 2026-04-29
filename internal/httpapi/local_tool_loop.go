@@ -333,20 +333,7 @@ func buildChatCompletionMessagesFromItems(items []domain.Item) ([]map[string]any
 			if err != nil {
 				return nil, err
 			}
-			messages = append(messages, map[string]any{
-				"role":    "assistant",
-				"content": nil,
-				"tool_calls": []map[string]any{
-					{
-						"id":   callID,
-						"type": "function",
-						"function": map[string]any{
-							"name":      name,
-							"arguments": normalizeJSONStringField(arguments),
-						},
-					},
-				},
-			})
+			messages = appendLocalChatToolCallMessage(messages, callID, name, arguments)
 			lastTextMessage = -1
 		case "function_call_output", "custom_tool_call_output", localBuiltinShellCallOutputType, localBuiltinApplyPatchCallOutputType:
 			callID := strings.TrimSpace(item.CallID())
@@ -415,6 +402,33 @@ func buildChatCompletionMessagesFromItems(items []domain.Item) ([]map[string]any
 
 	messages = synthesizeMissingChatToolOutputs(messages)
 	return messages, nil
+}
+
+func appendLocalChatToolCallMessage(messages []map[string]any, callID string, name string, arguments json.RawMessage) []map[string]any {
+	toolCall := map[string]any{
+		"id":   callID,
+		"type": "function",
+		"function": map[string]any{
+			"name":      name,
+			"arguments": normalizeJSONStringField(arguments),
+		},
+	}
+
+	if len(messages) > 0 {
+		last := messages[len(messages)-1]
+		if strings.TrimSpace(asString(last["role"])) == "assistant" {
+			if toolCalls, ok := last["tool_calls"].([]map[string]any); ok {
+				last["tool_calls"] = append(toolCalls, toolCall)
+				return messages
+			}
+		}
+	}
+
+	return append(messages, map[string]any{
+		"role":       "assistant",
+		"content":    nil,
+		"tool_calls": []map[string]any{toolCall},
+	})
 }
 
 const missingChatToolOutputContent = "tool output was not supplied by the client; treat this tool call as failed and continue with available context."
@@ -734,11 +748,33 @@ func parseLocalToolLoopChatCompletion(raw []byte, responseID string, model strin
 }
 
 func containsRawToolCallMarkup(text string) bool {
-	return strings.Contains(text, "<|tool_call") || strings.Contains(text, "<|tool_calls_section")
+	for _, marker := range rawToolCallMarkupMarkers() {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func rawToolCallMarkupMarkers() []string {
+	return []string{
+		"<|tool_call",
+		"<|tool_calls_section",
+		"<tool_call",
+		"</tool_call>",
+		"<tool_code>",
+		"<invoke name=",
+		"<read_file>",
+		"</read_file>",
+		"<patch>",
+		"</patch>",
+		"<bash>",
+		"</bash>",
+	}
 }
 
 func buildRawToolCallMarkupRepairPrompt() string {
-	return "Your previous assistant message printed internal tool-call markup as text. That is invalid. If you still need a tool, emit a structured function tool call through the tools interface. If the task is complete, reply with final plain text only. Do not include <|tool_call, <|tool_calls_section, or function-call templates in assistant text."
+	return "Your previous assistant message printed internal tool-call markup as text. That is invalid. If you still need a tool, emit a structured function tool call through the tools interface. If the task is complete, reply with final plain text only. Do not include pseudo-tool markup such as <|tool_call, <|tool_calls_section, <tool_call>, <read_file>, <patch>, <invoke name=..., or <bash> in assistant text."
 }
 
 func extractChatCompletionContent(raw json.RawMessage) string {

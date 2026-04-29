@@ -190,7 +190,7 @@ Observed result:
   Codex function tool named `shell`, without `exec_command` or `write_stdin`.
 - A follow-up repo-owned task matrix smoke uses the same real CLI path in
   scratch workspaces and verifies a single-file patch, a tiny Go bugfix,
-  deterministic `PLAN.md` creation, and a two-file update.
+  `PLAN.md` creation with required planning markers, and a two-file update.
 
 This proves practical compatibility for the current Codex CLI bridge path with
 the Responses WebSocket-capable shim. The Responses WebSocket track is recorded
@@ -350,7 +350,7 @@ The local slice is considered closed because coverage includes:
 - `make codex-cli-shell-tool-smoke`, which verifies the Codex fallback function
   tool named `shell` when `features.unified_exec=false`
 - `make codex-cli-task-matrix-smoke`, which verifies real scratch workspace
-  edits, a tiny Go bugfix, and deterministic planning output through Codex CLI
+  edits, a tiny Go bugfix, and planning-output markers through Codex CLI
 
 The current Codex bridge tests remain part of the baseline because current
 Codex CLI still uses the bridge instead of emitting native `shell` /

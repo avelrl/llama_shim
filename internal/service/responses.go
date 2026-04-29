@@ -670,7 +670,29 @@ func appendRawToolMarkupRepairInstruction(items []domain.Item) []domain.Item {
 }
 
 func containsRawToolCallMarkupText(text string) bool {
-	return strings.Contains(text, "<|tool_call") || strings.Contains(text, "<|tool_calls_section")
+	for _, marker := range rawToolCallMarkupTextMarkers() {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func rawToolCallMarkupTextMarkers() []string {
+	return []string{
+		"<|tool_call",
+		"<|tool_calls_section",
+		"<tool_call",
+		"</tool_call>",
+		"<tool_code>",
+		"<invoke name=",
+		"<read_file>",
+		"</read_file>",
+		"<patch>",
+		"</patch>",
+		"<bash>",
+		"</bash>",
+	}
 }
 
 func (s *ResponseService) CreateWarmup(ctx context.Context, input CreateResponseInput) (domain.Response, error) {

@@ -2420,7 +2420,7 @@ components:
           $ref: "#/components/schemas/ShimCapabilityContainersSurface"
     ShimCapabilityResponsesSurface:
       type: object
-      required: [enabled, stateful, retrieve, delete, cancel, input_items, create_stream, retrieve_stream, input_tokens, compact, websocket, mode]
+      required: [enabled, stateful, retrieve, delete, cancel, input_items, create_stream, retrieve_stream, input_tokens, compact, websocket, mode, transport]
       properties:
         enabled:
           type: boolean
@@ -2446,6 +2446,9 @@ components:
           $ref: "#/components/schemas/ShimCapabilityResponsesWebSocket"
         mode:
           type: string
+        transport:
+          type: string
+          enum: [responses, chat_completions]
     ShimCapabilityResponsesWebSocket:
       type: object
       required: [enabled, support, endpoint, sequential, multiplexing]
@@ -2500,10 +2503,13 @@ components:
           type: boolean
     ShimCapabilityRuntime:
       type: object
-      required: [responses_mode, custom_tools_mode, compaction, constrained_decoding, codex, persistence, retrieval, ops]
+      required: [responses_mode, responses_upstream_transport, custom_tools_mode, compaction, constrained_decoding, codex, persistence, retrieval, ops]
       properties:
         responses_mode:
           type: string
+        responses_upstream_transport:
+          type: string
+          enum: [responses, chat_completions]
         custom_tools_mode:
           type: string
         compaction:

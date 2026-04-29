@@ -110,6 +110,47 @@ This smoke does not prove the full devstack matrix and does not claim exact
 OpenAI hosted tool choreography. It is the practical real-upstream gate for
 whether the current model/provider pair is useful enough for Codex coding work.
 
+## Automated Eval Harness
+
+For repeated local regression work, prefer the manifest-backed eval runner over
+manual prompt-by-prompt testing. It keeps each task attempt in an isolated
+workspace, uses an isolated `CODEX_HOME`, captures `codex exec --json`, and
+writes deterministic checker output:
+
+```bash
+SHIM_BASE_URL=http://127.0.0.1:18080 \
+CODEX_MODEL=devstack-model \
+make codex-eval-smoke
+```
+
+For a real upstream behind an already running shim:
+
+```bash
+SHIM_BASE_URL="$SHIM_BASE_URL" \
+CODEX_MODEL="$CODEX_MODEL" \
+CODEX_PROVIDER="$CODEX_PROVIDER" \
+CODEX_API_KEY_ENV=GW_API_KEY \
+GW_API_KEY="$GW_API_KEY" \
+make codex-eval-real-upstream
+```
+
+Important eval knobs:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `CODEX_EVAL_SUITE` | `codex-smoke` | Task suite: `codex-smoke` for the fast gate, `codex-core` for the current deterministic devstack set, `codex-real-upstream` for real model/provider regression. |
+| `CODEX_EVAL_OUT` | `.tmp/codex-eval-runs/run-<timestamp>` | Artifact directory containing `summary.json`, `summary.md`, per-task JSONL, diffs, and checker output. |
+| `CODEX_EVAL_ATTEMPTS` | manifest value | Override per-task retry count. |
+| `CODEX_EVAL_REASONING_EFFORT` | `minimal` | Reasoning effort for tiny deterministic tasks. |
+| `CODEX_EVAL_WEBSOCKETS` | `false` | Enable only when testing the WS path intentionally. |
+| `CODEX_EVAL_UNIFIED_EXEC` | `true` | Use Codex unified exec command tools. |
+| `CODEX_EVAL_APPLY_PATCH_FREEFORM` | `true` | Keep Codex apply-patch freeform enabled. |
+
+Use the old `make codex-cli-real-upstream-smoke` for a quick yes/no canary.
+Use `make codex-eval-real-upstream` when the result needs durable artifacts,
+failure buckets, and a workspace diff that can become a permanent regression
+task.
+
 Create a disposable workspace:
 
 ```bash

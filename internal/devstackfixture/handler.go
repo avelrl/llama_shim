@@ -475,6 +475,18 @@ func fixtureCodexFunctionFinalOutput(request chatCompletionRequest) (string, boo
 		}
 		return "MULTIFILE", true
 	}
+	if containsAny(joined, "codex command recovery case", "command recovery case") {
+		if !strings.Contains(joined, "recovery task verified") {
+			return "command did not report recovery completion: " + strings.TrimSpace(message.Content), true
+		}
+		return "RECOVERED", true
+	}
+	if containsAny(joined, "codex eval read file", "eval read file") {
+		if !strings.Contains(joined, "llama-shim-42") {
+			return "command did not report read_file token: " + strings.TrimSpace(message.Content), true
+		}
+		return "READ_OK", true
+	}
 	if containsAny(joined, "reply patched", "codex coding task smoke", "patched-by-codex") {
 		if !strings.Contains(joined, "patched smoke_target.txt") {
 			return "command did not report patch completion: " + strings.TrimSpace(message.Content), true
@@ -500,13 +512,19 @@ func fixtureCodexFunctionPlannedCall(request chatCompletionRequest) (string, str
 		return name, fixtureCodexCommandArguments(kind, "python3 -c \"import os, subprocess; from pathlib import Path; d=Path(os.environ['LLAMA_SHIM_CODEX_MATRIX_WORKDIR']); p=d/'calc.go'; p.write_text(p.read_text().replace('return a - b', 'return a + b')); os.environ['GOCACHE']=str(d/'.gocache'); subprocess.run(['go','test','./...'], cwd=d, check=True); print('bugfix go task passed')\"", 60000), true
 	}
 	if containsAny(joined, "codex task matrix plan doc", "matrix plan doc") {
-		return name, fixtureCodexCommandArguments(kind, "python3 -c \"import os; from pathlib import Path; d=Path(os.environ['LLAMA_SHIM_CODEX_MATRIX_WORKDIR']); (d/'PLAN.md').write_text('# Implementation Plan\\n\\n- [x] Read requirements\\n- [x] Identify API change\\n- [x] Add regression test\\n'); print('plan task written')\"", 5000), true
+		return name, fixtureCodexCommandArguments(kind, "python3 -c \"import os; from pathlib import Path; d=Path(os.environ['LLAMA_SHIM_CODEX_MATRIX_WORKDIR']); (d/'PLAN.md').write_text('# Implementation Plan\\n\\n- [x] Read requirements\\n- [x] Identify API change\\n- [x] Add regression test\\n'); print('plan task written')\"", 60000), true
 	}
 	if containsAny(joined, "codex task matrix multi file", "matrix multi file") {
-		return name, fixtureCodexCommandArguments(kind, "python3 -c \"import os; from pathlib import Path; d=Path(os.environ['LLAMA_SHIM_CODEX_MATRIX_WORKDIR']); (d/'app').mkdir(exist_ok=True); (d/'app/config.txt').write_text('mode=matrix\\nfeature=enabled\\n'); (d/'app/status.txt').write_text('status=updated\\n'); print('multi file task updated')\"", 5000), true
+		return name, fixtureCodexCommandArguments(kind, "python3 -c \"import os; from pathlib import Path; d=Path(os.environ['LLAMA_SHIM_CODEX_MATRIX_WORKDIR']); (d/'app').mkdir(exist_ok=True); (d/'app/config.txt').write_text('mode=matrix\\nfeature=enabled\\n'); (d/'app/status.txt').write_text('status=updated\\n'); print('multi file task updated')\"", 60000), true
+	}
+	if containsAny(joined, "codex command recovery case", "command recovery case") {
+		return name, fixtureCodexCommandArguments(kind, "d=\"$LLAMA_SHIM_CODEX_MATRIX_WORKDIR\"; cd \"$d\"; sh verify.sh >/dev/null 2>&1 || true; printf 'status=ready\\n' > status.txt; sh verify.sh; echo 'recovery task verified'", 60000), true
+	}
+	if containsAny(joined, "codex eval read file", "eval read file") {
+		return name, fixtureCodexCommandArguments(kind, "cat README.md", 60000), true
 	}
 	if containsAny(joined, "codex coding task smoke", "smoke_target.txt", "patched-by-codex") {
-		return name, fixtureCodexCommandArguments(kind, "python3 -c \"import os; from pathlib import Path; p=Path(os.environ['LLAMA_SHIM_CODEX_SMOKE_TARGET']); p.write_text(p.read_text().replace('status = TODO', 'status = patched-by-codex')); print('patched smoke_target.txt')\"", 5000), true
+		return name, fixtureCodexCommandArguments(kind, "python3 -c \"import os; from pathlib import Path; p=Path(os.environ['LLAMA_SHIM_CODEX_SMOKE_TARGET']); p.write_text(p.read_text().replace('status = TODO', 'status = patched-by-codex')); print('patched smoke_target.txt')\"", 60000), true
 	}
 	return name, fixtureCodexCommandArguments(kind, "pwd", 1000), true
 }

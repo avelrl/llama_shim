@@ -1,0 +1,28 @@
+id: basic_patch
+title: Single file deterministic patch
+category: edit
+suites:
+  - codex-smoke
+  - codex-core
+  - codex-real-upstream
+timeout: 180s
+attempts: 2
+env:
+  LLAMA_SHIM_CODEX_SMOKE_TARGET: ${workspace}/smoke_target.txt
+prompt: |
+  This is the Codex coding task smoke. Use exec_command to update smoke_target.txt by replacing `status = TODO` with `status = patched-by-codex`. Then reply PATCHED.
+expected:
+  final_text_contains:
+    - PATCHED
+  files:
+    - path: smoke_target.txt
+      equals: |
+        name = llama_shim
+        status = patched-by-codex
+  codex_events:
+    - item.started:command_execution
+    - item.completed:agent_message
+    - turn.completed
+  forbidden_output:
+    - "<|tool_call"
+    - "<|tool_calls_section"

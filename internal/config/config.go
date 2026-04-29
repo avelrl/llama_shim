@@ -86,6 +86,7 @@ type Config struct {
 	ChatCompletionsStoreWhenOmitted                     bool
 	ChatCompletionsUpstreamCompatibility                []ChatCompletionsUpstreamCompatibilityRule
 	ResponsesMode                                       string
+	ResponsesUpstreamTransport                          string
 	ResponsesWebSocketEnabled                           bool
 	ResponsesCustomToolsMode                            string
 	ResponsesConstrainedDecodingBackend                 string
@@ -172,6 +173,8 @@ const (
 	ResponsesModePreferLocal                                       = "prefer_local"
 	ResponsesModePreferUpstream                                    = "prefer_upstream"
 	ResponsesModeLocalOnly                                         = "local_only"
+	ResponsesUpstreamTransportResponses                            = "responses"
+	ResponsesUpstreamTransportChatCompletions                      = "chat_completions"
 	ShimAuthModeDisabled                                           = "disabled"
 	ShimAuthModeStaticBearer                                       = "static_bearer"
 	ResponsesCodeInterpreterBackendDisabled                        = "disabled"
@@ -230,6 +233,7 @@ func Load(configPath string) (Config, error) {
 		ResponsesComputerBackend:              strings.ToLower(strings.TrimSpace(v.GetString("responses.computer.backend"))),
 		ChatCompletionsStoreWhenOmitted:       v.GetBool("chat_completions.default_store_when_omitted"),
 		ResponsesMode:                         strings.ToLower(strings.TrimSpace(v.GetString("responses.mode"))),
+		ResponsesUpstreamTransport:            strings.ToLower(strings.TrimSpace(v.GetString("responses.upstream_transport"))),
 		ResponsesWebSocketEnabled:             v.GetBool("responses.websocket.enabled"),
 		ResponsesCustomToolsMode:              strings.ToLower(strings.TrimSpace(v.GetString("responses.custom_tools.mode"))),
 		ResponsesConstrainedDecodingBackend:   strings.ToLower(strings.TrimSpace(v.GetString("responses.constrained_decoding.backend"))),
@@ -364,6 +368,9 @@ func Load(configPath string) (Config, error) {
 	cfg.ResponsesWebSearchBaseURL = normalizedWebSearch.BaseURL
 	if err := parseResponsesMode(cfg.ResponsesMode); err != nil {
 		return Config{}, fmt.Errorf("parse responses.mode: %w", err)
+	}
+	if err := parseResponsesUpstreamTransport(cfg.ResponsesUpstreamTransport); err != nil {
+		return Config{}, fmt.Errorf("parse responses.upstream_transport: %w", err)
 	}
 	if err := parseCustomToolsMode(cfg.ResponsesCustomToolsMode); err != nil {
 		return Config{}, fmt.Errorf("parse responses.custom_tools.mode: %w", err)
@@ -613,6 +620,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("chat_completions.default_store_when_omitted", true)
 	v.SetDefault("chat_completions.upstream_compatibility.models", []map[string]any{})
 	v.SetDefault("responses.mode", ResponsesModePreferLocal)
+	v.SetDefault("responses.upstream_transport", ResponsesUpstreamTransportResponses)
 	v.SetDefault("responses.websocket.enabled", true)
 	v.SetDefault("responses.custom_tools.mode", "auto")
 	v.SetDefault("responses.constrained_decoding.backend", ResponsesConstrainedDecodingBackendShimValidateRepair)
@@ -1012,6 +1020,15 @@ func normalizeConfigEnum(value string, defaultValue string, allowed []string) (s
 func parseResponsesMode(value string) error {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "", ResponsesModePreferLocal, ResponsesModePreferUpstream, ResponsesModeLocalOnly:
+		return nil
+	default:
+		return strconv.ErrSyntax
+	}
+}
+
+func parseResponsesUpstreamTransport(value string) error {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", ResponsesUpstreamTransportResponses, ResponsesUpstreamTransportChatCompletions:
 		return nil
 	default:
 		return strconv.ErrSyntax

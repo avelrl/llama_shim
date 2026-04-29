@@ -451,6 +451,7 @@ func TestChatCompletionsProxyAppliesConfiguredUpstreamCompatibility(t *testing.T
 func TestCapabilitiesEndpointReportsConfiguredRuntime(t *testing.T) {
 	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
 		ResponsesMode:                     config.ResponsesModeLocalOnly,
+		ResponsesUpstreamTransport:        config.ResponsesUpstreamTransportChatCompletions,
 		CustomToolsMode:                   "bridge",
 		CodexCompatibilityEnabled:         true,
 		ForceToolChoiceRequired:           true,
@@ -479,6 +480,7 @@ func TestCapabilitiesEndpointReportsConfiguredRuntime(t *testing.T) {
 	require.Equal(t, true, responsesSurface["enabled"])
 	require.Equal(t, true, responsesSurface["compact"])
 	require.Equal(t, config.ResponsesModeLocalOnly, asStringAny(responsesSurface["mode"]))
+	require.Equal(t, config.ResponsesUpstreamTransportChatCompletions, asStringAny(responsesSurface["transport"]))
 	responsesWebSocket := responsesSurface["websocket"].(map[string]any)
 	require.Equal(t, true, responsesWebSocket["enabled"])
 	require.Equal(t, "local_subset", asStringAny(responsesWebSocket["support"]))
@@ -497,6 +499,7 @@ func TestCapabilitiesEndpointReportsConfiguredRuntime(t *testing.T) {
 
 	runtime := payload["runtime"].(map[string]any)
 	require.Equal(t, config.ResponsesModeLocalOnly, asStringAny(runtime["responses_mode"]))
+	require.Equal(t, config.ResponsesUpstreamTransportChatCompletions, asStringAny(runtime["responses_upstream_transport"]))
 	require.Equal(t, "bridge", asStringAny(runtime["custom_tools_mode"]))
 	require.Equal(t, float64(0), runtime["chat_completions_upstream_compatibility_rules"])
 
@@ -2951,6 +2954,112 @@ func TestResponsesInputTokensPreferUpstreamWhenNoLocalState(t *testing.T) {
 	mustDecode(t, payload, &counted)
 	require.Equal(t, "response.input_tokens", counted.Object)
 	require.Equal(t, 3, counted.InputTokens)
+}
+
+func TestResponsesOverChatTransportUsesChatCompletionsAndLocalStore(t *testing.T) {
+	var nativeResponsesHits atomic.Int64
+	var chatHits atomic.Int64
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/responses":
+			nativeResponsesHits.Add(1)
+			http.NotFound(w, r)
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/chat/completions":
+			chatHits.Add(1)
+			var request map[string]any
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
+			require.Equal(t, "test-model", asStringAny(request["model"]))
+			require.Contains(t, request, "thinking")
+			writeChatCompletionText(t, w, "test-model", "OK")
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/models":
+			writeModelsList(t, w, "test-model")
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer upstream.Close()
+
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		LlamaBaseURL:               upstream.URL,
+		ResponsesMode:              config.ResponsesModePreferUpstream,
+		ResponsesUpstreamTransport: config.ResponsesUpstreamTransportChatCompletions,
+	})
+
+	status, payload := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model":    "test-model",
+		"store":    true,
+		"input":    "Say OK and nothing else",
+		"thinking": map[string]any{"type": "disabled"},
+		"include":  []any{},
+	})
+	require.Equal(t, http.StatusOK, status)
+	var response domain.Response
+	mustDecode(t, payload, &response)
+	require.NotEmpty(t, response.ID)
+	require.Equal(t, "OK", response.OutputText)
+	require.Equal(t, int64(1), chatHits.Load())
+	require.Equal(t, int64(0), nativeResponsesHits.Load())
+
+	retrieveStatus, retrieved := rawRequest(t, app, http.MethodGet, "/v1/responses/"+response.ID, nil)
+	require.Equal(t, http.StatusOK, retrieveStatus)
+	require.Equal(t, response.ID, asStringAny(retrieved["id"]))
+
+	itemsStatus, items := rawRequest(t, app, http.MethodGet, "/v1/responses/"+response.ID+"/input_items", nil)
+	require.Equal(t, http.StatusOK, itemsStatus)
+	require.Equal(t, "list", asStringAny(items["object"]))
+	require.Equal(t, int64(0), nativeResponsesHits.Load())
+}
+
+func TestResponsesOverChatTransportMapsTextFormatToChatResponseFormat(t *testing.T) {
+	var captured map[string]any
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/chat/completions":
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&captured))
+			writeChatCompletionText(t, w, "test-model", `{"status":"ok","value":42}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/models":
+			writeModelsList(t, w, "test-model")
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer upstream.Close()
+
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		LlamaBaseURL:               upstream.URL,
+		ResponsesUpstreamTransport: config.ResponsesUpstreamTransportChatCompletions,
+	})
+
+	status, payload := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model": "test-model",
+		"input": "Return JSON with status ok and value 42.",
+		"text": map[string]any{
+			"format": map[string]any{
+				"type":   "json_schema",
+				"name":   "simple_status",
+				"strict": true,
+				"schema": map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"properties": map[string]any{
+						"status": map[string]any{"type": "string"},
+						"value":  map[string]any{"type": "integer"},
+					},
+					"required": []string{"status", "value"},
+				},
+			},
+		},
+	})
+	require.Equal(t, http.StatusOK, status)
+	var response domain.Response
+	mustDecode(t, payload, &response)
+	require.JSONEq(t, `{"status":"ok","value":42}`, response.OutputText)
+
+	responseFormat := captured["response_format"].(map[string]any)
+	require.Equal(t, "json_schema", asStringAny(responseFormat["type"]))
+	jsonSchema := responseFormat["json_schema"].(map[string]any)
+	require.Equal(t, "simple_status", asStringAny(jsonSchema["name"]))
+	require.Equal(t, true, jsonSchema["strict"])
 }
 
 func TestResponsesCompactReturnsSyntheticCompactionResource(t *testing.T) {
@@ -13380,6 +13489,23 @@ func rawRequestWithHeaders(t *testing.T, app *testutil.TestApp, method, path str
 	var decoded map[string]any
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&decoded))
 	return resp.StatusCode, resp.Header.Clone(), decoded
+}
+
+func writeModelsList(t *testing.T, w http.ResponseWriter, modelIDs ...string) {
+	t.Helper()
+
+	data := make([]map[string]any, 0, len(modelIDs))
+	for _, modelID := range modelIDs {
+		data = append(data, map[string]any{
+			"id":     modelID,
+			"object": "model",
+		})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+		"object": "list",
+		"data":   data,
+	}))
 }
 
 func writeChatCompletionText(t *testing.T, w http.ResponseWriter, model string, content string) {

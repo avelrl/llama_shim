@@ -43,6 +43,7 @@ type capabilityResponsesSurface struct {
 	Compact        bool                         `json:"compact"`
 	WebSocket      capabilityResponsesWebSocket `json:"websocket"`
 	Mode           string                       `json:"mode"`
+	Transport      string                       `json:"transport"`
 }
 
 type capabilityResponsesWebSocket struct {
@@ -78,6 +79,7 @@ type capabilityContainersSurface struct {
 
 type capabilityRuntimeConfig struct {
 	ResponsesMode                        string                              `json:"responses_mode"`
+	ResponsesUpstreamTransport           string                              `json:"responses_upstream_transport"`
 	CustomToolsMode                      string                              `json:"custom_tools_mode"`
 	ChatCompletionsUpstreamCompatibility int                                 `json:"chat_completions_upstream_compatibility_rules"`
 	UpstreamToolCompatibilityRules       int                                 `json:"upstream_tool_compatibility_rules"`
@@ -253,7 +255,8 @@ func buildCapabilityManifest(ctx context.Context, deps RouterDeps) capabilityMan
 					Sequential:   true,
 					Multiplexing: false,
 				},
-				Mode: deps.ResponsesMode,
+				Mode:      deps.ResponsesMode,
+				Transport: normalizeResponsesUpstreamTransport(deps.ResponsesUpstreamTransport),
 			},
 			Conversations: capabilityConversationsRoute{
 				Enabled:  true,
@@ -276,6 +279,7 @@ func buildCapabilityManifest(ctx context.Context, deps RouterDeps) capabilityMan
 		},
 		Runtime: capabilityRuntimeConfig{
 			ResponsesMode:                        deps.ResponsesMode,
+			ResponsesUpstreamTransport:           normalizeResponsesUpstreamTransport(deps.ResponsesUpstreamTransport),
 			CustomToolsMode:                      deps.ResponsesCustomToolsMode,
 			ChatCompletionsUpstreamCompatibility: len(deps.ChatCompletionsUpstreamCompatibility),
 			UpstreamToolCompatibilityRules:       len(deps.ResponsesUpstreamToolCompatibility),

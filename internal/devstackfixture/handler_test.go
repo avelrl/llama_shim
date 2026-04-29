@@ -433,7 +433,7 @@ func TestHandlerChatCompletionsPlansAndCompletesCodexCodingTaskToolCall(t *testi
 	require.Len(t, toolCalls, 1)
 	function := toolCalls[0].(map[string]any)["function"].(map[string]any)
 	require.Equal(t, "exec_command", function["name"])
-	require.JSONEq(t, `{"cmd":"python3 -c \"import os; from pathlib import Path; p=Path(os.environ['LLAMA_SHIM_CODEX_SMOKE_TARGET']); p.write_text(p.read_text().replace('status = TODO', 'status = patched-by-codex')); print('patched smoke_target.txt')\"","yield_time_ms":5000,"max_output_tokens":12000}`, function["arguments"].(string))
+	require.JSONEq(t, `{"cmd":"python3 -c \"import os; from pathlib import Path; p=Path(os.environ['LLAMA_SHIM_CODEX_SMOKE_TARGET']); p.write_text(p.read_text().replace('status = TODO', 'status = patched-by-codex')); print('patched smoke_target.txt')\"","yield_time_ms":60000,"max_output_tokens":12000}`, function["arguments"].(string))
 
 	payload["messages"] = []map[string]any{
 		{"role": "system", "content": "You are a coding agent running in the Codex CLI, a terminal-based coding assistant."},
@@ -494,6 +494,20 @@ func TestChatCompletionsCodexTaskMatrixRules(t *testing.T) {
 			commandMarker: "multi file task updated",
 			toolOutput:    "multi file task updated",
 			final:         "MULTIFILE",
+		},
+		{
+			name:          "command recovery",
+			prompt:        "This is the Codex command recovery case. Use exec_command to run `sh verify.sh`, update status.txt, verify, and reply RECOVERED.",
+			commandMarker: "verify.sh",
+			toolOutput:    "recovery task verified",
+			final:         "RECOVERED",
+		},
+		{
+			name:          "eval read file",
+			prompt:        "This is the Codex eval read file case. Use exec_command to read README.md and reply READ_OK.",
+			commandMarker: "cat README.md",
+			toolOutput:    "codex-smoke-token: llama-shim-42",
+			final:         "READ_OK",
 		},
 	}
 

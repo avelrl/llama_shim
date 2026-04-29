@@ -1,0 +1,32 @@
+id: command_recovery
+title: Failed command recovery
+category: regression
+suites:
+  - codex-smoke
+  - codex-core
+  - codex-real-upstream
+timeout: 180s
+attempts: 2
+env:
+  LLAMA_SHIM_CODEX_MATRIX_WORKDIR: ${workspace}
+prompt: |
+  This is the Codex command recovery case. Use exec_command to run `sh verify.sh`; it should fail while status.txt says status=broken.
+  Update status.txt so it contains exactly `status=ready`, run `sh verify.sh` again, then reply RECOVERED.
+expected:
+  final_text_contains:
+    - RECOVERED
+  files:
+    - path: status.txt
+      equals: |
+        status=ready
+  commands:
+    - name: verify
+      command: sh verify.sh
+      timeout: 30s
+  codex_events:
+    - item.started:command_execution
+    - item.completed:agent_message
+    - turn.completed
+  forbidden_output:
+    - "<|tool_call"
+    - "<|tool_calls_section"

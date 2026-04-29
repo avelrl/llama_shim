@@ -38,6 +38,10 @@ chat_completions:
         invalid_tool_arguments_fallback: final_text
 responses:
   mode: prefer_local
+  # Use chat_completions when the upstream has no reliable /v1/responses.
+  # The shim still exposes /v1/responses to Codex and stores/replays local
+  # Responses state, but model generation goes to upstream /v1/chat/completions.
+  upstream_transport: chat_completions
   websocket:
     enabled: true
   codex:
@@ -227,11 +231,19 @@ Current tested metadata starts:
 
 - `Kimi-K2.6`: `context_window: 262144`, `max_context_window: 262144`.
 - `deepseek-v4-pro`: `context_window: 1000000`, `max_context_window: 1000000`.
+- `mimo-v2.5-pro`: `context_window: 1048576`, `max_context_window: 1048576`.
 - `Qwen3.6-35B-A3B`: `context_window: 262144`, `max_context_window: 262144`.
 
-The Qwen value is intentionally conservative for the tested gateway path. Only
-raise it after the exact upstream deployment proves the larger long-context
-setting through Codex smoke and ordinary API tests.
+The MiMo value follows the
+[Hugging Face model card](https://huggingface.co/XiaomiMiMo/MiMo-V2.5-Pro)'s
+1M context claim and its deployment example's `context-length 1048576`. The
+DeepSeek value follows the
+[DeepSeek V4 Pro card](https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro)'s
+1M context claim. The Qwen value is intentionally conservative for the tested
+gateway path: the [Qwen3.6 card](https://huggingface.co/Qwen/Qwen3.6-35B-A3B)
+says Qwen3.6 is native 262144 and extensible up to 1010000 tokens, but only
+raise the shim metadata after the exact upstream deployment proves the larger
+long-context setting through Codex smoke and ordinary API tests.
 
 Codex sends `GET /v1/models?client_version=...`; for that Codex-specific query
 shim returns a Codex model catalog (`{"models":[...]}`). A normal
@@ -360,6 +372,22 @@ responses:
           display_name: DeepSeek V4 Pro
           context_window: 1000000
           max_context_window: 1000000
+          default_reasoning_level: high
+          supported_reasoning_levels: [low, medium, high]
+          supports_reasoning_summaries: false
+          default_reasoning_summary: none
+          shell_type: shell_command
+          apply_patch_tool_type: freeform
+          supports_parallel_tool_calls: false
+          support_verbosity: false
+          input_modalities: [text]
+          truncation_policy:
+            mode: bytes
+            limit: 10000
+        - model: mimo-v2.5-pro
+          display_name: MiMo v2.5 Pro
+          context_window: 1048576
+          max_context_window: 1048576
           default_reasoning_level: high
           supported_reasoning_levels: [low, medium, high]
           supports_reasoning_summaries: false
@@ -682,8 +710,37 @@ the shim over `openai_base_url` and verifies four deterministic tasks:
 
 - single-file patch
 - tiny Go bugfix with `go test ./...`
-- deterministic `PLAN.md` creation
+- `PLAN.md` creation with required planning markers
 - two-file workspace update
+
+For repeatable regression runs with durable artifacts, use the V3 Codex eval
+harness:
+
+```bash
+SHIM_BASE_URL=http://127.0.0.1:18080 \
+CODEX_MODEL=devstack-model \
+make codex-eval-smoke
+```
+
+Against a real upstream behind a running shim:
+
+```bash
+SHIM_BASE_URL=http://127.0.0.1:8080 \
+CODEX_MODEL=Qwen3.6-35B-A3B \
+CODEX_PROVIDER=gateway-shim \
+CODEX_API_KEY_ENV=GW_API_KEY \
+GW_API_KEY=shim-dev-key \
+make codex-eval-real-upstream
+```
+
+The eval runner writes artifacts under `.tmp/codex-eval-runs/<run-id>/`,
+including `summary.json`, `summary.md`, `environment.json`, `codex.jsonl`,
+workspace snapshots, `git.diff`, `checker.json`, and `failure.md`. The fast
+`codex-smoke` suite covers boot, read, single-file patch, tiny Go bugfix,
+plan writing with required markers, and multi-file edit. The `codex-real-upstream`
+suite adds the first mixed text-plus-file-change regression task. This is a
+local quality/regression signal; it does not strengthen hosted OpenAI parity
+claims by itself.
 
 ## Boundaries
 

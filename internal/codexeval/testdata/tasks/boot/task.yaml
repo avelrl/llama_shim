@@ -1,0 +1,20 @@
+id: boot
+title: Provider boot
+category: boot
+suites:
+  - codex-smoke
+  - codex-core
+  - codex-real-upstream
+timeout: 120s
+attempts: 1
+prompt: |
+  Reply READY.
+expected:
+  final_text_contains:
+    - READY
+  codex_events:
+    - item.completed:agent_message
+    - turn.completed
+  forbidden_output:
+    - "<|tool_call"
+    - "<|tool_calls_section"

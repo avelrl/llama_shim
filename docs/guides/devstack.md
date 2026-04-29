@@ -299,13 +299,23 @@ small deterministic task matrix:
 
 - `basic_patch`: updates one scratch text file and receives `PATCHED`
 - `bugfix_go`: fixes a tiny Go package, then verifies `go test ./...`
-- `plan_doc`: writes a deterministic `PLAN.md` checklist and receives
+- `plan_doc`: writes `PLAN.md` with required planning markers and receives
   `PLANNED`
 - `multi_file`: updates two files under one scratch workspace and receives
   `MULTIFILE`
 
 The goal is not to benchmark model quality. The goal is to prove that the
 stack is runnable, probeable, and reproducible.
+
+`make codex-eval-smoke` runs the manifest-backed V3 Codex eval harness against
+the same devstack fixture path. It is heavier than the shell smoke scripts but
+keeps durable artifacts under `.tmp/codex-eval-runs/<run-id>/`, including
+Codex JSONL, workspace snapshots, diffs, checker results, and a machine-readable
+summary. Use it when a failure needs to become an automated regression task:
+
+```bash
+make codex-eval-smoke
+```
 
 ## Files
 
@@ -326,6 +336,12 @@ stack is runnable, probeable, and reproducible.
   real Codex CLI coding-task smoke path
 - [scripts/codex-cli-task-matrix-smoke.sh](../../scripts/codex-cli-task-matrix-smoke.sh):
   real Codex CLI task matrix smoke path
+- [scripts/codex-eval-runner.sh](../../scripts/codex-eval-runner.sh):
+  manifest-backed Codex eval runner wrapper
+- [cmd/codex-eval-runner/main.go](../../cmd/codex-eval-runner/main.go):
+  Codex eval runner CLI
+- [internal/codexeval/testdata/tasks](../../internal/codexeval/testdata/tasks):
+  committed Codex eval task manifests and fixture workspaces
 - [cmd/devstack-fixture/main.go](../../cmd/devstack-fixture/main.go): deterministic fixture service
 - [internal/devstackfixture/mcp.go](../../internal/devstackfixture/mcp.go): deterministic MCP fixture transport
 

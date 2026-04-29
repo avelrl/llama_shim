@@ -1,0 +1,30 @@
+id: bugfix_go
+title: Tiny Go bugfix
+category: code
+suites:
+  - codex-smoke
+  - codex-core
+  - codex-real-upstream
+timeout: 240s
+attempts: 2
+env:
+  LLAMA_SHIM_CODEX_MATRIX_WORKDIR: ${workspace}
+prompt: |
+  This is the Codex task matrix bugfix go case. Use exec_command to fix calc.go so go test ./... passes. Then reply BUGFIXED.
+expected:
+  final_text_contains:
+    - BUGFIXED
+  files:
+    - path: calc.go
+      contains: "return a + b"
+  commands:
+    - name: go test
+      command: GOCACHE="$(pwd)/.gocache" go test ./...
+      timeout: 60s
+  codex_events:
+    - item.started:command_execution
+    - item.completed:agent_message
+    - turn.completed
+  forbidden_output:
+    - "<|tool_call"
+    - "<|tool_calls_section"

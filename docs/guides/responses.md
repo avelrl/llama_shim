@@ -108,6 +108,13 @@ curl http://127.0.0.1:8080/v1/responses \
 - `responses.mode=prefer_upstream` is a proxy-first escape hatch, not the main
   V2 behavior.
 - `responses.mode=local_only` never calls upstream.
+- `responses.upstream_transport=responses` is the default and allows native
+  upstream `/v1/responses` proxy/fallback paths.
+- `responses.upstream_transport=chat_completions` enables a shim-owned
+  Responses-over-Chat mode for chat-only upstreams: the shim owns Responses
+  storage, `previous_response_id`, `conversation`, `input_items`, and generic
+  SSE/replay, while model generation is sent to upstream `/v1/chat/completions`.
+  This does not claim native hosted Responses parity.
 - `responses.websocket.enabled=true` exposes the V3 local-subset Responses
   WebSocket transport at `GET /v1/responses`; HTTP `POST /v1/responses` and
   SSE `stream=true` remain supported.

@@ -108,6 +108,7 @@ chat_completions:
         invalid_tool_arguments_fallback: final_text
 responses:
   mode: prefer_upstream
+  upstream_transport: chat_completions
   websocket:
     enabled: false
   web_search:
@@ -282,6 +283,7 @@ responses:
 		},
 	}, cfg.ChatCompletionsUpstreamCompatibility)
 	require.Equal(t, config.ResponsesModePreferUpstream, cfg.ResponsesMode)
+	require.Equal(t, config.ResponsesUpstreamTransportChatCompletions, cfg.ResponsesUpstreamTransport)
 	require.False(t, cfg.ResponsesWebSocketEnabled)
 	require.Equal(t, "searxng", cfg.ResponsesWebSearchBackend)
 	require.Equal(t, "http://127.0.0.1:8084", cfg.ResponsesWebSearchBaseURL)
@@ -439,6 +441,7 @@ responses:
 	t.Setenv("RETRIEVAL_EMBEDDER_MODEL", "text-embedding-3-small")
 	t.Setenv("CHAT_COMPLETIONS_DEFAULT_STORE_WHEN_OMITTED", "true")
 	t.Setenv("RESPONSES_MODE", "local_only")
+	t.Setenv("RESPONSES_UPSTREAM_TRANSPORT", "chat_completions")
 	t.Setenv("RESPONSES_CONSTRAINED_DECODING_BACKEND", "vllm")
 	t.Setenv("RESPONSES_WEB_SEARCH_BACKEND", "searxng")
 	t.Setenv("RESPONSES_WEB_SEARCH_BASE_URL", "http://127.0.0.1:8181")
@@ -518,6 +521,7 @@ responses:
 	require.True(t, cfg.ChatCompletionsStoreWhenOmitted)
 	require.Empty(t, cfg.ChatCompletionsUpstreamCompatibility)
 	require.Equal(t, config.ResponsesModeLocalOnly, cfg.ResponsesMode)
+	require.Equal(t, config.ResponsesUpstreamTransportChatCompletions, cfg.ResponsesUpstreamTransport)
 	require.Equal(t, config.ResponsesConstrainedDecodingBackendVLLM, cfg.ResponsesConstrainedDecodingBackend)
 	require.Equal(t, "searxng", cfg.ResponsesWebSearchBackend)
 	require.Equal(t, "http://127.0.0.1:8181", cfg.ResponsesWebSearchBaseURL)
@@ -591,6 +595,7 @@ func TestLoadUsesCodexSafeDefaults(t *testing.T) {
 	require.Empty(t, cfg.RetrievalEmbedderModel)
 	require.True(t, cfg.ChatCompletionsStoreWhenOmitted)
 	require.Equal(t, config.ResponsesModePreferLocal, cfg.ResponsesMode)
+	require.Equal(t, config.ResponsesUpstreamTransportResponses, cfg.ResponsesUpstreamTransport)
 	require.Equal(t, "disabled", cfg.ResponsesImageGenerationBackend)
 	require.Empty(t, cfg.ResponsesImageGenerationBaseURL)
 	require.Equal(t, 0*time.Second, cfg.ResponsesImageGenerationTimeout)
@@ -772,4 +777,17 @@ responses:
 	_, err := config.Load(configPath)
 	require.Error(t, err)
 	require.ErrorContains(t, err, "parse responses.computer.backend")
+}
+
+func TestLoadRejectsUnsupportedResponsesUpstreamTransport(t *testing.T) {
+	disableDotEnv(t)
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	writeFile(t, configPath, `
+responses:
+  upstream_transport: native_chat_magic
+`)
+
+	_, err := config.Load(configPath)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "parse responses.upstream_transport")
 }

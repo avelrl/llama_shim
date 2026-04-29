@@ -30,6 +30,7 @@ const (
 )
 
 type responsesCreateRouteInputs struct {
+	NativeResponsesProxy               bool
 	HasLocalState                      bool
 	LocalToolLoop                      bool
 	LocalToolSearchRequested           bool
@@ -54,7 +55,7 @@ type responsesCreateRouteInputs struct {
 }
 
 func selectResponsesCreateRoute(responsesMode string, profile responsesCreateRouteInputs) responsesCreateRoute {
-	if responsesMode == config.ResponsesModePreferUpstream && !profile.HasLocalState {
+	if responsesMode == config.ResponsesModePreferUpstream && !profile.HasLocalState && profile.NativeResponsesProxy {
 		return responsesCreateRouteProxy
 	}
 
@@ -109,6 +110,8 @@ func selectResponsesCreateRoute(responsesMode string, profile responsesCreateRou
 		return responsesCreateRouteLocalStateViaUpstream
 	case responsesMode == config.ResponsesModeLocalOnly:
 		return responsesCreateRouteLocalOnlyUnsupported
+	case !profile.NativeResponsesProxy:
+		return responsesCreateRouteLocalOnlyUnsupported
 	default:
 		return responsesCreateRouteProxy
 	}
@@ -129,6 +132,7 @@ func buildResponsesCreateRouteInputs(
 	localMCPUnsupported := hasUnsupportedLocalMCPTools(rawFields)
 
 	return responsesCreateRouteInputs{
+		NativeResponsesProxy:               true,
 		HasLocalState:                      hasLocalState,
 		LocalToolLoop:                      !localContextManagement && supportsLocalToolLoop(rawFields),
 		LocalToolSearchRequested:           !localContextManagement && hasLocalToolSearchRequest(rawFields),

@@ -1,0 +1,40 @@
+id: multi_file
+title: Multi-file deterministic edit
+category: edit
+suites:
+  - codex-smoke
+  - codex-core
+  - codex-real-upstream
+timeout: 180s
+attempts: 2
+env:
+  LLAMA_SHIM_CODEX_MATRIX_WORKDIR: ${workspace}
+prompt: |
+  This is the Codex task matrix multi file case. Use exec_command to update both files exactly as follows.
+
+  app/config.txt must contain:
+  mode=matrix
+  feature=enabled
+
+  app/status.txt must contain:
+  status=updated
+
+  Then reply MULTIFILE.
+expected:
+  final_text_contains:
+    - MULTIFILE
+  files:
+    - path: app/config.txt
+      equals: |
+        mode=matrix
+        feature=enabled
+    - path: app/status.txt
+      equals: |
+        status=updated
+  codex_events:
+    - item.started:command_execution
+    - item.completed:agent_message
+    - turn.completed
+  forbidden_output:
+    - "<|tool_call"
+    - "<|tool_calls_section"

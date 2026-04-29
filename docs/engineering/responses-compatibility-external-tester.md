@@ -1,6 +1,6 @@
 # Responses Compatibility External Tester
 
-Last updated: April 28, 2026.
+Last updated: April 29, 2026.
 
 Status: repo-owned runner and Broad subset profile are in place. This is an
 engineering runbook, not a stronger hosted-parity claim.
@@ -56,7 +56,7 @@ The docs-backed baseline is:
 
 ## Latest Real-Upstream Ledger
 
-Last real-upstream check: April 28, 2026.
+Last real-upstream check: April 29, 2026.
 
 ### April 27, 2026 DeepSeek Diagnostic Run
 
@@ -332,6 +332,56 @@ and does not claim native OpenAI Structured Outputs parity for Qwen.
 For practical model ranking and manual-smoke order, see
 [Codex Upstream Model Matrix](codex-upstream-model-matrix.md).
 
+### April 29, 2026 MiMo v2.5 Pro Chat-Transport Green Run
+
+Configuration:
+
+- harness mode: operator-run real upstream through the shim
+- tester mode: `strict`
+- tester profile: `llama-shim-mimo-v2.5-pro`
+- upstream class: chat-only OpenAI-compatible gateway
+- shim setting: `responses.upstream_transport: chat_completions`
+- operator report name: `llama_shim_mimo_v2_5_pro_20260429_221715`
+
+Result:
+
+- `chat`: `READY`
+- `responses`: `READY`
+- total tests: `28`
+- passed tests: `28`
+- flaky cases: `0`
+- unsupported cases: `0`
+- incompatibilities: `0`
+
+The run passed the strict external tester profile through the shim, including
+Responses create/retrieve, generic SSE streaming, structured output,
+function/custom tools, constrained custom-tool grammar, `previous_response_id`,
+Conversations state, input-items, compaction, and direct Chat Completions
+checks.
+
+Evidence from shim logs:
+
+- The shim started with `responses_upstream_transport=chat_completions`, so
+  `/v1/responses` was owned locally by the shim while model generation used the
+  upstream `/v1/chat/completions` path.
+- No upstream `5xx`, timeout, or proxy failure was present during the run.
+- The only `400` responses were expected negative-shape checks from the tester.
+- Two compaction warnings came from a configured but unavailable local
+  model-assisted compaction backend at `127.0.0.1:1234`; the shim fell back to
+  heuristic compaction and the compaction tests still passed. Use
+  `responses.compaction.backend: heuristic` for cleaner external tester logs
+  when model-assisted compaction is not under test.
+
+Current interpretation:
+
+- This is a green real-upstream compatibility gate for the shim-owned
+  Responses-over-Chat transport against MiMo v2.5 Pro.
+- It does not prove native upstream `/v1/responses` parity for MiMo. The
+  configured transport deliberately bypasses native upstream Responses.
+- It does not prove Codex coding-task reliability. Run the Codex eval harness
+  or `make codex-cli-real-upstream-smoke` before adding MiMo to the practical
+  Codex baseline.
+
 ## Goal
 
 The external tester should validate observable OpenAI-compatible behavior for
@@ -574,6 +624,7 @@ they assert optional tool or transport behavior.
 | retrieve streaming | Stored response replay emits stable semantic events. | Broad subset; generic replay is acceptable where hosted choreography is unspecified. |
 | `/v1/responses/input_tokens` | Returns `response.input_tokens` object and deterministic local count. | Broad subset; exact upstream tokenizer parity is not claimed. |
 | `responses.mode` | `prefer_local`, `prefer_upstream`, and `local_only` keep documented fallback behavior. | Broad subset. |
+| `responses.upstream_transport` | `responses` keeps native upstream `/v1/responses` proxy/fallback paths; `chat_completions` tests shim-owned Responses-over-Chat for chat-only upstreams. | Broad subset; no native hosted Responses planner/tool parity in chat transport mode. |
 | Function/custom tools | Function/custom tool call shape, tool output follow-up, validation/repair boundaries. | Broad subset. |
 | Constrained decoding | Use capability flags to distinguish `shim_validate_repair` from `grammar_native`. | Broad subset, backend-specific. |
 | Local tool families | Test only families enabled in `/debug/capabilities`: `file_search`, `web_search`, `image_generation`, `computer`, `code_interpreter`, `mcp.server_url`, `tool_search`, native local `shell`, native local `apply_patch`. | Broad subset, local/runtime-specific. |

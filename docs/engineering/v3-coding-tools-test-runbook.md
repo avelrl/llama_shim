@@ -238,7 +238,7 @@ The task matrix smoke must verify four deterministic real-Codex tasks:
 
 - `basic_patch`: one-file text patch, final `PATCHED`
 - `bugfix_go`: tiny Go bugfix plus `go test ./...`, final `BUGFIXED`
-- `plan_doc`: deterministic `PLAN.md`, final `PLANNED`
+- `plan_doc`: writes `PLAN.md` with required planning markers, final `PLANNED`
 - `multi_file`: two-file workspace update, final `MULTIFILE`
 
 The WebSocket follow-up is tracked in [v3-websocket.md](../v3-websocket.md); the

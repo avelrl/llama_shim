@@ -4,12 +4,38 @@ Last updated: April 29, 2026.
 
 Task id: `v3-codex-eval-harness`
 
-Status: proposed, high priority.
+Status: Phase 1 implemented, Phase 2+ pending.
 
 This task defines a repeatable evaluation and regression loop for running the
 real Codex CLI through `llama_shim` against local or OpenAI-compatible upstream
 models. The goal is to stop relying on one-off manual Codex sessions as the
 primary compatibility signal.
+
+Implemented Phase 1 slice:
+
+- `cmd/codex-eval-runner`
+- `internal/codexeval`
+- manifest-backed task definitions under
+  `internal/codexeval/testdata/tasks`
+- `scripts/codex-eval-runner.sh`
+- Make targets:
+  - `make codex-eval-smoke`
+  - `make codex-eval-core`
+  - `make codex-eval-real-upstream`
+- isolated task workspace and `CODEX_HOME` per attempt
+- generated Codex custom-provider config
+- deterministic file, command, Codex event, and forbidden-output checkers
+- local artifacts under `.tmp/codex-eval-runs/<run-id>/`
+- markdown matrix generation from one or more `summary.json` files:
+  `go run ./cmd/codex-eval-runner matrix .tmp/codex-eval-runs`
+
+The implemented `codex-smoke` suite currently covers `boot`, `read_file`,
+`basic_patch`, `bugfix_go`, `command_recovery`, `plan_doc`, and `multi_file`.
+The initial `codex-core` suite currently reuses that deterministic set. The
+`codex-real-upstream` suite includes those tasks plus the first mixed
+text-plus-file-change regression task, `bugfix_mixed`, because that task
+requires real Codex file-change behavior rather than the devstack command
+fixture.
 
 This is a V3 quality and automation track. It does not change the frozen V2
 compatibility contract and must not strengthen any hosted OpenAI parity claim
@@ -288,6 +314,36 @@ For every run:
       failure.md
 ```
 
+To summarize multiple runs after testing several models:
+
+```bash
+go run ./cmd/codex-eval-runner matrix .tmp/codex-eval-runs
+```
+
+Or write the generated markdown to a local artifact:
+
+```bash
+go run ./cmd/codex-eval-runner matrix \
+  --out .tmp/codex-eval-runs/matrix.md \
+  .tmp/codex-eval-runs
+```
+
+The generated matrix is mechanical: date, run id, model, suite, pass count,
+retry-dependent task count, failure buckets, and failed tasks. Keep the
+human-written interpretation in
+`docs/engineering/codex-upstream-model-matrix.md`.
+
+That split is intentional:
+
+- generated matrix output is an audit trail and quick comparison view copied
+  directly from `summary.json`;
+- the model matrix document is where a human records interpretation: whether a
+  retry is acceptable, whether a failure was shim transport, model behavior, or
+  task/checker wording, and which model should be used for the next gate;
+- do not edit generated counts by hand; rerun the matrix generator instead;
+- do not paste every historical generated row into the model matrix. Keep only
+  meaningful baselines and explain why they matter.
+
 `summary.json` should include:
 
 - run id
@@ -347,6 +403,7 @@ Tasks:
 - `read_file`
 - `basic_patch`
 - `bugfix_go`
+- `command_recovery`
 - `plan_doc`
 - `multi_file`
 
@@ -369,7 +426,7 @@ Task families:
 - long stdout truncation
 - stderr handling
 - no-op task where Codex should not edit files
-- deterministic plan document generation
+- plan document generation with required semantic markers
 - mixed natural-language preamble plus tool edit
 - patch after reading context from multiple files
 - apply-patch/freeform path
@@ -484,6 +541,27 @@ actually passed.
 
 ## Implementation Phases
 
+Current status on April 29, 2026:
+
+- Phase 0 is complete: the previous smoke scripts remain documented and
+  available.
+- Phase 1 is implemented: the runner, manifests, isolated workspaces,
+  `CODEX_HOME`, summaries, artifacts, and deterministic checkers exist.
+- Phase 2 is partially implemented: Make targets exist and use the runner, but
+  older smoke scripts have not been deduplicated into shared runner logic.
+- Phase 3 has started: `command_recovery`, `bugfix_mixed`, raw-tool-markup
+  detection, and failure buckets exist, but `codex-core` is still a small suite
+  and does not yet contain the planned timeout, long-stdout, stderr, no-edit,
+  fallback-shell, and WebSocket variants.
+- Phase 4 has started: real-upstream runs and matrix generation exist, but
+  failed-task rerun, expected-quarantine, and packaged failure review are still
+  pending.
+- Phases 5 and 6 are still pending.
+
+Next practical milestone: finish Phase 4 enough for daily use by adding
+failed-task rerun and expected-quarantine support, then grow `codex-core`
+toward the Phase 3 task list.
+
 ### Phase 0: Preserve Current Smoke Behavior
 
 Deliverables:
@@ -520,6 +598,7 @@ Initial tasks:
 - `read_file`
 - `basic_patch`
 - `bugfix_go`
+- `command_recovery`
 - `plan_doc`
 - `multi_file`
 

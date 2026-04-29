@@ -24,7 +24,8 @@ Optional:
   CODEX_API_KEY=shim-dev-key
   CODEX_HOME=.tmp/codex-real-upstream-smoke/codex-home
   CODEX_REAL_SMOKE_WORKDIR=.tmp/codex-real-upstream-smoke
-  CODEX_REAL_SMOKE_CASES=boot,read,write,bugfix,bugfix_mixed
+  CODEX_REAL_SMOKE_CASES=boot,read,write,bugfix
+  CODEX_REAL_SMOKE_CASES=boot,read,write,bugfix,bugfix_mixed  # strict mixed text/tool case
   CODEX_REAL_SMOKE_CASE_ATTEMPTS=2
   CODEX_REAL_SMOKE_REASONING_EFFORT=minimal
   CODEX_REAL_SMOKE_WEBSOCKETS=false
@@ -57,7 +58,7 @@ api_key_env="${CODEX_API_KEY_ENV:-GW_API_KEY}"
 api_key_value="${CODEX_API_KEY:-${!api_key_env:-}}"
 base_dir="${CODEX_REAL_SMOKE_WORKDIR:-.tmp/codex-real-upstream-smoke}"
 codex_home="${CODEX_HOME:-${base_dir}/codex-home}"
-case_list="${CODEX_REAL_SMOKE_CASES:-boot,read,write,bugfix,bugfix_mixed}"
+case_list="${CODEX_REAL_SMOKE_CASES:-boot,read,write,bugfix}"
 case_attempts="${CODEX_REAL_SMOKE_CASE_ATTEMPTS:-2}"
 reasoning_effort="${CODEX_REAL_SMOKE_REASONING_EFFORT:-minimal}"
 supports_websockets="${CODEX_REAL_SMOKE_WEBSOCKETS:-false}"
@@ -186,7 +187,10 @@ require_no_unsupported_apply_patch() {
 
 require_no_raw_tool_call_markup() {
   local output_file="$1"
-  if grep -a -q '<|tool_call' "${output_file}" || grep -a -q '<|tool_calls_section' "${output_file}"; then
+  if grep -a -q '<|tool_call' "${output_file}" ||
+    grep -a -q '<|tool_calls_section' "${output_file}" ||
+    grep -a -q '<tool_call>' "${output_file}" ||
+    grep -a -q '<function=' "${output_file}"; then
     echo "Codex surfaced raw tool-call markup as text; upstream tool-call formatting is not reliable" >&2
     cat "${output_file}" >&2
     exit 1

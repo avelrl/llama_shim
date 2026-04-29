@@ -1,0 +1,26 @@
+id: bugfix_mixed
+title: Go bugfix with text before patch
+category: regression
+suites:
+  - codex-real-upstream
+timeout: 300s
+attempts: 2
+prompt: |
+  First say exactly MIXED_CAUSE_FOUND in a short sentence. Then inspect mathutil.go and mathutil_test.go, fix the bug, run tests, and finish with MIXED_BUGFIX_OK.
+expected:
+  final_text_contains:
+    - MIXED_BUGFIX_OK
+  files:
+    - path: mathutil.go
+      contains: "return a + b"
+  commands:
+    - name: go test
+      command: GOCACHE="$(pwd)/.gocache" go test ./...
+      timeout: 60s
+  codex_events:
+    - item.completed:agent_message
+    - item.started:file_change
+    - turn.completed
+  forbidden_output:
+    - "<|tool_call"
+    - "<|tool_calls_section"

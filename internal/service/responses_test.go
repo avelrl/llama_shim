@@ -469,25 +469,48 @@ func TestCreateResponseTruncatesToolOutputSummaryForLocalGeneration(t *testing.T
 func TestCreateResponseRepairsRawToolMarkupAfterToolOutput(t *testing.T) {
 	t.Parallel()
 
-	generator := &sequenceGenerator{outputs: []string{
-		`<|tool_calls_section_begin|><|tool_call_begin|>functions.command:0<|tool_call_argument_begin|>{"command":"cat README.md"}<|tool_call_end|><|tool_calls_section_end|>`,
-		"READ_OK",
-	}}
-	svc := service.NewResponseService(noopResponseStore{}, noopConversationStore{}, generator)
+	cases := []struct {
+		name   string
+		markup string
+	}{
+		{
+			name:   "kimi_section",
+			markup: `<|tool_calls_section_begin|><|tool_call_begin|>functions.command:0<|tool_call_argument_begin|>{"command":"cat README.md"}<|tool_call_end|><|tool_calls_section_end|>`,
+		},
+		{
+			name: "xml_tool_call",
+			markup: `<tool_call>
+<function>exec_command>
+<parameter>command>cat README.md</parameter>
+</function>
+</tool_call>`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-	response, err := svc.Create(context.Background(), service.CreateResponseInput{
-		Model: "test-model",
-		Input: json.RawMessage(`[
-			{"type":"message","role":"user","content":"Read README.md and answer with READ_OK."},
-			{"type":"shell_call_output","call_id":"call_read","output":"codex-smoke-token: llama-shim-42\n"}
-		]`),
-		RequestJSON: `{"model":"test-model"}`,
-	})
-	require.NoError(t, err)
-	require.Equal(t, "READ_OK", response.OutputText)
+			generator := &sequenceGenerator{outputs: []string{
+				tc.markup,
+				"READ_OK",
+			}}
+			svc := service.NewResponseService(noopResponseStore{}, noopConversationStore{}, generator)
 
-	require.Len(t, generator.contexts, 2)
-	require.Contains(t, domain.MessageText(generator.contexts[1][len(generator.contexts[1])-1]), "previous draft attempted to print internal tool-call markup")
+			response, err := svc.Create(context.Background(), service.CreateResponseInput{
+				Model: "test-model",
+				Input: json.RawMessage(`[
+					{"type":"message","role":"user","content":"Read README.md and answer with READ_OK."},
+					{"type":"shell_call_output","call_id":"call_read","output":"codex-smoke-token: llama-shim-42\n"}
+				]`),
+				RequestJSON: `{"model":"test-model"}`,
+			})
+			require.NoError(t, err)
+			require.Equal(t, "READ_OK", response.OutputText)
+
+			require.Len(t, generator.contexts, 2)
+			require.Contains(t, domain.MessageText(generator.contexts[1][len(generator.contexts[1])-1]), "previous draft attempted to print internal tool-call markup")
+		})
+	}
 }
 
 func TestCreateStreamBuffersPostToolAnswerAndRepairsBeforeDelta(t *testing.T) {
