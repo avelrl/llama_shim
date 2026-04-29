@@ -35,6 +35,27 @@ v1 supports:
 - exact hosted-parity and advanced transport backlog:
   [docs/v5-scope.md](docs/v5-scope.md)
 
+## Tested Upstream Models
+
+The model list below is an operator test set for shim-through-upstream checks,
+not a general benchmark and not a claim of native OpenAI-hosted parity. Keep
+the detailed evidence and run notes in
+[docs/engineering/codex-upstream-model-matrix.md](docs/engineering/codex-upstream-model-matrix.md).
+
+| Model / upstream | Primary test role |
+| --- | --- |
+| DeepSeek V4 Pro | strongest current API compatibility gate for the broad shim surface |
+| Qwen3.6-35B-A3B | practical Codex coding smoke and manual task loop checks |
+| Kimi K2.6 | long-context and provider-specific compatibility experiments |
+| MiMo v2.5 Pro | chat-only Responses-over-Chat gate and Codex eval candidate |
+
+Special thanks to XiaomiMiMo for the public MiMo Orbit initiative and the API
+access that made the April 29, 2026 MiMo v2.5 Pro real-upstream run possible:
+[100t.xiaomimimo.com](https://100t.xiaomimimo.com/). The run produced a clean
+28/28 strict external-tester result for the shim-owned Responses-over-Chat
+path. The README claim stays conservative: this proves the tested chat
+transport path, not native upstream `/v1/responses` parity.
+
 ## Documentation
 
 - practical guides: [docs/guides/README.md](docs/guides/README.md)
