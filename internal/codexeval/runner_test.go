@@ -3,6 +3,7 @@ package codexeval
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -45,4 +46,77 @@ func TestWriteCodexConfigDoesNotAddDeveloperInstructionsForOtherModels(t *testin
 	if strings.Contains(string(raw), "developer_instructions") {
 		t.Fatalf("generated config unexpectedly contains developer_instructions:\n%s", raw)
 	}
+}
+
+func TestLoadSelectedTasksFiltersExplicitTaskIDsAcrossSuites(t *testing.T) {
+	runner := NewRunner(Config{
+		TasksDir: "testdata/tasks",
+		Suite:    "codex-smoke",
+		TaskIDs:  []string{"bugfix_mixed", "read_file"},
+	})
+
+	tasks, err := runner.loadSelectedTasks()
+	if err != nil {
+		t.Fatalf("loadSelectedTasks() error = %v", err)
+	}
+	if got, want := taskIDs(tasks), []string{"bugfix_mixed", "read_file"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("task ids = %v, want %v", got, want)
+	}
+}
+
+func TestLoadSelectedTasksRerunsFailedTasksFromSummary(t *testing.T) {
+	runDir := t.TempDir()
+	summary := Summary{
+		Tasks: []TaskResult{
+			{ID: "boot", Status: StatusPassed},
+			{ID: "bugfix_mixed", Status: StatusFailedChecker},
+			{ID: "plan_doc", Status: StatusQuarantined},
+			{ID: "multi_file", Status: StatusFailedTimeout},
+		},
+	}
+	if err := writeJSON(filepath.Join(runDir, "summary.json"), summary); err != nil {
+		t.Fatalf("write summary: %v", err)
+	}
+	runner := NewRunner(Config{
+		TasksDir:        "testdata/tasks",
+		Suite:           "codex-smoke",
+		RerunFailedFrom: runDir,
+	})
+
+	tasks, err := runner.loadSelectedTasks()
+	if err != nil {
+		t.Fatalf("loadSelectedTasks() error = %v", err)
+	}
+	if got, want := taskIDs(tasks), []string{"bugfix_mixed", "multi_file"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("task ids = %v, want %v", got, want)
+	}
+}
+
+func TestLoadSelectedTasksRerunFailsWhenSummaryHasNoFailures(t *testing.T) {
+	runDir := t.TempDir()
+	summary := Summary{
+		Tasks: []TaskResult{
+			{ID: "boot", Status: StatusPassed},
+			{ID: "plan_doc", Status: StatusSkipped},
+		},
+	}
+	if err := writeJSON(filepath.Join(runDir, "summary.json"), summary); err != nil {
+		t.Fatalf("write summary: %v", err)
+	}
+	runner := NewRunner(Config{
+		TasksDir:        "testdata/tasks",
+		RerunFailedFrom: runDir,
+	})
+
+	if _, err := runner.loadSelectedTasks(); err == nil {
+		t.Fatalf("expected no failed tasks error")
+	}
+}
+
+func taskIDs(tasks []Task) []string {
+	ids := make([]string, 0, len(tasks))
+	for _, task := range tasks {
+		ids = append(ids, task.Manifest.ID)
+	}
+	return ids
 }

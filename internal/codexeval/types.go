@@ -38,6 +38,8 @@ const (
 type Config struct {
 	TasksDir            string
 	Suite               string
+	TaskIDs             []string
+	RerunFailedFrom     string
 	OutDir              string
 	ShimBaseURL         string
 	BaseURL             string
@@ -114,24 +116,26 @@ type CommandExpectation struct {
 }
 
 type Environment struct {
-	RunID              string `json:"run_id"`
-	StartedAt          string `json:"started_at"`
-	GitCommit          string `json:"git_commit,omitempty"`
-	GitDirty           bool   `json:"git_dirty"`
-	CodexBin           string `json:"codex_bin"`
-	CodexVersion       string `json:"codex_version,omitempty"`
-	Model              string `json:"model"`
-	Provider           string `json:"provider"`
-	ShimBaseURL        string `json:"shim_base_url"`
-	BaseURL            string `json:"base_url"`
-	APIKeyEnv          string `json:"api_key_env"`
-	APIKeyPresent      bool   `json:"api_key_present"`
-	Suite              string `json:"suite"`
-	WebSockets         bool   `json:"websockets"`
-	UnifiedExec        bool   `json:"unified_exec"`
-	ApplyPatchFreeform bool   `json:"apply_patch_freeform"`
-	ReasoningEffort    string `json:"reasoning_effort"`
-	ReasoningSummary   string `json:"reasoning_summary"`
+	RunID              string   `json:"run_id"`
+	StartedAt          string   `json:"started_at"`
+	GitCommit          string   `json:"git_commit,omitempty"`
+	GitDirty           bool     `json:"git_dirty"`
+	CodexBin           string   `json:"codex_bin"`
+	CodexVersion       string   `json:"codex_version,omitempty"`
+	Model              string   `json:"model"`
+	Provider           string   `json:"provider"`
+	ShimBaseURL        string   `json:"shim_base_url"`
+	BaseURL            string   `json:"base_url"`
+	APIKeyEnv          string   `json:"api_key_env"`
+	APIKeyPresent      bool     `json:"api_key_present"`
+	Suite              string   `json:"suite"`
+	TaskIDs            []string `json:"task_ids,omitempty"`
+	RerunFailedFrom    string   `json:"rerun_failed_from,omitempty"`
+	WebSockets         bool     `json:"websockets"`
+	UnifiedExec        bool     `json:"unified_exec"`
+	ApplyPatchFreeform bool     `json:"apply_patch_freeform"`
+	ReasoningEffort    string   `json:"reasoning_effort"`
+	ReasoningSummary   string   `json:"reasoning_summary"`
 }
 
 type Summary struct {

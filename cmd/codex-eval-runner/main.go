@@ -23,6 +23,8 @@ func main() {
 	var config codexeval.Config
 	flag.StringVar(&config.TasksDir, "tasks-dir", envString("CODEX_EVAL_TASKS_DIR", "internal/codexeval/testdata/tasks"), "task manifest directory")
 	flag.StringVar(&config.Suite, "suite", envString("CODEX_EVAL_SUITE", "codex-smoke"), "task suite")
+	taskIDs := flag.String("tasks", envString("CODEX_EVAL_TASKS", ""), "comma-separated task ids to run; selects tasks across suites")
+	flag.StringVar(&config.RerunFailedFrom, "rerun-failed-from", envString("CODEX_EVAL_RERUN_FAILED_FROM", ""), "summary.json or run directory whose failed tasks should be rerun")
 	flag.StringVar(&config.OutDir, "out", envString("CODEX_EVAL_OUT", ""), "artifact output directory")
 	flag.StringVar(&config.ShimBaseURL, "shim-base-url", envString("SHIM_BASE_URL", "http://127.0.0.1:18080"), "shim base URL")
 	flag.StringVar(&config.BaseURL, "base-url", envString("CODEX_BASE_URL", ""), "Codex provider base URL")
@@ -44,6 +46,7 @@ func main() {
 	flag.IntVar(&config.StreamMaxRetries, "stream-max-retries", envInt("CODEX_EVAL_STREAM_MAX_RETRIES", 0), "Codex provider stream retries")
 	flag.IntVar(&config.StreamIdleTimeoutMS, "stream-idle-timeout-ms", envInt("CODEX_EVAL_STREAM_IDLE_TIMEOUT_MS", 180000), "Codex provider stream idle timeout")
 	flag.Parse()
+	config.TaskIDs = parseCSV(*taskIDs)
 
 	if config.APIKeyValue == "" && config.APIKeyEnv != "" {
 		config.APIKeyValue = os.Getenv(config.APIKeyEnv)
@@ -137,4 +140,16 @@ func envBool(key string, fallback bool) bool {
 	default:
 		return fallback
 	}
+}
+
+func parseCSV(raw string) []string {
+	parts := strings.Split(raw, ",")
+	values := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			values = append(values, part)
+		}
+	}
+	return values
 }

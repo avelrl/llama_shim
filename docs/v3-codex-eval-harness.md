@@ -4,7 +4,8 @@ Last updated: April 30, 2026.
 
 Task id: `v3-codex-eval-harness`
 
-Status: Phase 4 partially implemented; Phase 5+ pending.
+Status: Phase 4 mostly implemented; packaged failure review and Phase 5+
+pending.
 
 This task defines a repeatable evaluation and regression loop for running the
 real Codex CLI through `llama_shim` against local or OpenAI-compatible upstream
@@ -26,6 +27,7 @@ Implemented slice through the current Phase 4 work:
 - generated Codex custom-provider config
 - deterministic file, command, Codex event, and forbidden-output checkers
 - local artifacts under `.tmp/codex-eval-runs/<run-id>/`
+- task-id filtering and failed-task rerun from a previous `summary.json`
 - markdown matrix generation from one or more `summary.json` files:
   `go run ./cmd/codex-eval-runner matrix .tmp/codex-eval-runs`
 
@@ -282,6 +284,8 @@ Environment and flags should cover:
 - `CODEX_API_KEY_ENV`
 - `CODEX_API_KEY`
 - `CODEX_EVAL_SUITE`
+- `CODEX_EVAL_TASKS`
+- `CODEX_EVAL_RERUN_FAILED_FROM`
 - `CODEX_EVAL_OUT`
 - `CODEX_EVAL_PARALLELISM`
 - `CODEX_EVAL_ATTEMPTS`
@@ -295,6 +299,27 @@ Environment and flags should cover:
 Default to serial execution for the first version. Codex tasks mutate
 workspaces, produce logs, and can stress one upstream model; parallelism should
 be explicit.
+
+Run an explicit subset by task id:
+
+```bash
+CODEX_EVAL_TASKS=basic_patch,bugfix_mixed \
+  CODEX_EVAL_SUITE=codex-real-upstream \
+  bash ./scripts/codex-eval-runner.sh
+```
+
+Rerun only tasks that failed in an earlier run. The value can be either a run
+directory or the exact `summary.json` path:
+
+```bash
+CODEX_EVAL_RERUN_FAILED_FROM=.tmp/codex-eval-runs/run-20260430T215102Z \
+  CODEX_EVAL_SUITE=codex-real-upstream \
+  bash ./scripts/codex-eval-runner.sh
+```
+
+When explicit task ids or failed-task rerun are used, the runner resolves task
+ids across all committed task manifests rather than only the named suite. The
+suite still records the intended run profile in the output environment.
 
 ## Runner Outputs
 
@@ -554,7 +579,7 @@ actually passed.
 
 ## Implementation Phases
 
-Current status on April 29, 2026:
+Current status on April 30, 2026:
 
 - Phase 0 is complete: the previous smoke scripts remain documented and
   available.
@@ -566,18 +591,17 @@ Current status on April 29, 2026:
   detection, and failure buckets exist, but `codex-core` is still a small suite
   and does not yet contain the planned timeout, long-stdout, stderr, no-edit,
   fallback-shell, and WebSocket variants.
-- Phase 4 has started: real-upstream runs and matrix generation exist, but
-  failed-task rerun, expected-quarantine, and packaged failure review are still
-  pending.
+- Phase 4 is mostly implemented: real-upstream runs, manifest quarantine,
+  task-id filtering, failed-task rerun, and matrix generation exist. Packaged
+  failure review bundles are still pending.
 - A Qwen-specific `developer_instructions` injection experiment was tried and
   removed. It reduced the April 30 Qwen eval result from the prior 7/8 and 8/8
   baselines to 5/8 by increasing protocol-shaped final text such as
   `<resolve_conflicts>` and `<toolCall::apply_patch>`.
 - Phases 5 and 6 are still pending.
 
-Next practical milestone: finish Phase 4 enough for daily use by adding
-failed-task rerun and expected-quarantine support, then grow `codex-core`
-toward the Phase 3 task list.
+Next practical milestone: finish Phase 4 by adding packaged failure review
+bundles, then grow `codex-core` toward the Phase 3 task list.
 
 ### Phase 0: Preserve Current Smoke Behavior
 
@@ -684,6 +708,16 @@ Exit criteria:
 - local Qwen 3.6 run produces a stable `summary.json`
 - failures can be rerun by id
 - failures can be packed for frontier-model review
+
+Implemented so far:
+
+- `CODEX_EVAL_TASKS` and `--tasks` run explicit task ids.
+- `CODEX_EVAL_RERUN_FAILED_FROM` and `--rerun-failed-from` rerun tasks whose
+  previous `summary.json` status was not `passed`, `skipped`, or
+  `quarantined`.
+- The matrix generator summarizes multiple local run directories.
+- Current per-model baselines are recorded in
+  `docs/engineering/codex-upstream-model-matrix.md`.
 
 ### Phase 5: Regression Import Workflow
 

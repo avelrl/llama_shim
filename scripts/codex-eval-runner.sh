@@ -24,6 +24,8 @@ Optional:
   CODEX_BASE_URL=$SHIM_BASE_URL/v1
   CODEX_API_KEY=shim-dev-key
   CODEX_EVAL_OUT=.tmp/codex-eval-runs/<run-id>
+  CODEX_EVAL_TASKS=basic_patch,bugfix_mixed
+  CODEX_EVAL_RERUN_FAILED_FROM=.tmp/codex-eval-runs/<previous-run-id>
   CODEX_EVAL_ATTEMPTS=2
   CODEX_EVAL_REASONING_EFFORT=minimal
   CODEX_EVAL_REASONING_SUMMARY=none

@@ -32,12 +32,12 @@ func (runner *Runner) Run(ctx context.Context) (*Summary, error) {
 		return nil, fmt.Errorf("create out dir: %w", err)
 	}
 
-	tasks, err := LoadTasks(runner.config.TasksDir, runner.config.Suite)
+	tasks, err := runner.loadSelectedTasks()
 	if err != nil {
 		return nil, err
 	}
 	if len(tasks) == 0 {
-		return nil, fmt.Errorf("no tasks matched suite %q in %s", runner.config.Suite, runner.config.TasksDir)
+		return nil, fmt.Errorf("no tasks matched selection in %s", runner.config.TasksDir)
 	}
 
 	env := runner.environment(started)
@@ -152,12 +152,100 @@ func (runner *Runner) environment(started time.Time) Environment {
 		APIKeyEnv:          runner.config.APIKeyEnv,
 		APIKeyPresent:      runner.config.APIKeyValue != "",
 		Suite:              runner.config.Suite,
+		TaskIDs:            append([]string(nil), runner.config.TaskIDs...),
+		RerunFailedFrom:    runner.config.RerunFailedFrom,
 		WebSockets:         runner.config.WebSockets,
 		UnifiedExec:        runner.config.UnifiedExec,
 		ApplyPatchFreeform: runner.config.ApplyPatchFreeform,
 		ReasoningEffort:    runner.config.ReasoningEffort,
 		ReasoningSummary:   runner.config.ReasoningSummary,
 	}
+}
+
+func (runner *Runner) loadSelectedTasks() ([]Task, error) {
+	selectedIDs := append([]string(nil), runner.config.TaskIDs...)
+	if runner.config.RerunFailedFrom != "" {
+		failedIDs, err := failedTaskIDsFromSummary(runner.config.RerunFailedFrom)
+		if err != nil {
+			return nil, err
+		}
+		if len(failedIDs) == 0 && len(selectedIDs) == 0 {
+			return nil, fmt.Errorf("no failed tasks in %s", runner.config.RerunFailedFrom)
+		}
+		selectedIDs = append(selectedIDs, failedIDs...)
+	}
+
+	suite := runner.config.Suite
+	if len(selectedIDs) > 0 {
+		suite = ""
+	}
+	tasks, err := LoadTasks(runner.config.TasksDir, suite)
+	if err != nil {
+		return nil, err
+	}
+	if len(selectedIDs) == 0 {
+		return tasks, nil
+	}
+	return filterTasksByIDs(tasks, selectedIDs)
+}
+
+func failedTaskIDsFromSummary(path string) ([]string, error) {
+	summaryPath := path
+	if info, err := os.Stat(summaryPath); err == nil && info.IsDir() {
+		summaryPath = filepath.Join(summaryPath, "summary.json")
+	}
+	raw, err := os.ReadFile(summaryPath)
+	if err != nil {
+		return nil, fmt.Errorf("read rerun summary %s: %w", summaryPath, err)
+	}
+	var summary Summary
+	if err := json.Unmarshal(raw, &summary); err != nil {
+		return nil, fmt.Errorf("parse rerun summary %s: %w", summaryPath, err)
+	}
+	ids := make([]string, 0)
+	for _, task := range summary.Tasks {
+		switch task.Status {
+		case StatusPassed, StatusSkipped, StatusQuarantined:
+			continue
+		default:
+			if task.ID != "" {
+				ids = append(ids, task.ID)
+			}
+		}
+	}
+	return ids, nil
+}
+
+func filterTasksByIDs(tasks []Task, ids []string) ([]Task, error) {
+	taskByID := make(map[string]Task, len(tasks))
+	for _, task := range tasks {
+		taskByID[task.Manifest.ID] = task
+	}
+	selected := make([]Task, 0, len(ids))
+	seen := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		if !taskIDPattern.MatchString(id) {
+			return nil, fmt.Errorf("invalid task id %q", id)
+		}
+		task, ok := taskByID[id]
+		if !ok {
+			return nil, fmt.Errorf("selected task %q not found in %s", id, tasksRootForError(tasks))
+		}
+		selected = append(selected, task)
+	}
+	return selected, nil
+}
+
+func tasksRootForError(tasks []Task) string {
+	if len(tasks) == 0 {
+		return "task set"
+	}
+	return filepath.Dir(tasks[0].Dir)
 }
 
 func (runner *Runner) preflight(ctx context.Context) error {
