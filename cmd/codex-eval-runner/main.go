@@ -15,9 +15,15 @@ import (
 )
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "matrix" {
-		runMatrix(os.Args[2:])
-		return
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "matrix":
+			runMatrix(os.Args[2:])
+			return
+		case "failure-bundle":
+			runFailureBundle(os.Args[2:])
+			return
+		}
 	}
 
 	var config codexeval.Config
@@ -96,6 +102,39 @@ func runMatrix(args []string) {
 		os.Exit(1)
 	}
 	fmt.Printf("codex eval matrix: %s\n", *out)
+}
+
+func runFailureBundle(args []string) {
+	flags := flag.NewFlagSet("failure-bundle", flag.ExitOnError)
+	out := flags.String("out", envString("CODEX_EVAL_FAILURE_BUNDLE_OUT", ""), "write markdown failure bundle to this file instead of stdout")
+	if err := flags.Parse(args); err != nil {
+		fmt.Fprintf(os.Stderr, "codex eval failure bundle failed: %v\n", err)
+		os.Exit(2)
+	}
+	if flags.NArg() != 1 {
+		fmt.Fprintf(os.Stderr, "codex eval failure bundle failed: expected one run directory or summary.json path\n")
+		os.Exit(2)
+	}
+	markdown, err := codexeval.RenderFailureBundleMarkdown(flags.Arg(0))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "codex eval failure bundle failed: %v\n", err)
+		os.Exit(1)
+	}
+	if strings.TrimSpace(*out) == "" {
+		fmt.Print(markdown)
+		return
+	}
+	if dir := filepath.Dir(*out); dir != "." {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			fmt.Fprintf(os.Stderr, "codex eval failure bundle failed: %v\n", err)
+			os.Exit(1)
+		}
+	}
+	if err := os.WriteFile(*out, []byte(markdown), 0o644); err != nil {
+		fmt.Fprintf(os.Stderr, "codex eval failure bundle failed: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("codex eval failure bundle: %s\n", *out)
 }
 
 func envString(key, fallback string) string {

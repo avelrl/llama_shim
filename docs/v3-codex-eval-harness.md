@@ -4,8 +4,8 @@ Last updated: April 30, 2026.
 
 Task id: `v3-codex-eval-harness`
 
-Status: Phase 4 mostly implemented; packaged failure review and Phase 5+
-pending.
+Status: Phase 4 daily-loop tooling implemented; Phase 3 suite expansion and
+Phase 5+ pending.
 
 This task defines a repeatable evaluation and regression loop for running the
 real Codex CLI through `llama_shim` against local or OpenAI-compatible upstream
@@ -28,6 +28,8 @@ Implemented slice through the current Phase 4 work:
 - deterministic file, command, Codex event, and forbidden-output checkers
 - local artifacts under `.tmp/codex-eval-runs/<run-id>/`
 - task-id filtering and failed-task rerun from a previous `summary.json`
+- failure bundle generation for frontier-model review:
+  `go run ./cmd/codex-eval-runner failure-bundle .tmp/codex-eval-runs/<run-id>`
 - markdown matrix generation from one or more `summary.json` files:
   `go run ./cmd/codex-eval-runner matrix .tmp/codex-eval-runs`
 
@@ -363,6 +365,19 @@ retry-dependent task count, failure buckets, and failed tasks. Keep the
 human-written interpretation in
 `docs/engineering/codex-upstream-model-matrix.md`.
 
+To package failed-task artifacts for review:
+
+```bash
+go run ./cmd/codex-eval-runner failure-bundle \
+  --out .tmp/codex-eval-runs/failure-bundle.md \
+  .tmp/codex-eval-runs/<run-id>
+```
+
+The failure bundle includes failed task ids, status and failure buckets, attempt
+metadata, Codex event summaries, checker failures, final text, copied
+`task.yaml`, `git.diff`, and `failure.md` when those artifacts exist. It is a
+local debug artifact and should not be committed.
+
 That split is intentional:
 
 - generated matrix output is an audit trail and quick comparison view copied
@@ -591,17 +606,16 @@ Current status on April 30, 2026:
   detection, and failure buckets exist, but `codex-core` is still a small suite
   and does not yet contain the planned timeout, long-stdout, stderr, no-edit,
   fallback-shell, and WebSocket variants.
-- Phase 4 is mostly implemented: real-upstream runs, manifest quarantine,
-  task-id filtering, failed-task rerun, and matrix generation exist. Packaged
-  failure review bundles are still pending.
+- Phase 4 daily-loop tooling is implemented: real-upstream runs, manifest
+  quarantine, task-id filtering, failed-task rerun, matrix generation, and
+  packaged failure review bundles exist.
 - A Qwen-specific `developer_instructions` injection experiment was tried and
   removed. It reduced the April 30 Qwen eval result from the prior 7/8 and 8/8
   baselines to 5/8 by increasing protocol-shaped final text such as
   `<resolve_conflicts>` and `<toolCall::apply_patch>`.
 - Phases 5 and 6 are still pending.
 
-Next practical milestone: finish Phase 4 by adding packaged failure review
-bundles, then grow `codex-core` toward the Phase 3 task list.
+Next practical milestone: grow `codex-core` toward the Phase 3 task list.
 
 ### Phase 0: Preserve Current Smoke Behavior
 
@@ -716,6 +730,8 @@ Implemented so far:
   previous `summary.json` status was not `passed`, `skipped`, or
   `quarantined`.
 - The matrix generator summarizes multiple local run directories.
+- The `failure-bundle` subcommand packages failed-task artifacts into one
+  markdown file for frontier-model review.
 - Current per-model baselines are recorded in
   `docs/engineering/codex-upstream-model-matrix.md`.
 

@@ -10,6 +10,10 @@ Usage:
 
   ./scripts/codex-eval-runner.sh matrix .tmp/codex-eval-runs
 
+  ./scripts/codex-eval-runner.sh failure-bundle \
+    --out .tmp/codex-eval-runs/failure-bundle.md \
+    .tmp/codex-eval-runs/<run-id>
+
 Common real-upstream usage:
   SHIM_BASE_URL=http://127.0.0.1:8080 \
   CODEX_MODEL=Qwen3.6-35B-A3B \
@@ -33,6 +37,7 @@ Optional:
   CODEX_EVAL_UNIFIED_EXEC=true
   CODEX_EVAL_APPLY_PATCH_FREEFORM=true
   CODEX_EVAL_MATRIX_OUT=.tmp/codex-eval-runs/matrix.md
+  CODEX_EVAL_FAILURE_BUNDLE_OUT=.tmp/codex-eval-runs/failure-bundle.md
 EOF
 }
 
