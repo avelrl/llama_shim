@@ -70,6 +70,7 @@ const (
 	defaultStoredResponseLineageMaxItems   = 128
 	defaultLocalToolOutputSummaryMaxBytes  = 64 << 10
 	localToolOutputSummaryTruncationNotice = "\n\n[truncated by shim local tool output summary limit]"
+	maxLocalTextRawToolMarkupRepairRetries = 2
 )
 
 func NewResponseService(responses ResponseStore, conversations ConversationStore, generator Generator) *ResponseService {
@@ -499,23 +500,20 @@ func (s *ResponseService) CreateStream(ctx context.Context, input CreateResponse
 }
 
 func (s *ResponseService) generateLocalResponseText(ctx context.Context, input CreateResponseInput, generationContext []domain.Item, repairRawToolMarkup bool) (string, error) {
-	outputText, err := s.generator.Generate(ctx, input.Model, generationContext, input.GenerationOptions)
-	if err != nil {
-		return "", err
+	contextItems := generationContext
+	for repairAttempt := 0; ; repairAttempt++ {
+		outputText, err := s.generator.Generate(ctx, input.Model, contextItems, input.GenerationOptions)
+		if err != nil {
+			return "", err
+		}
+		if !repairRawToolMarkup || !containsRawToolCallMarkupText(outputText) {
+			return outputText, nil
+		}
+		if repairAttempt >= maxLocalTextRawToolMarkupRepairRetries {
+			return "", &llama.InvalidResponseError{Message: "llama assistant content contained raw tool-call markup"}
+		}
+		contextItems = appendRawToolMarkupRepairInstruction(generationContext)
 	}
-	if !repairRawToolMarkup || !containsRawToolCallMarkupText(outputText) {
-		return outputText, nil
-	}
-
-	repairedContext := appendRawToolMarkupRepairInstruction(generationContext)
-	outputText, err = s.generator.Generate(ctx, input.Model, repairedContext, input.GenerationOptions)
-	if err != nil {
-		return "", err
-	}
-	if containsRawToolCallMarkupText(outputText) {
-		return "", &llama.InvalidResponseError{Message: "llama assistant content contained raw tool-call markup"}
-	}
-	return outputText, nil
 }
 
 func buildLocalTextGenerationContext(items []domain.Item, maxToolOutputSummaryBytes int) ([]domain.Item, bool, error) {
@@ -682,8 +680,24 @@ func rawToolCallMarkupTextMarkers() []string {
 	return []string{
 		"<|tool_call",
 		"<|tool_calls_section",
+		"<|mask_start|",
+		"<|mask_end|",
+		"<prelude>",
+		"</prelude>",
+		"<tool call:",
+		"[Tool call:",
+		"<function_call>",
+		"</function_call>",
+		"<function_call_output",
+		"<FUNCTION_CALL_OUTPUT",
+		"<apply_patch>",
+		"</apply_patch>",
+		"<command>",
+		"</command>",
 		"<tool_call",
 		"</tool_call>",
+		"<tool_code_call>",
+		"</tool_code_call>",
 		"<tool_code>",
 		"<invoke name=",
 		"<read_file>",

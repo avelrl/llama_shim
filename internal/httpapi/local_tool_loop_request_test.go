@@ -160,6 +160,50 @@ func TestBuildChatCompletionMessagesFromItemsSynthesizesMissingApplyPatchOutput(
 	require.Equal(t, "user", messages[3]["role"])
 }
 
+func TestParseLocalToolLoopChatCompletionRepairsApplyPatchRepeatedEnvelopes(t *testing.T) {
+	descriptor := customToolDescriptor{
+		Name:          "apply_patch",
+		SyntheticName: syntheticCustomToolName("", "apply_patch"),
+		Constraint:    mustApplyPatchCustomToolConstraint(t),
+		Transport:     customToolTransportLocalConstrained,
+	}
+	plan := customToolTransportPlan{
+		Mode: customToolsModeBridge,
+		Bridge: customToolBridge{
+			ByModelName: map[string]customToolDescriptor{
+				"apply_patch": descriptor,
+			},
+			BySynthetic: map[string]customToolDescriptor{
+				descriptor.SyntheticName: descriptor,
+			},
+			ByCanonical: map[string]customToolDescriptor{
+				canonicalCustomToolKey("", "apply_patch"): descriptor,
+			},
+		},
+	}
+
+	raw := []byte(`{
+		"choices": [{
+			"message": {
+				"tool_calls": [{
+					"id": "call_patch",
+					"type": "function",
+					"function": {
+						"name": "apply_patch",
+						"arguments": "{\"input\":\"*** Begin Patch\\n*** Update File: app/config.txt\\n@@ \\n mode=matrix\\n-feature=disabled\\n+feature=enabled\\n*** End Patch\\n*** Begin Patch\\n*** Update File: app/status.txt\\n@@ \\n-status=todo\\n+status=updated\\n*** End Patch\"}"
+					}
+				}]
+			}
+		}]
+	}`)
+
+	response, err := parseLocalToolLoopChatCompletion(raw, "resp_test", "test-model", "", "", plan)
+	require.NoError(t, err)
+	require.Len(t, response.Output, 1)
+	require.Equal(t, "custom_tool_call", response.Output[0].Type)
+	require.Equal(t, "*** Begin Patch\n*** Update File: app/config.txt\n@@\n mode=matrix\n-feature=disabled\n+feature=enabled\n*** Update File: app/status.txt\n@@\n-status=todo\n+status=updated\n*** End Patch", response.Output[0].Input())
+}
+
 func mustDomainItem(t *testing.T, raw string) domain.Item {
 	t.Helper()
 

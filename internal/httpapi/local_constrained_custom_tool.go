@@ -711,6 +711,9 @@ func parseLocalConstrainedCustomToolRuntimeOutput(raw string, descriptor customT
 	if err := json.Unmarshal(rawInput, &input); err != nil {
 		return "", &llama.InvalidResponseError{Message: fmt.Sprintf("shim-local constrained custom tool %s input field must be a string", descriptor.Name)}
 	}
+	if repaired, ok := repairConstrainedCustomToolInput(descriptor, input); ok {
+		input = repaired
+	}
 	if err := descriptor.Constraint.Validate(input); err != nil {
 		return "", &llama.InvalidResponseError{Message: fmt.Sprintf("shim-local constrained custom tool %s returned invalid constrained input: %v", descriptor.Name, err)}
 	}
@@ -721,6 +724,9 @@ func parseRawConstrainedCustomToolRuntimeOutput(raw string, descriptor customToo
 	input := strings.TrimSpace(raw)
 	if input == "" {
 		return "", &llama.InvalidResponseError{Message: fmt.Sprintf("shim-local constrained custom tool %s returned empty raw constrained output", descriptor.Name)}
+	}
+	if repaired, ok := repairConstrainedCustomToolInput(descriptor, input); ok {
+		input = repaired
 	}
 	if err := descriptor.Constraint.Validate(input); err != nil {
 		return "", &llama.InvalidResponseError{Message: fmt.Sprintf("shim-local constrained custom tool %s returned invalid raw constrained input: %v", descriptor.Name, err)}

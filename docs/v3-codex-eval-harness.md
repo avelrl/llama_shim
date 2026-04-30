@@ -1,17 +1,17 @@
 # V3 Codex Eval Harness
 
-Last updated: April 29, 2026.
+Last updated: April 30, 2026.
 
 Task id: `v3-codex-eval-harness`
 
-Status: Phase 1 implemented, Phase 2+ pending.
+Status: Phase 4 partially implemented; Phase 5+ pending.
 
 This task defines a repeatable evaluation and regression loop for running the
 real Codex CLI through `llama_shim` against local or OpenAI-compatible upstream
 models. The goal is to stop relying on one-off manual Codex sessions as the
 primary compatibility signal.
 
-Implemented Phase 1 slice:
+Implemented slice through the current Phase 4 work:
 
 - `cmd/codex-eval-runner`
 - `internal/codexeval`
@@ -94,6 +94,11 @@ Relevant docs-backed constraints:
 - Codex configuration supports OpenAI-compatible custom providers via
   `model_providers.<id>.base_url`, `wire_api = "responses"`, and
   provider-level `supports_websockets`.
+- Codex configuration supports `developer_instructions` as additional
+  instructions, but this harness does not currently inject model-specific
+  developer instructions by default. A Qwen-specific experiment on April 30,
+  2026 made the run less stable by prompting the model to discuss protocol
+  details in final text.
 - The public `openai/codex` repo is the right implementation reference for the
   CLI tool registry and local execution behavior, but it is not the source of
   truth for OpenAI wire-contract claims.
@@ -344,6 +349,12 @@ That split is intentional:
 - do not paste every historical generated row into the model matrix. Keep only
   meaningful baselines and explain why they matter.
 
+Manual matrix-doc updates should therefore carry interpretation only: why a
+retry-dependent green result is acceptable or not, whether a failure points at
+shim transport, task wording, model tool discipline, or Codex config, and which
+run should be treated as the current baseline. Counts, buckets, and failed task
+ids come from generated `summary.json`/matrix output.
+
 `summary.json` should include:
 
 - run id
@@ -502,6 +513,8 @@ The runner should classify failures before any LLM-assisted analysis:
 - `checker_diff`: Codex completed but final workspace is wrong.
 - `checker_tests`: Codex completed but repository tests fail.
 - `raw_tool_markup`: model leaked provider-native tool markup to Codex text.
+- `context_leak`: model quoted Codex prompt/context blocks such as
+  `<environment_context>` or `<permissions instructions>` in final text.
 - `timeout`: task exceeded configured wall-clock limit.
 - `harness_bug`: setup/checker/artifact capture failed.
 
@@ -556,6 +569,10 @@ Current status on April 29, 2026:
 - Phase 4 has started: real-upstream runs and matrix generation exist, but
   failed-task rerun, expected-quarantine, and packaged failure review are still
   pending.
+- A Qwen-specific `developer_instructions` injection experiment was tried and
+  removed. It reduced the April 30 Qwen eval result from the prior 7/8 and 8/8
+  baselines to 5/8 by increasing protocol-shaped final text such as
+  `<resolve_conflicts>` and `<toolCall::apply_patch>`.
 - Phases 5 and 6 are still pending.
 
 Next practical milestone: finish Phase 4 enough for daily use by adding

@@ -6,7 +6,9 @@ suites:
 timeout: 300s
 attempts: 2
 prompt: |
-  First say exactly MIXED_CAUSE_FOUND in a short sentence. Then inspect mathutil.go and mathutil_test.go, fix the bug, run tests, and finish with MIXED_BUGFIX_OK.
+  This is a single-turn coding task. First include exactly MIXED_CAUSE_FOUND in a short sentence, but do not stop after that sentence.
+  Continue in the same turn by using tools to inspect mathutil.go and mathutil_test.go, fix the bug, run tests, and finish with MIXED_BUGFIX_OK.
+  The final answer must contain MIXED_BUGFIX_OK after the file has been changed and tests have passed.
 expected:
   final_text_contains:
     - MIXED_BUGFIX_OK

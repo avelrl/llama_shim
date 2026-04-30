@@ -27,6 +27,12 @@ func runCheckers(ctx context.Context, manifest Manifest, workspace, outputFile s
 	if err != nil {
 		return CheckResult{}, "", err
 	}
+	for _, marker := range contextLeakMarkers() {
+		if strings.Contains(string(rawOutput), marker) || strings.Contains(finalText, marker) {
+			result.addFailure("context_leak", fmt.Sprintf("output contains internal context marker %q", marker))
+			break
+		}
+	}
 	for _, marker := range rawToolMarkupMarkers() {
 		if strings.Contains(string(rawOutput), marker) || strings.Contains(finalText, marker) {
 			result.addFailure("raw_tool_markup", fmt.Sprintf("output contains provider-native tool marker %q", marker))
@@ -44,6 +50,11 @@ func runCheckers(ctx context.Context, manifest Manifest, workspace, outputFile s
 	for _, expected := range manifest.Expected.FinalTextContains {
 		if !strings.Contains(finalText, expected) {
 			result.addFailure("final_text", fmt.Sprintf("final text %q does not contain %q", finalText, expected))
+		}
+	}
+	for _, expected := range manifest.Expected.FinalTextContainsFold {
+		if !containsFold(finalText, expected) {
+			result.addFailure("final_text", fmt.Sprintf("final text %q does not contain %q (case-insensitive)", finalText, expected))
 		}
 	}
 	for _, expected := range manifest.Expected.CodexEvents {
@@ -64,12 +75,41 @@ func runCheckers(ctx context.Context, manifest Manifest, workspace, outputFile s
 	return result, finalText, nil
 }
 
+func contextLeakMarkers() []string {
+	return []string{
+		"<environment_context>",
+		"</environment_context>",
+		"<permissions instructions>",
+		"</permissions instructions>",
+	}
+}
+
 func rawToolMarkupMarkers() []string {
 	return []string{
 		"<|tool_call",
 		"<|tool_calls_section",
+		"<|mask_start|",
+		"<|mask_end|",
+		"<prelude>",
+		"</prelude>",
+		"<tool call:",
+		"[Tool call:",
+		"<function_call>",
+		"</function_call>",
+		"<function_call_output",
+		"<FUNCTION_CALL_OUTPUT",
+		"<antThinking>",
+		"</antThinking>",
+		"<toolCall::",
+		"</toolCall::",
+		"<apply_patch>",
+		"</apply_patch>",
+		"<command>",
+		"</command>",
 		"<tool_call",
 		"</tool_call>",
+		"<tool_code_call>",
+		"</tool_code_call>",
 		"<tool_code>",
 		"<invoke name=",
 		"<read_file>",
@@ -79,6 +119,10 @@ func rawToolMarkupMarkers() []string {
 		"<bash>",
 		"</bash>",
 	}
+}
+
+func containsFold(value, expected string) bool {
+	return strings.Contains(strings.ToLower(value), strings.ToLower(expected))
 }
 
 func (result *CheckResult) addFailure(kind, message string) {
@@ -112,6 +156,9 @@ func checkFileExpectation(result *CheckResult, workspace string, expected FileEx
 	content := string(raw)
 	if expected.Equals != "" && content != expected.Equals {
 		result.addFailure("file_equals", fmt.Sprintf("%s content mismatch", expected.Path))
+	}
+	if expected.EqualsTrimSpace != "" && strings.TrimSpace(content) != strings.TrimSpace(expected.EqualsTrimSpace) {
+		result.addFailure("file_equals", fmt.Sprintf("%s trimmed content mismatch", expected.Path))
 	}
 	if expected.Contains != "" && !strings.Contains(content, expected.Contains) {
 		result.addFailure("file_contains", fmt.Sprintf("%s does not contain %q", expected.Path, expected.Contains))

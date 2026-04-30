@@ -10,6 +10,7 @@ const (
 	StatusFailedNoToolEvent = "failed_no_tool_event"
 	StatusFailedNoFinal     = "failed_no_final_answer"
 	StatusFailedRawTool     = "failed_raw_tool_markup"
+	StatusFailedContextLeak = "failed_context_leak"
 	StatusFailedTimeout     = "failed_timeout"
 	StatusFailedSetup       = "failed_setup"
 	StatusSkipped           = "skipped"
@@ -29,6 +30,7 @@ const (
 	BucketCheckerDiff      = "checker_diff"
 	BucketCheckerTests     = "checker_tests"
 	BucketRawToolMarkup    = "raw_tool_markup"
+	BucketContextLeak      = "context_leak"
 	BucketTimeout          = "timeout"
 	BucketHarnessBug       = "harness_bug"
 )
@@ -84,22 +86,24 @@ type Quarantine struct {
 }
 
 type Expected struct {
-	FinalTextEquals   string               `yaml:"final_text_equals" json:"final_text_equals,omitempty"`
-	FinalTextContains []string             `yaml:"final_text_contains" json:"final_text_contains,omitempty"`
-	Files             []FileExpectation    `yaml:"files" json:"files,omitempty"`
-	Commands          []CommandExpectation `yaml:"commands" json:"commands,omitempty"`
-	CodexEvents       []string             `yaml:"codex_events" json:"codex_events,omitempty"`
-	ForbiddenOutput   []string             `yaml:"forbidden_output" json:"forbidden_output,omitempty"`
-	MaxToolCalls      int                  `yaml:"max_tool_calls" json:"max_tool_calls,omitempty"`
+	FinalTextEquals       string               `yaml:"final_text_equals" json:"final_text_equals,omitempty"`
+	FinalTextContains     []string             `yaml:"final_text_contains" json:"final_text_contains,omitempty"`
+	FinalTextContainsFold []string             `yaml:"final_text_contains_fold" json:"final_text_contains_fold,omitempty"`
+	Files                 []FileExpectation    `yaml:"files" json:"files,omitempty"`
+	Commands              []CommandExpectation `yaml:"commands" json:"commands,omitempty"`
+	CodexEvents           []string             `yaml:"codex_events" json:"codex_events,omitempty"`
+	ForbiddenOutput       []string             `yaml:"forbidden_output" json:"forbidden_output,omitempty"`
+	MaxToolCalls          int                  `yaml:"max_tool_calls" json:"max_tool_calls,omitempty"`
 }
 
 type FileExpectation struct {
-	Path     string `yaml:"path" json:"path"`
-	Exists   *bool  `yaml:"exists" json:"exists,omitempty"`
-	Absent   bool   `yaml:"absent" json:"absent,omitempty"`
-	Equals   string `yaml:"equals" json:"equals,omitempty"`
-	Contains string `yaml:"contains" json:"contains,omitempty"`
-	Matches  string `yaml:"matches" json:"matches,omitempty"`
+	Path            string `yaml:"path" json:"path"`
+	Exists          *bool  `yaml:"exists" json:"exists,omitempty"`
+	Absent          bool   `yaml:"absent" json:"absent,omitempty"`
+	Equals          string `yaml:"equals" json:"equals,omitempty"`
+	EqualsTrimSpace string `yaml:"equals_trim_space" json:"equals_trim_space,omitempty"`
+	Contains        string `yaml:"contains" json:"contains,omitempty"`
+	Matches         string `yaml:"matches" json:"matches,omitempty"`
 }
 
 type CommandExpectation struct {

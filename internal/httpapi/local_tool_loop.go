@@ -709,6 +709,9 @@ func parseLocalToolLoopChatCompletion(raw []byte, responseID string, model strin
 		if rewritten, changed := remapFunctionCallItemToCustom(itemPayload, plan.Bridge); changed {
 			itemPayload = rewritten
 		}
+		if rewritten, changed := repairConstrainedCustomToolCallPayload(itemPayload, plan.Bridge); changed {
+			itemPayload = rewritten
+		}
 
 		rawItem, err := json.Marshal(itemPayload)
 		if err != nil {
@@ -760,8 +763,24 @@ func rawToolCallMarkupMarkers() []string {
 	return []string{
 		"<|tool_call",
 		"<|tool_calls_section",
+		"<|mask_start|",
+		"<|mask_end|",
+		"<prelude>",
+		"</prelude>",
+		"<tool call:",
+		"[Tool call:",
+		"<function_call>",
+		"</function_call>",
+		"<function_call_output",
+		"<FUNCTION_CALL_OUTPUT",
+		"<apply_patch>",
+		"</apply_patch>",
+		"<command>",
+		"</command>",
 		"<tool_call",
 		"</tool_call>",
+		"<tool_code_call>",
+		"</tool_code_call>",
 		"<tool_code>",
 		"<invoke name=",
 		"<read_file>",
@@ -774,7 +793,7 @@ func rawToolCallMarkupMarkers() []string {
 }
 
 func buildRawToolCallMarkupRepairPrompt() string {
-	return "Your previous assistant message printed internal tool-call markup as text. That is invalid. If you still need a tool, emit a structured function tool call through the tools interface. If the task is complete, reply with final plain text only. Do not include pseudo-tool markup such as <|tool_call, <|tool_calls_section, <tool_call>, <read_file>, <patch>, <invoke name=..., or <bash> in assistant text."
+	return "Your previous assistant message printed internal tool-call markup as text. That is invalid. If you still need a tool, emit a structured function tool call through the tools interface. If the task is complete, reply with final plain text only. Do not include pseudo-tool markup such as <|tool_call, <|tool_calls_section, <|mask_start|>, <prelude>, <tool_call>, <function_call>, <tool_code_call>, <read_file>, <patch>, <apply_patch>, <command>, <function_call_output>, <invoke name=..., or <bash> in assistant text."
 }
 
 func extractChatCompletionContent(raw json.RawMessage) string {

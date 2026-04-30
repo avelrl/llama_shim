@@ -1350,6 +1350,58 @@ func TestParseLocalToolLoopChatCompletionRejectsPseudoShellMarkupText(t *testing
 	require.Contains(t, markupErr.Content, "<bash>")
 }
 
+func TestParseLocalToolLoopChatCompletionRejectsNaturalLanguageToolCallMarkupText(t *testing.T) {
+	cases := []struct {
+		content     string
+		wantContent string
+	}{
+		{
+			content:     "Let me read the file.\n\n<tool call: exec_command(\"cat README.md\")>",
+			wantContent: "tool call",
+		},
+		{
+			content:     "Fixing the file now.\n\n[Tool call: apply_patch]\n```patch\n*** Begin Patch\n*** End Patch\n```",
+			wantContent: "tool call",
+		},
+		{
+			content:     "Let me run it.\n\n<|mask_start|>tool_code\n```json\n[{\"type\":\"console\",\"command\":\"cat README.md\"}]\n```<|mask_end|>",
+			wantContent: "mask_start",
+		},
+		{
+			content:     "Here is the result.\n\n<FUNCTION_CALL_OUTPUT>\ncat README.md\n</FUNCTION_CALL_OUTPUT>",
+			wantContent: "function_call_output",
+		},
+		{
+			content:     "Looking first.\n\n<prelude>Inspecting files.</prelude>",
+			wantContent: "prelude",
+		},
+		{
+			content:     "Checking now.\n\n<function_call>\n{\"function\":\"exec_command\",\"command\":[\"cat\",\"README.md\"]}\n</function_call>",
+			wantContent: "function_call",
+		},
+		{
+			content:     "Checking now.\n\n<tool_code_call>\nfunction {\"code\":\"cat README.md\"}\n</tool_code_call>",
+			wantContent: "tool_code_call",
+		},
+		{
+			content:     "Writing now.\n\n<apply_patch>\n<command>*** Begin Patch\n*** End Patch</command>\n</apply_patch>",
+			wantContent: "apply_patch",
+		},
+	}
+
+	for _, tc := range cases {
+		rawContent, err := json.Marshal(tc.content)
+		require.NoError(t, err)
+		raw := []byte(`{"choices":[{"message":{"content":` + string(rawContent) + `}}]}`)
+
+		_, err = parseLocalToolLoopChatCompletion(raw, "resp_test", "test-model", "", "", customToolTransportPlan{})
+
+		var markupErr *rawToolCallMarkupError
+		require.ErrorAs(t, err, &markupErr)
+		require.Contains(t, strings.ToLower(markupErr.Content), tc.wantContent)
+	}
+}
+
 func TestRemapCustomToolsPayloadAppendsCodexCompatibilityHint(t *testing.T) {
 	rawFields := map[string]json.RawMessage{
 		"instructions": json.RawMessage(`"You are a coding agent running in the Codex CLI, a terminal-based coding assistant."`),

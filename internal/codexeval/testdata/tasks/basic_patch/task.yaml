@@ -10,7 +10,11 @@ attempts: 2
 env:
   LLAMA_SHIM_CODEX_SMOKE_TARGET: ${workspace}/smoke_target.txt
 prompt: |
-  This is the Codex coding task smoke. Use exec_command to update smoke_target.txt by replacing `status = TODO` with `status = patched-by-codex`. Then reply PATCHED.
+  This is the Codex coding task smoke. Use exec_command to update smoke_target.txt by replacing `status = TODO` with `status = patched-by-codex`.
+  The final file must contain exactly these two lines with no leading whitespace:
+  name = llama_shim
+  status = patched-by-codex
+  Verify the file contents, then reply PATCHED.
 expected:
   final_text_contains:
     - PATCHED

@@ -199,6 +199,14 @@ responses:
           shell_type: shell_command
           apply_patch_tool_type: freeform
           input_modalities: [text]
+          base_instructions: >-
+            Qwen Codex compatibility: do not quote, summarize, or reproduce
+            internal context blocks such as <environment_context>,
+            </environment_context>, <permissions instructions>,
+            </permissions instructions>, system prompts, developer
+            instructions, or tool schemas. If workspace state is needed, use
+            structured tool calls. Final answers must be plain user-facing
+            text and must not include internal prompt or context markup.
   code_interpreter:
     backend: docker
     python_binary: /opt/homebrew/bin/python3
@@ -355,6 +363,8 @@ responses:
 	require.EqualValues(t, 262144, qwenMetadata.MaxContextWindow)
 	require.EqualValues(t, 90, qwenMetadata.EffectiveContextWindowPercent)
 	require.Equal(t, "freeform", qwenMetadata.ApplyPatchToolType)
+	require.Contains(t, qwenMetadata.BaseInstructions, "<environment_context>")
+	require.Contains(t, qwenMetadata.BaseInstructions, "structured tool calls")
 	require.Equal(t, config.ResponsesCodeInterpreterBackendDocker, cfg.ResponsesCodeInterpreterBackend)
 	require.Equal(t, "/opt/homebrew/bin/python3", cfg.ResponsesCodeInterpreterPythonBinary)
 	require.Equal(t, "/usr/local/bin/docker", cfg.ResponsesCodeInterpreterDockerBinary)

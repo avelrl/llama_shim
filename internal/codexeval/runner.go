@@ -497,6 +497,8 @@ func classifyRunError(err error, outputFile string) (string, string) {
 func classifyCheckFailure(result CheckResult, finalText string) (string, string) {
 	for _, failure := range result.Failures {
 		switch failure.Kind {
+		case "context_leak":
+			return StatusFailedContextLeak, BucketContextLeak
 		case "raw_tool_markup":
 			return StatusFailedRawTool, BucketRawToolMarkup
 		case "final_text":

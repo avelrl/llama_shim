@@ -868,6 +868,10 @@ sequenceDiagram
   Codex->>Shim: tool output follow-up
   Shim->>Fixture: final continuation
   Fixture-->>Shim: final assistant message
+  alt empty final response or raw pseudo-tool markup in assistant text
+    Shim->>Fixture: bounded final-text repair from existing tool outputs
+    Fixture-->>Shim: plain final assistant message or invalid-response error
+  end
   Shim-->>Codex: response completed
 ```
 
@@ -877,6 +881,9 @@ Practical finding:
   bridge.
 - The repo-owned Codex smokes verify WebSocket availability, `exec_command`,
   fallback function `shell`, and a deterministic task matrix.
+- Local final-text repair is bounded and only asks the model to produce plain
+  text from already-returned tool outputs; the shim does not execute pseudo-tool
+  markup printed inside assistant text.
 - They do not prove that current Codex emits native Responses `shell` or
   `apply_patch` declarations.
 - Practical model/provider quality is tracked separately in

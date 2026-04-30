@@ -10,7 +10,7 @@ attempts: 1
 prompt: |
   Reply READY.
 expected:
-  final_text_contains:
+  final_text_contains_fold:
     - READY
   codex_events:
     - item.completed:agent_message

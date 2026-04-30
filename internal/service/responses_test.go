@@ -485,6 +485,43 @@ func TestCreateResponseRepairsRawToolMarkupAfterToolOutput(t *testing.T) {
 </function>
 </tool_call>`,
 		},
+		{
+			name: "qwen_mask_tool_code",
+			markup: `<|mask_start|>tool_code
+` + "```json" + `
+[{"type":"console","command":"cat README.md"}]
+` + "```" + `<|mask_end|>`,
+		},
+		{
+			name: "qwen_function_call_output",
+			markup: `<function_call_output>
+Function call: exec_command
+Arguments: {"cmd":"cat README.md"}
+</function_call_output>`,
+		},
+		{
+			name:   "qwen_prelude",
+			markup: `<prelude>Inspecting files before editing.</prelude>`,
+		},
+		{
+			name: "qwen_function_call",
+			markup: `<function_call>
+{"function":"exec_command","command":["cat","README.md"]}
+</function_call>`,
+		},
+		{
+			name: "qwen_tool_code_call",
+			markup: `<tool_code_call>
+function {"code":"cat README.md"}
+</tool_code_call>`,
+		},
+		{
+			name: "qwen_apply_patch_command",
+			markup: `<apply_patch>
+<command>*** Begin Patch
+*** End Patch</command>
+</apply_patch>`,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -511,6 +548,55 @@ func TestCreateResponseRepairsRawToolMarkupAfterToolOutput(t *testing.T) {
 			require.Contains(t, domain.MessageText(generator.contexts[1][len(generator.contexts[1])-1]), "previous draft attempted to print internal tool-call markup")
 		})
 	}
+}
+
+func TestCreateResponseRetriesRawToolMarkupRepairAfterToolOutput(t *testing.T) {
+	t.Parallel()
+
+	generator := &sequenceGenerator{outputs: []string{
+		`<tool_call>{"name":"shell","arguments":{"command":"cat README.md"}}</tool_call>`,
+		`<function_call>{"function":"shell","command":"cat README.md"}</function_call>`,
+		"READ_OK",
+	}}
+	svc := service.NewResponseService(noopResponseStore{}, noopConversationStore{}, generator)
+
+	response, err := svc.Create(context.Background(), service.CreateResponseInput{
+		Model: "test-model",
+		Input: json.RawMessage(`[
+			{"type":"message","role":"user","content":"Read README.md and answer with READ_OK."},
+			{"type":"shell_call_output","call_id":"call_read","output":"codex-smoke-token: llama-shim-42\n"}
+		]`),
+		RequestJSON: `{"model":"test-model"}`,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "READ_OK", response.OutputText)
+
+	require.Len(t, generator.contexts, 3)
+	require.Contains(t, domain.MessageText(generator.contexts[1][len(generator.contexts[1])-1]), "previous draft attempted to print internal tool-call markup")
+	require.Contains(t, domain.MessageText(generator.contexts[2][len(generator.contexts[2])-1]), "previous draft attempted to print internal tool-call markup")
+}
+
+func TestCreateResponseRawToolMarkupRepairEventuallyFails(t *testing.T) {
+	t.Parallel()
+
+	generator := &sequenceGenerator{outputs: []string{
+		`<tool_call>{"name":"shell","arguments":{"command":"cat README.md"}}</tool_call>`,
+		`<function_call>{"function":"shell","command":"cat README.md"}</function_call>`,
+		`<apply_patch><command>*** Begin Patch
+*** End Patch</command></apply_patch>`,
+	}}
+	svc := service.NewResponseService(noopResponseStore{}, noopConversationStore{}, generator)
+
+	_, err := svc.Create(context.Background(), service.CreateResponseInput{
+		Model: "test-model",
+		Input: json.RawMessage(`[
+			{"type":"message","role":"user","content":"Read README.md and answer with READ_OK."},
+			{"type":"shell_call_output","call_id":"call_read","output":"codex-smoke-token: llama-shim-42\n"}
+		]`),
+		RequestJSON: `{"model":"test-model"}`,
+	})
+	require.ErrorContains(t, err, "raw tool-call markup")
+	require.Len(t, generator.contexts, 3)
 }
 
 func TestCreateStreamBuffersPostToolAnswerAndRepairsBeforeDelta(t *testing.T) {

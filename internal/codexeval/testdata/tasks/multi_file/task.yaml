@@ -10,7 +10,7 @@ attempts: 2
 env:
   LLAMA_SHIM_CODEX_MATRIX_WORKDIR: ${workspace}
 prompt: |
-  This is the Codex task matrix multi file case. Use exec_command to update both files exactly as follows.
+  This is the Codex task matrix multi file case. Use exec_command to inspect the workspace, update both files exactly as follows, then run another exec_command to verify the final contents before replying.
 
   app/config.txt must contain:
   mode=matrix
@@ -19,6 +19,7 @@ prompt: |
   app/status.txt must contain:
   status=updated
 
+  Do not rely only on file edits. You must emit at least one command execution event after editing, such as reading both files back.
   Then reply MULTIFILE.
 expected:
   final_text_contains:
@@ -29,7 +30,7 @@ expected:
         mode=matrix
         feature=enabled
     - path: app/status.txt
-      equals: |
+      equals_trim_space: |
         status=updated
   codex_events:
     - item.started:command_execution
