@@ -503,6 +503,27 @@ func TestChatCompletionsCodexTaskMatrixRules(t *testing.T) {
 			final:         "RECOVERED",
 		},
 		{
+			name:          "no edit",
+			prompt:        "This is the Codex no-edit safety case. Use exec_command to read README.md and reply NO_EDIT_OK.",
+			commandMarker: "cat README.md",
+			toolOutput:    "do-not-edit-token",
+			final:         "NO_EDIT_OK",
+		},
+		{
+			name:          "stderr handling",
+			prompt:        "This is the Codex stderr handling case. Use exec_command to run `sh emit_stderr.sh` and reply STDERR_OK.",
+			commandMarker: "sh emit_stderr.sh",
+			toolOutput:    "stdout-token\nstderr-token",
+			final:         "STDERR_OK",
+		},
+		{
+			name:          "long stdout",
+			prompt:        "This is the Codex long stdout case. Use exec_command to run `sh long_stdout.sh` and reply LONG_STDOUT_OK.",
+			commandMarker: "sh long_stdout.sh",
+			toolOutput:    "line-001\nLONG_STDOUT_DONE",
+			final:         "LONG_STDOUT_OK",
+		},
+		{
 			name:          "eval read file",
 			prompt:        "This is the Codex eval read file case. Use exec_command to read README.md and reply READ_OK.",
 			commandMarker: "cat README.md",

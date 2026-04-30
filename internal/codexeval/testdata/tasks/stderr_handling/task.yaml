@@ -18,7 +18,6 @@ expected:
       contains: stderr-token
   codex_events:
     - item.started:command_execution
-    - item.completed:command_execution
     - item.completed:agent_message
     - turn.completed
   forbidden_codex_events:

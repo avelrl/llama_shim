@@ -481,6 +481,24 @@ func fixtureCodexFunctionFinalOutput(request chatCompletionRequest) (string, boo
 		}
 		return "RECOVERED", true
 	}
+	if containsAny(joined, "codex no-edit safety case", "no-edit safety case") {
+		if !strings.Contains(joined, "do-not-edit-token") {
+			return "command did not report no-edit token: " + strings.TrimSpace(message.Content), true
+		}
+		return "NO_EDIT_OK", true
+	}
+	if containsAny(joined, "codex stderr handling case", "stderr handling case") {
+		if !strings.Contains(joined, "stderr-token") {
+			return "command did not report stderr token: " + strings.TrimSpace(message.Content), true
+		}
+		return "STDERR_OK", true
+	}
+	if containsAny(joined, "codex long stdout case", "long stdout case") {
+		if !strings.Contains(joined, "long_stdout_done") {
+			return "command did not report long stdout marker: " + strings.TrimSpace(message.Content), true
+		}
+		return "LONG_STDOUT_OK", true
+	}
 	if containsAny(joined, "codex eval read file", "eval read file") {
 		if !strings.Contains(joined, "llama-shim-42") {
 			return "command did not report read_file token: " + strings.TrimSpace(message.Content), true
@@ -519,6 +537,15 @@ func fixtureCodexFunctionPlannedCall(request chatCompletionRequest) (string, str
 	}
 	if containsAny(joined, "codex command recovery case", "command recovery case") {
 		return name, fixtureCodexCommandArguments(kind, "d=\"$LLAMA_SHIM_CODEX_MATRIX_WORKDIR\"; cd \"$d\"; sh verify.sh >/dev/null 2>&1 || true; printf 'status=ready\\n' > status.txt; sh verify.sh; echo 'recovery task verified'", 60000), true
+	}
+	if containsAny(joined, "codex no-edit safety case", "no-edit safety case") {
+		return name, fixtureCodexCommandArguments(kind, "cat README.md", 60000), true
+	}
+	if containsAny(joined, "codex stderr handling case", "stderr handling case") {
+		return name, fixtureCodexCommandArguments(kind, "sh emit_stderr.sh", 60000), true
+	}
+	if containsAny(joined, "codex long stdout case", "long stdout case") {
+		return name, fixtureCodexCommandArguments(kind, "sh long_stdout.sh", 60000), true
 	}
 	if containsAny(joined, "codex eval read file", "eval read file") {
 		return name, fixtureCodexCommandArguments(kind, "cat README.md", 60000), true
