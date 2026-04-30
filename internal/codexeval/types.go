@@ -94,6 +94,7 @@ type Expected struct {
 	Files                 []FileExpectation    `yaml:"files" json:"files,omitempty"`
 	Commands              []CommandExpectation `yaml:"commands" json:"commands,omitempty"`
 	CodexEvents           []string             `yaml:"codex_events" json:"codex_events,omitempty"`
+	ForbiddenCodexEvents  []string             `yaml:"forbidden_codex_events" json:"forbidden_codex_events,omitempty"`
 	ForbiddenOutput       []string             `yaml:"forbidden_output" json:"forbidden_output,omitempty"`
 	MaxToolCalls          int                  `yaml:"max_tool_calls" json:"max_tool_calls,omitempty"`
 }

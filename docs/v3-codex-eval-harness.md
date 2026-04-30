@@ -25,7 +25,8 @@ Implemented slice through the current Phase 4 work:
   - `make codex-eval-real-upstream`
 - isolated task workspace and `CODEX_HOME` per attempt
 - generated Codex custom-provider config
-- deterministic file, command, Codex event, and forbidden-output checkers
+- deterministic file, command, Codex event, forbidden-event, and
+  forbidden-output checkers
 - local artifacts under `.tmp/codex-eval-runs/<run-id>/`
 - task-id filtering and failed-task rerun from a previous `summary.json`
 - failure bundle generation for frontier-model review:
@@ -35,7 +36,8 @@ Implemented slice through the current Phase 4 work:
 
 The implemented `codex-smoke` suite currently covers `boot`, `read_file`,
 `basic_patch`, `bugfix_go`, `command_recovery`, `plan_doc`, and `multi_file`.
-The initial `codex-core` suite currently reuses that deterministic set. The
+The `codex-core` suite includes that deterministic set plus command/no-edit
+coverage for `no_edit`, `stderr_handling`, and `long_stdout`. The
 `codex-real-upstream` suite includes those tasks plus the first mixed
 text-plus-file-change regression task, `bugfix_mixed`, because that task
 requires real Codex file-change behavior rather than the devstack command
@@ -253,6 +255,7 @@ The schema should support:
 - JSON file checks
 - command checkers such as `go test ./...`
 - expected Codex JSON event presence
+- forbidden Codex JSON event presence
 - forbidden Codex JSON event or text markers
 - expected shim log markers when debug logging is enabled
 - maximum tool-call count
@@ -604,8 +607,8 @@ Current status on April 30, 2026:
   older smoke scripts have not been deduplicated into shared runner logic.
 - Phase 3 has started: `command_recovery`, `bugfix_mixed`, raw-tool-markup
   detection, and failure buckets exist, but `codex-core` is still a small suite
-  and does not yet contain the planned timeout, long-stdout, stderr, no-edit,
-  fallback-shell, and WebSocket variants.
+  and does not yet contain the planned timeout, fallback-shell, WebSocket, and
+  TypeScript/JavaScript variants.
 - Phase 4 daily-loop tooling is implemented: real-upstream runs, manifest
   quarantine, task-id filtering, failed-task rerun, matrix generation, and
   packaged failure review bundles exist.
@@ -691,15 +694,15 @@ Exit criteria:
 Deliverables:
 
 - command failure recovery task
-- command timeout task
-- long stdout task
-- stderr task
-- no-op/no-edit task
+- no-edit safety task
+- stderr handling task
+- long stdout handling task
 - mixed text plus file-change task
+- raw tool markup detection
+- per-task failure bucket classification
+- command timeout task
 - fallback shell mode task
 - WebSocket mode task
-- raw tool markup task
-- per-task failure bucket classification
 
 Exit criteria:
 

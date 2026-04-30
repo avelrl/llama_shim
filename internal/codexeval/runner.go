@@ -596,6 +596,8 @@ func classifyCheckFailure(result CheckResult, finalText string) (string, string)
 				return StatusFailedNoToolEvent, BucketModelNoTool
 			}
 			return StatusFailedChecker, BucketHarnessBug
+		case "forbidden_codex_event":
+			return StatusFailedChecker, BucketCheckerDiff
 		case "command_failed", "command_timeout":
 			return StatusFailedChecker, BucketCheckerTests
 		case "file_equals", "file_contains", "file_matches", "file_exists", "file_absent", "file_read":

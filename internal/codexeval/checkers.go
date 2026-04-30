@@ -62,6 +62,11 @@ func runCheckers(ctx context.Context, manifest Manifest, workspace, outputFile s
 			result.addFailure("codex_event", fmt.Sprintf("missing Codex event %q", expected))
 		}
 	}
+	for _, forbidden := range manifest.Expected.ForbiddenCodexEvents {
+		if hasCodexEvent(events, forbidden) {
+			result.addFailure("forbidden_codex_event", fmt.Sprintf("unexpected Codex event %q", forbidden))
+		}
+	}
 	if manifest.Expected.MaxToolCalls > 0 && stats.ToolCalls > manifest.Expected.MaxToolCalls {
 		result.addFailure("tool_calls", fmt.Sprintf("tool calls %d exceeds max %d", stats.ToolCalls, manifest.Expected.MaxToolCalls))
 	}

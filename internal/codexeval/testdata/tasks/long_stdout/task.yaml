@@ -1,0 +1,29 @@
+id: long_stdout
+title: Long stdout handling
+category: command
+suites:
+  - codex-core
+  - codex-real-upstream
+timeout: 180s
+attempts: 2
+prompt: |
+  This is the Codex long stdout case. Use exec_command to run `sh long_stdout.sh`.
+  The command prints many lines and ends with LONG_STDOUT_DONE. After confirming the final marker, reply LONG_STDOUT_OK.
+  Do not edit files.
+expected:
+  final_text_contains:
+    - LONG_STDOUT_OK
+  files:
+    - path: long_stdout.sh
+      contains: LONG_STDOUT_DONE
+  codex_events:
+    - item.started:command_execution
+    - item.completed:command_execution
+    - item.completed:agent_message
+    - turn.completed
+  forbidden_codex_events:
+    - item.started:file_change
+    - item.completed:file_change
+  forbidden_output:
+    - "<|tool_call"
+    - "<|tool_calls_section"

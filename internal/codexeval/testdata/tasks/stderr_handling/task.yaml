@@ -1,0 +1,29 @@
+id: stderr_handling
+title: Stderr command handling
+category: command
+suites:
+  - codex-core
+  - codex-real-upstream
+timeout: 120s
+attempts: 2
+prompt: |
+  This is the Codex stderr handling case. Use exec_command to run `sh emit_stderr.sh`.
+  Confirm the command output includes stderr-token, then reply STDERR_OK.
+  Do not edit files.
+expected:
+  final_text_contains:
+    - STDERR_OK
+  files:
+    - path: emit_stderr.sh
+      contains: stderr-token
+  codex_events:
+    - item.started:command_execution
+    - item.completed:command_execution
+    - item.completed:agent_message
+    - turn.completed
+  forbidden_codex_events:
+    - item.started:file_change
+    - item.completed:file_change
+  forbidden_output:
+    - "<|tool_call"
+    - "<|tool_calls_section"

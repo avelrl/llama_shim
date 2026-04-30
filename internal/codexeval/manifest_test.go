@@ -175,6 +175,35 @@ func TestRunCheckersRejectsContextLeak(t *testing.T) {
 	}
 }
 
+func TestRunCheckersRejectsForbiddenCodexEvent(t *testing.T) {
+	workspace := t.TempDir()
+	output := filepath.Join(workspace, "codex.jsonl")
+	raw := `{"type":"item.started","item":{"type":"file_change"}}
+{"type":"item.completed","item":{"type":"agent_message","text":"NO_EDIT_OK"}}
+{"type":"turn.completed"}
+`
+	if err := os.WriteFile(output, []byte(raw), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	manifest := Manifest{
+		ID: "no_edit",
+		Expected: Expected{
+			FinalTextContains:    []string{"NO_EDIT_OK"},
+			ForbiddenCodexEvents: []string{"item.started:file_change"},
+		},
+	}
+	result, _, err := runCheckers(t.Context(), manifest, workspace, output, nil)
+	if err != nil {
+		t.Fatalf("runCheckers failed: %v", err)
+	}
+	if result.Passed {
+		t.Fatalf("expected checker failure")
+	}
+	if got := result.Failures[0].Kind; got != "forbidden_codex_event" {
+		t.Fatalf("expected forbidden_codex_event, got %s", got)
+	}
+}
+
 func TestRunCheckersRejectsPseudoApplyPatchMarkup(t *testing.T) {
 	workspace := t.TempDir()
 	output := filepath.Join(workspace, "codex.jsonl")
