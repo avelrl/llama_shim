@@ -96,6 +96,7 @@ type Expected struct {
 	CodexEvents           []string             `yaml:"codex_events" json:"codex_events,omitempty"`
 	ForbiddenCodexEvents  []string             `yaml:"forbidden_codex_events" json:"forbidden_codex_events,omitempty"`
 	ForbiddenOutput       []string             `yaml:"forbidden_output" json:"forbidden_output,omitempty"`
+	MinCommandExecutions  int                  `yaml:"min_command_executions" json:"min_command_executions,omitempty"`
 	MaxToolCalls          int                  `yaml:"max_tool_calls" json:"max_tool_calls,omitempty"`
 }
 

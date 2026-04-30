@@ -1,0 +1,30 @@
+id: command_timeout
+title: Command timeout recovery
+category: command
+suites:
+  - codex-core
+timeout: 180s
+attempts: 2
+prompt: |
+  This is the Codex command timeout recovery case. Use exec_command to run `sh slow.sh`.
+  It is expected to fail with a timeout marker. After that, use exec_command to run `sh fast.sh`, confirm it prints TIMEOUT_RECOVERED, and reply TIMEOUT_RECOVERED.
+  Do not edit files.
+expected:
+  final_text_contains:
+    - TIMEOUT_RECOVERED
+  files:
+    - path: slow.sh
+      contains: TIMEOUT_OCCURRED
+    - path: fast.sh
+      contains: TIMEOUT_RECOVERED
+  codex_events:
+    - item.started:command_execution
+    - item.completed:agent_message
+    - turn.completed
+  min_command_executions: 2
+  forbidden_codex_events:
+    - item.started:file_change
+    - item.completed:file_change
+  forbidden_output:
+    - "<|tool_call"
+    - "<|tool_calls_section"

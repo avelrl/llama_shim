@@ -457,6 +457,7 @@ func fixtureCodexFunctionFinalOutput(request chatCompletionRequest) (string, boo
 		return "", false
 	}
 	joined := strings.ToLower(strings.TrimSpace(joinMessageContent(request.Messages)))
+	toolOutput := strings.ToLower(strings.TrimSpace(message.Content))
 	if containsAny(joined, "codex task matrix bugfix go", "matrix bugfix go") {
 		if !strings.Contains(joined, "bugfix go task passed") {
 			return "command did not report bugfix completion: " + strings.TrimSpace(message.Content), true
@@ -481,26 +482,32 @@ func fixtureCodexFunctionFinalOutput(request chatCompletionRequest) (string, boo
 		}
 		return "RECOVERED", true
 	}
+	if containsAny(joined, "codex command timeout recovery case", "command timeout recovery case") {
+		if !strings.Contains(toolOutput, "timeout_recovered") {
+			return "", false
+		}
+		return "TIMEOUT_RECOVERED", true
+	}
 	if containsAny(joined, "codex no-edit safety case", "no-edit safety case") {
-		if !strings.Contains(joined, "do-not-edit-token") {
+		if !strings.Contains(toolOutput, "do-not-edit-token") {
 			return "command did not report no-edit token: " + strings.TrimSpace(message.Content), true
 		}
 		return "NO_EDIT_OK", true
 	}
 	if containsAny(joined, "codex stderr handling case", "stderr handling case") {
-		if !strings.Contains(joined, "stderr-token") {
+		if !strings.Contains(toolOutput, "stderr-token") {
 			return "command did not report stderr token: " + strings.TrimSpace(message.Content), true
 		}
 		return "STDERR_OK", true
 	}
 	if containsAny(joined, "codex long stdout case", "long stdout case") {
-		if !strings.Contains(joined, "long_stdout_done") {
+		if !strings.Contains(toolOutput, "long_stdout_done") {
 			return "command did not report long stdout marker: " + strings.TrimSpace(message.Content), true
 		}
 		return "LONG_STDOUT_OK", true
 	}
 	if containsAny(joined, "codex eval read file", "eval read file") {
-		if !strings.Contains(joined, "llama-shim-42") {
+		if !strings.Contains(toolOutput, "llama-shim-42") {
 			return "command did not report read_file token: " + strings.TrimSpace(message.Content), true
 		}
 		return "READ_OK", true
@@ -537,6 +544,12 @@ func fixtureCodexFunctionPlannedCall(request chatCompletionRequest) (string, str
 	}
 	if containsAny(joined, "codex command recovery case", "command recovery case") {
 		return name, fixtureCodexCommandArguments(kind, "d=\"$LLAMA_SHIM_CODEX_MATRIX_WORKDIR\"; cd \"$d\"; sh verify.sh >/dev/null 2>&1 || true; printf 'status=ready\\n' > status.txt; sh verify.sh; echo 'recovery task verified'", 60000), true
+	}
+	if containsAny(joined, "codex command timeout recovery case", "command timeout recovery case") {
+		if message, ok := lastNonEmptyMessage(request.Messages); ok && strings.EqualFold(strings.TrimSpace(message.Role), "tool") {
+			return name, fixtureCodexCommandArguments(kind, "sh fast.sh", 60000), true
+		}
+		return name, fixtureCodexCommandArguments(kind, "sh slow.sh", 60000), true
 	}
 	if containsAny(joined, "codex no-edit safety case", "no-edit safety case") {
 		return name, fixtureCodexCommandArguments(kind, "cat README.md", 60000), true

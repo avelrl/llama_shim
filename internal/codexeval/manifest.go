@@ -131,9 +131,13 @@ func (expected Expected) Validate() error {
 		len(expected.Commands) > 0 ||
 		len(expected.CodexEvents) > 0 ||
 		len(expected.ForbiddenCodexEvents) > 0 ||
-		len(expected.ForbiddenOutput) > 0
+		len(expected.ForbiddenOutput) > 0 ||
+		expected.MinCommandExecutions > 0
 	if !hasChecker {
 		return fmt.Errorf("at least one deterministic checker is required")
+	}
+	if expected.MinCommandExecutions < 0 {
+		return fmt.Errorf("min_command_executions must be >= 0")
 	}
 	for _, file := range expected.Files {
 		if err := validateRelativePath(file.Path); err != nil {

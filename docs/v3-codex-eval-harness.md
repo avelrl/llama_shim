@@ -1,6 +1,6 @@
 # V3 Codex Eval Harness
 
-Last updated: April 30, 2026.
+Last updated: May 1, 2026.
 
 Task id: `v3-codex-eval-harness`
 
@@ -37,11 +37,13 @@ Implemented slice through the current Phase 4 work:
 The implemented `codex-smoke` suite currently covers `boot`, `read_file`,
 `basic_patch`, `bugfix_go`, `command_recovery`, `plan_doc`, and `multi_file`.
 The `codex-core` suite includes that deterministic set plus command/no-edit
-coverage for `no_edit`, `stderr_handling`, and `long_stdout`. The
-`codex-real-upstream` suite includes those tasks plus the first mixed
-text-plus-file-change regression task, `bugfix_mixed`, because that task
-requires real Codex file-change behavior rather than the devstack command
-fixture.
+coverage for `no_edit`, `stderr_handling`, `long_stdout`, and
+`command_timeout`. The `codex-real-upstream` suite tracks the current
+real-upstream-safe subset plus the first mixed text-plus-file-change regression
+task, `bugfix_mixed`, because that task requires real Codex file-change
+behavior rather than the devstack command fixture. Newly added core tasks
+should be promoted into `codex-real-upstream` only after at least one real
+provider profile proves them stable.
 
 This is a V3 quality and automation track. It does not change the frozen V2
 compatibility contract and must not strengthen any hosted OpenAI parity claim
@@ -258,6 +260,7 @@ The schema should support:
 - forbidden Codex JSON event presence
 - forbidden Codex JSON event or text markers
 - expected shim log markers when debug logging is enabled
+- minimum command-execution count for recovery tasks
 - maximum tool-call count
 - maximum wall-clock duration
 - per-task retry count
@@ -597,7 +600,7 @@ actually passed.
 
 ## Implementation Phases
 
-Current status on April 30, 2026:
+Current status on May 1, 2026:
 
 - Phase 0 is complete: the previous smoke scripts remain documented and
   available.
@@ -605,10 +608,10 @@ Current status on April 30, 2026:
   `CODEX_HOME`, summaries, artifacts, and deterministic checkers exist.
 - Phase 2 is partially implemented: Make targets exist and use the runner, but
   older smoke scripts have not been deduplicated into shared runner logic.
-- Phase 3 has started: `command_recovery`, `bugfix_mixed`, raw-tool-markup
-  detection, and failure buckets exist, but `codex-core` is still a small suite
-  and does not yet contain the planned timeout, fallback-shell, WebSocket, and
-  TypeScript/JavaScript variants.
+- Phase 3 has started: `command_recovery`, `command_timeout`,
+  `bugfix_mixed`, raw-tool-markup detection, and failure buckets exist, but
+  `codex-core` is still a small suite and does not yet contain the planned
+  fallback-shell, WebSocket, and TypeScript/JavaScript variants.
 - Phase 4 daily-loop tooling is implemented: real-upstream runs, manifest
   quarantine, task-id filtering, failed-task rerun, matrix generation, and
   packaged failure review bundles exist.
@@ -618,7 +621,9 @@ Current status on April 30, 2026:
   `<resolve_conflicts>` and `<toolCall::apply_patch>`.
 - Phases 5 and 6 are still pending.
 
-Next practical milestone: grow `codex-core` toward the Phase 3 task list.
+Next practical milestone: add profile-driven fallback-shell and WebSocket
+coverage without mixing those transport/tool-mode axes into normal
+real-upstream model comparisons.
 
 ### Phase 0: Preserve Current Smoke Behavior
 

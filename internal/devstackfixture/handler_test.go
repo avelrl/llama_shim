@@ -503,6 +503,13 @@ func TestChatCompletionsCodexTaskMatrixRules(t *testing.T) {
 			final:         "RECOVERED",
 		},
 		{
+			name:          "command timeout recovery",
+			prompt:        "This is the Codex command timeout recovery case. Use exec_command to run `sh slow.sh` with a short timeout, then run `sh fast.sh`, and reply TIMEOUT_RECOVERED.",
+			commandMarker: "sh slow.sh",
+			toolOutput:    "TIMEOUT_RECOVERED",
+			final:         "TIMEOUT_RECOVERED",
+		},
+		{
 			name:          "no edit",
 			prompt:        "This is the Codex no-edit safety case. Use exec_command to read README.md and reply NO_EDIT_OK.",
 			commandMarker: "cat README.md",
@@ -562,6 +569,34 @@ func TestChatCompletionsCodexTaskMatrixRules(t *testing.T) {
 			require.Equal(t, "stop", finishReason)
 		})
 	}
+}
+
+func TestChatCompletionsCodexCommandTimeoutPlansFastRecovery(t *testing.T) {
+	tools := []chatTool{
+		{
+			Type: "function",
+			Function: chatToolFunction{
+				Name: "exec_command",
+			},
+		},
+	}
+	request := chatCompletionRequest{
+		Model: DefaultModel,
+		Messages: []chatMessage{
+			{Role: "system", Content: "You are a coding agent running in the Codex CLI, a terminal-based coding assistant."},
+			{Role: "user", Content: "This is the Codex command timeout recovery case. Use exec_command to run `sh slow.sh` with a short timeout, then run `sh fast.sh`, and reply TIMEOUT_RECOVERED."},
+			{Role: "tool", ToolCallID: "call_devstack_codex_1", Content: "command timed out after 500ms"},
+		},
+		Tools: tools,
+	}
+
+	content, toolCalls, finishReason := chatCompletionReply(request)
+	require.Empty(t, content)
+	require.Equal(t, "tool_calls", finishReason)
+	require.Len(t, toolCalls, 1)
+	function := toolCalls[0]["function"].(map[string]any)
+	require.Equal(t, "exec_command", function["name"])
+	require.Contains(t, function["arguments"], "sh fast.sh")
 }
 
 func TestHandlerChatCompletionsReturnsCompactionJSON(t *testing.T) {

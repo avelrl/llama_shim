@@ -95,6 +95,35 @@ func TestRunCheckersFinalTextContainsFold(t *testing.T) {
 	}
 }
 
+func TestRunCheckersRejectsTooFewCommandExecutions(t *testing.T) {
+	workspace := t.TempDir()
+	output := filepath.Join(workspace, "codex.jsonl")
+	raw := `{"type":"item.started","item":{"type":"command_execution"}}
+{"type":"item.completed","item":{"type":"agent_message","text":"TIMEOUT_RECOVERED"}}
+{"type":"turn.completed"}
+`
+	if err := os.WriteFile(output, []byte(raw), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	manifest := Manifest{
+		ID: "command_timeout",
+		Expected: Expected{
+			FinalTextContains:    []string{"TIMEOUT_RECOVERED"},
+			MinCommandExecutions: 2,
+		},
+	}
+	result, _, err := runCheckers(t.Context(), manifest, workspace, output, nil)
+	if err != nil {
+		t.Fatalf("runCheckers failed: %v", err)
+	}
+	if result.Passed {
+		t.Fatalf("expected checker failure")
+	}
+	if got := result.Failures[0].Kind; got != "command_count" {
+		t.Fatalf("expected command_count, got %s", got)
+	}
+}
+
 func TestRunCheckersFileEqualsTrimSpace(t *testing.T) {
 	workspace := t.TempDir()
 	if err := os.WriteFile(filepath.Join(workspace, "status.txt"), []byte("status=updated"), 0o644); err != nil {
