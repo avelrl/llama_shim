@@ -78,7 +78,8 @@ failure recovery, and output formatting.
 
 ## Official References Reviewed
 
-This task was checked on April 29, 2026 against:
+This task was checked on April 29, 2026 and re-checked on May 1, 2026
+against:
 
 - local official-docs index: `openapi/llms.txt`
 - OpenAI docs:
@@ -87,6 +88,9 @@ This task was checked on April 29, 2026 against:
   - [Evaluate external models](https://developers.openai.com/api/docs/guides/external-models)
   - [Codex configuration reference](https://developers.openai.com/codex/config-reference)
   - [Codex app-server API overview](https://developers.openai.com/codex/app-server)
+  - [Streaming API responses](https://developers.openai.com/api/docs/guides/streaming-responses)
+  - [Conversation state](https://developers.openai.com/api/docs/guides/conversation-state)
+  - [WebSocket Mode](https://developers.openai.com/api/docs/guides/websocket-mode)
   - [Local shell](https://developers.openai.com/api/docs/guides/tools-local-shell)
   - [Function calling](https://developers.openai.com/api/docs/guides/function-calling)
 - official public repo:
@@ -102,6 +106,12 @@ Relevant docs-backed constraints:
 - Codex configuration supports OpenAI-compatible custom providers via
   `model_providers.<id>.base_url`, `wire_api = "responses"`, and
   provider-level `supports_websockets`.
+- Current Codex documentation and source no longer support Chat Completions as a
+  Codex provider wire API. Chat-only upstream compatibility remains a
+  shim-owned bridge concern and is outside native Codex provider parity.
+- Responses WebSocket mode uses repeated `response.create` events, optional
+  `generate: false` warmup, and `previous_response_id` continuation with
+  incremental inputs.
 - Codex configuration supports `developer_instructions` as additional
   instructions, but this harness does not currently inject model-specific
   developer instructions by default. A Qwen-specific experiment on April 30,
@@ -113,29 +123,72 @@ Relevant docs-backed constraints:
 
 ## Codex Upstream Reference Inspected
 
-The local ignored checkout at `.tmp/codex-upstream/` was inspected at commit:
+An ignored local checkout of `openai/codex` was inspected at commit:
 
 ```text
-87bc72408c5ef08f8d21f2cdd00c55451c3be33f
+9121132c8f5412ae99c36363409759baa7e004f9
 ```
 
 Relevant implementation points observed:
 
+- `codex-rs/model-provider-info/src/lib.rs` only accepts
+  `wire_api = "responses"`; `wire_api = "chat"` is rejected by current Codex.
+- `codex-rs/codex-api/src/common.rs` and `codex-rs/core/src/client.rs` show
+  the current Responses request shape Codex sends: `model`, `instructions`,
+  `input`, `tools`, `tool_choice = "auto"`, `parallel_tool_calls`,
+  optional `reasoning`, `store`, `stream = true`, `include`,
+  `service_tier`, `prompt_cache_key`, optional `text`, and
+  `client_metadata`.
+- The HTTP path adds `x-client-request-id` and `session_id` headers from the
+  Codex conversation id. The WebSocket path can send `previous_response_id`
+  with an incremental input delta after a reusable prior response.
+- `codex-rs/codex-api/src/sse/responses.rs` maps a concrete subset of
+  Responses stream events into Codex events, including output items, output
+  text deltas, custom tool-call input deltas, reasoning summary/text deltas,
+  `response.failed`, `response.incomplete`, and `response.completed`.
 - `codex-rs/tools/src/tool_registry_plan.rs` builds the active tool registry
   from config and model metadata.
 - Codex can expose several command-tool modes, including `unified_exec`,
   `shell_command`, `shell`, `local_shell`, and fallback function-tool variants.
-- The registry can also expose `write_stdin`, `apply_patch`, `update_plan`,
-  `view_image`, `web_search`, dynamic tool discovery, MCP resources/tools,
-  request-user-input, and subagent tools depending on configuration.
-- `codex-rs/model-provider/src/provider.rs` confirms provider metadata is
-  adapted into the API client and model-manager path.
+- In `unified_exec` mode, Codex exposes both `exec_command` and `write_stdin`.
+  `exec_command` can return a live session id for PTY or long-running command
+  interaction, and `write_stdin` resumes that session.
+- The registry can also expose `apply_patch` as either freeform or JSON
+  function tool, `update_plan`, `request_permissions`, `request_user_input`,
+  MCP resource tools, deferred tool search, dynamic tools, `view_image`,
+  `web_search`, subagent tools, and agent-job tools depending on configuration.
+- `codex-rs/protocol/src/openai_models.rs` confirms model metadata affects
+  shell tool type, apply-patch tool type, web-search tool type, context window,
+  auto-compaction threshold, truncation policy, parallel tool calls, image
+  detail support, reasoning summary support, verbosity support, input
+  modalities, and experimental supported tools.
 - `docs/exec.md` points non-interactive execution at the public Codex
   non-interactive docs; local smoke scripts should keep using `codex exec
   --json` because that is the most stable automation surface for this repo.
 
 These findings mean the harness must evaluate concrete Codex tool-mode
 combinations rather than a generic "agent benchmark" only.
+
+Source-informed gaps that should be represented in future task or profile
+work:
+
+- `write_stdin`/PTY interaction, because current timeout coverage proves
+  command recovery but not interactive process continuation.
+- WebSocket incremental continuation with `previous_response_id`, because this
+  is a different Codex request shape than the normal HTTP full-context request.
+- `apply_patch` as both freeform and function tool, because model metadata can
+  switch the advertised tool contract.
+- fallback shell variants (`shell`, `shell_command`, `local_shell`) as separate
+  profiles, because they produce different tool schemas and handlers.
+- request-permissions and request-user-input behavior as non-default profiles,
+  because the normal non-interactive eval loop should avoid blocking on client
+  approval or user-choice UI.
+- MCP resource, deferred tool-search, dynamic-tool, and subagent registries as
+  later compatibility profiles, not as part of the first real-upstream model
+  quality comparison.
+- model-metadata edge profiles for reasoning summaries, verbosity, truncation,
+  context-window/auto-compaction, parallel tool calls, image input/detail, and
+  experimental supported tools.
 
 ## Goal
 
@@ -302,6 +355,13 @@ Environment and flags should cover:
 - `CODEX_EVAL_WEBSOCKETS`
 - `CODEX_EVAL_UNIFIED_EXEC`
 - `CODEX_EVAL_APPLY_PATCH_FREEFORM`
+- `CODEX_EVAL_SHELL_TOOL_TYPE`
+- `CODEX_EVAL_APPLY_PATCH_TOOL_TYPE`
+- `CODEX_EVAL_MODEL_METADATA_PROFILE`
+- `CODEX_EVAL_STREAM_IDLE_TIMEOUT_MS`
+- `CODEX_EVAL_STREAM_MAX_RETRIES`
+- `CODEX_EVAL_REQUEST_MAX_RETRIES`
+- `CODEX_EVAL_WEBSOCKET_CONNECT_TIMEOUT_MS`
 - `CODEX_EVAL_KEEP_WORKSPACES`
 
 Default to serial execution for the first version. Codex tasks mutate
@@ -480,6 +540,7 @@ Task families:
 - tiny TypeScript or JavaScript bugfix with tests
 - command failure recovery
 - command timeout recovery
+- PTY or long-running command interaction through `write_stdin`
 - long stdout truncation
 - stderr handling
 - no-op task where Codex should not edit files
@@ -487,8 +548,11 @@ Task families:
 - mixed natural-language preamble plus tool edit
 - patch after reading context from multiple files
 - apply-patch/freeform path
+- apply-patch/function path
 - fallback shell path with `unified_exec=false`
+- local-shell path when Codex exposes `local_shell`
 - WebSocket-enabled path
+- WebSocket incremental continuation after a previous response id
 - HTTP-first path
 - raw tool-call markup rejection
 
@@ -506,14 +570,30 @@ Task families:
 - model metadata variants:
   - context-window present
   - context-window absent
+  - auto-compaction threshold present
+  - truncation policy bytes vs tokens
+  - reasoning summaries enabled vs disabled
+  - verbosity enabled vs disabled
+  - parallel tool calls enabled vs disabled
   - apply-patch freeform enabled
+  - apply-patch function enabled
   - apply-patch disabled
+  - image input/detail enabled
   - WebSocket enabled
   - WebSocket disabled
 - tool availability variants:
   - unified exec
+  - `write_stdin` available after a live process
   - fallback shell
+  - local shell
   - no shell
+  - request permissions disabled
+  - request permissions enabled with a deterministic denial/approval fixture
+  - request user input unavailable in non-interactive mode
+  - MCP resource tools disabled
+  - deferred tool search disabled
+  - dynamic tools disabled
+  - subagent tools disabled
   - web search disabled
   - app/connectors disabled
   - tool search disabled
@@ -522,6 +602,17 @@ Task families:
   - final answer after file change
   - final answer after failed command
   - final answer after large command output
+- transport/retry variants:
+  - HTTP SSE idle timeout
+  - retryable stream interruption
+  - WebSocket connect timeout
+  - WebSocket unsupported/fallback-to-HTTP path
+  - stream closed before `response.completed`
+  - `response.failed` and `response.incomplete` mapping
+- remote compaction variants:
+  - pre-turn auto-compaction
+  - mid-turn compaction after tool output
+  - WebSocket session reset after compaction
 - regression cases imported from manual failures
 
 Target runtime: allowed to be long; not a normal pre-commit gate.
@@ -552,6 +643,8 @@ The runner should classify failures before any LLM-assisted analysis:
 - `shim_transport`: HTTP/SSE/WebSocket request fails or wrong status appears.
 - `upstream_http`: upstream request returns non-2xx or malformed payload.
 - `upstream_stream`: upstream stream disconnects or never completes.
+- `upstream_incomplete`: upstream emits `response.incomplete`.
+- `upstream_response_failed`: upstream emits `response.failed`.
 - `model_no_tool`: model answers text but never calls the required tool.
 - `model_bad_tool_args`: model calls a tool with invalid or empty arguments.
 - `codex_tool_missing`: Codex receives a call but reports unsupported tool.
@@ -611,7 +704,8 @@ Current status on May 1, 2026:
 - Phase 3 has started: `command_recovery`, `command_timeout`,
   `bugfix_mixed`, raw-tool-markup detection, and failure buckets exist, but
   `codex-core` is still a small suite and does not yet contain the planned
-  fallback-shell, WebSocket, and TypeScript/JavaScript variants.
+  `write_stdin`, fallback-shell, WebSocket, compaction, and
+  TypeScript/JavaScript variants.
 - Phase 4 daily-loop tooling is implemented: real-upstream runs, manifest
   quarantine, task-id filtering, failed-task rerun, matrix generation, and
   packaged failure review bundles exist.
@@ -706,8 +800,11 @@ Deliverables:
 - raw tool markup detection
 - per-task failure bucket classification
 - command timeout task
+- `write_stdin`/PTY interaction task
 - fallback shell mode task
 - WebSocket mode task
+- WebSocket incremental continuation task
+- remote compaction/reset task
 
 Exit criteria:
 
@@ -810,15 +907,20 @@ Before marking this task complete, the harness should cover:
 - `unified_exec=false`
 - local command execution
 - command stdout, stderr, non-zero exit, and timeout
+- long-running command continuation through `write_stdin`
 - single-file edit
 - multi-file edit
 - patch-style file change
+- freeform and function `apply_patch` tool modes
 - tiny code bugfix plus test run
 - deterministic documentation writing
 - no-edit safety task
 - mixed text/tool stream
 - raw provider tool markup rejection
 - final answer after tool output
+- HTTP Responses request shape and headers used by Codex
+- WebSocket Responses request shape, including incremental continuation with
+  `previous_response_id`
 - at least one real-upstream Qwen 3.6 profile run
 
 ## Guardrails
