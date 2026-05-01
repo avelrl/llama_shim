@@ -391,7 +391,7 @@ func (runner *Runner) runAttempt(ctx context.Context, task Task, attempt int) At
 		result.FailureBucket = BucketHarnessBug
 		return result
 	}
-	_ = copyDirIfExists(workspace, before)
+	_ = copyWorkspaceSnapshot(workspace, before)
 	if err := writeManifestCopy(task, attemptDir); err != nil {
 		result.Error = err.Error()
 		result.FailureBucket = BucketHarnessBug
@@ -422,10 +422,12 @@ func (runner *Runner) runAttempt(ctx context.Context, task Task, attempt int) At
 		result.Error = runErr.Error()
 	}
 
-	_ = copyDirIfExists(workspace, after)
+	_ = copyWorkspaceSnapshot(workspace, after)
 	_ = writeGitDiff(before, after, filepath.Join(attemptDir, "git.diff"))
+	_ = pruneAttemptArtifacts(attemptDir)
 	checkResult, finalText, checkErr := runCheckers(ctx, task.Manifest, workspace, outputFile, task.Manifest.Env)
 	result.CheckResult = checkResult
+	_ = pruneWorkspaceArtifacts(workspace)
 	if _, stats, _, eventErr := parseCodexEvents(outputFile); eventErr == nil {
 		result.Events = stats
 	}
@@ -448,6 +450,17 @@ func (runner *Runner) runAttempt(ctx context.Context, task Task, attempt int) At
 		_ = writeFailureMarkdown(filepath.Join(attemptDir, "failure.md"), task.Manifest, result)
 	}
 	return result
+}
+
+func pruneAttemptArtifacts(attemptDir string) error {
+	for _, rel := range []string{
+		filepath.Join("codex-home", ".tmp", "plugins"),
+	} {
+		if err := os.RemoveAll(filepath.Join(attemptDir, rel)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func writeManifestCopy(task Task, outDir string) error {

@@ -27,19 +27,20 @@ func RenderMatrixMarkdown(paths []string) (string, error) {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Codex Eval Matrix\n\n")
 	fmt.Fprintf(&b, "Generated from %d run(s).\n\n", len(summaries))
-	fmt.Fprintf(&b, "| Date | Run | Model | Suite | Result | Retries | Failure buckets | Failed tasks | Notes |\n")
-	fmt.Fprintf(&b, "| --- | --- | --- | --- | ---: | ---: | --- | --- | --- |\n")
+	fmt.Fprintf(&b, "| Date | Run | Model | Suite | Scope | Result | Retries | Failure buckets | Failed tasks | Notes |\n")
+	fmt.Fprintf(&b, "| --- | --- | --- | --- | --- | ---: | ---: | --- | --- | --- |\n")
 	for _, summary := range summaries {
 		passed := summary.Counts[StatusPassed]
 		total := len(summary.Tasks)
 		failedTasks := matrixFailedTasks(summary)
 		fmt.Fprintf(
 			&b,
-			"| %s | `%s` | `%s` | `%s` | %d/%d | %d | %s | %s | %s |\n",
+			"| %s | `%s` | `%s` | `%s` | `%s` | %d/%d | %d | %s | %s | %s |\n",
 			matrixDate(summary),
 			summary.RunID,
 			summary.Environment.Model,
 			summary.Environment.Suite,
+			SuiteScope(summary.Environment.Suite),
 			passed,
 			total,
 			matrixRetryCount(summary),

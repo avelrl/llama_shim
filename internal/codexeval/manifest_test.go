@@ -22,6 +22,33 @@ func TestLoadTasksSmokeSuite(t *testing.T) {
 	}
 }
 
+func TestLoadTasksRealUpstreamExpandedSuite(t *testing.T) {
+	tasks, err := LoadTasks("testdata/tasks", "codex-real-upstream-expanded")
+	if err != nil {
+		t.Fatalf("LoadTasks failed: %v", err)
+	}
+	if len(tasks) != 18 {
+		t.Fatalf("expanded task count = %d, want 18", len(tasks))
+	}
+	byID := map[string]bool{}
+	for _, task := range tasks {
+		if !task.Manifest.InSuite("codex-real-upstream-expanded") {
+			t.Fatalf("loaded task outside suite: %s", task.Manifest.ID)
+		}
+		byID[task.Manifest.ID] = true
+	}
+	for _, id := range []string{"boot", "bugfix_mixed", "command_pipeline", "env_var_command", "json_config_edit", "js_bugfix", "python_bugfix", "shell_script_fix", "workdir_nested"} {
+		if !byID[id] {
+			t.Fatalf("expanded suite missing %s", id)
+		}
+	}
+	for _, id := range []string{"command_timeout", "no_delete", "patch_after_context"} {
+		if byID[id] {
+			t.Fatalf("expanded suite unexpectedly includes %s", id)
+		}
+	}
+}
+
 func TestManifestRejectsAbsoluteFilePath(t *testing.T) {
 	manifest := Manifest{
 		ID:       "bad_task",

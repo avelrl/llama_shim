@@ -8,9 +8,40 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 func copyDir(src, dst string) error {
+	return copyDirFiltered(src, dst, nil)
+}
+
+func copyWorkspaceSnapshot(src, dst string) error {
+	return copyDirFiltered(src, dst, skipWorkspaceSnapshotArtifact)
+}
+
+func pruneWorkspaceArtifacts(root string) error {
+	return filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		if rel == "." || !isWorkspaceGeneratedArtifactPath(rel) {
+			return nil
+		}
+		if err := os.RemoveAll(path); err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return filepath.SkipDir
+		}
+		return nil
+	})
+}
+
+func copyDirFiltered(src, dst string, skip func(rel string, entry fs.DirEntry) bool) error {
 	if err := os.MkdirAll(dst, 0o755); err != nil {
 		return err
 	}
@@ -23,6 +54,12 @@ func copyDir(src, dst string) error {
 			return err
 		}
 		if rel == "." {
+			return nil
+		}
+		if skip != nil && skip(rel, entry) {
+			if entry.IsDir() {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		target := filepath.Join(dst, rel)
@@ -43,6 +80,20 @@ func copyDir(src, dst string) error {
 		}
 		return copyFile(path, target, mode.Perm())
 	})
+}
+
+func skipWorkspaceSnapshotArtifact(rel string, _ fs.DirEntry) bool {
+	return isWorkspaceGeneratedArtifactPath(rel)
+}
+
+func isWorkspaceGeneratedArtifactPath(rel string) bool {
+	for _, part := range strings.Split(filepath.ToSlash(rel), "/") {
+		switch part {
+		case ".cache", ".gocache", ".git", ".pytest_cache", "__pycache__", "node_modules":
+			return true
+		}
+	}
+	return false
 }
 
 func copyFile(src, dst string, mode fs.FileMode) error {

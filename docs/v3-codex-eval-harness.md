@@ -52,12 +52,17 @@ WebSocket transport tasks with `supports_websockets=true`. The
 instead of the default core gate because the current Codex Chat bridge does not
 expose a reliable live process session id in model-visible tool output.
 
-The `codex-real-upstream` suite tracks the current real-upstream-safe subset
-plus the first mixed text-plus-file-change regression task, `bugfix_mixed`,
-because that task requires real Codex file-change behavior rather than the
-devstack command fixture. Newly added core tasks should be promoted into
-`codex-real-upstream` only after at least one real provider profile proves them
-stable.
+The `codex-real-upstream` suite tracks the current real-upstream-safe stable
+subset plus the first mixed text-plus-file-change regression task,
+`bugfix_mixed`, because that task requires real Codex file-change behavior
+rather than the devstack command fixture. The
+`codex-real-upstream-expanded` suite is an explicit diagnostic profile: it
+starts from the stable real-upstream subset and adds practical command/edit/code
+tasks (`command_pipeline`, `env_var_command`, `json_config_edit`, `js_bugfix`,
+`python_bugfix`, `shell_script_fix`, and `workdir_nested`). Keep
+high-noise or deliberately adversarial tasks such as `command_timeout`,
+`no_delete`, and `patch_after_context` out of the expanded profile until a real
+provider proves them stable enough to be useful.
 
 This is a V3 quality and automation track. It does not change the frozen V2
 compatibility contract and must not strengthen any hosted OpenAI parity claim
@@ -399,6 +404,13 @@ CODEX_EVAL_TASKS=basic_patch,bugfix_mixed \
   bash ./scripts/codex-eval-runner.sh
 ```
 
+Run the expanded real-upstream profile directly:
+
+```bash
+CODEX_EVAL_SUITE=codex-real-upstream-expanded \
+  bash ./scripts/codex-eval-runner.sh
+```
+
 Rerun only tasks that failed in an earlier run. The value can be either a run
 directory or the exact `summary.json` path:
 
@@ -449,9 +461,9 @@ go run ./cmd/codex-eval-runner matrix \
   .tmp/codex-eval-runs
 ```
 
-The generated matrix is mechanical: date, run id, model, suite, pass count,
-retry-dependent task count, failure buckets, and failed tasks. Keep the
-human-written interpretation in
+The generated matrix is mechanical: date, run id, model, suite, suite scope,
+pass count, retry-dependent task count, failure buckets, and failed tasks. Keep
+the human-written interpretation in
 `docs/engineering/codex-upstream-model-matrix.md`.
 
 To compare a deterministic control run against one or more real-upstream runs:
@@ -481,8 +493,11 @@ The compare report classifies each task with a mechanical diagnosis:
 - `ok`: the control and real-upstream task both passed without retry.
 
 Tasks that exist in only one compared suite are reported as coverage
-differences, not quality diagnoses. For example, a `codex-core`-only timeout
-task and a `codex-real-upstream`-only mixed text/tool task should not make an
+differences, not quality diagnoses. The report also labels each run with a
+suite scope such as `control`, `real-stable`, or `real-expanded`, so a stable
+11-task real-upstream run is not mistaken for the same coverage claim as the
+20-task deterministic control. For example, a `codex-core`-only timeout task
+and a `codex-real-upstream`-only mixed text/tool task should not make an
 otherwise green candidate look like a tool or transport regression.
 
 For the normal local automation loop, use the wrapper. It first runs the
@@ -495,6 +510,19 @@ CODEX_PROVIDER=gateway-shim \
 CODEX_API_KEY_ENV=GW_API_KEY \
 GW_API_KEY=sk-... \
 CODEX_EVAL_MODELS="deepseek-v4-pro,kimi-k2,Qwen3.6-35B-A3B" \
+CODEX_EVAL_ATTEMPTS=2 \
+make codex-eval-loop
+```
+
+For a larger real-upstream diagnostic pass, switch only the candidate suite:
+
+```bash
+SHIM_BASE_URL=http://127.0.0.1:8080 \
+CODEX_PROVIDER=gateway-shim \
+CODEX_API_KEY_ENV=GW_API_KEY \
+GW_API_KEY=sk-... \
+CODEX_EVAL_MODELS="deepseek-v4-pro" \
+CODEX_EVAL_CANDIDATE_SUITE=codex-real-upstream-expanded \
 CODEX_EVAL_ATTEMPTS=2 \
 make codex-eval-loop
 ```
@@ -512,6 +540,12 @@ Loop artifacts live under `.tmp/codex-eval-loops/<loop-id>/`:
   summary.json
   failure-bundle.md
   failure-bundles/
+```
+
+To clear local eval artifacts after extracting the reports you need:
+
+```bash
+make codex-eval-clean
 ```
 
 By default, candidate failures do not stop the loop after their own run because
@@ -639,6 +673,10 @@ Artifacts must be useful for automated analysis but safe to keep locally:
 - keep Codex JSONL exactly enough to replay event classification
 - keep shim log slices bounded by request id or run window
 - keep before/after workspace snapshots for small committed fixture tasks
+- do not retain generated dependency/cache directories in saved workspaces or
+  workspace snapshots (`.cache`, `.gocache`, `.pytest_cache`, `__pycache__`,
+  `node_modules`)
+- do not retain Codex plugin catalog downloads under per-attempt `codex-home`
 - for large tasks, store a git diff plus checker output instead of full copies
 - never commit run artifacts
 - never write local absolute paths into committed task manifests or docs
@@ -693,6 +731,40 @@ Task families:
 - raw tool-call markup rejection
 
 Target runtime: under 45 minutes for one model/provider.
+
+### `codex-real-upstream`
+
+Purpose: stable real-provider gate for the subset that is cheap enough and
+predictable enough to run repeatedly while comparing models.
+
+Tasks:
+
+- stable smoke/core tasks: `boot`, `read_file`, `basic_patch`, `bugfix_go`,
+  `command_recovery`, `plan_doc`, `multi_file`, `long_stdout`, `no_edit`, and
+  `stderr_handling`
+- real-only regression task: `bugfix_mixed`
+
+Target runtime: under 20 minutes for one model/provider in normal conditions.
+
+### `codex-real-upstream-expanded`
+
+Purpose: larger real-provider diagnostic pass. This is not the default gate; use
+it when evaluating a model before updating the model matrix or promoting more
+tasks into the stable real-upstream suite.
+
+Additional tasks beyond `codex-real-upstream`:
+
+- `command_pipeline`
+- `env_var_command`
+- `json_config_edit`
+- `js_bugfix`
+- `python_bugfix`
+- `shell_script_fix`
+- `workdir_nested`
+
+Excluded for now: `command_timeout`, `no_delete`, and `patch_after_context`.
+Those remain deterministic-control coverage until they are proven stable enough
+across real providers.
 
 ### `codex-compat`
 
@@ -1124,8 +1196,11 @@ When this task is implemented, update:
 This V3 task is done when:
 
 - the runner exists and is documented
-- `codex-smoke`, `codex-core`, and `codex-real-upstream` suites exist
+- `codex-smoke`, `codex-core`, `codex-real-upstream`, and
+  `codex-real-upstream-expanded` suites exist
 - `codex-core` contains at least 20 deterministic tasks
+- `codex-real-upstream-expanded` is documented as diagnostic coverage, not the
+  default stable real-upstream gate
 - failed runs produce enough artifacts for offline diagnosis
 - task manifests validate before execution
 - generated artifacts are ignored and redacted

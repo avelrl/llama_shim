@@ -4,6 +4,7 @@ category: command
 suites:
   - codex-core
   - codex-real-upstream
+  - codex-real-upstream-expanded
 timeout: 120s
 attempts: 2
 prompt: |

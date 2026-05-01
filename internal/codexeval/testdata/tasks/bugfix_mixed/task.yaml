@@ -3,6 +3,7 @@ title: Go bugfix with text before patch
 category: regression
 suites:
   - codex-real-upstream
+  - codex-real-upstream-expanded
 timeout: 300s
 attempts: 2
 prompt: |

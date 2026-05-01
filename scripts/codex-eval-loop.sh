@@ -18,6 +18,7 @@ Common optional knobs:
   CODEX_EVAL_CONTROL_MODEL=devstack-model
   CODEX_EVAL_CONTROL_SUITE=codex-core
   CODEX_EVAL_CANDIDATE_SUITE=codex-real-upstream
+  # Use CODEX_EVAL_CANDIDATE_SUITE=codex-real-upstream-expanded for expanded diagnostics.
   CODEX_EVAL_ATTEMPTS=2
 EOF
 }

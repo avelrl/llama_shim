@@ -72,6 +72,8 @@ func TestRenderCompareMarkdownClassifiesCandidateFailures(t *testing.T) {
 		t.Fatalf("RenderCompareMarkdown failed: %v", err)
 	}
 	for _, expected := range []string{
+		"- Control: `control` `devstack-model` `codex-core` `control` `3/3`",
+		"| `candidate` | `qwen-test` | `codex-real-upstream` | `real-stable` | 2/3 |",
 		"`candidate_tool_contract`: 1",
 		"`retry_dependent`: 1",
 		"| `basic_patch` | `passed` | `failed_raw_tool_markup / raw_tool_markup` | `candidate_tool_contract` | `raw_tool_markup` | 1 |",
@@ -122,8 +124,8 @@ func TestRenderCompareMarkdownSeparatesCoverageDifferences(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildCompareReport failed: %v", err)
 	}
-	if got := report.Candidates[0].Counts[DiagnosisOK]; got != 1 {
-		t.Fatalf("ok diagnosis count = %d, want 1", got)
+	if got := report.Candidates[0].Counts[DiagnosisOK]; got != 2 {
+		t.Fatalf("ok diagnosis count = %d, want 2", got)
 	}
 	if len(report.Candidates[0].Coverage) != 2 {
 		t.Fatalf("coverage count = %d, want 2", len(report.Candidates[0].Coverage))
@@ -137,6 +139,60 @@ func TestRenderCompareMarkdownSeparatesCoverageDifferences(t *testing.T) {
 		if !strings.Contains(markdown, expected) {
 			t.Fatalf("compare markdown missing %q:\n%s", expected, markdown)
 		}
+	}
+}
+
+func TestBuildCompareReportCountsCandidateOnlyRetryDependentTask(t *testing.T) {
+	root := t.TempDir()
+	controlDir := filepath.Join(root, "control")
+	candidateDir := filepath.Join(root, "candidate")
+	control := Summary{
+		RunID: "control",
+		Environment: Environment{
+			Model: "devstack-model",
+			Suite: "codex-core",
+		},
+		Counts: map[string]int{StatusPassed: 1},
+		Tasks:  []TaskResult{{ID: "boot", Status: StatusPassed}},
+	}
+	candidate := Summary{
+		RunID: "candidate",
+		Environment: Environment{
+			Model: "real-model",
+			Suite: "codex-real-upstream",
+		},
+		Counts: map[string]int{StatusPassed: 2},
+		Tasks: []TaskResult{
+			{ID: "boot", Status: StatusPassed, Attempts: []AttemptResult{{Attempt: 1, Status: StatusPassed}}},
+			{
+				ID:     "bugfix_mixed",
+				Status: StatusPassed,
+				Attempts: []AttemptResult{
+					{Attempt: 1, Status: StatusFailedRawTool, FailureBucket: BucketRawToolMarkup},
+					{Attempt: 2, Status: StatusPassed},
+				},
+			},
+		},
+	}
+	if err := writeJSON(filepath.Join(controlDir, "summary.json"), control); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSON(filepath.Join(candidateDir, "summary.json"), candidate); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := BuildCompareReport(controlDir, []string{candidateDir})
+	if err != nil {
+		t.Fatalf("BuildCompareReport failed: %v", err)
+	}
+	if got := report.Candidates[0].Counts[DiagnosisOK]; got != 1 {
+		t.Fatalf("ok diagnosis count = %d, want 1", got)
+	}
+	if got := report.Candidates[0].Counts[DiagnosisRetryDependent]; got != 1 {
+		t.Fatalf("retry-dependent diagnosis count = %d, want 1", got)
+	}
+	if len(report.Candidates[0].Coverage) != 1 || !report.Candidates[0].Coverage[0].RetryDependent {
+		t.Fatalf("expected retry-dependent candidate-only coverage, got %#v", report.Candidates[0].Coverage)
 	}
 }
 

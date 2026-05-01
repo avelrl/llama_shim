@@ -1,4 +1,4 @@
-.PHONY: run build lint test vet diff-check ci-check maint-cleanup maint-optimize maint-vacuum maint-backup docker-build compose-up compose-down devstack-up devstack-down devstack-smoke devstack-ci-smoke devstack-full-smoke responses-compat-external-smoke responses-compat-external-real-smoke responses-websocket-smoke v3-coding-tools-smoke v3-constrained-decoding-smoke v3-vllm-constrained-smoke codex-cli-devstack-smoke codex-cli-shell-tool-smoke codex-cli-coding-task-smoke codex-cli-task-matrix-smoke codex-cli-real-upstream-smoke codex-eval-smoke codex-eval-core codex-eval-core-shell codex-eval-core-websocket codex-eval-core-profiles codex-eval-real-upstream codex-eval-matrix codex-eval-loop
+.PHONY: run build lint test vet diff-check ci-check maint-cleanup maint-optimize maint-vacuum maint-backup docker-build compose-up compose-down devstack-up devstack-down devstack-smoke devstack-ci-smoke devstack-full-smoke responses-compat-external-smoke responses-compat-external-real-smoke responses-websocket-smoke v3-coding-tools-smoke v3-constrained-decoding-smoke v3-vllm-constrained-smoke codex-cli-devstack-smoke codex-cli-shell-tool-smoke codex-cli-coding-task-smoke codex-cli-task-matrix-smoke codex-cli-real-upstream-smoke codex-eval-smoke codex-eval-core codex-eval-core-shell codex-eval-core-websocket codex-eval-core-profiles codex-eval-real-upstream codex-eval-real-upstream-expanded codex-eval-matrix codex-eval-loop codex-eval-clean
 
 CONFIG ?= config.yaml
 BACKUP ?= ./.data/shim-backup.db
@@ -135,9 +135,15 @@ codex-eval-core-profiles: codex-eval-core codex-eval-core-shell codex-eval-core-
 codex-eval-real-upstream:
 	CODEX_EVAL_SUITE=$${CODEX_EVAL_SUITE:-codex-real-upstream} bash ./scripts/codex-eval-runner.sh
 
+codex-eval-real-upstream-expanded:
+	CODEX_EVAL_SUITE=codex-real-upstream-expanded bash ./scripts/codex-eval-runner.sh
+
 codex-eval-matrix:
 	$(TOOL_PREP)
 	$(TOOL_ENV) $(GO) run ./cmd/codex-eval-runner matrix $${CODEX_EVAL_MATRIX_RUNS:-.tmp/codex-eval-runs}
 
 codex-eval-loop:
 	bash ./scripts/codex-eval-loop.sh
+
+codex-eval-clean:
+	rm -rf .tmp/codex-eval-runs .tmp/codex-eval-loops

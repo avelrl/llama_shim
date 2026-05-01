@@ -31,6 +31,7 @@ type CompareRunRef struct {
 	Source    string `json:"source"`
 	Model     string `json:"model"`
 	Suite     string `json:"suite"`
+	Scope     string `json:"scope"`
 	StartedAt string `json:"started_at,omitempty"`
 	Status    string `json:"status"`
 	Passed    int    `json:"passed"`
@@ -95,24 +96,26 @@ func RenderCompareReportMarkdown(report CompareReport) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Codex Eval Compare\n\n")
 	fmt.Fprintf(&b, "- Generated: `%s`\n", report.GeneratedAt)
-	fmt.Fprintf(&b, "- Control: `%s` `%s` `%s` `%d/%d`\n\n",
+	fmt.Fprintf(&b, "- Control: `%s` `%s` `%s` `%s` `%d/%d`\n\n",
 		report.Control.RunID,
 		report.Control.Model,
 		report.Control.Suite,
+		report.Control.Scope,
 		report.Control.Passed,
 		report.Control.Total,
 	)
 
 	fmt.Fprintf(&b, "## Candidate Overview\n\n")
-	fmt.Fprintf(&b, "| Run | Model | Suite | Result | Diagnoses |\n")
-	fmt.Fprintf(&b, "| --- | --- | --- | ---: | --- |\n")
+	fmt.Fprintf(&b, "| Run | Model | Suite | Scope | Result | Diagnoses |\n")
+	fmt.Fprintf(&b, "| --- | --- | --- | --- | ---: | --- |\n")
 	for _, candidate := range report.Candidates {
 		fmt.Fprintf(
 			&b,
-			"| `%s` | `%s` | `%s` | %d/%d | %s |\n",
+			"| `%s` | `%s` | `%s` | `%s` | %d/%d | %s |\n",
 			markdownCell(candidate.Run.RunID),
 			markdownCell(candidate.Run.Model),
 			markdownCell(candidate.Run.Suite),
+			markdownCell(candidate.Run.Scope),
 			candidate.Run.Passed,
 			candidate.Run.Total,
 			diagnosisCountsText(candidate.Counts),
@@ -206,14 +209,32 @@ func compareCandidate(control Summary, source string, candidate Summary) Candida
 		controlTask := controlTasks[id]
 		candidateTask := candidateTasks[id]
 		task := compareTask(controlTask, candidateTask)
+		if diagnosis := compareCountDiagnosis(controlTask, candidateTask, task); diagnosis != "" {
+			comparison.Counts[diagnosis]++
+		}
 		if controlTask == nil || candidateTask == nil {
 			comparison.Coverage = append(comparison.Coverage, task)
 			continue
 		}
 		comparison.Tasks = append(comparison.Tasks, task)
-		comparison.Counts[task.Diagnosis]++
 	}
 	return comparison
+}
+
+func compareCountDiagnosis(controlTask, candidateTask *TaskResult, task TaskCompare) string {
+	if candidateTask == nil {
+		return ""
+	}
+	if controlTask != nil {
+		return task.Diagnosis
+	}
+	if candidateTask.Status == StatusPassed && task.RetryDependent {
+		return DiagnosisRetryDependent
+	}
+	if candidateTask.Status == StatusPassed {
+		return DiagnosisOK
+	}
+	return candidateDiagnosis(*candidateTask)
 }
 
 func compareTask(controlTask, candidateTask *TaskResult) TaskCompare {
@@ -287,6 +308,7 @@ func compareRunRef(source string, summary Summary) CompareRunRef {
 		Status:    status,
 		Passed:    passed,
 		Total:     total,
+		Scope:     SuiteScope(summary.Environment.Suite),
 	}
 }
 

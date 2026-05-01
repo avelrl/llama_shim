@@ -5,6 +5,7 @@ suites:
   - codex-smoke
   - codex-core
   - codex-real-upstream
+  - codex-real-upstream-expanded
 timeout: 240s
 attempts: 2
 env:

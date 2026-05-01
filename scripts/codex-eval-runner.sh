@@ -32,8 +32,12 @@ Common real-upstream usage:
   CODEX_PROVIDER=gateway-shim \
   CODEX_API_KEY_ENV=GW_API_KEY \
   GW_API_KEY=shim-dev-key \
-  CODEX_EVAL_SUITE=codex-core \
+  CODEX_EVAL_SUITE=codex-real-upstream \
   ./scripts/codex-eval-runner.sh
+
+Expanded real-upstream diagnostic:
+  CODEX_EVAL_SUITE=codex-real-upstream-expanded \
+    ./scripts/codex-eval-runner.sh
 
 Optional:
   CODEX_BIN=codex

@@ -3,6 +3,7 @@ title: Tiny Python bugfix
 category: code
 suites:
   - codex-core
+  - codex-real-upstream-expanded
 timeout: 180s
 attempts: 2
 prompt: |

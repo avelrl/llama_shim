@@ -3,6 +3,7 @@ title: JSON config edit
 category: edit
 suites:
   - codex-core
+  - codex-real-upstream-expanded
 timeout: 180s
 attempts: 2
 prompt: |

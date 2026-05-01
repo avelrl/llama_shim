@@ -50,7 +50,7 @@ func TestRenderMatrixMarkdown(t *testing.T) {
 	}
 	for _, expected := range []string{
 		"# Codex Eval Matrix",
-		"| 2026-04-29 | `run-1` | `model-a` | `codex-real-upstream` | 2/2 | 1 | none | none | dirty git; retry-dependent: 1 |",
+		"| 2026-04-29 | `run-1` | `model-a` | `codex-real-upstream` | `real-stable` | 2/2 | 1 | none | none | dirty git; retry-dependent: 1 |",
 	} {
 		if !strings.Contains(markdown, expected) {
 			t.Fatalf("matrix markdown missing %q:\n%s", expected, markdown)
