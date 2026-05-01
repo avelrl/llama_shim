@@ -6,6 +6,8 @@ Task id: `v3-codex-eval-harness`
 
 Status: Phase 5 regression import workflow implemented; Phase 3 deterministic
 core suite and profile gates implemented; Phase 6 benchmark-lite pending.
+Shim-native Codex request-shape and interactive-session coverage is split into
+[v3-codex-shim-native-coverage.md](v3-codex-shim-native-coverage.md).
 
 This task defines a repeatable evaluation and regression loop for running the
 real Codex CLI through `llama_shim` against local or OpenAI-compatible upstream
@@ -189,7 +191,8 @@ These findings mean the harness must evaluate concrete Codex tool-mode
 combinations rather than a generic "agent benchmark" only.
 
 Source-informed gaps that should be represented in future task or profile
-work:
+work are tracked in
+[v3-codex-shim-native-coverage.md](v3-codex-shim-native-coverage.md):
 
 - `write_stdin`/PTY interaction, because current timeout coverage proves
   command recovery but not interactive process continuation.
@@ -916,7 +919,9 @@ Current status on May 1, 2026:
   continuation path. `write_stdin_pty` is scaffolded as an interactive
   compatibility profile task, not a default core task, because the current
   Chat-backed Codex bridge does not expose a stable session id for a follow-up
-  `write_stdin` call. Remote compaction/reset is kept in the broader
+  `write_stdin` call; the fix is tracked separately in
+  [v3-codex-interactive-command-session-bridge.md](v3-codex-interactive-command-session-bridge.md).
+  Remote compaction/reset is kept in the broader
   `codex-compat` family because it needs a separate low-context or
   remote-state profile rather than the normal pre-commit core gate.
 - Phase 4 daily-loop tooling is implemented: real-upstream runs, manifest
@@ -929,8 +934,15 @@ Current status on May 1, 2026:
 - Phase 5 regression import workflow is implemented.
 - Phase 6 is still pending.
 
-Next practical milestone: decide which new deterministic core tasks should be
-promoted into `codex-real-upstream` after real-model stability runs.
+Remaining work is split into two tracks:
+
+- Phase 6 here: benchmark-lite breadth after the repo-owned harness is stable.
+- Interactive command-session bridge:
+  [v3-codex-interactive-command-session-bridge.md](v3-codex-interactive-command-session-bridge.md).
+- Shim-native Codex profile/request-shape follow-up:
+  [v3-codex-shim-native-coverage.md](v3-codex-shim-native-coverage.md).
+
+Next practical milestone for this document: Phase 6 benchmark-lite import.
 
 ### Phase 0: Preserve Current Smoke Behavior
 
@@ -1128,9 +1140,12 @@ Avoid:
 - tasks that pass even when no tool was called
 - tasks that pass if Codex edits the wrong file but says the right sentinel
 
-## Minimum Regression Coverage
+## Minimum Regression Coverage Split
 
-Before marking this task complete, the harness should cover:
+Before marking this task complete, the harness should cover the default and
+real-upstream-safe items below. Shim-native profile items are tracked in
+[v3-codex-shim-native-coverage.md](v3-codex-shim-native-coverage.md) so they do
+not block closing the eval-harness phases that are already implemented.
 
 - Codex boot through custom provider
 - authorized `/v1/models` probe through shim
@@ -1140,20 +1155,20 @@ Before marking this task complete, the harness should cover:
 - `unified_exec=false`
 - local command execution
 - command stdout, stderr, non-zero exit, and timeout
-- long-running command continuation through `write_stdin`
+- long-running command continuation through `write_stdin` (shim-native follow-up)
 - single-file edit
 - multi-file edit
 - patch-style file change
-- freeform and function `apply_patch` tool modes
+- freeform and function `apply_patch` tool modes (shim-native follow-up)
 - tiny code bugfix plus test run
 - deterministic documentation writing
 - no-edit safety task
 - mixed text/tool stream
 - raw provider tool markup rejection
 - final answer after tool output
-- HTTP Responses request shape and headers used by Codex
+- HTTP Responses request shape and headers used by Codex (shim-native follow-up)
 - WebSocket Responses request shape, including incremental continuation with
-  `previous_response_id`
+  `previous_response_id` (shim-native follow-up)
 - at least one real-upstream Qwen 3.6 profile run
 
 ## Guardrails
@@ -1207,6 +1222,9 @@ This V3 task is done when:
 - the old smoke targets still work
 - at least one local real-upstream model profile such as Qwen 3.6 is documented
 - at least three prior manual failure modes are permanent regression tasks
+- shim-native request-shape, `write_stdin`, and `apply_patch` profile coverage
+  are either implemented or explicitly tracked in
+  [v3-codex-shim-native-coverage.md](v3-codex-shim-native-coverage.md)
 - `go test ./...` passes
 - `make lint` passes
 - `git diff --check` passes

@@ -194,7 +194,7 @@ edge cases, and Realtime API WebSocket compatibility are deferred to
 
 ### 8. Codex eval harness and auto-regression loop
 
-Status: Phase 1 implemented. See
+Status: Phase 5 implemented; Phase 6 benchmark-lite pending. See
 [v3-codex-eval-harness.md](v3-codex-eval-harness.md).
 
 The existing Codex CLI smokes are useful canaries, but manual Codex sessions
@@ -213,7 +213,7 @@ upstreams such as Qwen 3.6:
 - convert manual failures into permanent deterministic tasks
 - keep pass/fail owned by task checkers, not by an LLM judge
 
-Implemented Phase 1 slice:
+Implemented scope:
 
 - `cmd/codex-eval-runner`
 - manifest-backed task definitions under `internal/codexeval/testdata/tasks`
@@ -224,6 +224,7 @@ Implemented Phase 1 slice:
   `failure.md`, workspace snapshots, and `git.diff` artifacts
 - `make codex-eval-smoke`, `make codex-eval-core`, and
   `make codex-eval-real-upstream`
+- `codex-real-upstream` and `codex-real-upstream-expanded` profiles
 - `codex-eval-runner matrix`, `codex-eval-runner compare`, and
   `codex-eval-runner failure-bundle`
 - `codex-eval-runner import-failure` for failed-run to regression-task
@@ -231,13 +232,33 @@ Implemented Phase 1 slice:
 - `make codex-eval-loop` for automated devstack-control versus real-upstream
   model orchestration
 
-Remaining V3 work is the larger core suite expansion, shim-log slicing, deeper
-model/profile interpretation, and benchmark-lite import.
+Remaining V3 work in this track is Phase 6 benchmark-lite import. Shim-native
+Codex request-shape/profile coverage is split into
+[v3-codex-shim-native-coverage.md](v3-codex-shim-native-coverage.md).
 
 This is a quality and automation track. It does not strengthen any hosted
 OpenAI parity claim by itself.
 
-### 9. Ops and deployment expansion
+### 9. Codex shim-native request-shape and profile coverage
+
+Status: planned follow-up. See
+[v3-codex-shim-native-coverage.md](v3-codex-shim-native-coverage.md).
+
+This track covers Codex-through-shim behavior that is not benchmark breadth:
+
+- `write_stdin`/PTY continuation through the Chat-backed bridge
+  ([v3-codex-interactive-command-session-bridge.md](v3-codex-interactive-command-session-bridge.md))
+- redacted Codex HTTP Responses request-shape checks
+- WebSocket `response.create` and `previous_response_id` continuation checks
+- `apply_patch` freeform/function/disabled model-metadata profiles
+- shell-tool profile variants that should stay out of the default core gate
+  until stable
+
+This is a V3 compatibility-quality track. It should not claim exact hosted
+parity and should not promote flaky profile tasks into `codex-core` or
+`codex-real-upstream` until the profile has deterministic evidence.
+
+### 10. Ops and deployment expansion
 
 - multi-tenant authz / tenant isolation
 - richer exporters and dashboards
