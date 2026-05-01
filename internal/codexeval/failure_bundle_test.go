@@ -67,6 +67,7 @@ func TestRenderFailureBundleMarkdown(t *testing.T) {
 		"## Task `basic_patch`",
 		"- Bucket: `checker_diff`",
 		"`file_equals`: smoke_target.txt content mismatch",
+		"import-failure <run-dir> --task basic_patch --attempt 1 --out <new-task-id>",
 		"#### Task Manifest",
 		"#### Git Diff",
 		"tasks/basic_patch/attempt-01",

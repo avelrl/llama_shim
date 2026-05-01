@@ -518,6 +518,54 @@ metadata, Codex event summaries, checker failures, final text, copied
 `task.yaml`, `git.diff`, and `failure.md` when those artifacts exist. It is a
 local debug artifact and should not be committed.
 
+To turn a failed task attempt into a committed regression-task skeleton:
+
+```bash
+go run ./cmd/codex-eval-runner import-failure \
+  --task basic_patch \
+  --attempt 1 \
+  --out imported_basic_patch_regression \
+  .tmp/codex-eval-runs/<run-id>
+```
+
+The import command rejects tasks whose final status is `passed`, `skipped`, or
+`quarantined`; it is meant for failed outcomes, not retry-dependent green runs.
+If `--attempt` is omitted, the last failed attempt is imported.
+
+Generated import layout:
+
+```text
+internal/codexeval/testdata/tasks/<new-task-id>/
+  task.yaml
+  workspace/
+  import_artifacts/
+    README.md
+    source.json
+    source_task.yaml
+    git.diff
+    final_text.txt
+    checker_failures.md
+    workspace-before/
+    workspace-after/
+```
+
+The generated `task.yaml` is intentionally valid but isolated in the
+`codex-regression-import` suite with TODO prompt/checker fields. It should not
+be moved into `codex-core`, `codex-smoke`, or `codex-real-upstream` until the
+task is minimized and deterministic.
+
+Before committing an imported regression:
+
+- replace the TODO prompt with the smallest task that reproduces the failure;
+- replace the TODO checker with deterministic file, command, and Codex-event
+  checks;
+- remove provider chatter, secrets, raw `.tmp` paths, local absolute paths, and
+  unrelated generated files;
+- keep only the minimal `workspace/` fixture needed to reproduce the issue;
+- delete or trim `import_artifacts/` if the copied diagnostics are no longer
+  needed for review;
+- run `go test ./internal/codexeval` and the target eval suite.
+
 That split is intentional:
 
 - generated matrix output is an audit trail and quick comparison view copied
@@ -915,6 +963,8 @@ Implemented so far:
   JSON summary, and failure-bundle generation in one command.
 - The `failure-bundle` subcommand packages failed-task artifacts into one
   markdown file for frontier-model review.
+- The `import-failure` subcommand turns a failed task attempt into a sanitized
+  regression-task skeleton under the committed task tree.
 - Current per-model baselines are recorded in
   `docs/engineering/codex-upstream-model-matrix.md`.
 
@@ -922,11 +972,12 @@ Implemented so far:
 
 Deliverables:
 
-- command to import a failed manual run into a new task skeleton
-- task minimization checklist
-- fixture sanitization checklist
-- reviewer template for failure analysis
-- docs update explaining how manual sessions become automated regression cases
+- command to import a failed manual run into a new task skeleton: implemented
+- task minimization checklist: implemented
+- fixture sanitization checklist: implemented
+- reviewer template for failure analysis: covered by `failure-bundle`
+- docs update explaining how manual sessions become automated regression cases:
+  implemented
 
 Exit criteria:
 

@@ -173,6 +173,23 @@ model-behavior, and retry-dependent failures. Human-written model matrix
 updates should copy interpretation from that report, not recalculate counts by
 hand.
 
+When a failed task should become a permanent regression, import it into a task
+skeleton instead of copying `.tmp` artifacts by hand:
+
+```bash
+go run ./cmd/codex-eval-runner import-failure \
+  --task basic_patch \
+  --attempt 1 \
+  --out imported_basic_patch_regression \
+  .tmp/codex-eval-runs/<run-id>
+```
+
+The imported task lands in the `codex-regression-import` suite with TODO
+prompt/checker fields and copied diagnostics under `import_artifacts/`. Before
+moving it into a normal suite, minimize the prompt, keep only the smallest
+workspace fixture, replace the TODO checker with deterministic checks, and
+remove secrets, absolute local paths, `.tmp` paths, and provider-specific noise.
+
 Create a disposable workspace:
 
 ```bash

@@ -27,6 +27,9 @@ func main() {
 		case "compare":
 			runCompare(os.Args[2:])
 			return
+		case "import-failure":
+			runImportFailure(os.Args[2:])
+			return
 		}
 	}
 
@@ -187,6 +190,34 @@ func runCompare(args []string) {
 		}
 		fmt.Printf("codex eval compare summary: %s\n", *jsonOut)
 	}
+}
+
+func runImportFailure(args []string) {
+	flags := flag.NewFlagSet("import-failure", flag.ExitOnError)
+	taskID := flags.String("task", envString("CODEX_EVAL_IMPORT_TASK", ""), "failed task id to import")
+	outID := flags.String("out", envString("CODEX_EVAL_IMPORT_OUT", ""), "new task id under the task manifest directory")
+	tasksDir := flags.String("tasks-dir", envString("CODEX_EVAL_TASKS_DIR", "internal/codexeval/testdata/tasks"), "task manifest directory")
+	attempt := flags.Int("attempt", envInt("CODEX_EVAL_IMPORT_ATTEMPT", 0), "specific failed attempt to import; 0 uses the last failed attempt")
+	if err := flags.Parse(args); err != nil {
+		fmt.Fprintf(os.Stderr, "codex eval import failed: %v\n", err)
+		os.Exit(2)
+	}
+	if flags.NArg() != 1 {
+		fmt.Fprintf(os.Stderr, "codex eval import failed: expected one run directory or summary.json path\n")
+		os.Exit(2)
+	}
+	result, err := codexeval.ImportFailure(codexeval.ImportFailureOptions{
+		RunPath:  flags.Arg(0),
+		TaskID:   *taskID,
+		OutID:    *outID,
+		TasksDir: *tasksDir,
+		Attempt:  *attempt,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "codex eval import failed: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("codex eval imported failure: %s\n", result.TaskDir)
 }
 
 func writeTextFile(path, value string) error {

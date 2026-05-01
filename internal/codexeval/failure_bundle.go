@@ -98,6 +98,7 @@ func writeAttemptFailureBundle(b *strings.Builder, runDir, taskID string, attemp
 		fmt.Fprintf(b, "- Error: `%s`\n", truncateInline(attempt.Error, 500))
 	}
 	fmt.Fprintf(b, "- Artifact: `%s`\n", displayArtifactPath(runDir, attemptDir))
+	fmt.Fprintf(b, "- Import command: `go run ./cmd/codex-eval-runner import-failure <run-dir> --task %s --attempt %d --out <new-task-id>`\n", taskID, attempt.Attempt)
 	fmt.Fprintf(b, "\n")
 
 	writeEventSummary(b, attempt.Events)

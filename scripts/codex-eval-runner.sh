@@ -20,6 +20,12 @@ Usage:
     --json-out .tmp/codex-eval-loops/<loop-id>/summary.json \
     .tmp/codex-eval-loops/<loop-id>/candidate-*
 
+  ./scripts/codex-eval-runner.sh import-failure \
+    --task basic_patch \
+    --attempt 1 \
+    --out imported_basic_patch_regression \
+    .tmp/codex-eval-runs/<run-id>
+
 Common real-upstream usage:
   SHIM_BASE_URL=http://127.0.0.1:8080 \
   CODEX_MODEL=Qwen3.6-35B-A3B \
@@ -47,6 +53,9 @@ Optional:
   CODEX_EVAL_COMPARE_CONTROL=.tmp/codex-eval-loops/<loop-id>/control
   CODEX_EVAL_COMPARE_OUT=.tmp/codex-eval-loops/<loop-id>/compare.md
   CODEX_EVAL_COMPARE_JSON_OUT=.tmp/codex-eval-loops/<loop-id>/summary.json
+  CODEX_EVAL_IMPORT_TASK=basic_patch
+  CODEX_EVAL_IMPORT_OUT=imported_basic_patch_regression
+  CODEX_EVAL_IMPORT_ATTEMPT=1
 EOF
 }
 
