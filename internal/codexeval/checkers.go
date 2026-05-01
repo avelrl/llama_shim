@@ -2,6 +2,7 @@ package codexeval
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -77,6 +78,9 @@ func runCheckers(ctx context.Context, manifest Manifest, workspace, outputFile s
 	}
 	for _, command := range manifest.Expected.Commands {
 		checkCommandExpectation(ctx, &result, workspace, command, taskEnv)
+	}
+	if len(manifest.Expected.RequestShapes) > 0 {
+		checkRequestShapeExpectations(&result, filepath.Dir(outputFile), manifest.Expected.RequestShapes)
 	}
 	result.Passed = len(result.Failures) == 0
 	return result, finalText, nil
@@ -192,4 +196,196 @@ func commandName(expected CommandExpectation) string {
 func expandTemplate(value, workspace string) string {
 	value = strings.ReplaceAll(value, "${workspace}", workspace)
 	return value
+}
+
+func checkRequestShapeExpectations(result *CheckResult, attemptDir string, expectations []RequestShapeExpectation) {
+	artifactPath := filepath.Join(attemptDir, requestShapeArtifactName)
+	raw, err := os.ReadFile(artifactPath)
+	if err != nil {
+		result.addFailure("request_shape", fmt.Sprintf("cannot read %s: %v", requestShapeArtifactName, err))
+		return
+	}
+	var artifact requestShapeArtifact
+	if err := json.Unmarshal(raw, &artifact); err != nil {
+		result.addFailure("request_shape", fmt.Sprintf("cannot parse %s: %v", requestShapeArtifactName, err))
+		return
+	}
+	for _, expectation := range expectations {
+		checkRequestShapeExpectation(result, artifact.Requests, expectation)
+	}
+}
+
+func checkRequestShapeExpectation(result *CheckResult, requests []CapturedRequestShape, expectation RequestShapeExpectation) {
+	minCount := expectation.MinCount
+	if minCount == 0 {
+		minCount = 1
+	}
+	matches := make([]CapturedRequestShape, 0)
+	for _, request := range requests {
+		if requestShapeMatchesFilter(request, expectation) {
+			matches = append(matches, request)
+		}
+	}
+	label := expectation.Name
+	if label == "" {
+		label = requestShapeExpectationLabel(expectation)
+	}
+	if len(matches) < minCount {
+		result.addFailure("request_shape", fmt.Sprintf("%s matched %d request(s), want at least %d", label, len(matches), minCount))
+		return
+	}
+	var firstMismatch string
+	for _, request := range matches {
+		if mismatch := requestShapeDetailMismatch(request, expectation); mismatch == "" {
+			return
+		} else if firstMismatch == "" {
+			firstMismatch = mismatch
+		}
+	}
+	result.addFailure("request_shape", fmt.Sprintf("%s matched transport/path filters but failed detail checks: %s", label, firstMismatch))
+}
+
+func requestShapeMatchesFilter(request CapturedRequestShape, expectation RequestShapeExpectation) bool {
+	if expectation.Transport != "" && request.Transport != expectation.Transport {
+		return false
+	}
+	if expectation.Method != "" && !strings.EqualFold(request.Method, expectation.Method) {
+		return false
+	}
+	if expectation.Path != "" && request.Path != expectation.Path {
+		return false
+	}
+	if expectation.Type != "" && request.Type != expectation.Type {
+		return false
+	}
+	if expectation.Model != "" && request.Model != expectation.Model {
+		return false
+	}
+	return true
+}
+
+func requestShapeDetailMismatch(request CapturedRequestShape, expectation RequestShapeExpectation) string {
+	headers := lowerStringSetFromMap(request.Headers)
+	bodyFields := stringSet(request.BodyFields)
+	toolNames := stringSet(request.ToolNames)
+	toolTypes := stringSet(request.ToolTypes)
+	inputItemTypes := stringSet(request.InputItemTypes)
+	for _, header := range expectation.RequiredHeaders {
+		if !headers[strings.ToLower(header)] {
+			return fmt.Sprintf("missing header %q", header)
+		}
+	}
+	for _, header := range expectation.ForbiddenHeaders {
+		if headers[strings.ToLower(header)] {
+			return fmt.Sprintf("unexpected header %q", header)
+		}
+	}
+	for _, header := range expectation.RedactedHeaders {
+		value, ok := request.Headers[strings.ToLower(header)]
+		if !ok {
+			return fmt.Sprintf("missing redacted header %q", header)
+		}
+		if value != "[REDACTED]" {
+			return fmt.Sprintf("header %q was not redacted", header)
+		}
+	}
+	for _, field := range expectation.RequiredBodyFields {
+		if !bodyFields[field] {
+			return fmt.Sprintf("missing body field %q", field)
+		}
+	}
+	for _, field := range expectation.ForbiddenBodyFields {
+		if bodyFields[field] {
+			return fmt.Sprintf("unexpected body field %q", field)
+		}
+	}
+	if expectation.MinTools > 0 && len(request.ToolNames) < expectation.MinTools {
+		return fmt.Sprintf("tool count %d below min %d", len(request.ToolNames), expectation.MinTools)
+	}
+	for _, name := range expectation.RequiredToolNames {
+		if !toolNames[name] {
+			return fmt.Sprintf("missing tool name %q", name)
+		}
+	}
+	for _, name := range expectation.ForbiddenToolNames {
+		if toolNames[name] {
+			return fmt.Sprintf("unexpected tool name %q", name)
+		}
+	}
+	for _, typ := range expectation.RequiredToolTypes {
+		if !toolTypes[typ] {
+			return fmt.Sprintf("missing tool type %q", typ)
+		}
+	}
+	for _, typ := range expectation.RequiredInputItemTypes {
+		if !inputItemTypes[typ] {
+			return fmt.Sprintf("missing input item type %q", typ)
+		}
+	}
+	if expectation.Stream != nil && !boolPointerEquals(request.Stream, *expectation.Stream) {
+		return fmt.Sprintf("stream = %v, want %v", pointerBoolString(request.Stream), *expectation.Stream)
+	}
+	if expectation.Store != nil && !boolPointerEquals(request.Store, *expectation.Store) {
+		return fmt.Sprintf("store = %v, want %v", pointerBoolString(request.Store), *expectation.Store)
+	}
+	if expectation.Generate != nil && !boolPointerEquals(request.Generate, *expectation.Generate) {
+		return fmt.Sprintf("generate = %v, want %v", pointerBoolString(request.Generate), *expectation.Generate)
+	}
+	if expectation.ToolChoicePresent != nil && request.ToolChoicePresent != *expectation.ToolChoicePresent {
+		return fmt.Sprintf("tool_choice_present = %v, want %v", request.ToolChoicePresent, *expectation.ToolChoicePresent)
+	}
+	if expectation.PreviousResponseIDPresent != nil && request.PreviousResponseIDPresent != *expectation.PreviousResponseIDPresent {
+		return fmt.Sprintf("previous_response_id_present = %v, want %v", request.PreviousResponseIDPresent, *expectation.PreviousResponseIDPresent)
+	}
+	if request.BodyTruncated {
+		return "captured body was truncated"
+	}
+	if request.BodyInvalidJSON != "" && len(expectation.RequiredBodyFields) > 0 {
+		return "captured body was not valid JSON: " + request.BodyInvalidJSON
+	}
+	return ""
+}
+
+func requestShapeExpectationLabel(expectation RequestShapeExpectation) string {
+	parts := []string{"request shape"}
+	if expectation.Transport != "" {
+		parts = append(parts, expectation.Transport)
+	}
+	if expectation.Method != "" {
+		parts = append(parts, expectation.Method)
+	}
+	if expectation.Path != "" {
+		parts = append(parts, expectation.Path)
+	}
+	if expectation.Type != "" {
+		parts = append(parts, expectation.Type)
+	}
+	return strings.Join(parts, " ")
+}
+
+func lowerStringSetFromMap(values map[string]string) map[string]bool {
+	result := make(map[string]bool, len(values))
+	for key := range values {
+		result[strings.ToLower(key)] = true
+	}
+	return result
+}
+
+func stringSet(values []string) map[string]bool {
+	result := make(map[string]bool, len(values))
+	for _, value := range values {
+		result[value] = true
+	}
+	return result
+}
+
+func boolPointerEquals(value *bool, expected bool) bool {
+	return value != nil && *value == expected
+}
+
+func pointerBoolString(value *bool) string {
+	if value == nil {
+		return "<absent>"
+	}
+	return fmt.Sprintf("%v", *value)
 }

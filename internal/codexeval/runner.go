@@ -397,7 +397,20 @@ func (runner *Runner) runAttempt(ctx context.Context, task Task, attempt int) At
 		result.FailureBucket = BucketHarnessBug
 		return result
 	}
-	if err := runner.writeCodexConfig(filepath.Join(attemptDir, "codex-home", "config.toml")); err != nil {
+	configBaseURL := runner.config.BaseURL
+	var shapeCapture *requestShapeCapture
+	if len(task.Manifest.Expected.RequestShapes) > 0 {
+		var err error
+		shapeCapture, err = startRequestShapeCapture(runner.config.BaseURL, filepath.Join(attemptDir, requestShapeArtifactName))
+		if err != nil {
+			result.Error = err.Error()
+			result.FailureBucket = BucketHarnessBug
+			return result
+		}
+		defer shapeCapture.Close()
+		configBaseURL = shapeCapture.ProviderBaseURL()
+	}
+	if err := runner.writeCodexConfig(filepath.Join(attemptDir, "codex-home", "config.toml"), configBaseURL); err != nil {
 		result.Error = err.Error()
 		result.FailureBucket = BucketHarnessBug
 		return result
@@ -425,6 +438,9 @@ func (runner *Runner) runAttempt(ctx context.Context, task Task, attempt int) At
 	_ = copyWorkspaceSnapshot(workspace, after)
 	_ = writeGitDiff(before, after, filepath.Join(attemptDir, "git.diff"))
 	_ = pruneAttemptArtifacts(attemptDir)
+	if shapeCapture != nil {
+		_ = shapeCapture.WriteArtifact()
+	}
 	checkResult, finalText, checkErr := runCheckers(ctx, task.Manifest, workspace, outputFile, task.Manifest.Env)
 	result.CheckResult = checkResult
 	_ = pruneWorkspaceArtifacts(workspace)
@@ -469,9 +485,13 @@ func writeManifestCopy(task Task, outDir string) error {
 	return copyFile(src, dst, 0o644)
 }
 
-func (runner *Runner) writeCodexConfig(path string) error {
+func (runner *Runner) writeCodexConfig(path string, baseURLOverride ...string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
+	}
+	baseURL := runner.config.BaseURL
+	if len(baseURLOverride) > 0 && strings.TrimSpace(baseURLOverride[0]) != "" {
+		baseURL = strings.TrimRight(baseURLOverride[0], "/")
 	}
 	config := fmt.Sprintf(`model = "%s"
 model_provider = "%s"
@@ -503,7 +523,7 @@ request_max_retries = %d
 stream_max_retries = %d
 stream_idle_timeout_ms = %d
 `, runner.config.Model, runner.config.Provider, runner.config.ApplyPatchFreeform, runner.config.UnifiedExec,
-		runner.config.Provider, runner.config.Provider, runner.config.BaseURL, runner.config.APIKeyEnv,
+		runner.config.Provider, runner.config.Provider, baseURL, runner.config.APIKeyEnv,
 		runner.config.WebSockets, runner.config.RequestMaxRetries, runner.config.StreamMaxRetries, runner.config.StreamIdleTimeoutMS)
 	return os.WriteFile(path, []byte(config), 0o600)
 }
@@ -615,6 +635,8 @@ func classifyCheckFailure(result CheckResult, finalText string) (string, string)
 			return StatusFailedChecker, BucketCheckerDiff
 		case "command_failed", "command_timeout":
 			return StatusFailedChecker, BucketCheckerTests
+		case "request_shape":
+			return StatusFailedChecker, BucketHarnessBug
 		case "file_equals", "file_contains", "file_matches", "file_exists", "file_absent", "file_read":
 			return StatusFailedChecker, BucketCheckerDiff
 		}

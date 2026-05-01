@@ -4,8 +4,8 @@ Last updated: May 1, 2026.
 
 Task id: `v3-codex-shim-native-coverage`
 
-Status: planned follow-up split out of
-[v3-codex-eval-harness.md](v3-codex-eval-harness.md).
+Status: request-shape capture and HTTP/WebSocket profile tasks implemented;
+`apply_patch` tool-mode profiles remain planned follow-up work.
 
 This document indexes Codex-through-shim compatibility gaps that are not just
 benchmark breadth. They are shim-native or profile-specific behaviors that need
@@ -38,6 +38,9 @@ Relevant source/docs constraints:
   `developer_instructions`, and provider-level `supports_websockets`.
 - WebSocket mode uses `response.create`, optional `generate: false`, and
   incremental continuation via `previous_response_id`.
+- Current Codex source serializes `stream` into
+  `ResponseCreateWsRequest`; this Codex-native profile checks the observed
+  Codex request shape and does not present that field as hosted OpenAI parity.
 - Codex app-server command APIs include `command/exec`,
   `command/exec/write`, resize, terminate, and output-delta notifications,
   which confirms that interactive command continuation is a real Codex runtime
@@ -57,13 +60,15 @@ process through both HTTP Responses and Chat-backed Responses paths.
 
 ### 2. Codex Request-Shape Capture And Profile Checks
 
+Status: implemented on May 1, 2026.
+
 Problem:
 
-The harness currently validates task outcomes well, but it does not yet make
-Codex request shape a first-class checker. That leaves subtle regressions in
-headers, provider config, model metadata, and transport mode harder to diagnose.
+The harness validates task outcomes well, but request shape also needs to be a
+first-class checker. Otherwise subtle regressions in headers, provider config,
+model metadata, and transport mode are harder to diagnose.
 
-Required coverage:
+Implemented coverage:
 
 - HTTP Responses request shape sent by Codex:
   - path and method;
@@ -72,28 +77,49 @@ Required coverage:
   - `session_id` header when present;
   - `model`, `instructions`, `input`, `tools`, `tool_choice`, `stream`,
     `parallel_tool_calls`, `reasoning`, `store`, `include`, `text`, and
-    `client_metadata` presence/absence as applicable.
+    `client_metadata` presence/absence as applicable;
+  - advertised tool names and tool types.
 - WebSocket request shape:
   - `response.create` message shape;
-  - warmup `generate: false` if enabled later;
-  - incremental continuation with `previous_response_id`;
-  - reconnect/fallback behavior kept separate from the default gate.
-- Provider/model profile knobs:
+  - warmup `generate: false`;
+  - generated request with incremental `previous_response_id`;
+  - redacted handshake headers;
+  - unexpected WebSocket dial/pump errors captured as diagnostic
+    `websocket_error` request-shape entries.
+- Generated Codex config knobs:
   - `supports_websockets`;
   - `features.unified_exec`;
-  - fallback shell mode;
-  - local shell mode if supported by the active Codex source;
-  - `features.apply_patch_freeform`;
-  - function-style `apply_patch`;
-  - disabled `apply_patch`.
+  - `features.apply_patch_freeform`.
 
-Implementation shape:
+Run commands:
 
-- add a redacted request-shape capture artifact to eval attempts or to the shim
-  log slice consumed by eval checkers;
-- add deterministic request-shape checkers that operate on redacted artifacts;
-- keep profile tasks out of stable real-upstream comparison until a provider
-  proves them useful and non-flaky.
+```bash
+make codex-eval-shim-native
+make codex-eval-shim-native-websocket
+make codex-eval-shim-native-profiles
+```
+
+Artifacts:
+
+- every task attempt that declares `expected.request_shapes` writes
+  `.tmp/codex-eval-runs/<run-id>/tasks/<task-id>/attempt-XX/request-shapes.json`;
+- the artifact is bounded and redacts sensitive headers such as
+  `authorization`, API keys, tokens, secrets, and cookies;
+- the checker matches redacted artifacts deterministically through
+  `expected.request_shapes` in the task manifest.
+
+Implemented tasks:
+
+- `request_shape_http` in `codex-shim-native`;
+- `request_shape_websocket` in `codex-shim-native-websocket`.
+
+Boundary:
+
+These tasks intentionally live outside the default `codex-core` and
+`codex-real-upstream` gates. They prove what the current Codex CLI sends
+through the shim, including implementation-specific details from the inspected
+Codex source, and they should not be used as standalone evidence for a stronger
+OpenAI hosted parity claim.
 
 ### 3. `apply_patch` Tool-Mode Profiles
 
@@ -121,17 +147,23 @@ Required tests:
 
 ### 4. WebSocket Incremental Continuation Profile
 
+Status: request-shape path implemented; failure-state invalidation remains in
+the broader V3 WebSocket track.
+
 Problem:
 
 The default HTTP eval path sends full request context. WebSocket mode can send
 incremental inputs with `previous_response_id`, which is a different request
 shape and a different shim state path.
 
-Required coverage:
+Implemented coverage:
 
 - WebSocket-enabled Codex profile uses WebSocket transport, not HTTP fallback;
 - the second turn sends only incremental input plus `previous_response_id`;
 - `store=false` behavior is handled as a connection-local cache path;
+
+Remaining coverage:
+
 - failed continuation invalidates the relevant cached state where applicable.
 
 This profile belongs with V3 WebSocket coverage, but it is tracked here because
@@ -156,8 +188,9 @@ This follow-up is done when:
 - `write_stdin_pty` passes in a dedicated interactive profile without relying
   on model-visible luck; tracked in
   [v3-codex-interactive-command-session-bridge.md](v3-codex-interactive-command-session-bridge.md)
-- request-shape artifacts are redacted, bounded, and checked deterministically;
-- HTTP and WebSocket Codex request-shape profile tasks exist;
+- request-shape artifacts are redacted, bounded, and checked deterministically
+  (done);
+- HTTP and WebSocket Codex request-shape profile tasks exist (done);
 - freeform and function `apply_patch` profile checks exist or the unsupported
   mode is explicitly documented against the current Codex source;
 - docs and run commands are linked from

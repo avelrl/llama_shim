@@ -742,6 +742,21 @@ suite adds the first mixed text-plus-file-change regression task. This is a
 local quality/regression signal; it does not strengthen hosted OpenAI parity
 claims by itself.
 
+For Codex-through-shim request-shape coverage, use the shim-native profiles:
+
+```bash
+make codex-eval-shim-native
+make codex-eval-shim-native-websocket
+make codex-eval-shim-native-profiles
+```
+
+Tasks in these profiles write a redacted, bounded
+`request-shapes.json` under each attempt directory. Use it to inspect the
+actual Codex HTTP or WebSocket request shape, including headers, body fields,
+tool names, WebSocket warmup `generate:false`, and incremental
+`previous_response_id`. This is Codex compatibility evidence, not a standalone
+hosted OpenAI parity claim.
+
 ## Boundaries
 
 Current status is `Broad subset`:

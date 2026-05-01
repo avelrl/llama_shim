@@ -1,0 +1,34 @@
+id: request_shape_http
+title: HTTP Responses request shape
+category: shim-native
+suites:
+  - codex-shim-native
+timeout: 120s
+attempts: 1
+prompt: |
+  This is the Codex HTTP request-shape case. Complete the turn with a minimal response.
+expected:
+  files:
+    - path: README.md
+      contains: llama-shim-42
+  codex_events:
+    - item.completed:agent_message
+    - turn.completed
+  request_shapes:
+    - name: http responses create
+      transport: http
+      method: POST
+      path: /v1/responses
+      min_count: 1
+      min_tools: 1
+      redacted_headers:
+        - authorization
+      required_body_fields:
+        - input
+        - model
+        - tools
+      required_tool_names:
+        - exec_command
+  forbidden_output:
+    - "<|tool_call"
+    - "<|tool_calls_section"

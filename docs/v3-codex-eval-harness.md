@@ -27,11 +27,14 @@ Implemented slice through the current Phase 5 work:
   - `make codex-eval-core-shell`
   - `make codex-eval-core-websocket`
   - `make codex-eval-core-profiles`
+  - `make codex-eval-shim-native`
+  - `make codex-eval-shim-native-websocket`
+  - `make codex-eval-shim-native-profiles`
   - `make codex-eval-real-upstream`
 - isolated task workspace and `CODEX_HOME` per attempt
 - generated Codex custom-provider config
-- deterministic file, command, Codex event, forbidden-event, and
-  forbidden-output checkers
+- deterministic file, command, Codex event, request-shape, forbidden-event,
+  and forbidden-output checkers
 - local artifacts under `.tmp/codex-eval-runs/<run-id>/`
 - task-id filtering and failed-task rerun from a previous `summary.json`
 - failure bundle generation for frontier-model review:
@@ -48,8 +51,10 @@ The `codex-core` suite now contains 20 deterministic tasks: the smoke set plus
 `shell_script_fix`.
 Profile gates cover tool/transport axes that should not be mixed into the
 normal real-upstream model comparison by default: `codex-core-shell` runs
-fallback shell mode with `unified_exec=false`, and `codex-core-websocket` runs
-WebSocket transport tasks with `supports_websockets=true`. The
+fallback shell mode with `unified_exec=false`, `codex-core-websocket` runs
+WebSocket transport tasks with `supports_websockets=true`, and
+`codex-shim-native` / `codex-shim-native-websocket` verify redacted Codex
+request shapes for HTTP and WebSocket transports. The
 `write_stdin_pty` task is kept in `codex-core-interactive` and `codex-compat`
 instead of the default core gate because the current Codex Chat bridge does not
 expose a reliable live process session id in model-visible tool output.
@@ -916,7 +921,10 @@ Current status on May 1, 2026:
   tool/transport profile gates: `codex-core` has 20 deterministic tasks,
   `codex-core-shell` covers fallback shell mode, and
   `codex-core-websocket` covers WebSocket mode plus a tool-follow-up
-  continuation path. `write_stdin_pty` is scaffolded as an interactive
+  continuation path. The shim-native request-shape profile is implemented and
+  tracked in
+  [v3-codex-shim-native-coverage.md](v3-codex-shim-native-coverage.md).
+  `write_stdin_pty` is scaffolded as an interactive
   compatibility profile task, not a default core task, because the current
   Chat-backed Codex bridge does not expose a stable session id for a follow-up
   `write_stdin` call; the fix is tracked separately in
@@ -1048,6 +1056,9 @@ make codex-eval-core
 make codex-eval-core-shell
 make codex-eval-core-websocket
 make codex-eval-core-profiles
+make codex-eval-shim-native
+make codex-eval-shim-native-websocket
+make codex-eval-shim-native-profiles
 ```
 
 ### Phase 4: Real-Upstream Daily Loop

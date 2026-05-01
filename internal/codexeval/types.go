@@ -88,16 +88,42 @@ type Quarantine struct {
 }
 
 type Expected struct {
-	FinalTextEquals       string               `yaml:"final_text_equals" json:"final_text_equals,omitempty"`
-	FinalTextContains     []string             `yaml:"final_text_contains" json:"final_text_contains,omitempty"`
-	FinalTextContainsFold []string             `yaml:"final_text_contains_fold" json:"final_text_contains_fold,omitempty"`
-	Files                 []FileExpectation    `yaml:"files" json:"files,omitempty"`
-	Commands              []CommandExpectation `yaml:"commands" json:"commands,omitempty"`
-	CodexEvents           []string             `yaml:"codex_events" json:"codex_events,omitempty"`
-	ForbiddenCodexEvents  []string             `yaml:"forbidden_codex_events" json:"forbidden_codex_events,omitempty"`
-	ForbiddenOutput       []string             `yaml:"forbidden_output" json:"forbidden_output,omitempty"`
-	MinCommandExecutions  int                  `yaml:"min_command_executions" json:"min_command_executions,omitempty"`
-	MaxToolCalls          int                  `yaml:"max_tool_calls" json:"max_tool_calls,omitempty"`
+	FinalTextEquals       string                    `yaml:"final_text_equals" json:"final_text_equals,omitempty"`
+	FinalTextContains     []string                  `yaml:"final_text_contains" json:"final_text_contains,omitempty"`
+	FinalTextContainsFold []string                  `yaml:"final_text_contains_fold" json:"final_text_contains_fold,omitempty"`
+	Files                 []FileExpectation         `yaml:"files" json:"files,omitempty"`
+	Commands              []CommandExpectation      `yaml:"commands" json:"commands,omitempty"`
+	RequestShapes         []RequestShapeExpectation `yaml:"request_shapes" json:"request_shapes,omitempty"`
+	CodexEvents           []string                  `yaml:"codex_events" json:"codex_events,omitempty"`
+	ForbiddenCodexEvents  []string                  `yaml:"forbidden_codex_events" json:"forbidden_codex_events,omitempty"`
+	ForbiddenOutput       []string                  `yaml:"forbidden_output" json:"forbidden_output,omitempty"`
+	MinCommandExecutions  int                       `yaml:"min_command_executions" json:"min_command_executions,omitempty"`
+	MaxToolCalls          int                       `yaml:"max_tool_calls" json:"max_tool_calls,omitempty"`
+}
+
+type RequestShapeExpectation struct {
+	Name                      string   `yaml:"name" json:"name,omitempty"`
+	Transport                 string   `yaml:"transport" json:"transport,omitempty"`
+	Method                    string   `yaml:"method" json:"method,omitempty"`
+	Path                      string   `yaml:"path" json:"path,omitempty"`
+	Type                      string   `yaml:"type" json:"type,omitempty"`
+	Model                     string   `yaml:"model" json:"model,omitempty"`
+	MinCount                  int      `yaml:"min_count" json:"min_count,omitempty"`
+	MinTools                  int      `yaml:"min_tools" json:"min_tools,omitempty"`
+	RequiredHeaders           []string `yaml:"required_headers" json:"required_headers,omitempty"`
+	ForbiddenHeaders          []string `yaml:"forbidden_headers" json:"forbidden_headers,omitempty"`
+	RedactedHeaders           []string `yaml:"redacted_headers" json:"redacted_headers,omitempty"`
+	RequiredBodyFields        []string `yaml:"required_body_fields" json:"required_body_fields,omitempty"`
+	ForbiddenBodyFields       []string `yaml:"forbidden_body_fields" json:"forbidden_body_fields,omitempty"`
+	RequiredToolNames         []string `yaml:"required_tool_names" json:"required_tool_names,omitempty"`
+	ForbiddenToolNames        []string `yaml:"forbidden_tool_names" json:"forbidden_tool_names,omitempty"`
+	RequiredToolTypes         []string `yaml:"required_tool_types" json:"required_tool_types,omitempty"`
+	RequiredInputItemTypes    []string `yaml:"required_input_item_types" json:"required_input_item_types,omitempty"`
+	Stream                    *bool    `yaml:"stream" json:"stream,omitempty"`
+	Store                     *bool    `yaml:"store" json:"store,omitempty"`
+	Generate                  *bool    `yaml:"generate" json:"generate,omitempty"`
+	ToolChoicePresent         *bool    `yaml:"tool_choice_present" json:"tool_choice_present,omitempty"`
+	PreviousResponseIDPresent *bool    `yaml:"previous_response_id_present" json:"previous_response_id_present,omitempty"`
 }
 
 type FileExpectation struct {

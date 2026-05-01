@@ -1,0 +1,66 @@
+id: request_shape_websocket
+title: WebSocket Responses request shape
+category: shim-native
+suites:
+  - codex-shim-native-websocket
+timeout: 120s
+attempts: 1
+prompt: |
+  This is the Codex WebSocket request-shape case. Complete the turn with a minimal response.
+expected:
+  files:
+    - path: README.md
+      contains: llama-shim-42
+  codex_events:
+    - item.completed:agent_message
+    - turn.completed
+  request_shapes:
+    - name: websocket handshake
+      transport: websocket_handshake
+      method: GET
+      path: /v1/responses
+      min_count: 1
+      redacted_headers:
+        - authorization
+    - name: websocket warmup response.create
+      transport: websocket
+      method: MESSAGE
+      path: /v1/responses
+      type: response.create
+      generate: false
+      stream: true
+      min_count: 1
+      min_tools: 1
+      forbidden_body_fields:
+        - background
+      required_body_fields:
+        - generate
+        - model
+        - stream
+        - tools
+        - type
+      required_tool_names:
+        - exec_command
+    - name: websocket generated response.create
+      transport: websocket
+      method: MESSAGE
+      path: /v1/responses
+      type: response.create
+      stream: true
+      previous_response_id_present: true
+      min_count: 1
+      min_tools: 1
+      forbidden_body_fields:
+        - background
+      required_body_fields:
+        - input
+        - model
+        - previous_response_id
+        - stream
+        - tools
+        - type
+      required_tool_names:
+        - exec_command
+  forbidden_output:
+    - "<|tool_call"
+    - "<|tool_calls_section"

@@ -129,6 +129,7 @@ func (expected Expected) Validate() error {
 		len(expected.FinalTextContains) > 0 ||
 		len(expected.Files) > 0 ||
 		len(expected.Commands) > 0 ||
+		len(expected.RequestShapes) > 0 ||
 		len(expected.CodexEvents) > 0 ||
 		len(expected.ForbiddenCodexEvents) > 0 ||
 		len(expected.ForbiddenOutput) > 0 ||
@@ -164,6 +165,14 @@ func (expected Expected) Validate() error {
 			if parsed <= 0 {
 				return fmt.Errorf("command checker timeout must be positive")
 			}
+		}
+	}
+	for _, shape := range expected.RequestShapes {
+		if shape.MinCount < 0 {
+			return fmt.Errorf("request shape %q min_count must be >= 0", shape.Name)
+		}
+		if shape.MinTools < 0 {
+			return fmt.Errorf("request shape %q min_tools must be >= 0", shape.Name)
 		}
 	}
 	return nil

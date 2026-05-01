@@ -20,7 +20,7 @@ func SuiteScope(suite string) string {
 		return SuiteScopeRealStable
 	case "codex-real-upstream-expanded":
 		return SuiteScopeRealExpanded
-	case "codex-core-shell", "codex-core-websocket", "codex-core-interactive", "codex-compat":
+	case "codex-core-shell", "codex-core-websocket", "codex-core-interactive", "codex-shim-native", "codex-shim-native-websocket", "codex-compat":
 		return SuiteScopeProfile
 	case "codex-regression-import":
 		return SuiteScopeRegressionImport

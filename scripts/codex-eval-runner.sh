@@ -67,6 +67,12 @@ Profile gates:
 
   CODEX_EVAL_SUITE=codex-core-websocket CODEX_EVAL_WEBSOCKETS=true \
     ./scripts/codex-eval-runner.sh
+
+  CODEX_EVAL_SUITE=codex-shim-native \
+    ./scripts/codex-eval-runner.sh
+
+  CODEX_EVAL_SUITE=codex-shim-native-websocket CODEX_EVAL_WEBSOCKETS=true \
+    ./scripts/codex-eval-runner.sh
 EOF
 }
 
