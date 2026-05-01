@@ -56,6 +56,13 @@ Optional:
   CODEX_EVAL_IMPORT_TASK=basic_patch
   CODEX_EVAL_IMPORT_OUT=imported_basic_patch_regression
   CODEX_EVAL_IMPORT_ATTEMPT=1
+
+Profile gates:
+  CODEX_EVAL_SUITE=codex-core-shell CODEX_EVAL_UNIFIED_EXEC=false \
+    ./scripts/codex-eval-runner.sh
+
+  CODEX_EVAL_SUITE=codex-core-websocket CODEX_EVAL_WEBSOCKETS=true \
+    ./scripts/codex-eval-runner.sh
 EOF
 }
 

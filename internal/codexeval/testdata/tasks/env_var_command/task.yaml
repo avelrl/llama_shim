@@ -1,0 +1,25 @@
+id: env_var_command
+title: Command environment propagation
+category: command
+suites:
+  - codex-core
+timeout: 120s
+attempts: 2
+env:
+  CODEX_EVAL_MAGIC: phase3-core
+prompt: |
+  This is the Codex env var case. Use exec_command to read CODEX_EVAL_MAGIC and write env_capture.txt containing exactly `EVAL_MAGIC=phase3-core`. Verify the file, then reply ENV_VAR_OK.
+expected:
+  final_text_contains:
+    - ENV_VAR_OK
+  files:
+    - path: env_capture.txt
+      equals: |
+        EVAL_MAGIC=phase3-core
+  codex_events:
+    - item.started:command_execution
+    - item.completed:agent_message
+    - turn.completed
+  forbidden_output:
+    - "<|tool_call"
+    - "<|tool_calls_section"

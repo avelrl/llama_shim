@@ -4,15 +4,15 @@ Last updated: May 1, 2026.
 
 Task id: `v3-codex-eval-harness`
 
-Status: Phase 4 daily-loop tooling implemented; Phase 3 suite expansion and
-Phase 5+ pending.
+Status: Phase 5 regression import workflow implemented; Phase 3 deterministic
+core suite and profile gates implemented; Phase 6 benchmark-lite pending.
 
 This task defines a repeatable evaluation and regression loop for running the
 real Codex CLI through `llama_shim` against local or OpenAI-compatible upstream
 models. The goal is to stop relying on one-off manual Codex sessions as the
 primary compatibility signal.
 
-Implemented slice through the current Phase 4 work:
+Implemented slice through the current Phase 5 work:
 
 - `cmd/codex-eval-runner`
 - `internal/codexeval`
@@ -22,6 +22,9 @@ Implemented slice through the current Phase 4 work:
 - Make targets:
   - `make codex-eval-smoke`
   - `make codex-eval-core`
+  - `make codex-eval-core-shell`
+  - `make codex-eval-core-websocket`
+  - `make codex-eval-core-profiles`
   - `make codex-eval-real-upstream`
 - isolated task workspace and `CODEX_HOME` per attempt
 - generated Codex custom-provider config
@@ -36,14 +39,25 @@ Implemented slice through the current Phase 4 work:
 
 The implemented `codex-smoke` suite currently covers `boot`, `read_file`,
 `basic_patch`, `bugfix_go`, `command_recovery`, `plan_doc`, and `multi_file`.
-The `codex-core` suite includes that deterministic set plus command/no-edit
-coverage for `no_edit`, `stderr_handling`, `long_stdout`, and
-`command_timeout`. The `codex-real-upstream` suite tracks the current
-real-upstream-safe subset plus the first mixed text-plus-file-change regression
-task, `bugfix_mixed`, because that task requires real Codex file-change
-behavior rather than the devstack command fixture. Newly added core tasks
-should be promoted into `codex-real-upstream` only after at least one real
-provider profile proves them stable.
+The `codex-core` suite now contains 20 deterministic tasks: the smoke set plus
+`no_edit`, `stderr_handling`, `long_stdout`, `command_timeout`,
+`command_pipeline`, `js_bugfix`, `python_bugfix`, `json_config_edit`,
+`env_var_command`, `workdir_nested`, `patch_after_context`, `no_delete`, and
+`shell_script_fix`.
+Profile gates cover tool/transport axes that should not be mixed into the
+normal real-upstream model comparison by default: `codex-core-shell` runs
+fallback shell mode with `unified_exec=false`, and `codex-core-websocket` runs
+WebSocket transport tasks with `supports_websockets=true`. The
+`write_stdin_pty` task is kept in `codex-core-interactive` and `codex-compat`
+instead of the default core gate because the current Codex Chat bridge does not
+expose a reliable live process session id in model-visible tool output.
+
+The `codex-real-upstream` suite tracks the current real-upstream-safe subset
+plus the first mixed text-plus-file-change regression task, `bugfix_mixed`,
+because that task requires real Codex file-change behavior rather than the
+devstack command fixture. Newly added core tasks should be promoted into
+`codex-real-upstream` only after at least one real provider profile proves them
+stable.
 
 This is a V3 quality and automation track. It does not change the frozen V2
 compatibility contract and must not strengthen any hosted OpenAI parity claim
@@ -662,7 +676,7 @@ Task families:
 - tiny TypeScript or JavaScript bugfix with tests
 - command failure recovery
 - command timeout recovery
-- PTY or long-running command interaction through `write_stdin`
+- shell pipeline command behavior
 - long stdout truncation
 - stderr handling
 - no-op task where Codex should not edit files
@@ -823,11 +837,16 @@ Current status on May 1, 2026:
   `CODEX_HOME`, summaries, artifacts, and deterministic checkers exist.
 - Phase 2 is partially implemented: Make targets exist and use the runner, but
   older smoke scripts have not been deduplicated into shared runner logic.
-- Phase 3 has started: `command_recovery`, `command_timeout`,
-  `bugfix_mixed`, raw-tool-markup detection, and failure buckets exist, but
-  `codex-core` is still a small suite and does not yet contain the planned
-  `write_stdin`, fallback-shell, WebSocket, compaction, and
-  TypeScript/JavaScript variants.
+- Phase 3 is implemented for deterministic core coverage and first
+  tool/transport profile gates: `codex-core` has 20 deterministic tasks,
+  `codex-core-shell` covers fallback shell mode, and
+  `codex-core-websocket` covers WebSocket mode plus a tool-follow-up
+  continuation path. `write_stdin_pty` is scaffolded as an interactive
+  compatibility profile task, not a default core task, because the current
+  Chat-backed Codex bridge does not expose a stable session id for a follow-up
+  `write_stdin` call. Remote compaction/reset is kept in the broader
+  `codex-compat` family because it needs a separate low-context or
+  remote-state profile rather than the normal pre-commit core gate.
 - Phase 4 daily-loop tooling is implemented: real-upstream runs, manifest
   quarantine, task-id filtering, failed-task rerun, matrix generation, and
   packaged failure review bundles exist.
@@ -835,11 +854,11 @@ Current status on May 1, 2026:
   removed. It reduced the April 30 Qwen eval result from the prior 7/8 and 8/8
   baselines to 5/8 by increasing protocol-shaped final text such as
   `<resolve_conflicts>` and `<toolCall::apply_patch>`.
-- Phases 5 and 6 are still pending.
+- Phase 5 regression import workflow is implemented.
+- Phase 6 is still pending.
 
-Next practical milestone: add profile-driven fallback-shell and WebSocket
-coverage without mixing those transport/tool-mode axes into normal
-real-upstream model comparisons.
+Next practical milestone: decide which new deterministic core tasks should be
+promoted into `codex-real-upstream` after real-model stability runs.
 
 ### Phase 0: Preserve Current Smoke Behavior
 
@@ -922,17 +941,30 @@ Deliverables:
 - raw tool markup detection
 - per-task failure bucket classification
 - command timeout task
-- `write_stdin`/PTY interaction task
-- fallback shell mode task
-- WebSocket mode task
-- WebSocket incremental continuation task
-- remote compaction/reset task
+- command pipeline task
+- `write_stdin`/PTY interaction task in `codex-core-interactive` and
+  `codex-compat`
+- fallback shell mode task through the `codex-core-shell` profile
+- WebSocket mode task through the `codex-core-websocket` profile
+- WebSocket tool-follow-up continuation task through the
+  `codex-core-websocket` profile
+- remote compaction/reset task moved to `codex-compat`, not the default core
+  gate
 
 Exit criteria:
 
 - `codex-core` has at least 20 deterministic tasks
 - every failure has a bucket
 - failed task artifacts are enough to debug without re-running the whole suite
+
+Implemented Phase 3 profile commands:
+
+```bash
+make codex-eval-core
+make codex-eval-core-shell
+make codex-eval-core-websocket
+make codex-eval-core-profiles
+```
 
 ### Phase 4: Real-Upstream Daily Loop
 

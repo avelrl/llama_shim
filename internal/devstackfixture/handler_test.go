@@ -531,11 +531,95 @@ func TestChatCompletionsCodexTaskMatrixRules(t *testing.T) {
 			final:         "LONG_STDOUT_OK",
 		},
 		{
+			name:          "command pipeline",
+			prompt:        "This is the Codex command pipeline case. Use exec_command to create pipeline.txt and reply PIPELINE_OK.",
+			commandMarker: "pipeline task passed",
+			toolOutput:    "ALPHA\nBETA\npipeline task passed",
+			final:         "PIPELINE_OK",
+		},
+		{
 			name:          "eval read file",
 			prompt:        "This is the Codex eval read file case. Use exec_command to read README.md and reply READ_OK.",
 			commandMarker: "cat README.md",
 			toolOutput:    "codex-smoke-token: llama-shim-42",
 			final:         "READ_OK",
+		},
+		{
+			name:          "js bugfix",
+			prompt:        "This is the Codex JS bugfix case. Use exec_command to fix math.js and reply JS_BUGFIX_OK.",
+			commandMarker: "js bugfix task passed",
+			toolOutput:    "js bugfix task passed",
+			final:         "JS_BUGFIX_OK",
+		},
+		{
+			name:          "python bugfix",
+			prompt:        "This is the Codex Python bugfix case. Use exec_command to fix mathutil.py and reply PY_BUGFIX_OK.",
+			commandMarker: "python bugfix task passed",
+			toolOutput:    "python bugfix task passed",
+			final:         "PY_BUGFIX_OK",
+		},
+		{
+			name:          "json config",
+			prompt:        "This is the Codex JSON config edit case. Use exec_command to update config.json and reply JSON_CONFIG_OK.",
+			commandMarker: "json config task updated",
+			toolOutput:    "json config task updated",
+			final:         "JSON_CONFIG_OK",
+		},
+		{
+			name:          "env var",
+			prompt:        "This is the Codex env var case. Use exec_command to capture CODEX_EVAL_MAGIC and reply ENV_VAR_OK.",
+			commandMarker: "CODEX_EVAL_MAGIC",
+			toolOutput:    "EVAL_MAGIC=phase3-core",
+			final:         "ENV_VAR_OK",
+		},
+		{
+			name:          "nested workdir",
+			prompt:        "This is the Codex nested workdir case. Use exec_command to write src/output.txt and reply NESTED_WORKDIR_OK.",
+			commandMarker: "cd src",
+			toolOutput:    "NESTED WORKDIR OK",
+			final:         "NESTED_WORKDIR_OK",
+		},
+		{
+			name:          "context patch",
+			prompt:        "This is the Codex context patch case. Use exec_command to read context and reply CONTEXT_PATCH_OK.",
+			commandMarker: "context patch task updated",
+			toolOutput:    "context patch task updated",
+			final:         "CONTEXT_PATCH_OK",
+		},
+		{
+			name:          "no delete",
+			prompt:        "This is the Codex no delete case. Use exec_command to read protected files and reply NO_DELETE_OK.",
+			commandMarker: "cat protected.txt scratch.txt",
+			toolOutput:    "keep-me-safe",
+			final:         "NO_DELETE_OK",
+		},
+		{
+			name:          "shell script fix",
+			prompt:        "This is the Codex shell script fix case. Use exec_command to fix app.sh and reply SHELL_SCRIPT_OK.",
+			commandMarker: "shell script task passed",
+			toolOutput:    "shell script task passed",
+			final:         "SHELL_SCRIPT_OK",
+		},
+		{
+			name:          "fallback shell",
+			prompt:        "This is the Codex fallback shell case. Use the shell tool to read fallback.txt and reply FALLBACK_SHELL_OK.",
+			commandMarker: "cat fallback.txt",
+			toolOutput:    "fallback-shell-token",
+			final:         "FALLBACK_SHELL_OK",
+		},
+		{
+			name:          "websocket read",
+			prompt:        "This is the Codex websocket read case. Use exec_command to read README.md and reply WS_READ_OK.",
+			commandMarker: "cat README.md",
+			toolOutput:    "codex-smoke-token: llama-shim-42",
+			final:         "WS_READ_OK",
+		},
+		{
+			name:          "websocket patch",
+			prompt:        "This is the Codex websocket patch case. Use exec_command to patch websocket_target.txt and reply WS_PATCH_OK.",
+			commandMarker: "patched websocket_target.txt",
+			toolOutput:    "patched websocket_target.txt",
+			final:         "WS_PATCH_OK",
 		},
 	}
 
@@ -569,6 +653,74 @@ func TestChatCompletionsCodexTaskMatrixRules(t *testing.T) {
 			require.Equal(t, "stop", finishReason)
 		})
 	}
+}
+
+func TestChatCompletionsCodexWriteStdinPlansInteractiveFollowup(t *testing.T) {
+	tools := []chatTool{
+		{Type: "function", Function: chatToolFunction{Name: "exec_command"}},
+		{Type: "function", Function: chatToolFunction{Name: "write_stdin"}},
+	}
+	request := chatCompletionRequest{
+		Model: DefaultModel,
+		Messages: []chatMessage{
+			{Role: "system", Content: "You are a coding agent running in the Codex CLI, a terminal-based coding assistant."},
+			{Role: "user", Content: "This is the Codex write stdin PTY case. Start an interactive command, send stdin, then reply STDIN_OK."},
+		},
+		Tools: tools,
+	}
+
+	content, toolCalls, finishReason := chatCompletionReply(request)
+	require.Empty(t, content)
+	require.Equal(t, "tool_calls", finishReason)
+	require.Len(t, toolCalls, 1)
+	function := toolCalls[0]["function"].(map[string]any)
+	require.Equal(t, "exec_command", function["name"])
+	require.Contains(t, function["arguments"], `"tty":true`)
+
+	request.Messages = append(request.Messages, chatMessage{
+		Role:       "tool",
+		ToolCallID: "call_devstack_codex_1",
+		Content:    `{"session_id":7,"output":"READY_FOR_STDIN\n"}`,
+	})
+	content, toolCalls, finishReason = chatCompletionReply(request)
+	require.Empty(t, content)
+	require.Equal(t, "tool_calls", finishReason)
+	require.Len(t, toolCalls, 1)
+	function = toolCalls[0]["function"].(map[string]any)
+	require.Equal(t, "write_stdin", function["name"])
+	require.Contains(t, function["arguments"], `"session_id":7`)
+	require.Contains(t, function["arguments"], `\u0003`)
+
+	request.Messages = append(request.Messages, chatMessage{
+		Role:       "tool",
+		ToolCallID: "call_devstack_codex_2",
+		Content:    "STDIN_DONE codex-stdin-token",
+	})
+	content, toolCalls, finishReason = chatCompletionReply(request)
+	require.Equal(t, "STDIN_OK", content)
+	require.Nil(t, toolCalls)
+	require.Equal(t, "stop", finishReason)
+}
+
+func TestChatCompletionsCodexShellCommandToolArguments(t *testing.T) {
+	request := chatCompletionRequest{
+		Model: DefaultModel,
+		Messages: []chatMessage{
+			{Role: "system", Content: "You are a coding agent running in the Codex CLI, a terminal-based coding assistant."},
+			{Role: "user", Content: "This is the Codex fallback shell case. Use the shell tool to read fallback.txt and reply FALLBACK_SHELL_OK."},
+		},
+		Tools: []chatTool{
+			{Type: "function", Function: chatToolFunction{Name: "shell_command"}},
+		},
+	}
+
+	content, toolCalls, finishReason := chatCompletionReply(request)
+	require.Empty(t, content)
+	require.Equal(t, "tool_calls", finishReason)
+	require.Len(t, toolCalls, 1)
+	function := toolCalls[0]["function"].(map[string]any)
+	require.Equal(t, "shell_command", function["name"])
+	require.JSONEq(t, `{"command":"cat fallback.txt","timeout_ms":60000,"workdir":"."}`, function["arguments"].(string))
 }
 
 func TestChatCompletionsCodexCommandTimeoutPlansFastRecovery(t *testing.T) {

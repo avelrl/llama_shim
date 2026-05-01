@@ -1,0 +1,22 @@
+id: websocket_read_file
+title: WebSocket read file
+category: transport
+suites:
+  - codex-core-websocket
+timeout: 120s
+attempts: 2
+prompt: |
+  This is the Codex websocket read case. Use exec_command to read README.md and confirm it contains llama-shim-42. Then reply WS_READ_OK.
+expected:
+  final_text_contains:
+    - WS_READ_OK
+  files:
+    - path: README.md
+      contains: llama-shim-42
+  codex_events:
+    - item.started:command_execution
+    - item.completed:agent_message
+    - turn.completed
+  forbidden_output:
+    - "<|tool_call"
+    - "<|tool_calls_section"

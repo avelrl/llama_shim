@@ -1,0 +1,28 @@
+id: json_config_edit
+title: JSON config edit
+category: edit
+suites:
+  - codex-core
+timeout: 180s
+attempts: 2
+prompt: |
+  This is the Codex JSON config edit case. Use exec_command to update config.json so feature.enabled is true and feature.mode is strict. Validate the JSON, then reply JSON_CONFIG_OK.
+expected:
+  final_text_contains:
+    - JSON_CONFIG_OK
+  files:
+    - path: config.json
+      contains: '"enabled": true'
+    - path: config.json
+      contains: '"mode": "strict"'
+  commands:
+    - name: valid json
+      command: python3 -m json.tool config.json >/dev/null
+      timeout: 30s
+  codex_events:
+    - item.started:command_execution
+    - item.completed:agent_message
+    - turn.completed
+  forbidden_output:
+    - "<|tool_call"
+    - "<|tool_calls_section"

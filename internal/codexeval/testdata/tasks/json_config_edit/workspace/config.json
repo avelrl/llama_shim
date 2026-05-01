@@ -1,0 +1,7 @@
+{
+  "feature": {
+    "enabled": false,
+    "mode": "draft"
+  },
+  "service": "shim"
+}

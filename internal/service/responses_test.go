@@ -522,6 +522,20 @@ function {"code":"cat README.md"}
 *** End Patch</command>
 </apply_patch>`,
 		},
+		{
+			name:   "deepseek_dsml_tool_call",
+			markup: "<\uFF5C\uFF5CDSML\uFF5C\uFF5Ctool_calls><\uFF5C\uFF5CDSML\uFF5C\uFF5Cinvoke name=\"read\">README.md</\uFF5C\uFF5CDSML\uFF5C\uFF5Cinvoke></\uFF5C\uFF5CDSML\uFF5C\uFF5Ctool_calls>",
+		},
+		{
+			name: "deepseek_fenced_json_command",
+			markup: "```json\n" +
+				`{"agent":"cli","command":["bash","-c","cat README.md"],"cwd":"/tmp/workspace"}` + "\n```",
+		},
+		{
+			name: "deepseek_fenced_json_apply_patch",
+			markup: "```json\n" +
+				`{"command":["apply_patch","*** Begin Patch\n*** End Patch"]}` + "\n```",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

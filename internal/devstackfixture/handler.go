@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -17,13 +19,16 @@ const (
 	fixtureBuiltinApplyPatchToolName = "__llama_shim_builtin_apply_patch"
 	fixtureCodexExecCommandToolName  = "exec_command"
 	fixtureCodexShellToolName        = "shell"
+	fixtureCodexShellCommandToolName = "shell_command"
+	fixtureCodexWriteStdinToolName   = "write_stdin"
 )
 
 type fixtureCodexCommandToolKind string
 
 const (
-	fixtureCodexCommandToolExec  fixtureCodexCommandToolKind = "exec_command"
-	fixtureCodexCommandToolShell fixtureCodexCommandToolKind = "shell"
+	fixtureCodexCommandToolExec         fixtureCodexCommandToolKind = "exec_command"
+	fixtureCodexCommandToolShell        fixtureCodexCommandToolKind = "shell"
+	fixtureCodexCommandToolShellCommand fixtureCodexCommandToolKind = "shell_command"
 )
 
 func NewHandler() http.Handler {
@@ -506,6 +511,84 @@ func fixtureCodexFunctionFinalOutput(request chatCompletionRequest) (string, boo
 		}
 		return "LONG_STDOUT_OK", true
 	}
+	if containsAny(joined, "codex command pipeline case", "command pipeline case") {
+		if !strings.Contains(toolOutput, "pipeline task passed") {
+			return "command did not report pipeline completion: " + strings.TrimSpace(message.Content), true
+		}
+		return "PIPELINE_OK", true
+	}
+	if containsAny(joined, "codex js bugfix case", "js bugfix case") {
+		if !strings.Contains(joined, "js bugfix task passed") {
+			return "command did not report JS bugfix completion: " + strings.TrimSpace(message.Content), true
+		}
+		return "JS_BUGFIX_OK", true
+	}
+	if containsAny(joined, "codex python bugfix case", "python bugfix case") {
+		if !strings.Contains(joined, "python bugfix task passed") {
+			return "command did not report Python bugfix completion: " + strings.TrimSpace(message.Content), true
+		}
+		return "PY_BUGFIX_OK", true
+	}
+	if containsAny(joined, "codex json config edit case", "json config edit case") {
+		if !strings.Contains(joined, "json config task updated") {
+			return "command did not report JSON config completion: " + strings.TrimSpace(message.Content), true
+		}
+		return "JSON_CONFIG_OK", true
+	}
+	if containsAny(joined, "codex env var case", "env var case") {
+		if !strings.Contains(toolOutput, "eval_magic=phase3-core") {
+			return "command did not report env marker: " + strings.TrimSpace(message.Content), true
+		}
+		return "ENV_VAR_OK", true
+	}
+	if containsAny(joined, "codex nested workdir case", "nested workdir case") {
+		if !strings.Contains(toolOutput, "nested workdir ok") {
+			return "command did not report nested workdir marker: " + strings.TrimSpace(message.Content), true
+		}
+		return "NESTED_WORKDIR_OK", true
+	}
+	if containsAny(joined, "codex context patch case", "context patch case") {
+		if !strings.Contains(joined, "context patch task updated") {
+			return "command did not report context patch completion: " + strings.TrimSpace(message.Content), true
+		}
+		return "CONTEXT_PATCH_OK", true
+	}
+	if containsAny(joined, "codex no delete case", "no delete case") {
+		if !strings.Contains(toolOutput, "keep-me-safe") {
+			return "command did not report protected file marker: " + strings.TrimSpace(message.Content), true
+		}
+		return "NO_DELETE_OK", true
+	}
+	if containsAny(joined, "codex shell script fix case", "shell script fix case") {
+		if !strings.Contains(joined, "shell script task passed") {
+			return "command did not report shell script completion: " + strings.TrimSpace(message.Content), true
+		}
+		return "SHELL_SCRIPT_OK", true
+	}
+	if containsAny(joined, "codex fallback shell case", "fallback shell case") {
+		if !strings.Contains(toolOutput, "fallback-shell-token") {
+			return "command did not report fallback shell token: " + strings.TrimSpace(message.Content), true
+		}
+		return "FALLBACK_SHELL_OK", true
+	}
+	if containsAny(joined, "codex write stdin pty case", "write stdin pty case") {
+		if !strings.Contains(toolOutput, "stdin_done codex-stdin-token") {
+			return "", false
+		}
+		return "STDIN_OK", true
+	}
+	if containsAny(joined, "codex websocket read case", "websocket read case") {
+		if !strings.Contains(toolOutput, "llama-shim-42") {
+			return "command did not report websocket read token: " + strings.TrimSpace(message.Content), true
+		}
+		return "WS_READ_OK", true
+	}
+	if containsAny(joined, "codex websocket patch case", "websocket patch case") {
+		if !strings.Contains(joined, "patched websocket_target.txt") {
+			return "command did not report websocket patch completion: " + strings.TrimSpace(message.Content), true
+		}
+		return "WS_PATCH_OK", true
+	}
 	if containsAny(joined, "codex eval read file", "eval read file") {
 		if !strings.Contains(toolOutput, "llama-shim-42") {
 			return "command did not report read_file token: " + strings.TrimSpace(message.Content), true
@@ -530,7 +613,7 @@ func fixtureCodexFunctionPlannedCall(request chatCompletionRequest) (string, str
 		return "", "", false
 	}
 	joined := strings.ToLower(strings.TrimSpace(joinMessageContent(request.Messages)))
-	if !containsAny(joined, "exec_command", "shell tool", "run command", " run ", "pwd", "remember code 777") {
+	if !containsAny(joined, "exec_command", "shell tool", "run command", " run ", "pwd", "remember code 777", "write stdin pty case", "fallback shell case", "websocket read case", "websocket patch case") {
 		return "", "", false
 	}
 	if containsAny(joined, "codex task matrix bugfix go", "matrix bugfix go") {
@@ -560,6 +643,50 @@ func fixtureCodexFunctionPlannedCall(request chatCompletionRequest) (string, str
 	if containsAny(joined, "codex long stdout case", "long stdout case") {
 		return name, fixtureCodexCommandArguments(kind, "sh long_stdout.sh", 60000), true
 	}
+	if containsAny(joined, "codex command pipeline case", "command pipeline case") {
+		return name, fixtureCodexCommandArguments(kind, "tr '[:lower:]' '[:upper:]' < input.txt | sort > pipeline.txt && cat pipeline.txt && echo 'pipeline task passed'", 60000), true
+	}
+	if containsAny(joined, "codex js bugfix case", "js bugfix case") {
+		return name, fixtureCodexCommandArguments(kind, "python3 -c \"from pathlib import Path; p=Path('math.js'); p.write_text(p.read_text().replace('return a - b;', 'return a + b;'))\" && node math.test.js && echo 'js bugfix task passed'", 60000), true
+	}
+	if containsAny(joined, "codex python bugfix case", "python bugfix case") {
+		return name, fixtureCodexCommandArguments(kind, "python3 -c \"from pathlib import Path; p=Path('mathutil.py'); p.write_text(p.read_text().replace('return a - b', 'return a + b'))\" && python3 test_mathutil.py && echo 'python bugfix task passed'", 60000), true
+	}
+	if containsAny(joined, "codex json config edit case", "json config edit case") {
+		return name, fixtureCodexCommandArguments(kind, "python3 -c \"import json; from pathlib import Path; p=Path('config.json'); data=json.loads(p.read_text()); data['feature']['enabled']=True; data['feature']['mode']='strict'; p.write_text(json.dumps(data, indent=2, sort_keys=True)+'\\n')\" && python3 -m json.tool config.json >/dev/null && echo 'json config task updated'", 60000), true
+	}
+	if containsAny(joined, "codex env var case", "env var case") {
+		return name, fixtureCodexCommandArguments(kind, "printf 'EVAL_MAGIC=%s\\n' \"$CODEX_EVAL_MAGIC\" > env_capture.txt && cat env_capture.txt", 60000), true
+	}
+	if containsAny(joined, "codex nested workdir case", "nested workdir case") {
+		return name, fixtureCodexCommandArguments(kind, "cd src && tr '[:lower:]' '[:upper:]' < input.txt > output.txt && cat output.txt", 60000), true
+	}
+	if containsAny(joined, "codex context patch case", "context patch case") {
+		return name, fixtureCodexCommandArguments(kind, "python3 -c \"from pathlib import Path; req=Path('requirements.txt').read_text().strip(); p=Path('service.txt'); p.write_text('service=payments\\nmode=compatible\\nrequirement='+req+'\\n')\" && cat service.txt && echo 'context patch task updated'", 60000), true
+	}
+	if containsAny(joined, "codex no delete case", "no delete case") {
+		return name, fixtureCodexCommandArguments(kind, "cat protected.txt scratch.txt", 60000), true
+	}
+	if containsAny(joined, "codex shell script fix case", "shell script fix case") {
+		return name, fixtureCodexCommandArguments(kind, "python3 -c \"from pathlib import Path; p=Path('app.sh'); p.write_text(p.read_text().replace('echo broken', 'echo fixed'))\" && sh verify.sh && echo 'shell script task passed'", 60000), true
+	}
+	if containsAny(joined, "codex fallback shell case", "fallback shell case") {
+		return name, fixtureCodexCommandArguments(kind, "cat fallback.txt", 60000), true
+	}
+	if containsAny(joined, "codex write stdin pty case", "write stdin pty case") {
+		if message, ok := lastNonEmptyMessage(request.Messages); ok && strings.EqualFold(strings.TrimSpace(message.Role), "tool") && strings.Contains(strings.ToLower(message.Content), "ready_for_stdin") {
+			if writeStdinName := fixtureFunctionToolName(request.Tools, fixtureCodexWriteStdinToolName); writeStdinName != "" {
+				return writeStdinName, fixtureCodexWriteStdinArguments(fixtureCodexSessionID(message.Content), "\x03", 3000), true
+			}
+		}
+		return name, fixtureCodexInteractiveExecArguments("bash -lc 'trap \"echo STDIN_DONE codex-stdin-token; exit 0\" INT; echo READY_FOR_STDIN; sleep 300'", 1000), true
+	}
+	if containsAny(joined, "codex websocket read case", "websocket read case") {
+		return name, fixtureCodexCommandArguments(kind, "cat README.md", 60000), true
+	}
+	if containsAny(joined, "codex websocket patch case", "websocket patch case") {
+		return name, fixtureCodexCommandArguments(kind, "python3 -c \"from pathlib import Path; p=Path('websocket_target.txt'); p.write_text(p.read_text().replace('status = TODO', 'status = websocket-patched')); print('patched websocket_target.txt')\"", 60000), true
+	}
 	if containsAny(joined, "codex eval read file", "eval read file") {
 		return name, fixtureCodexCommandArguments(kind, "cat README.md", 60000), true
 	}
@@ -581,6 +708,9 @@ func fixtureCodexCommandTool(tools []chatTool) (string, fixtureCodexCommandToolK
 	if name := fixtureFunctionToolName(tools, fixtureCodexShellToolName); name != "" {
 		return name, fixtureCodexCommandToolShell
 	}
+	if name := fixtureFunctionToolName(tools, fixtureCodexShellCommandToolName); name != "" {
+		return name, fixtureCodexCommandToolShellCommand
+	}
 	return "", ""
 }
 
@@ -590,6 +720,12 @@ func fixtureCodexCommandArguments(kind fixtureCodexCommandToolKind, command stri
 	case fixtureCodexCommandToolShell:
 		payload = map[string]any{
 			"command":    []string{"bash", "-lc", command},
+			"timeout_ms": timeoutMS,
+			"workdir":    ".",
+		}
+	case fixtureCodexCommandToolShellCommand:
+		payload = map[string]any{
+			"command":    command,
 			"timeout_ms": timeoutMS,
 			"workdir":    ".",
 		}
@@ -605,6 +741,44 @@ func fixtureCodexCommandArguments(kind fixtureCodexCommandToolKind, command stri
 		panic(err)
 	}
 	return string(encoded)
+}
+
+func fixtureCodexInteractiveExecArguments(command string, yieldTimeMS int) string {
+	payload := map[string]any{
+		"cmd":               command,
+		"tty":               true,
+		"yield_time_ms":     yieldTimeMS,
+		"max_output_tokens": 12000,
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		panic(err)
+	}
+	return string(encoded)
+}
+
+func fixtureCodexWriteStdinArguments(sessionID int, chars string, yieldTimeMS int) string {
+	payload := map[string]any{
+		"session_id":        sessionID,
+		"chars":             chars,
+		"yield_time_ms":     yieldTimeMS,
+		"max_output_tokens": 12000,
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		panic(err)
+	}
+	return string(encoded)
+}
+
+func fixtureCodexSessionID(text string) int {
+	matches := regexp.MustCompile(`"session_id"\s*:\s*([0-9]+)`).FindStringSubmatch(text)
+	if len(matches) == 2 {
+		if sessionID, err := strconv.Atoi(matches[1]); err == nil {
+			return sessionID
+		}
+	}
+	return 0
 }
 
 func fixtureBuiltinCodingToolFinalOutput(request chatCompletionRequest) (string, bool) {

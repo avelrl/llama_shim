@@ -1,0 +1,26 @@
+id: js_bugfix
+title: Tiny JavaScript bugfix
+category: code
+suites:
+  - codex-core
+timeout: 180s
+attempts: 2
+prompt: |
+  This is the Codex JS bugfix case. Use exec_command to inspect math.js and math.test.js, fix the bug, run `node math.test.js`, and reply JS_BUGFIX_OK.
+expected:
+  final_text_contains:
+    - JS_BUGFIX_OK
+  files:
+    - path: math.js
+      contains: "return a + b;"
+  commands:
+    - name: node test
+      command: node math.test.js
+      timeout: 30s
+  codex_events:
+    - item.started:command_execution
+    - item.completed:agent_message
+    - turn.completed
+  forbidden_output:
+    - "<|tool_call"
+    - "<|tool_calls_section"

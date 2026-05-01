@@ -10,6 +10,7 @@ import (
 	"llama_shim/internal/domain"
 	"llama_shim/internal/llama"
 	"llama_shim/internal/service"
+	"llama_shim/internal/toolmarkup"
 )
 
 var shimLocalToolLoopFields = map[string]struct{}{
@@ -751,49 +752,11 @@ func parseLocalToolLoopChatCompletion(raw []byte, responseID string, model strin
 }
 
 func containsRawToolCallMarkup(text string) bool {
-	for _, marker := range rawToolCallMarkupMarkers() {
-		if strings.Contains(text, marker) {
-			return true
-		}
-	}
-	return false
-}
-
-func rawToolCallMarkupMarkers() []string {
-	return []string{
-		"<|tool_call",
-		"<|tool_calls_section",
-		"<|mask_start|",
-		"<|mask_end|",
-		"<prelude>",
-		"</prelude>",
-		"<tool call:",
-		"[Tool call:",
-		"<function_call>",
-		"</function_call>",
-		"<function_call_output",
-		"<FUNCTION_CALL_OUTPUT",
-		"<apply_patch>",
-		"</apply_patch>",
-		"<command>",
-		"</command>",
-		"<tool_call",
-		"</tool_call>",
-		"<tool_code_call>",
-		"</tool_code_call>",
-		"<tool_code>",
-		"<invoke name=",
-		"<read_file>",
-		"</read_file>",
-		"<patch>",
-		"</patch>",
-		"<bash>",
-		"</bash>",
-	}
+	return toolmarkup.ContainsPseudoToolText(text)
 }
 
 func buildRawToolCallMarkupRepairPrompt() string {
-	return "Your previous assistant message printed internal tool-call markup as text. That is invalid. If you still need a tool, emit a structured function tool call through the tools interface. If the task is complete, reply with final plain text only. Do not include pseudo-tool markup such as <|tool_call, <|tool_calls_section, <|mask_start|>, <prelude>, <tool_call>, <function_call>, <tool_code_call>, <read_file>, <patch>, <apply_patch>, <command>, <function_call_output>, <invoke name=..., or <bash> in assistant text."
+	return "Your previous assistant message printed internal tool-call markup as text. That is invalid. If you still need a tool, emit a structured function tool call through the tools interface. If the task is complete, reply with final plain text only. Do not include pseudo-tool markup such as <|tool_call, <|tool_calls_section, <|mask_start|>, <prelude>, <tool_call>, <function_call>, <tool_code_call>, <read_file>, <patch>, <apply_patch>, <command>, <function_call_output>, <invoke name=..., <||DSML||tool_calls>, fenced JSON command/apply_patch blocks, or <bash> in assistant text."
 }
 
 func extractChatCompletionContent(raw json.RawMessage) string {

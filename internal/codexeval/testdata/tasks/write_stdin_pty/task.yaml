@@ -1,0 +1,21 @@
+id: write_stdin_pty
+title: PTY stdin continuation
+category: command
+suites:
+  - codex-core-interactive
+  - codex-compat
+timeout: 180s
+attempts: 2
+prompt: |
+  This is the Codex write stdin PTY case. Use exec_command with tty=true to start an interactive process that waits for stdin, then use write_stdin to send `codex-stdin-token`. Confirm the process prints STDIN_DONE codex-stdin-token and reply STDIN_OK.
+expected:
+  final_text_contains:
+    - STDIN_OK
+  min_command_executions: 1
+  codex_events:
+    - item.started:command_execution
+    - item.completed:agent_message
+    - turn.completed
+  forbidden_output:
+    - "<|tool_call"
+    - "<|tool_calls_section"

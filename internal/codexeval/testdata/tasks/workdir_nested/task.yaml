@@ -1,0 +1,23 @@
+id: workdir_nested
+title: Nested workdir command
+category: command
+suites:
+  - codex-core
+timeout: 120s
+attempts: 2
+prompt: |
+  This is the Codex nested workdir case. Use exec_command to work inside the src directory, convert src/input.txt to uppercase into src/output.txt, verify it prints NESTED WORKDIR OK, and reply NESTED_WORKDIR_OK.
+expected:
+  final_text_contains:
+    - NESTED_WORKDIR_OK
+  files:
+    - path: src/output.txt
+      equals: |
+        NESTED WORKDIR OK
+  codex_events:
+    - item.started:command_execution
+    - item.completed:agent_message
+    - turn.completed
+  forbidden_output:
+    - "<|tool_call"
+    - "<|tool_calls_section"

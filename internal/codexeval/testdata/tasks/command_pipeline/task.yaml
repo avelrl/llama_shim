@@ -1,0 +1,24 @@
+id: command_pipeline
+title: Shell pipeline command
+category: command
+suites:
+  - codex-core
+timeout: 120s
+attempts: 2
+prompt: |
+  This is the Codex command pipeline case. Use exec_command to transform input.txt into pipeline.txt by uppercasing each line and sorting the result. The final pipeline.txt file must contain exactly ALPHA then BETA, one per line. Verify the file, then reply PIPELINE_OK.
+expected:
+  final_text_contains:
+    - PIPELINE_OK
+  files:
+    - path: pipeline.txt
+      equals: |
+        ALPHA
+        BETA
+  codex_events:
+    - item.started:command_execution
+    - item.completed:agent_message
+    - turn.completed
+  forbidden_output:
+    - "<|tool_call"
+    - "<|tool_calls_section"

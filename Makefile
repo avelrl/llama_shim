@@ -1,4 +1,4 @@
-.PHONY: run build lint test vet diff-check ci-check maint-cleanup maint-optimize maint-vacuum maint-backup docker-build compose-up compose-down devstack-up devstack-down devstack-smoke devstack-ci-smoke devstack-full-smoke responses-compat-external-smoke responses-compat-external-real-smoke responses-websocket-smoke v3-coding-tools-smoke v3-constrained-decoding-smoke v3-vllm-constrained-smoke codex-cli-devstack-smoke codex-cli-shell-tool-smoke codex-cli-coding-task-smoke codex-cli-task-matrix-smoke codex-cli-real-upstream-smoke codex-eval-smoke codex-eval-core codex-eval-real-upstream codex-eval-matrix codex-eval-loop
+.PHONY: run build lint test vet diff-check ci-check maint-cleanup maint-optimize maint-vacuum maint-backup docker-build compose-up compose-down devstack-up devstack-down devstack-smoke devstack-ci-smoke devstack-full-smoke responses-compat-external-smoke responses-compat-external-real-smoke responses-websocket-smoke v3-coding-tools-smoke v3-constrained-decoding-smoke v3-vllm-constrained-smoke codex-cli-devstack-smoke codex-cli-shell-tool-smoke codex-cli-coding-task-smoke codex-cli-task-matrix-smoke codex-cli-real-upstream-smoke codex-eval-smoke codex-eval-core codex-eval-core-shell codex-eval-core-websocket codex-eval-core-profiles codex-eval-real-upstream codex-eval-matrix codex-eval-loop
 
 CONFIG ?= config.yaml
 BACKUP ?= ./.data/shim-backup.db
@@ -123,6 +123,14 @@ codex-eval-smoke:
 
 codex-eval-core:
 	OPENAI_API_KEY=$${OPENAI_API_KEY:-shim-dev-key} CODEX_EVAL_SUITE=codex-core bash ./scripts/codex-eval-runner.sh
+
+codex-eval-core-shell:
+	OPENAI_API_KEY=$${OPENAI_API_KEY:-shim-dev-key} CODEX_EVAL_SUITE=codex-core-shell CODEX_EVAL_UNIFIED_EXEC=false bash ./scripts/codex-eval-runner.sh
+
+codex-eval-core-websocket:
+	OPENAI_API_KEY=$${OPENAI_API_KEY:-shim-dev-key} CODEX_EVAL_SUITE=codex-core-websocket CODEX_EVAL_WEBSOCKETS=true bash ./scripts/codex-eval-runner.sh
+
+codex-eval-core-profiles: codex-eval-core codex-eval-core-shell codex-eval-core-websocket
 
 codex-eval-real-upstream:
 	CODEX_EVAL_SUITE=$${CODEX_EVAL_SUITE:-codex-real-upstream} bash ./scripts/codex-eval-runner.sh

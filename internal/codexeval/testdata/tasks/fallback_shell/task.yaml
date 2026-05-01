@@ -1,0 +1,22 @@
+id: fallback_shell
+title: Fallback shell command mode
+category: command
+suites:
+  - codex-core-shell
+timeout: 120s
+attempts: 2
+prompt: |
+  This is the Codex fallback shell case. Use the available shell command tool, not exec_command, to read fallback.txt. Confirm it contains fallback-shell-token and reply FALLBACK_SHELL_OK.
+expected:
+  final_text_contains:
+    - FALLBACK_SHELL_OK
+  files:
+    - path: fallback.txt
+      contains: fallback-shell-token
+  codex_events:
+    - item.started:command_execution
+    - item.completed:agent_message
+    - turn.completed
+  forbidden_output:
+    - "<|tool_call"
+    - "<|tool_calls_section"

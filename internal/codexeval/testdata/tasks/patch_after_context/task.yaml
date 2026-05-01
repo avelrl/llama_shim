@@ -1,0 +1,25 @@
+id: patch_after_context
+title: Patch after reading context
+category: edit
+suites:
+  - codex-core
+timeout: 180s
+attempts: 2
+prompt: |
+  This is the Codex context patch case. Use exec_command to read requirements.txt and service.txt, then update service.txt so it contains mode=compatible and requirement=requirement: preserve api. Verify the file, then reply CONTEXT_PATCH_OK.
+expected:
+  final_text_contains:
+    - CONTEXT_PATCH_OK
+  files:
+    - path: service.txt
+      equals: |
+        service=payments
+        mode=compatible
+        requirement=requirement: preserve api
+  codex_events:
+    - item.started:command_execution
+    - item.completed:agent_message
+    - turn.completed
+  forbidden_output:
+    - "<|tool_call"
+    - "<|tool_calls_section"

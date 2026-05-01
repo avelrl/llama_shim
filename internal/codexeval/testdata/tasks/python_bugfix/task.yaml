@@ -1,0 +1,26 @@
+id: python_bugfix
+title: Tiny Python bugfix
+category: code
+suites:
+  - codex-core
+timeout: 180s
+attempts: 2
+prompt: |
+  This is the Codex Python bugfix case. Use exec_command to inspect mathutil.py and test_mathutil.py, fix the bug, run `python3 test_mathutil.py`, and reply PY_BUGFIX_OK.
+expected:
+  final_text_contains:
+    - PY_BUGFIX_OK
+  files:
+    - path: mathutil.py
+      contains: "return a + b"
+  commands:
+    - name: python test
+      command: python3 test_mathutil.py
+      timeout: 30s
+  codex_events:
+    - item.started:command_execution
+    - item.completed:agent_message
+    - turn.completed
+  forbidden_output:
+    - "<|tool_call"
+    - "<|tool_calls_section"

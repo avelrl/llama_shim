@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"llama_shim/internal/toolmarkup"
 )
 
 func runCheckers(ctx context.Context, manifest Manifest, workspace, outputFile string, taskEnv map[string]string) (CheckResult, string, error) {
@@ -33,11 +35,8 @@ func runCheckers(ctx context.Context, manifest Manifest, workspace, outputFile s
 			break
 		}
 	}
-	for _, marker := range rawToolMarkupMarkers() {
-		if strings.Contains(string(rawOutput), marker) || strings.Contains(finalText, marker) {
-			result.addFailure("raw_tool_markup", fmt.Sprintf("output contains provider-native tool marker %q", marker))
-			break
-		}
+	if marker := firstRawToolMarkupMarker(string(rawOutput), finalText); marker != "" {
+		result.addFailure("raw_tool_markup", fmt.Sprintf("output contains provider-native tool marker %q", marker))
 	}
 	for _, forbidden := range manifest.Expected.ForbiddenOutput {
 		if forbidden != "" && strings.Contains(string(rawOutput), forbidden) {
@@ -92,41 +91,13 @@ func contextLeakMarkers() []string {
 	}
 }
 
-func rawToolMarkupMarkers() []string {
-	return []string{
-		"<|tool_call",
-		"<|tool_calls_section",
-		"<|mask_start|",
-		"<|mask_end|",
-		"<prelude>",
-		"</prelude>",
-		"<tool call:",
-		"[Tool call:",
-		"<function_call>",
-		"</function_call>",
-		"<function_call_output",
-		"<FUNCTION_CALL_OUTPUT",
-		"<antThinking>",
-		"</antThinking>",
-		"<toolCall::",
-		"</toolCall::",
-		"<apply_patch>",
-		"</apply_patch>",
-		"<command>",
-		"</command>",
-		"<tool_call",
-		"</tool_call>",
-		"<tool_code_call>",
-		"</tool_code_call>",
-		"<tool_code>",
-		"<invoke name=",
-		"<read_file>",
-		"</read_file>",
-		"<patch>",
-		"</patch>",
-		"<bash>",
-		"</bash>",
+func firstRawToolMarkupMarker(values ...string) string {
+	for _, value := range values {
+		if marker := toolmarkup.FirstPseudoToolMarker(value); marker != "" {
+			return marker
+		}
 	}
+	return ""
 }
 
 func containsFold(value, expected string) bool {

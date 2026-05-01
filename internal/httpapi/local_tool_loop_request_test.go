@@ -204,6 +204,18 @@ func TestParseLocalToolLoopChatCompletionRepairsApplyPatchRepeatedEnvelopes(t *t
 	require.Equal(t, "*** Begin Patch\n*** Update File: app/config.txt\n@@\n mode=matrix\n-feature=disabled\n+feature=enabled\n*** Update File: app/status.txt\n@@\n-status=todo\n+status=updated\n*** End Patch", response.Output[0].Input())
 }
 
+func TestContainsRawToolCallMarkupCatchesDeepSeekPseudoTools(t *testing.T) {
+	cases := []string{
+		"<\uFF5C\uFF5CDSML\uFF5C\uFF5Ctool_calls><\uFF5C\uFF5CDSML\uFF5C\uFF5Cinvoke name=\"read\">README.md</\uFF5C\uFF5CDSML\uFF5C\uFF5Cinvoke></\uFF5C\uFF5CDSML\uFF5C\uFF5Ctool_calls>",
+		"```json\n" + `{"agent":"cli","command":["bash","-c","cat README.md"],"cwd":"/tmp/workspace"}` + "\n```",
+		"```json\n" + `{"command":["apply_patch","*** Begin Patch\n*** End Patch"]}` + "\n```",
+	}
+	for _, text := range cases {
+		require.True(t, containsRawToolCallMarkup(text), "expected pseudo-tool detection for %q", text)
+	}
+	require.False(t, containsRawToolCallMarkup("```json\n{\"command\":\"status\",\"value\":\"ok\"}\n```"))
+}
+
 func mustDomainItem(t *testing.T, raw string) domain.Item {
 	t.Helper()
 

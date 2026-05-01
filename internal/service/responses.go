@@ -13,6 +13,7 @@ import (
 	"llama_shim/internal/domain"
 	"llama_shim/internal/llama"
 	"llama_shim/internal/storage"
+	"llama_shim/internal/toolmarkup"
 )
 
 type Generator interface {
@@ -663,50 +664,12 @@ func localGenerationStringValue(value any) string {
 
 func appendRawToolMarkupRepairInstruction(items []domain.Item) []domain.Item {
 	out := append([]domain.Item(nil), items...)
-	out = append(out, domain.NewInputTextMessage("system", "The previous draft attempted to print internal tool-call markup as plain text. Discard that draft. Produce only the final plain-text answer from the available tool output. Do not call tools and do not print tool markers."))
+	out = append(out, domain.NewInputTextMessage("system", "The previous draft attempted to print internal tool-call markup as plain text. Discard that draft. Produce only the final plain-text answer from the available tool output. Do not call tools and do not print tool markers, DSML tool blocks, or fenced JSON command/apply_patch blocks."))
 	return out
 }
 
 func containsRawToolCallMarkupText(text string) bool {
-	for _, marker := range rawToolCallMarkupTextMarkers() {
-		if strings.Contains(text, marker) {
-			return true
-		}
-	}
-	return false
-}
-
-func rawToolCallMarkupTextMarkers() []string {
-	return []string{
-		"<|tool_call",
-		"<|tool_calls_section",
-		"<|mask_start|",
-		"<|mask_end|",
-		"<prelude>",
-		"</prelude>",
-		"<tool call:",
-		"[Tool call:",
-		"<function_call>",
-		"</function_call>",
-		"<function_call_output",
-		"<FUNCTION_CALL_OUTPUT",
-		"<apply_patch>",
-		"</apply_patch>",
-		"<command>",
-		"</command>",
-		"<tool_call",
-		"</tool_call>",
-		"<tool_code_call>",
-		"</tool_code_call>",
-		"<tool_code>",
-		"<invoke name=",
-		"<read_file>",
-		"</read_file>",
-		"<patch>",
-		"</patch>",
-		"<bash>",
-		"</bash>",
-	}
+	return toolmarkup.ContainsPseudoToolText(text)
 }
 
 func (s *ResponseService) CreateWarmup(ctx context.Context, input CreateResponseInput) (domain.Response, error) {

@@ -1,0 +1,26 @@
+id: shell_script_fix
+title: Shell script fix
+category: code
+suites:
+  - codex-core
+timeout: 180s
+attempts: 2
+prompt: |
+  This is the Codex shell script fix case. Use exec_command to inspect app.sh and verify.sh, fix app.sh so `sh verify.sh` passes, and reply SHELL_SCRIPT_OK.
+expected:
+  final_text_contains:
+    - SHELL_SCRIPT_OK
+  files:
+    - path: app.sh
+      contains: "echo fixed"
+  commands:
+    - name: verify
+      command: sh verify.sh
+      timeout: 30s
+  codex_events:
+    - item.started:command_execution
+    - item.completed:agent_message
+    - turn.completed
+  forbidden_output:
+    - "<|tool_call"
+    - "<|tool_calls_section"

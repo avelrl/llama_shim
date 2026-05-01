@@ -1,0 +1,23 @@
+id: websocket_basic_patch
+title: WebSocket patch and continuation
+category: transport
+suites:
+  - codex-core-websocket
+timeout: 180s
+attempts: 2
+prompt: |
+  This is the Codex websocket patch case. Use exec_command to update websocket_target.txt by replacing `status = TODO` with `status = websocket-patched`. Verify the file contents, then reply WS_PATCH_OK.
+expected:
+  final_text_contains:
+    - WS_PATCH_OK
+  files:
+    - path: websocket_target.txt
+      equals: |
+        status = websocket-patched
+  codex_events:
+    - item.started:command_execution
+    - item.completed:agent_message
+    - turn.completed
+  forbidden_output:
+    - "<|tool_call"
+    - "<|tool_calls_section"

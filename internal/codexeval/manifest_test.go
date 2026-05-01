@@ -156,6 +156,9 @@ func TestRunCheckersRejectsQwenRawMarkup(t *testing.T) {
 		{name: "mask", text: "<|mask_start|>tool_code\n{\"type\":\"console\"}\n<|mask_end|>"},
 		{name: "ant_thinking", text: "<antThinking>\nI'll call the patch tool.\n</antThinking>"},
 		{name: "tool_call_colon", text: "<toolCall::apply_patch>\ncommand: ['*** Begin Patch']\n</toolCall::apply_patch>"},
+		{name: "deepseek_dsml", text: "<\uFF5C\uFF5CDSML\uFF5C\uFF5Ctool_calls><\uFF5C\uFF5CDSML\uFF5C\uFF5Cinvoke name=\"read\">README.md</\uFF5C\uFF5CDSML\uFF5C\uFF5Cinvoke></\uFF5C\uFF5CDSML\uFF5C\uFF5Ctool_calls>"},
+		{name: "fenced_cli_command", text: "```json\n" + `{"agent":"cli","command":["bash","-c","cat README.md"],"cwd":"/tmp/workspace"}` + "\n```"},
+		{name: "fenced_apply_patch_command", text: "```json\n" + `{"command":["apply_patch","*** Begin Patch\n*** End Patch"]}` + "\n```"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
