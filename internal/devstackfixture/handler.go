@@ -772,10 +772,15 @@ func fixtureCodexWriteStdinArguments(sessionID int, chars string, yieldTimeMS in
 }
 
 func fixtureCodexSessionID(text string) int {
-	matches := regexp.MustCompile(`"session_id"\s*:\s*([0-9]+)`).FindStringSubmatch(text)
-	if len(matches) == 2 {
-		if sessionID, err := strconv.Atoi(matches[1]); err == nil {
-			return sessionID
+	for _, pattern := range []string{
+		`"session_id"\s*:\s*([0-9]+)`,
+		`(?i)process\s+running\s+with\s+session\s+id\s+([0-9]+)`,
+	} {
+		matches := regexp.MustCompile(pattern).FindStringSubmatch(text)
+		if len(matches) == 2 {
+			if sessionID, err := strconv.Atoi(matches[1]); err == nil {
+				return sessionID
+			}
 		}
 	}
 	return 0

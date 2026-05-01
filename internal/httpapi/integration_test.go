@@ -3010,6 +3010,114 @@ func TestResponsesOverChatTransportUsesChatCompletionsAndLocalStore(t *testing.T
 	require.Equal(t, int64(0), nativeResponsesHits.Load())
 }
 
+func TestResponsesOverChatTransportPreservesCodexInteractiveSessionForWriteStdin(t *testing.T) {
+	var chatHits atomic.Int64
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/chat/completions":
+			hit := chatHits.Add(1)
+			var request map[string]any
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
+			require.Equal(t, "test-model", asStringAny(request["model"]))
+
+			switch hit {
+			case 1:
+				require.True(t, chatRequestHasTool(request, "exec_command"))
+				require.True(t, chatRequestHasTool(request, "write_stdin"))
+				writeChatCompletionToolCall(t, w, "test-model", "call_exec_1", "exec_command", `{"cmd":"python3 -q","tty":true,"yield_time_ms":1000,"max_output_tokens":12000}`)
+			case 2:
+				require.True(t, chatRequestHasToolOutput(request, "call_exec_1", "Process running with session ID 7"))
+				require.True(t, chatRequestHasToolOutput(request, "call_exec_1", "READY_FOR_STDIN"))
+				writeChatCompletionToolCall(t, w, "test-model", "call_stdin_1", "write_stdin", `{"session_id":7,"chars":"codex-stdin-token\n","yield_time_ms":1000,"max_output_tokens":12000}`)
+			default:
+				t.Fatalf("unexpected chat completion request %d", hit)
+			}
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/models":
+			writeModelsList(t, w, "test-model")
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer upstream.Close()
+
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		LlamaBaseURL:               upstream.URL,
+		ResponsesMode:              config.ResponsesModePreferUpstream,
+		ResponsesUpstreamTransport: config.ResponsesUpstreamTransportChatCompletions,
+	})
+
+	codexTools := []map[string]any{
+		{
+			"type":        "function",
+			"name":        "exec_command",
+			"description": "Runs a command and may return a live session_id when tty is true.",
+			"parameters": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"cmd":               map[string]any{"type": "string"},
+					"tty":               map[string]any{"type": "boolean"},
+					"yield_time_ms":     map[string]any{"type": "integer"},
+					"max_output_tokens": map[string]any{"type": "integer"},
+				},
+				"required": []string{"cmd"},
+			},
+		},
+		{
+			"type":        "function",
+			"name":        "write_stdin",
+			"description": "Writes stdin to a live exec_command session_id.",
+			"parameters": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"session_id":        map[string]any{"type": "integer"},
+					"chars":             map[string]any{"type": "string"},
+					"yield_time_ms":     map[string]any{"type": "integer"},
+					"max_output_tokens": map[string]any{"type": "integer"},
+				},
+				"required": []string{"session_id", "chars"},
+			},
+		},
+	}
+
+	status, firstPayload := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model":        "test-model",
+		"store":        true,
+		"instructions": "You are a coding agent running in the Codex CLI, a terminal-based coding assistant.",
+		"input":        "Start an interactive process and wait for stdin.",
+		"tools":        codexTools,
+	})
+	require.Equal(t, http.StatusOK, status)
+	firstOutput := firstPayload["output"].([]any)
+	require.Len(t, firstOutput, 1)
+	firstCall := firstOutput[0].(map[string]any)
+	require.Equal(t, "function_call", asStringAny(firstCall["type"]))
+	require.Equal(t, "exec_command", asStringAny(firstCall["name"]))
+	require.Equal(t, "call_exec_1", asStringAny(firstCall["call_id"]))
+
+	status, secondPayload := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model":                "test-model",
+		"store":                true,
+		"previous_response_id": asStringAny(firstPayload["id"]),
+		"instructions":         "You are a coding agent running in the Codex CLI, a terminal-based coding assistant.",
+		"input": []map[string]any{
+			{
+				"type":    "function_call_output",
+				"call_id": "call_exec_1",
+				"output":  "Chunk ID: abc\nWall time: 1.0000 seconds\nProcess running with session ID 7\nOutput:\nREADY_FOR_STDIN\n",
+			},
+		},
+		"tools": codexTools,
+	})
+	require.Equal(t, http.StatusOK, status)
+	secondOutput := secondPayload["output"].([]any)
+	require.Len(t, secondOutput, 1)
+	secondCall := secondOutput[0].(map[string]any)
+	require.Equal(t, "function_call", asStringAny(secondCall["type"]))
+	require.Equal(t, "write_stdin", asStringAny(secondCall["name"]))
+	require.Contains(t, asStringAny(secondCall["arguments"]), `"session_id":7`)
+	require.Equal(t, int64(2), chatHits.Load())
+}
+
 func TestResponsesOverChatTransportMapsTextFormatToChatResponseFormat(t *testing.T) {
 	var captured map[string]any
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -13528,6 +13636,82 @@ func writeChatCompletionText(t *testing.T, w http.ResponseWriter, model string, 
 			},
 		},
 	}))
+}
+
+func writeChatCompletionToolCall(t *testing.T, w http.ResponseWriter, model string, callID string, name string, arguments string) {
+	t.Helper()
+
+	w.Header().Set("Content-Type", "application/json")
+	require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+		"id":      "chatcmpl_test",
+		"object":  "chat.completion",
+		"created": time.Now().Unix(),
+		"model":   model,
+		"choices": []map[string]any{
+			{
+				"index": 0,
+				"message": map[string]any{
+					"role":    "assistant",
+					"content": nil,
+					"tool_calls": []map[string]any{
+						{
+							"id":   callID,
+							"type": "function",
+							"function": map[string]any{
+								"name":      name,
+								"arguments": arguments,
+							},
+						},
+					},
+				},
+				"finish_reason": "tool_calls",
+			},
+		},
+	}))
+}
+
+func chatRequestHasTool(request map[string]any, name string) bool {
+	tools, ok := request["tools"].([]any)
+	if !ok {
+		return false
+	}
+	for _, rawTool := range tools {
+		tool, ok := rawTool.(map[string]any)
+		if !ok {
+			continue
+		}
+		function, ok := tool["function"].(map[string]any)
+		if !ok {
+			continue
+		}
+		if asStringAny(function["name"]) == name {
+			return true
+		}
+	}
+	return false
+}
+
+func chatRequestHasToolOutput(request map[string]any, callID string, fragment string) bool {
+	messages, ok := request["messages"].([]any)
+	if !ok {
+		return false
+	}
+	for _, rawMessage := range messages {
+		message, ok := rawMessage.(map[string]any)
+		if !ok {
+			continue
+		}
+		if asStringAny(message["role"]) != "tool" {
+			continue
+		}
+		if asStringAny(message["tool_call_id"]) != callID {
+			continue
+		}
+		if strings.Contains(asStringAny(message["content"]), fragment) {
+			return true
+		}
+	}
+	return false
 }
 
 func fakeImageGenerationResponsePayload(responseID, itemID string) map[string]any {

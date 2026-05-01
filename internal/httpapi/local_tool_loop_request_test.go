@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -92,6 +93,32 @@ func TestBuildChatCompletionMessagesFromItemsUsesResponsesCallIDForToolCalls(t *
 	require.Equal(t, "call_abc", toolCalls[0]["id"])
 	require.Equal(t, "tool", messages[2]["role"])
 	require.Equal(t, "call_abc", messages[2]["tool_call_id"])
+}
+
+func TestBuildChatCompletionMessagesFromItemsPreservesCodexInteractiveSessionOutput(t *testing.T) {
+	output := "Chunk ID: abc\nWall time: 1.0000 seconds\nProcess running with session ID 7\nOutput:\nREADY_FOR_STDIN\n"
+	items := []domain.Item{
+		mustDomainItem(t, `{"type":"message","role":"user","content":"Start an interactive process."}`),
+		mustDomainItem(t, `{"type":"function_call","id":"item_exec","call_id":"call_exec","name":"exec_command","arguments":"{\"cmd\":\"python3 -q\",\"tty\":true}"}`),
+		mustDomainItem(t, fmt.Sprintf(`{"type":"function_call_output","call_id":"call_exec","output":%q}`, output)),
+		mustDomainItem(t, `{"type":"message","role":"user","content":"Send stdin now."}`),
+	}
+
+	messages, err := buildChatCompletionMessagesFromItems(items)
+
+	require.NoError(t, err)
+	require.Len(t, messages, 4)
+	require.Equal(t, "assistant", messages[1]["role"])
+	toolCalls, ok := messages[1]["tool_calls"].([]map[string]any)
+	require.True(t, ok)
+	require.Len(t, toolCalls, 1)
+	require.Equal(t, "call_exec", toolCalls[0]["id"])
+	require.Equal(t, "exec_command", toolCalls[0]["function"].(map[string]any)["name"])
+	require.Equal(t, "tool", messages[2]["role"])
+	require.Equal(t, "call_exec", messages[2]["tool_call_id"])
+	require.Equal(t, output, asString(messages[2]["content"]))
+	require.Equal(t, "7", localToolLoopSessionIDForLog(asString(messages[2]["content"])))
+	require.Equal(t, "7", localToolLoopSessionIDForLog(`{"session_id":7,"output":"READY_FOR_STDIN\n"}`))
 }
 
 func TestBuildChatCompletionMessagesFromItemsGroupsParallelToolCalls(t *testing.T) {

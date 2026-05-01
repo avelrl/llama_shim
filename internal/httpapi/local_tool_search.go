@@ -535,6 +535,7 @@ func (h *responseHandler) runPreparedLocalToolLoopResponse(ctx context.Context, 
 		if err != nil {
 			return domain.Response{}, err
 		}
+		logLocalToolLoopChatBridgeState(ctx, h.logger, input.Model, attempt, chatBody)
 
 		rawResponse, err := h.proxy.client.CreateChatCompletion(ctx, chatBody)
 		if err != nil {

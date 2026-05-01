@@ -680,7 +680,7 @@ func TestChatCompletionsCodexWriteStdinPlansInteractiveFollowup(t *testing.T) {
 	request.Messages = append(request.Messages, chatMessage{
 		Role:       "tool",
 		ToolCallID: "call_devstack_codex_1",
-		Content:    `{"session_id":7,"output":"READY_FOR_STDIN\n"}`,
+		Content:    "Chunk ID: abc\nWall time: 1.0000 seconds\nProcess running with session ID 7\nOutput:\nREADY_FOR_STDIN\n",
 	})
 	content, toolCalls, finishReason = chatCompletionReply(request)
 	require.Empty(t, content)
@@ -700,6 +700,12 @@ func TestChatCompletionsCodexWriteStdinPlansInteractiveFollowup(t *testing.T) {
 	require.Equal(t, "STDIN_OK", content)
 	require.Nil(t, toolCalls)
 	require.Equal(t, "stop", finishReason)
+}
+
+func TestFixtureCodexSessionIDParsesCodexUnifiedExecOutput(t *testing.T) {
+	require.Equal(t, 7, fixtureCodexSessionID(`{"session_id":7,"output":"READY"}`))
+	require.Equal(t, 1234, fixtureCodexSessionID("Chunk ID: abc\nProcess running with session ID 1234\nOutput:\nREADY\n"))
+	require.Zero(t, fixtureCodexSessionID("READY_FOR_STDIN\n"))
 }
 
 func TestChatCompletionsCodexShellCommandToolArguments(t *testing.T) {

@@ -4,7 +4,8 @@ Last updated: May 1, 2026.
 
 Task id: `v3-codex-interactive-command-session-bridge`
 
-Status: planned profile compatibility task.
+Status: initial shim bridge coverage implemented; dedicated profile passes on
+devstack.
 
 This task isolates the `exec_command -> session_id -> write_stdin` problem from
 the broader eval-harness and benchmark-lite work. The failure mode is not that
@@ -38,7 +39,7 @@ Relevant constraints:
 `write_stdin_pty` is intentionally outside default `codex-core` and stays in
 `codex-core-interactive` / `codex-compat` until the bridge is proven stable.
 
-The implementation must verify all of these:
+The compatibility work must verify all of these:
 
 1. `exec_command` preserves live session state in the shim/bridge.
 2. Tool output clearly and consistently reaches the model with the live
@@ -53,24 +54,41 @@ The implementation must verify all of these:
 - Keep `write_stdin_pty` in `codex-core-interactive` and `codex-compat`, not
   default `codex-core`.
 - Add focused shim tests for Responses-over-Chat:
-  `exec_command -> session_id -> write_stdin`.
-- Add negative tests:
-  - unknown `session_id`;
-  - expired/completed session;
-  - command failed before stdin write;
-  - concurrent live sessions do not cross-wire stdin.
-- Add explicit logging around:
-  - generated live session id;
-  - model-visible tool output summary;
-  - `write_stdin` lookup result;
-  - session close/expiry.
-- Inspect `.data/shim.log` from failed interactive runs to confirm whether the
-  loss is in state preservation, model-visible output, or lookup/routing.
+  `exec_command -> session_id -> write_stdin`. Done for the shim-owned bridge:
+  the test asserts that a Codex `function_call_output` containing real unified
+  exec text such as `Process running with session ID N` is preserved as Chat
+  `tool` content with the same `tool_call_id`, and that the next Chat-backed
+  response can return a structured `write_stdin` call with that `session_id`.
+- Keep runtime session negatives in the eval profile rather than shim unit
+  tests. In the Codex CLI path, the shim does not own the live PTY process or
+  its session registry; Codex executes `exec_command`, returns tool output to
+  the shim, and later executes `write_stdin`. The shim-owned contract is to
+  preserve model-visible session identity and structured tool-call shape, not
+  to validate unknown or expired local CLI sessions directly.
+- Add explicit shim logging around the Chat-backed local tool-loop bridge.
+  Done at debug level for generated Chat payloads:
+  - tool names;
+  - assistant tool-call count;
+  - model-visible tool-output call ids;
+  - detected interactive `session_id` values.
+- Inspect `.data/shim.log` or devstack container logs from failed interactive
+  runs to confirm whether the loss is in state preservation, model-visible
+  output, or lookup/routing. The May 1, 2026 failure was in the devstack
+  fixture: it parsed only JSON `"session_id"` values, while real Codex unified
+  exec emits model-visible text `Process running with session ID N`.
 - After implementation, run the profile:
 
 ```bash
 CODEX_EVAL_SUITE=codex-core-interactive bash ./scripts/codex-eval-runner.sh
 ```
+
+Validation on May 1, 2026:
+
+- focused fixture and bridge tests passed
+- `go test ./...`
+- `make lint`
+- `git diff --check`
+- `OPENAI_API_KEY=shim-dev-key CODEX_EVAL_SUITE=codex-core-interactive bash ./scripts/codex-eval-runner.sh`
 
 ## Acceptance Criteria
 
@@ -78,8 +96,11 @@ CODEX_EVAL_SUITE=codex-core-interactive bash ./scripts/codex-eval-runner.sh
   model-visible `exec_command` output for live commands.
 - `write_stdin` reaches the intended process and the eval observes the expected
   output after stdin.
-- Unknown or expired sessions fail deterministically with a useful diagnostic.
-- HTTP Responses path and Chat-backed path each have focused tests.
+- Unknown or expired sessions fail deterministically with a useful diagnostic
+  in the Codex CLI/eval runtime that owns the process session.
+- The Chat-backed path has focused shim tests for context preservation. Native
+  HTTP Responses upstream remains profile-tested because the session registry is
+  still client-side, not shim-side.
 - `codex-core-interactive` passes locally before any promotion discussion.
 - Default `codex-core` remains unchanged until the profile is stable.
 

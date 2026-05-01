@@ -864,8 +864,16 @@ sequenceDiagram
   Fixture-->>Shim: function tool call such as exec_command
   Shim-->>Codex: tool call item
   Codex->>Tools: run command or patch locally under Codex policy
-  Tools-->>Codex: tool output
+  Tools-->>Codex: tool output, including session id text for live PTY commands
   Codex->>Shim: tool output follow-up
+  Shim->>Fixture: Chat-backed continuation with matching tool_call_id and tool output
+  opt interactive command continues
+    Fixture-->>Shim: structured write_stdin function call with session_id
+    Shim-->>Codex: write_stdin tool call item
+    Codex->>Tools: write stdin to local live session
+    Tools-->>Codex: follow-up output
+    Codex->>Shim: write_stdin output follow-up
+  end
   Shim->>Fixture: final continuation
   Fixture-->>Shim: final assistant message
   alt empty final response or raw pseudo-tool markup in assistant text
@@ -881,6 +889,12 @@ Practical finding:
   bridge.
 - The repo-owned Codex smokes verify WebSocket availability, `exec_command`,
   fallback function `shell`, and a deterministic task matrix.
+- For interactive commands, Codex CLI owns the live process/session registry.
+  Real unified exec output exposes the id to the model as text like
+  `Process running with session ID N`. The shim-owned Chat-backed bridge must
+  preserve that model-visible data in tool-output messages and return later
+  `write_stdin` requests as structured tool calls; it does not validate local
+  session liveness itself.
 - Local final-text repair is bounded and only asks the model to produce plain
   text from already-returned tool outputs; the shim does not execute pseudo-tool
   markup printed inside assistant text.

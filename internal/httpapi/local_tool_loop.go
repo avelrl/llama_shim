@@ -5,6 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
+	"regexp"
+	"slices"
 	"strings"
 
 	"llama_shim/internal/domain"
@@ -186,6 +189,115 @@ func (h *responseHandler) createLocalToolLoopResponse(ctx context.Context, reque
 func buildLocalToolLoopChatCompletionBody(rawFields map[string]json.RawMessage, contextItems []domain.Item, currentInput []domain.Item, refs map[string]domain.ToolCallReference, serviceLimits ServiceLimits, customToolsMode string, codexCompatibilityEnabled bool, forceCodexToolChoiceRequired bool, repairPrompt string) ([]byte, customToolTransportPlan, error) {
 	_ = customToolsMode
 	return buildLocalChatCompletionRequest(rawFields, contextItems, currentInput, refs, serviceLimits, codexCompatibilityEnabled, forceCodexToolChoiceRequired, repairPrompt)
+}
+
+func logLocalToolLoopChatBridgeState(ctx context.Context, logger *slog.Logger, model string, attempt int, chatBody []byte) {
+	if logger == nil || !logger.Enabled(ctx, slog.LevelDebug) {
+		return
+	}
+
+	var body struct {
+		Messages   []map[string]any `json:"messages"`
+		Tools      []map[string]any `json:"tools"`
+		ToolChoice any              `json:"tool_choice"`
+	}
+	if err := json.Unmarshal(chatBody, &body); err != nil {
+		logger.DebugContext(ctx, "local tool loop chat bridge request decode failed",
+			"request_id", RequestIDFromContext(ctx),
+			"model", model,
+			"attempt", attempt,
+			"error", err,
+		)
+		return
+	}
+
+	toolNames := localToolLoopChatToolNames(body.Tools)
+	toolOutputCallIDs, sessionIDs, assistantToolCalls := localToolLoopChatMessageStats(body.Messages)
+	logger.DebugContext(ctx, "local tool loop chat bridge request",
+		"request_id", RequestIDFromContext(ctx),
+		"model", model,
+		"attempt", attempt,
+		"message_count", len(body.Messages),
+		"tool_count", len(body.Tools),
+		"tool_names", strings.Join(toolNames, ","),
+		"tool_choice_set", body.ToolChoice != nil,
+		"assistant_tool_call_count", assistantToolCalls,
+		"tool_output_count", len(toolOutputCallIDs),
+		"tool_output_call_ids", strings.Join(toolOutputCallIDs, ","),
+		"interactive_session_ids", strings.Join(sessionIDs, ","),
+		"has_exec_command_tool", slices.Contains(toolNames, "exec_command"),
+		"has_write_stdin_tool", slices.Contains(toolNames, "write_stdin"),
+	)
+}
+
+func localToolLoopChatToolNames(tools []map[string]any) []string {
+	names := make([]string, 0, len(tools))
+	for _, tool := range tools {
+		function, ok := tool["function"].(map[string]any)
+		if !ok {
+			continue
+		}
+		name := strings.TrimSpace(asString(function["name"]))
+		if name != "" {
+			names = append(names, name)
+		}
+	}
+	slices.Sort(names)
+	return slices.Compact(names)
+}
+
+func localToolLoopChatMessageStats(messages []map[string]any) ([]string, []string, int) {
+	callIDs := make([]string, 0)
+	sessionIDs := make([]string, 0)
+	assistantToolCalls := 0
+	seenCallIDs := make(map[string]struct{})
+	seenSessionIDs := make(map[string]struct{})
+
+	for _, message := range messages {
+		role := strings.TrimSpace(asString(message["role"]))
+		if role == "assistant" {
+			if calls, ok := message["tool_calls"].([]any); ok {
+				assistantToolCalls += len(calls)
+			}
+			if calls, ok := message["tool_calls"].([]map[string]any); ok {
+				assistantToolCalls += len(calls)
+			}
+		}
+		if role != "tool" {
+			continue
+		}
+		callID := strings.TrimSpace(asString(message["tool_call_id"]))
+		if callID != "" {
+			if _, ok := seenCallIDs[callID]; !ok {
+				seenCallIDs[callID] = struct{}{}
+				callIDs = append(callIDs, callID)
+			}
+		}
+		if sessionID := localToolLoopSessionIDForLog(asString(message["content"])); sessionID != "" {
+			if _, ok := seenSessionIDs[sessionID]; !ok {
+				seenSessionIDs[sessionID] = struct{}{}
+				sessionIDs = append(sessionIDs, sessionID)
+			}
+		}
+	}
+	return callIDs, sessionIDs, assistantToolCalls
+}
+
+func localToolLoopSessionIDForLog(content string) string {
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(content)), &payload); err == nil {
+		switch value := payload["session_id"].(type) {
+		case float64:
+			return fmt.Sprintf("%.0f", value)
+		case string:
+			return strings.TrimSpace(value)
+		}
+	}
+	matches := regexp.MustCompile(`(?i)process\s+running\s+with\s+session\s+id\s+([0-9]+)`).FindStringSubmatch(content)
+	if len(matches) == 2 {
+		return matches[1]
+	}
+	return ""
 }
 
 func rewriteResponsesBodyToChatCompletionsBody(body []byte) ([]byte, error) {
