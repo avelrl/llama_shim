@@ -18,6 +18,12 @@ import (
 
 var ErrRunFailed = errors.New("codex eval run failed")
 
+const (
+	applyPatchToolTypeFreeform = "freeform"
+	applyPatchToolTypeFunction = "function"
+	applyPatchToolTypeDisabled = "disabled"
+)
+
 type Runner struct {
 	config Config
 }
@@ -133,6 +139,7 @@ func normalizeConfig(config Config) Config {
 	if config.StreamIdleTimeoutMS == 0 {
 		config.StreamIdleTimeoutMS = 180000
 	}
+	config.ApplyPatchToolType = strings.ToLower(strings.TrimSpace(config.ApplyPatchToolType))
 	return config
 }
 
@@ -157,6 +164,7 @@ func (runner *Runner) environment(started time.Time) Environment {
 		WebSockets:         runner.config.WebSockets,
 		UnifiedExec:        runner.config.UnifiedExec,
 		ApplyPatchFreeform: runner.config.ApplyPatchFreeform,
+		ApplyPatchToolType: runner.config.ApplyPatchToolType,
 		ReasoningEffort:    runner.config.ReasoningEffort,
 		ReasoningSummary:   runner.config.ReasoningSummary,
 	}
@@ -493,7 +501,16 @@ func (runner *Runner) writeCodexConfig(path string, baseURLOverride ...string) e
 	if len(baseURLOverride) > 0 && strings.TrimSpace(baseURLOverride[0]) != "" {
 		baseURL = strings.TrimRight(baseURLOverride[0], "/")
 	}
+	modelCatalogLine, err := runner.writeCodexModelCatalogIfConfigured(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	applyPatchFreeform := runner.config.ApplyPatchFreeform
+	if runner.config.ApplyPatchToolType == applyPatchToolTypeDisabled {
+		applyPatchFreeform = false
+	}
 	config := fmt.Sprintf(`model = "%s"
+%s
 model_provider = "%s"
 approval_policy = "never"
 sandbox_mode = "workspace-write"
@@ -522,10 +539,87 @@ supports_websockets = %t
 request_max_retries = %d
 stream_max_retries = %d
 stream_idle_timeout_ms = %d
-`, runner.config.Model, runner.config.Provider, runner.config.ApplyPatchFreeform, runner.config.UnifiedExec,
+`, runner.config.Model, modelCatalogLine, runner.config.Provider, applyPatchFreeform, runner.config.UnifiedExec,
 		runner.config.Provider, runner.config.Provider, baseURL, runner.config.APIKeyEnv,
 		runner.config.WebSockets, runner.config.RequestMaxRetries, runner.config.StreamMaxRetries, runner.config.StreamIdleTimeoutMS)
 	return os.WriteFile(path, []byte(config), 0o600)
+}
+
+func (runner *Runner) writeCodexModelCatalogIfConfigured(codexHome string) (string, error) {
+	if runner.config.ApplyPatchToolType == "" {
+		return "", nil
+	}
+	if err := validateApplyPatchToolType(runner.config.ApplyPatchToolType); err != nil {
+		return "", err
+	}
+	catalogPath := filepath.Join(codexHome, "model-catalog.json")
+	catalogAbs, err := filepath.Abs(catalogPath)
+	if err != nil {
+		return "", err
+	}
+	applyPatchToolType := any(nil)
+	if runner.config.ApplyPatchToolType != applyPatchToolTypeDisabled {
+		applyPatchToolType = runner.config.ApplyPatchToolType
+	}
+	shellType := "unified_exec"
+	if !runner.config.UnifiedExec {
+		shellType = "shell_command"
+	}
+	catalog := map[string]any{
+		"models": []map[string]any{{
+			"slug":                             runner.config.Model,
+			"display_name":                     runner.config.Model,
+			"description":                      "Codex eval model metadata override",
+			"default_reasoning_level":          runner.config.ReasoningEffort,
+			"supported_reasoning_levels":       codexReasoningLevels(),
+			"shell_type":                       shellType,
+			"visibility":                       "list",
+			"supported_in_api":                 true,
+			"priority":                         1,
+			"additional_speed_tiers":           []string{},
+			"availability_nux":                 nil,
+			"upgrade":                          nil,
+			"base_instructions":                "You are Codex, a coding agent.",
+			"model_messages":                   nil,
+			"supports_reasoning_summaries":     false,
+			"default_reasoning_summary":        runner.config.ReasoningSummary,
+			"support_verbosity":                false,
+			"default_verbosity":                nil,
+			"apply_patch_tool_type":            applyPatchToolType,
+			"web_search_tool_type":             "text",
+			"truncation_policy":                map[string]any{"mode": "tokens", "limit": 200000},
+			"supports_parallel_tool_calls":     true,
+			"supports_image_detail_original":   false,
+			"context_window":                   200000,
+			"max_context_window":               nil,
+			"auto_compact_token_limit":         nil,
+			"effective_context_window_percent": 95,
+			"experimental_supported_tools":     []string{},
+			"input_modalities":                 []string{"text"},
+			"supports_search_tool":             false,
+		}},
+	}
+	if err := writeJSON(catalogPath, catalog); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("model_catalog_json = %q\n", catalogAbs), nil
+}
+
+func validateApplyPatchToolType(value string) error {
+	switch value {
+	case applyPatchToolTypeFreeform, applyPatchToolTypeFunction, applyPatchToolTypeDisabled:
+		return nil
+	default:
+		return fmt.Errorf("unsupported apply patch tool type %q; use freeform, function, or disabled", value)
+	}
+}
+
+func codexReasoningLevels() []map[string]string {
+	return []map[string]string{
+		{"effort": "minimal", "description": "Minimal"},
+		{"effort": "medium", "description": "Medium"},
+		{"effort": "high", "description": "High"},
+	}
 }
 
 func (runner *Runner) runCodex(ctx context.Context, task Task, attemptDir, workspace, outputFile string) (int, error) {

@@ -52,6 +52,7 @@ Optional:
   CODEX_EVAL_WEBSOCKETS=false
   CODEX_EVAL_UNIFIED_EXEC=true
   CODEX_EVAL_APPLY_PATCH_FREEFORM=true
+  CODEX_EVAL_APPLY_PATCH_TOOL_TYPE=freeform|function|disabled
   CODEX_EVAL_MATRIX_OUT=.tmp/codex-eval-runs/matrix.md
   CODEX_EVAL_FAILURE_BUNDLE_OUT=.tmp/codex-eval-runs/failure-bundle.md
   CODEX_EVAL_COMPARE_CONTROL=.tmp/codex-eval-loops/<loop-id>/control
@@ -72,6 +73,21 @@ Profile gates:
     ./scripts/codex-eval-runner.sh
 
   CODEX_EVAL_SUITE=codex-shim-native-websocket CODEX_EVAL_WEBSOCKETS=true \
+    ./scripts/codex-eval-runner.sh
+
+  CODEX_EVAL_SUITE=codex-shim-native-apply-patch-freeform \
+  CODEX_EVAL_APPLY_PATCH_FREEFORM=true \
+  CODEX_EVAL_APPLY_PATCH_TOOL_TYPE=freeform \
+    ./scripts/codex-eval-runner.sh
+
+  CODEX_EVAL_SUITE=codex-shim-native-apply-patch-function \
+  CODEX_EVAL_APPLY_PATCH_FREEFORM=false \
+  CODEX_EVAL_APPLY_PATCH_TOOL_TYPE=function \
+    ./scripts/codex-eval-runner.sh
+
+  CODEX_EVAL_SUITE=codex-shim-native-apply-patch-disabled \
+  CODEX_EVAL_APPLY_PATCH_FREEFORM=false \
+  CODEX_EVAL_APPLY_PATCH_TOOL_TYPE=disabled \
     ./scripts/codex-eval-runner.sh
 EOF
 }

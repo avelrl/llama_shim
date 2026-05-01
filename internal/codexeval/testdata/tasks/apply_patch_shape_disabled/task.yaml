@@ -1,0 +1,34 @@
+id: apply_patch_shape_disabled
+title: Apply patch disabled request shape
+category: shim-native
+suites:
+  - codex-shim-native-apply-patch-disabled
+timeout: 120s
+attempts: 1
+prompt: |
+  This is the Codex apply_patch disabled request-shape case. Complete the turn with a minimal response.
+expected:
+  files:
+    - path: README.md
+      contains: apply-patch-disabled
+  codex_events:
+    - item.completed:agent_message
+    - turn.completed
+  request_shapes:
+    - name: apply_patch tool not advertised
+      transport: http
+      method: POST
+      path: /v1/responses
+      min_count: 1
+      required_body_fields:
+        - input
+        - model
+        - tools
+      forbidden_tool_names:
+        - apply_patch
+      forbidden_tool_name_types:
+        - apply_patch:custom
+        - apply_patch:function
+  forbidden_output:
+    - "<|tool_call"
+    - "<|tool_calls_section"

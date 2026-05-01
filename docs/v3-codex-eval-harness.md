@@ -204,7 +204,8 @@ work are tracked in
 - WebSocket incremental continuation with `previous_response_id`, because this
   is a different Codex request shape than the normal HTTP full-context request.
 - `apply_patch` as both freeform and function tool, because model metadata can
-  switch the advertised tool contract.
+  switch the advertised tool contract. This is now covered by shim-native
+  request-shape profiles rather than model-quality tasks.
 - fallback shell variants (`shell`, `shell_command`, `local_shell`) as separate
   profiles, because they produce different tool schemas and handlers.
 - request-permissions and request-user-input behavior as non-default profiles,
@@ -923,7 +924,9 @@ Current status on May 1, 2026:
   `codex-core-websocket` covers WebSocket mode plus a tool-follow-up
   continuation path. The shim-native request-shape profile is implemented and
   tracked in
-  [v3-codex-shim-native-coverage.md](v3-codex-shim-native-coverage.md).
+  [v3-codex-shim-native-coverage.md](v3-codex-shim-native-coverage.md),
+  including HTTP, WebSocket, and `apply_patch` model-metadata tool-mode
+  profiles.
   `write_stdin_pty` is scaffolded as an interactive
   compatibility profile task, not a default core task, because the current
   Chat-backed Codex bridge does not expose a stable session id for a follow-up
@@ -1170,16 +1173,16 @@ not block closing the eval-harness phases that are already implemented.
 - single-file edit
 - multi-file edit
 - patch-style file change
-- freeform and function `apply_patch` tool modes (shim-native follow-up)
+- freeform, function, and disabled `apply_patch` tool modes
 - tiny code bugfix plus test run
 - deterministic documentation writing
 - no-edit safety task
 - mixed text/tool stream
 - raw provider tool markup rejection
 - final answer after tool output
-- HTTP Responses request shape and headers used by Codex (shim-native follow-up)
+- HTTP Responses request shape and headers used by Codex
 - WebSocket Responses request shape, including incremental continuation with
-  `previous_response_id` (shim-native follow-up)
+  `previous_response_id`
 - at least one real-upstream Qwen 3.6 profile run
 
 ## Guardrails

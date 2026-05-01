@@ -4,8 +4,8 @@ Last updated: May 1, 2026.
 
 Task id: `v3-codex-shim-native-coverage`
 
-Status: request-shape capture and HTTP/WebSocket profile tasks implemented;
-`apply_patch` tool-mode profiles remain planned follow-up work.
+Status: request-shape capture, HTTP/WebSocket profile tasks, and
+`apply_patch` tool-mode request-shape profiles implemented.
 
 This document indexes Codex-through-shim compatibility gaps that are not just
 benchmark breadth. They are shim-native or profile-specific behaviors that need
@@ -23,6 +23,7 @@ Checked on May 1, 2026:
 - local official-docs index: [openapi/llms.txt](../openapi/llms.txt)
 - OpenAI docs:
   - [Codex configuration reference](https://developers.openai.com/codex/config-reference)
+  - [Apply Patch](https://developers.openai.com/api/docs/guides/tools-apply-patch)
   - [WebSocket Mode](https://developers.openai.com/api/docs/guides/websocket-mode)
   - [Evaluation best practices](https://developers.openai.com/api/docs/guides/evaluation-best-practices)
   - [Codex app-server API overview](https://developers.openai.com/codex/app-server)
@@ -36,6 +37,9 @@ Relevant source/docs constraints:
 - Codex config exposes `features.unified_exec`, `features.shell_tool`,
   `features.apply_patch_freeform`, `model_catalog_json`,
   `developer_instructions`, and provider-level `supports_websockets`.
+- Current Codex source registers `apply_patch` from model metadata as either a
+  freeform custom tool or a JSON function tool; when metadata is unset,
+  `features.apply_patch_freeform` can enable the freeform fallback.
 - WebSocket mode uses `response.create`, optional `generate: false`, and
   incremental continuation via `previous_response_id`.
 - Current Codex source serializes `stream` into
@@ -79,6 +83,8 @@ Implemented coverage:
     `parallel_tool_calls`, `reasoning`, `store`, `include`, `text`, and
     `client_metadata` presence/absence as applicable;
   - advertised tool names and tool types.
+  - advertised tool name/type pairs such as `apply_patch:custom` and
+    `apply_patch:function`.
 - WebSocket request shape:
   - `response.create` message shape;
   - warmup `generate: false`;
@@ -123,27 +129,49 @@ OpenAI hosted parity claim.
 
 ### 3. `apply_patch` Tool-Mode Profiles
 
+Status: implemented on May 1, 2026.
+
 Problem:
 
 Codex can expose `apply_patch` in more than one shape depending on features and
 model metadata. The stable real-upstream tasks prove practical file edits, but
 they do not fully cover freeform-vs-function `apply_patch` contracts.
 
-Required coverage:
+Implemented coverage:
 
-- freeform `apply_patch` advertised and used;
-- function-style `apply_patch` advertised and used, if still supported by the
-  current Codex model metadata path;
-- disabled `apply_patch` profile falls back to command/file-change behavior
-  without claiming native patch coverage;
+- generated `model_catalog_json` for Codex eval runs when
+  `CODEX_EVAL_APPLY_PATCH_TOOL_TYPE` is set to `freeform`, `function`, or
+  `disabled`;
+- freeform `apply_patch` advertised as `apply_patch:custom`;
+- function-style `apply_patch` advertised as `apply_patch:function`;
+- disabled `apply_patch` profile proves the tool is not advertised;
 - invalid patch argument repair remains a shim-local compatibility layer and is
   not presented as exact hosted parity.
 
-Required tests:
+Run commands:
 
-- generated Codex config/model catalog fixture for each profile;
-- event checker proving a patch/file-change path was exercised;
-- request-shape checker proving the intended tool shape was advertised.
+```bash
+make codex-eval-shim-native-apply-patch-freeform
+make codex-eval-shim-native-apply-patch-function
+make codex-eval-shim-native-apply-patch-disabled
+make codex-eval-shim-native-apply-patch-profiles
+```
+
+Implemented tasks:
+
+- `apply_patch_shape_freeform` in
+  `codex-shim-native-apply-patch-freeform`;
+- `apply_patch_shape_function` in
+  `codex-shim-native-apply-patch-function`;
+- `apply_patch_shape_disabled` in
+  `codex-shim-native-apply-patch-disabled`.
+
+Boundary:
+
+These profiles prove Codex CLI tool advertisement through the shim. They do not
+require a model to actually choose `apply_patch`, so they are not replacements
+for real-upstream coding evals or the native Responses `tools:
+[{"type":"apply_patch"}]` smoke.
 
 ### 4. WebSocket Incremental Continuation Profile
 
@@ -191,8 +219,8 @@ This follow-up is done when:
 - request-shape artifacts are redacted, bounded, and checked deterministically
   (done);
 - HTTP and WebSocket Codex request-shape profile tasks exist (done);
-- freeform and function `apply_patch` profile checks exist or the unsupported
-  mode is explicitly documented against the current Codex source;
+- freeform, function, and disabled `apply_patch` request-shape profile checks
+  exist (done);
 - docs and run commands are linked from
   [docs/guides/codex-cli.md](guides/codex-cli.md) and
   [docs/v3-codex-eval-harness.md](v3-codex-eval-harness.md);

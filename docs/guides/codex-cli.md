@@ -570,6 +570,11 @@ Current Codex CLI has two relevant local command-tool modes for this shim:
   `apply_patch_tool_type: freeform`. Without the feature flag, Codex may still
   receive an upstream `apply_patch` tool call but report `unsupported call:
   apply_patch` locally.
+- To check Codex metadata wiring without depending on model sampling, use the
+  shim-native `apply_patch` request-shape profiles. They generate a temporary
+  `model_catalog_json` and verify that Codex advertises `apply_patch` as
+  `custom` for freeform, `function` for JSON-tool mode, or omits it when
+  disabled.
 
 Both of those are Codex CLI function-tool declarations. They are different
 from the official Responses native shell declaration, which is
@@ -577,6 +582,15 @@ from the official Responses native shell declaration, which is
 Responses `shell` and `apply_patch` subset is covered by
 `make v3-coding-tools-smoke`; real Codex CLI compatibility is covered by the
 Codex smoke scripts below.
+
+Apply-patch tool-mode profile checks:
+
+```bash
+make codex-eval-shim-native-apply-patch-freeform
+make codex-eval-shim-native-apply-patch-function
+make codex-eval-shim-native-apply-patch-disabled
+make codex-eval-shim-native-apply-patch-profiles
+```
 
 One-off fallback-shell check:
 

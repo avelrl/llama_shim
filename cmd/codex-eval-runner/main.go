@@ -53,6 +53,7 @@ func main() {
 	flag.BoolVar(&config.WebSockets, "websockets", envBool("CODEX_EVAL_WEBSOCKETS", false), "enable Codex provider WebSocket support")
 	flag.BoolVar(&config.UnifiedExec, "unified-exec", envBool("CODEX_EVAL_UNIFIED_EXEC", true), "enable Codex unified exec feature")
 	flag.BoolVar(&config.ApplyPatchFreeform, "apply-patch-freeform", envBool("CODEX_EVAL_APPLY_PATCH_FREEFORM", true), "enable Codex apply_patch freeform feature")
+	flag.StringVar(&config.ApplyPatchToolType, "apply-patch-tool-type", envString("CODEX_EVAL_APPLY_PATCH_TOOL_TYPE", ""), "Codex model_catalog_json apply_patch_tool_type override: freeform, function, or disabled")
 	flag.BoolVar(&config.SkipHealthCheck, "skip-health-check", envBool("CODEX_EVAL_SKIP_HEALTH_CHECK", false), "skip shim health preflight")
 	flag.BoolVar(&config.SkipModelsProbe, "skip-models-probe", envBool("CODEX_EVAL_SKIP_MODELS_PROBE", false), "skip /v1/models preflight")
 	flag.IntVar(&config.RequestMaxRetries, "request-max-retries", envInt("CODEX_EVAL_REQUEST_MAX_RETRIES", 1), "Codex provider request retries")

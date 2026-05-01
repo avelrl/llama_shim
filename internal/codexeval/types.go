@@ -55,6 +55,7 @@ type Config struct {
 	WebSockets          bool
 	UnifiedExec         bool
 	ApplyPatchFreeform  bool
+	ApplyPatchToolType  string
 	SkipHealthCheck     bool
 	SkipModelsProbe     bool
 	RequestMaxRetries   int
@@ -118,6 +119,8 @@ type RequestShapeExpectation struct {
 	RequiredToolNames         []string `yaml:"required_tool_names" json:"required_tool_names,omitempty"`
 	ForbiddenToolNames        []string `yaml:"forbidden_tool_names" json:"forbidden_tool_names,omitempty"`
 	RequiredToolTypes         []string `yaml:"required_tool_types" json:"required_tool_types,omitempty"`
+	RequiredToolNameTypes     []string `yaml:"required_tool_name_types" json:"required_tool_name_types,omitempty"`
+	ForbiddenToolNameTypes    []string `yaml:"forbidden_tool_name_types" json:"forbidden_tool_name_types,omitempty"`
 	RequiredInputItemTypes    []string `yaml:"required_input_item_types" json:"required_input_item_types,omitempty"`
 	Stream                    *bool    `yaml:"stream" json:"stream,omitempty"`
 	Store                     *bool    `yaml:"store" json:"store,omitempty"`
@@ -162,6 +165,7 @@ type Environment struct {
 	WebSockets         bool     `json:"websockets"`
 	UnifiedExec        bool     `json:"unified_exec"`
 	ApplyPatchFreeform bool     `json:"apply_patch_freeform"`
+	ApplyPatchToolType string   `json:"apply_patch_tool_type,omitempty"`
 	ReasoningEffort    string   `json:"reasoning_effort"`
 	ReasoningSummary   string   `json:"reasoning_summary"`
 }

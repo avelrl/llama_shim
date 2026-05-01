@@ -32,7 +32,10 @@ func TestRequestShapeCaptureProxyRedactsAndForwards(t *testing.T) {
 	req, err := http.NewRequest(http.MethodPost, capture.ProviderBaseURL()+"/responses", stringsReader(`{
 		"model":"devstack-model",
 		"input":[{"type":"message"}],
-		"tools":[{"type":"function","name":"exec_command"}],
+		"tools":[
+			{"type":"function","name":"exec_command"},
+			{"type":"custom","name":"apply_patch","format":{"type":"grammar"}}
+		],
 		"stream":true
 	}`))
 	if err != nil {
@@ -76,6 +79,12 @@ func TestRequestShapeCaptureProxyRedactsAndForwards(t *testing.T) {
 	if !containsString(request.ToolNames, "exec_command") {
 		t.Fatalf("tool names = %v, want exec_command", request.ToolNames)
 	}
+	if !containsString(request.ToolNameTypes, "exec_command:function") {
+		t.Fatalf("tool name/types = %v, want exec_command:function", request.ToolNameTypes)
+	}
+	if !containsString(request.ToolNameTypes, "apply_patch:custom") {
+		t.Fatalf("tool name/types = %v, want apply_patch:custom", request.ToolNameTypes)
+	}
 	if request.Stream == nil || !*request.Stream {
 		t.Fatalf("stream = %v, want true", request.Stream)
 	}
@@ -102,6 +111,7 @@ func TestRunCheckersRequestShapes(t *testing.T) {
 			Stream:            &stream,
 			ToolNames:         []string{"exec_command"},
 			ToolTypes:         []string{"function"},
+			ToolNameTypes:     []string{"exec_command:function"},
 			InputItemTypes:    []string{"message"},
 			InputItemCount:    1,
 			ToolChoicePresent: false,
@@ -124,6 +134,7 @@ func TestRunCheckersRequestShapes(t *testing.T) {
 				RequiredBodyFields:     []string{"input", "model", "tools"},
 				RequiredToolNames:      []string{"exec_command"},
 				RequiredToolTypes:      []string{"function"},
+				RequiredToolNameTypes:  []string{"exec_command:function"},
 				RequiredInputItemTypes: []string{"message"},
 				Stream:                 &stream,
 			}},

@@ -138,7 +138,18 @@ codex-eval-shim-native:
 codex-eval-shim-native-websocket:
 	OPENAI_API_KEY=$${OPENAI_API_KEY:-shim-dev-key} CODEX_EVAL_SUITE=codex-shim-native-websocket CODEX_EVAL_WEBSOCKETS=true bash ./scripts/codex-eval-runner.sh
 
-codex-eval-shim-native-profiles: codex-eval-shim-native codex-eval-shim-native-websocket
+codex-eval-shim-native-apply-patch-freeform:
+	OPENAI_API_KEY=$${OPENAI_API_KEY:-shim-dev-key} CODEX_EVAL_SUITE=codex-shim-native-apply-patch-freeform CODEX_EVAL_APPLY_PATCH_FREEFORM=true CODEX_EVAL_APPLY_PATCH_TOOL_TYPE=freeform bash ./scripts/codex-eval-runner.sh
+
+codex-eval-shim-native-apply-patch-function:
+	OPENAI_API_KEY=$${OPENAI_API_KEY:-shim-dev-key} CODEX_EVAL_SUITE=codex-shim-native-apply-patch-function CODEX_EVAL_APPLY_PATCH_FREEFORM=false CODEX_EVAL_APPLY_PATCH_TOOL_TYPE=function bash ./scripts/codex-eval-runner.sh
+
+codex-eval-shim-native-apply-patch-disabled:
+	OPENAI_API_KEY=$${OPENAI_API_KEY:-shim-dev-key} CODEX_EVAL_SUITE=codex-shim-native-apply-patch-disabled CODEX_EVAL_APPLY_PATCH_FREEFORM=false CODEX_EVAL_APPLY_PATCH_TOOL_TYPE=disabled bash ./scripts/codex-eval-runner.sh
+
+codex-eval-shim-native-apply-patch-profiles: codex-eval-shim-native-apply-patch-freeform codex-eval-shim-native-apply-patch-function codex-eval-shim-native-apply-patch-disabled
+
+codex-eval-shim-native-profiles: codex-eval-shim-native codex-eval-shim-native-websocket codex-eval-shim-native-apply-patch-profiles
 
 codex-eval-real-upstream:
 	CODEX_EVAL_SUITE=$${CODEX_EVAL_SUITE:-codex-real-upstream} bash ./scripts/codex-eval-runner.sh

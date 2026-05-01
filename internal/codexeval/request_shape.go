@@ -47,6 +47,7 @@ type CapturedRequestShape struct {
 	PreviousResponseIDPresent bool              `json:"previous_response_id_present,omitempty"`
 	ToolNames                 []string          `json:"tool_names,omitempty"`
 	ToolTypes                 []string          `json:"tool_types,omitempty"`
+	ToolNameTypes             []string          `json:"tool_name_types,omitempty"`
 	InputItemTypes            []string          `json:"input_item_types,omitempty"`
 	InputItemCount            int               `json:"input_item_count,omitempty"`
 }
@@ -259,7 +260,7 @@ func capturedShapeFromBody(transport, method string, requestURL *url.URL, header
 		shape.PreviousResponseIDPresent = true
 		shape.PreviousResponseID = stringField(object, "previous_response_id")
 	}
-	shape.ToolNames, shape.ToolTypes = summarizeTools(object["tools"])
+	shape.ToolNames, shape.ToolTypes, shape.ToolNameTypes = summarizeTools(object["tools"])
 	shape.InputItemTypes, shape.InputItemCount = summarizeInput(object["input"])
 	return shape
 }
@@ -284,32 +285,37 @@ func readCaptureBody(body io.ReadCloser) ([]byte, bool, error) {
 	return raw, false, nil
 }
 
-func summarizeTools(value any) ([]string, []string) {
+func summarizeTools(value any) ([]string, []string, []string) {
 	values, ok := value.([]any)
 	if !ok {
-		return nil, nil
+		return nil, nil, nil
 	}
 	names := make([]string, 0, len(values))
 	types := make([]string, 0, len(values))
+	nameTypes := make([]string, 0, len(values))
 	for _, item := range values {
 		object, ok := item.(map[string]any)
 		if !ok {
 			continue
 		}
-		if typ := stringField(object, "type"); typ != "" {
+		typ := stringField(object, "type")
+		if typ != "" {
 			types = append(types, typ)
 		}
-		if name := stringField(object, "name"); name != "" {
+		name := stringField(object, "name")
+		if name != "" {
 			names = append(names, name)
-			continue
-		}
-		if fn, ok := object["function"].(map[string]any); ok {
-			if name := stringField(fn, "name"); name != "" {
-				names = append(names, name)
+		} else if fn, ok := object["function"].(map[string]any); ok {
+			if fnName := stringField(fn, "name"); fnName != "" {
+				name = fnName
+				names = append(names, fnName)
 			}
 		}
+		if name != "" && typ != "" {
+			nameTypes = append(nameTypes, name+":"+typ)
+		}
 	}
-	return sortedUnique(names), sortedUnique(types)
+	return sortedUnique(names), sortedUnique(types), sortedUnique(nameTypes)
 }
 
 func summarizeInput(value any) ([]string, int) {

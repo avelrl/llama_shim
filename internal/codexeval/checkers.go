@@ -269,6 +269,7 @@ func requestShapeDetailMismatch(request CapturedRequestShape, expectation Reques
 	bodyFields := stringSet(request.BodyFields)
 	toolNames := stringSet(request.ToolNames)
 	toolTypes := stringSet(request.ToolTypes)
+	toolNameTypes := stringSet(request.ToolNameTypes)
 	inputItemTypes := stringSet(request.InputItemTypes)
 	for _, header := range expectation.RequiredHeaders {
 		if !headers[strings.ToLower(header)] {
@@ -315,6 +316,16 @@ func requestShapeDetailMismatch(request CapturedRequestShape, expectation Reques
 	for _, typ := range expectation.RequiredToolTypes {
 		if !toolTypes[typ] {
 			return fmt.Sprintf("missing tool type %q", typ)
+		}
+	}
+	for _, nameType := range expectation.RequiredToolNameTypes {
+		if !toolNameTypes[nameType] {
+			return fmt.Sprintf("missing tool name/type %q", nameType)
+		}
+	}
+	for _, nameType := range expectation.ForbiddenToolNameTypes {
+		if toolNameTypes[nameType] {
+			return fmt.Sprintf("unexpected tool name/type %q", nameType)
 		}
 	}
 	for _, typ := range expectation.RequiredInputItemTypes {

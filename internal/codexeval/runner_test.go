@@ -1,6 +1,7 @@
 package codexeval
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -45,6 +46,77 @@ func TestWriteCodexConfigDoesNotAddDeveloperInstructionsForOtherModels(t *testin
 	}
 	if strings.Contains(string(raw), "developer_instructions") {
 		t.Fatalf("generated config unexpectedly contains developer_instructions:\n%s", raw)
+	}
+}
+
+func TestWriteCodexConfigAddsApplyPatchModelCatalog(t *testing.T) {
+	runner := NewRunner(Config{
+		Model:              "devstack-model",
+		Provider:           "eval-provider",
+		BaseURL:            "http://127.0.0.1:8080/v1",
+		ApplyPatchToolType: "function",
+	})
+	path := filepath.Join(t.TempDir(), "codex-home", "config.toml")
+
+	if err := runner.writeCodexConfig(path); err != nil {
+		t.Fatalf("writeCodexConfig() error = %v", err)
+	}
+	rawConfig, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile(config) error = %v", err)
+	}
+	if !strings.Contains(string(rawConfig), "model_catalog_json = ") {
+		t.Fatalf("generated config does not contain model_catalog_json:\n%s", rawConfig)
+	}
+	rawCatalog, err := os.ReadFile(filepath.Join(filepath.Dir(path), "model-catalog.json"))
+	if err != nil {
+		t.Fatalf("ReadFile(catalog) error = %v", err)
+	}
+	var catalog struct {
+		Models []map[string]any `json:"models"`
+	}
+	if err := json.Unmarshal(rawCatalog, &catalog); err != nil {
+		t.Fatalf("Unmarshal(catalog) error = %v", err)
+	}
+	if len(catalog.Models) != 1 {
+		t.Fatalf("catalog models = %d, want 1", len(catalog.Models))
+	}
+	if got := catalog.Models[0]["apply_patch_tool_type"]; got != "function" {
+		t.Fatalf("apply_patch_tool_type = %v, want function", got)
+	}
+}
+
+func TestWriteCodexConfigCanDisableApplyPatchModelCatalog(t *testing.T) {
+	runner := NewRunner(Config{
+		Model:              "devstack-model",
+		Provider:           "eval-provider",
+		BaseURL:            "http://127.0.0.1:8080/v1",
+		ApplyPatchToolType: "disabled",
+	})
+	path := filepath.Join(t.TempDir(), "codex-home", "config.toml")
+
+	if err := runner.writeCodexConfig(path); err != nil {
+		t.Fatalf("writeCodexConfig() error = %v", err)
+	}
+	rawConfig, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile(config) error = %v", err)
+	}
+	if !strings.Contains(string(rawConfig), "apply_patch_freeform = false") {
+		t.Fatalf("generated config did not disable apply_patch_freeform:\n%s", rawConfig)
+	}
+	rawCatalog, err := os.ReadFile(filepath.Join(filepath.Dir(path), "model-catalog.json"))
+	if err != nil {
+		t.Fatalf("ReadFile(catalog) error = %v", err)
+	}
+	var catalog struct {
+		Models []map[string]any `json:"models"`
+	}
+	if err := json.Unmarshal(rawCatalog, &catalog); err != nil {
+		t.Fatalf("Unmarshal(catalog) error = %v", err)
+	}
+	if got, ok := catalog.Models[0]["apply_patch_tool_type"]; !ok || got != nil {
+		t.Fatalf("apply_patch_tool_type = %#v, want JSON null", got)
 	}
 }
 
