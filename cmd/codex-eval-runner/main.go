@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -22,6 +23,9 @@ func main() {
 			return
 		case "failure-bundle":
 			runFailureBundle(os.Args[2:])
+			return
+		case "compare":
+			runCompare(os.Args[2:])
 			return
 		}
 	}
@@ -135,6 +139,63 @@ func runFailureBundle(args []string) {
 		os.Exit(1)
 	}
 	fmt.Printf("codex eval failure bundle: %s\n", *out)
+}
+
+func runCompare(args []string) {
+	flags := flag.NewFlagSet("compare", flag.ExitOnError)
+	control := flags.String("control", envString("CODEX_EVAL_COMPARE_CONTROL", ""), "control run directory or summary.json")
+	out := flags.String("out", envString("CODEX_EVAL_COMPARE_OUT", ""), "write markdown compare report to this file instead of stdout")
+	jsonOut := flags.String("json-out", envString("CODEX_EVAL_COMPARE_JSON_OUT", ""), "write machine-readable compare report JSON to this file")
+	if err := flags.Parse(args); err != nil {
+		fmt.Fprintf(os.Stderr, "codex eval compare failed: %v\n", err)
+		os.Exit(2)
+	}
+	if strings.TrimSpace(*control) == "" {
+		fmt.Fprintf(os.Stderr, "codex eval compare failed: --control is required\n")
+		os.Exit(2)
+	}
+	if flags.NArg() == 0 {
+		fmt.Fprintf(os.Stderr, "codex eval compare failed: at least one candidate run directory or summary.json is required\n")
+		os.Exit(2)
+	}
+
+	report, err := codexeval.BuildCompareReport(*control, flags.Args())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "codex eval compare failed: %v\n", err)
+		os.Exit(1)
+	}
+	markdown := codexeval.RenderCompareReportMarkdown(report)
+	if strings.TrimSpace(*out) == "" {
+		fmt.Print(markdown)
+	} else {
+		if err := writeTextFile(*out, markdown); err != nil {
+			fmt.Fprintf(os.Stderr, "codex eval compare failed: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("codex eval compare: %s\n", *out)
+	}
+	if strings.TrimSpace(*jsonOut) != "" {
+		raw, err := json.MarshalIndent(report, "", "  ")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "codex eval compare failed: %v\n", err)
+			os.Exit(1)
+		}
+		raw = append(raw, '\n')
+		if err := writeTextFile(*jsonOut, string(raw)); err != nil {
+			fmt.Fprintf(os.Stderr, "codex eval compare failed: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("codex eval compare summary: %s\n", *jsonOut)
+	}
+}
+
+func writeTextFile(path, value string) error {
+	if dir := filepath.Dir(path); dir != "." {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+	}
+	return os.WriteFile(path, []byte(value), 0o644)
 }
 
 func envString(key, fallback string) string {

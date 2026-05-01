@@ -151,6 +151,28 @@ Use `make codex-eval-real-upstream` when the result needs durable artifacts,
 failure buckets, and a workspace diff that can become a permanent regression
 task.
 
+For repeated model checks, use the automated control-vs-real loop instead of
+running each model by hand. The loop runs a deterministic `codex-core` control
+against the devstack fixture, then runs `codex-real-upstream` for each model in
+`CODEX_EVAL_MODELS`, and finally writes `matrix.md`, `compare.md`,
+`summary.json`, and `failure-bundle.md` under one loop directory:
+
+```bash
+SHIM_BASE_URL=http://127.0.0.1:8080 \
+CODEX_PROVIDER=gateway-shim \
+CODEX_API_KEY_ENV=GW_API_KEY \
+GW_API_KEY="$GW_API_KEY" \
+CODEX_EVAL_MODELS="deepseek-v4-pro,kimi-k2,Qwen3.6-35B-A3B" \
+CODEX_EVAL_ATTEMPTS=2 \
+make codex-eval-loop
+```
+
+The generated `compare.md` is the first file to read. It separates
+`control_failed` issues from real-upstream transport, tool-contract,
+model-behavior, and retry-dependent failures. Human-written model matrix
+updates should copy interpretation from that report, not recalculate counts by
+hand.
+
 Create a disposable workspace:
 
 ```bash

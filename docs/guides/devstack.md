@@ -317,6 +317,11 @@ summary. Use it when a failure needs to become an automated regression task:
 make codex-eval-smoke
 ```
 
+`make codex-eval-loop` adds real-upstream orchestration on top of that runner:
+it runs the devstack control first, runs each model from `CODEX_EVAL_MODELS`,
+and writes matrix, compare, JSON summary, and failure-bundle artifacts under
+`.tmp/codex-eval-loops/<loop-id>/`.
+
 ## Files
 
 - [config.devstack.yaml](../../config.devstack.yaml): shim config used by the stack
@@ -338,8 +343,10 @@ make codex-eval-smoke
   real Codex CLI task matrix smoke path
 - [scripts/codex-eval-runner.sh](../../scripts/codex-eval-runner.sh):
   manifest-backed Codex eval runner wrapper
+- [scripts/codex-eval-loop.sh](../../scripts/codex-eval-loop.sh):
+  control-vs-real Codex eval orchestration wrapper
 - [cmd/codex-eval-runner/main.go](../../cmd/codex-eval-runner/main.go):
-  Codex eval runner CLI
+  Codex eval runner, matrix, compare, and failure-bundle CLI
 - [internal/codexeval/testdata/tasks](../../internal/codexeval/testdata/tasks):
   committed Codex eval task manifests and fixture workspaces
 - [cmd/devstack-fixture/main.go](../../cmd/devstack-fixture/main.go): deterministic fixture service

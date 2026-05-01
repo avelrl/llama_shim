@@ -1,4 +1,4 @@
-.PHONY: run build lint test vet diff-check ci-check maint-cleanup maint-optimize maint-vacuum maint-backup docker-build compose-up compose-down devstack-up devstack-down devstack-smoke devstack-ci-smoke devstack-full-smoke responses-compat-external-smoke responses-compat-external-real-smoke responses-websocket-smoke v3-coding-tools-smoke v3-constrained-decoding-smoke v3-vllm-constrained-smoke codex-cli-devstack-smoke codex-cli-shell-tool-smoke codex-cli-coding-task-smoke codex-cli-task-matrix-smoke codex-cli-real-upstream-smoke codex-eval-smoke codex-eval-core codex-eval-real-upstream codex-eval-matrix
+.PHONY: run build lint test vet diff-check ci-check maint-cleanup maint-optimize maint-vacuum maint-backup docker-build compose-up compose-down devstack-up devstack-down devstack-smoke devstack-ci-smoke devstack-full-smoke responses-compat-external-smoke responses-compat-external-real-smoke responses-websocket-smoke v3-coding-tools-smoke v3-constrained-decoding-smoke v3-vllm-constrained-smoke codex-cli-devstack-smoke codex-cli-shell-tool-smoke codex-cli-coding-task-smoke codex-cli-task-matrix-smoke codex-cli-real-upstream-smoke codex-eval-smoke codex-eval-core codex-eval-real-upstream codex-eval-matrix codex-eval-loop
 
 CONFIG ?= config.yaml
 BACKUP ?= ./.data/shim-backup.db
@@ -130,3 +130,6 @@ codex-eval-real-upstream:
 codex-eval-matrix:
 	$(TOOL_PREP)
 	$(TOOL_ENV) $(GO) run ./cmd/codex-eval-runner matrix $${CODEX_EVAL_MATRIX_RUNS:-.tmp/codex-eval-runs}
+
+codex-eval-loop:
+	bash ./scripts/codex-eval-loop.sh

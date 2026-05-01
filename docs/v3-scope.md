@@ -224,9 +224,13 @@ Implemented Phase 1 slice:
   `failure.md`, workspace snapshots, and `git.diff` artifacts
 - `make codex-eval-smoke`, `make codex-eval-core`, and
   `make codex-eval-real-upstream`
+- `codex-eval-runner matrix`, `codex-eval-runner compare`, and
+  `codex-eval-runner failure-bundle`
+- `make codex-eval-loop` for automated devstack-control versus real-upstream
+  model orchestration
 
 Remaining V3 work is the larger core suite expansion, failed-task rerun/import
-workflow, shim-log slicing, model/profile comparison summaries, and
+workflow, shim-log slicing, deeper model/profile interpretation, and
 benchmark-lite import.
 
 This is a quality and automation track. It does not strengthen any hosted

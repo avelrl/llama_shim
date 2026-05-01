@@ -245,8 +245,10 @@ cmd/codex-eval-runner/
 internal/codexeval/
 internal/codexeval/testdata/tasks/
 scripts/codex-eval-runner.sh
+scripts/codex-eval-loop.sh
 docs/v3-codex-eval-harness.md
 .tmp/codex-eval-runs/
+.tmp/codex-eval-loops/
 ```
 
 The exact Go package split can change during implementation, but the important
@@ -363,6 +365,13 @@ Environment and flags should cover:
 - `CODEX_EVAL_REQUEST_MAX_RETRIES`
 - `CODEX_EVAL_WEBSOCKET_CONNECT_TIMEOUT_MS`
 - `CODEX_EVAL_KEEP_WORKSPACES`
+- `CODEX_EVAL_LOOP_OUT`
+- `CODEX_EVAL_LOOP_STRICT_REAL_UPSTREAM`
+- `CODEX_EVAL_MODELS`
+- `CODEX_EVAL_CONTROL_SHIM_BASE_URL`
+- `CODEX_EVAL_CONTROL_MODEL`
+- `CODEX_EVAL_CONTROL_SUITE`
+- `CODEX_EVAL_CANDIDATE_SUITE`
 
 Default to serial execution for the first version. Codex tasks mutate
 workspaces, produce logs, and can stress one upstream model; parallelism should
@@ -430,6 +439,71 @@ The generated matrix is mechanical: date, run id, model, suite, pass count,
 retry-dependent task count, failure buckets, and failed tasks. Keep the
 human-written interpretation in
 `docs/engineering/codex-upstream-model-matrix.md`.
+
+To compare a deterministic control run against one or more real-upstream runs:
+
+```bash
+go run ./cmd/codex-eval-runner compare \
+  --control .tmp/codex-eval-loops/<loop-id>/control \
+  --out .tmp/codex-eval-loops/<loop-id>/compare.md \
+  --json-out .tmp/codex-eval-loops/<loop-id>/summary.json \
+  .tmp/codex-eval-loops/<loop-id>/candidate-*
+```
+
+The compare report classifies each task with a mechanical diagnosis:
+
+- `control_failed`: the deterministic control failed, so the issue is in the
+  harness, local shim path, fixture, or environment before model quality should
+  be considered;
+- `candidate_transport`: the control passed and the real-upstream run failed
+  in auth, shim transport, upstream HTTP/streaming, or timeout handling;
+- `candidate_tool_contract`: the control passed and the real-upstream run
+  failed with bad tool arguments, raw provider-native tool markup, or a missing
+  Codex tool contract;
+- `candidate_model_behavior`: the control passed and the real-upstream run
+  reached Codex but failed task semantics, final text, or model persistence;
+- `retry_dependent`: the real-upstream task passed only after a failed earlier
+  attempt;
+- `ok`: the control and real-upstream task both passed without retry.
+
+Tasks that exist in only one compared suite are reported as coverage
+differences, not quality diagnoses. For example, a `codex-core`-only timeout
+task and a `codex-real-upstream`-only mixed text/tool task should not make an
+otherwise green candidate look like a tool or transport regression.
+
+For the normal local automation loop, use the wrapper. It first runs the
+deterministic control, then each real-upstream model, then generates matrix,
+compare, JSON summary, and failure-bundle artifacts:
+
+```bash
+SHIM_BASE_URL=http://127.0.0.1:8080 \
+CODEX_PROVIDER=gateway-shim \
+CODEX_API_KEY_ENV=GW_API_KEY \
+GW_API_KEY=sk-... \
+CODEX_EVAL_MODELS="deepseek-v4-pro,kimi-k2,Qwen3.6-35B-A3B" \
+CODEX_EVAL_ATTEMPTS=2 \
+make codex-eval-loop
+```
+
+Loop artifacts live under `.tmp/codex-eval-loops/<loop-id>/`:
+
+```text
+.tmp/codex-eval-loops/<loop-id>/
+  control/
+    summary.json
+  candidate-<model>/
+    summary.json
+  matrix.md
+  compare.md
+  summary.json
+  failure-bundle.md
+  failure-bundles/
+```
+
+By default, candidate failures do not stop the loop after their own run because
+failed real-upstream candidates are the data being collected. Set
+`CODEX_EVAL_LOOP_STRICT_REAL_UPSTREAM=true` when the loop should return a
+non-zero exit code if any real-upstream candidate fails.
 
 To package failed-task artifacts for review:
 
@@ -835,6 +909,10 @@ Implemented so far:
   previous `summary.json` status was not `passed`, `skipped`, or
   `quarantined`.
 - The matrix generator summarizes multiple local run directories.
+- The compare generator classifies deterministic control versus real-upstream
+  candidate differences.
+- `make codex-eval-loop` runs the control, candidate models, matrix, compare,
+  JSON summary, and failure-bundle generation in one command.
 - The `failure-bundle` subcommand packages failed-task artifacts into one
   markdown file for frontier-model review.
 - Current per-model baselines are recorded in
