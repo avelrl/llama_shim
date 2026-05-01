@@ -536,7 +536,10 @@ CODEX_EVAL_ATTEMPTS=2 \
 make codex-eval-loop
 ```
 
-Loop artifacts live under `.tmp/codex-eval-loops/<loop-id>/`:
+Loop artifacts live under `.tmp/codex-eval-loops/<loop-id>/`. Single-model
+`codex-real-upstream` loops default to
+`.tmp/codex-eval-loops/<model>_baseline_<timestamp>/`; expanded or custom
+suites use `<model>_<suite>_<timestamp>` unless `CODEX_EVAL_LOOP_OUT` is set:
 
 ```text
 .tmp/codex-eval-loops/<loop-id>/

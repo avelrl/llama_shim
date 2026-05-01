@@ -13,6 +13,7 @@ Usage:
 
 Common optional knobs:
   CODEX_EVAL_LOOP_OUT=.tmp/codex-eval-loops/<loop-id>
+  # Default single-model baseline loops use <model>_baseline_<timestamp>.
   CODEX_EVAL_LOOP_STRICT_REAL_UPSTREAM=false
   CODEX_EVAL_CONTROL_SHIM_BASE_URL=http://127.0.0.1:18080
   CODEX_EVAL_CONTROL_MODEL=devstack-model
@@ -23,13 +24,48 @@ Common optional knobs:
 EOF
 }
 
+slugify_model() {
+  local value="$1"
+  value="$(printf '%s' "${value}" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9._-' '-')"
+  value="${value#-}"
+  value="${value%-}"
+  if [[ -z "${value}" ]]; then
+    value="model"
+  fi
+  printf '%s' "${value}"
+}
+
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   usage
   exit 0
 fi
 
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
-loop_out="${CODEX_EVAL_LOOP_OUT:-.tmp/codex-eval-loops/loop-${timestamp}}"
+
+candidate_suite="${CODEX_EVAL_CANDIDATE_SUITE:-codex-real-upstream}"
+models_raw="${CODEX_EVAL_MODELS:-${CODEX_MODEL:-}}"
+models_raw="${models_raw//,/ }"
+models=()
+for model in ${models_raw}; do
+  [[ -n "${model}" ]] && models+=("${model}")
+done
+
+if [[ ${#models[@]} -eq 0 ]]; then
+  echo "codex eval loop failed: CODEX_EVAL_MODELS or CODEX_MODEL is required" >&2
+  usage >&2
+  exit 2
+fi
+
+if [[ -n "${CODEX_EVAL_LOOP_OUT:-}" ]]; then
+  loop_out="${CODEX_EVAL_LOOP_OUT}"
+elif [[ ${#models[@]} -eq 1 && "${candidate_suite}" == "codex-real-upstream" ]]; then
+  loop_out=".tmp/codex-eval-loops/$(slugify_model "${models[0]}")_baseline_${timestamp}"
+elif [[ ${#models[@]} -eq 1 ]]; then
+  loop_out=".tmp/codex-eval-loops/$(slugify_model "${models[0]}")_$(slugify_model "${candidate_suite}")_${timestamp}"
+else
+  loop_out=".tmp/codex-eval-loops/loop-${timestamp}"
+fi
+
 control_dir="${loop_out}/control"
 matrix_out="${loop_out}/matrix.md"
 compare_out="${loop_out}/compare.md"
@@ -47,24 +83,10 @@ control_api_key="${CODEX_EVAL_CONTROL_API_KEY:-shim-dev-key}"
 
 candidate_base_url="${SHIM_BASE_URL:-http://127.0.0.1:8080}"
 candidate_provider="${CODEX_PROVIDER:-gateway-shim}"
-candidate_suite="${CODEX_EVAL_CANDIDATE_SUITE:-codex-real-upstream}"
 candidate_api_key_env="${CODEX_API_KEY_ENV:-OPENAI_API_KEY}"
 candidate_api_key="${CODEX_API_KEY:-}"
 if [[ -z "${candidate_api_key}" && -n "${candidate_api_key_env}" ]]; then
   candidate_api_key="${!candidate_api_key_env:-}"
-fi
-
-models_raw="${CODEX_EVAL_MODELS:-${CODEX_MODEL:-}}"
-models_raw="${models_raw//,/ }"
-models=()
-for model in ${models_raw}; do
-  [[ -n "${model}" ]] && models+=("${model}")
-done
-
-if [[ ${#models[@]} -eq 0 ]]; then
-  echo "codex eval loop failed: CODEX_EVAL_MODELS or CODEX_MODEL is required" >&2
-  usage >&2
-  exit 2
 fi
 
 mkdir -p "${loop_out}" "${bundle_dir}"
@@ -90,17 +112,6 @@ run_eval() {
     CODEX_EVAL_SUITE="${suite}" \
     CODEX_EVAL_OUT="${out_dir}" \
     bash ./scripts/codex-eval-runner.sh
-}
-
-slugify_model() {
-  local value="$1"
-  value="$(printf '%s' "${value}" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9._-' '-')"
-  value="${value#-}"
-  value="${value%-}"
-  if [[ -z "${value}" ]]; then
-    value="model"
-  fi
-  printf '%s' "${value}"
 }
 
 echo "==> codex eval loop: control ${control_model} (${control_suite})"

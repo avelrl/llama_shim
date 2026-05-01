@@ -309,7 +309,7 @@ stack is runnable, probeable, and reproducible.
 
 `make codex-eval-smoke` runs the manifest-backed V3 Codex eval harness against
 the same devstack fixture path. It is heavier than the shell smoke scripts but
-keeps durable artifacts under `.tmp/codex-eval-runs/<run-id>/`, including
+keeps local scratch artifacts under `.tmp/codex-eval-runs/<run-id>/`, including
 Codex JSONL, workspace snapshots, diffs, checker results, and a machine-readable
 summary. Use it when a failure needs to become an automated regression task:
 
@@ -320,7 +320,9 @@ make codex-eval-smoke
 `make codex-eval-loop` adds real-upstream orchestration on top of that runner:
 it runs the devstack control first, runs each model from `CODEX_EVAL_MODELS`,
 and writes matrix, compare, JSON summary, and failure-bundle artifacts under
-`.tmp/codex-eval-loops/<loop-id>/`.
+`.tmp/codex-eval-loops/<loop-id>/`. Single-model `codex-real-upstream` loops
+default to `<model>_baseline_<timestamp>` so promoted baseline candidates are
+recognizable before `.tmp` is cleaned.
 
 ## Files
 
