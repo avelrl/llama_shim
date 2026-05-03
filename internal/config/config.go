@@ -24,6 +24,7 @@ type Config struct {
 	SQLitePath                                          string
 	SQLiteMaintenanceCleanupInterval                    time.Duration
 	LlamaBaseURL                                        string
+	LlamaReadinessBearerToken                           string
 	LlamaTimeout                                        time.Duration
 	LlamaMaxConcurrentRequests                          int
 	LlamaMaxQueueWait                                   time.Duration
@@ -211,6 +212,7 @@ func Load(configPath string) (Config, error) {
 		SQLitePath:                            strings.TrimSpace(v.GetString("sqlite.path")),
 		SQLiteMaintenanceCleanupInterval:      0,
 		LlamaBaseURL:                          strings.TrimRight(strings.TrimSpace(v.GetString("llama.base_url")), "/"),
+		LlamaReadinessBearerToken:             strings.TrimSpace(v.GetString("llama.readiness_bearer_token")),
 		ConfigFile:                            v.ConfigFileUsed(),
 		ShimAuthMode:                          strings.ToLower(strings.TrimSpace(v.GetString("shim.auth.mode"))),
 		ShimAuthBearerTokens:                  parseStringList(v, "shim.auth.bearer_tokens"),
@@ -600,6 +602,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("sqlite.path", "./data/shim.db")
 	v.SetDefault("sqlite.maintenance.cleanup_interval", "15m")
 	v.SetDefault("llama.base_url", "http://127.0.0.1:8081")
+	v.SetDefault("llama.readiness_bearer_token", "")
 	v.SetDefault("llama.timeout", "60s")
 	v.SetDefault("llama.max_concurrent_requests", "4")
 	v.SetDefault("llama.max_queue_wait", "0s")

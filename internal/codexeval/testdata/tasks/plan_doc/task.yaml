@@ -4,10 +4,14 @@ category: docs
 suites:
   - codex-smoke
   - codex-core
+  - codex-bench-lite
   - codex-real-upstream
   - codex-real-upstream-expanded
 timeout: 180s
 attempts: 2
+provenance:
+  source: repo-owned Codex planning regression
+  notes: Deterministic documentation writing task with required markers.
 env:
   LLAMA_SHIM_CODEX_MATRIX_WORKDIR: ${workspace}
 prompt: |

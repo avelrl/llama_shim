@@ -52,6 +52,55 @@ func TestHydrateResponseRequestSurfaceSanitizesMCPTools(t *testing.T) {
 	require.NotContains(t, tools[1], "headers")
 }
 
+func TestHydrateResponseRequestSurfaceAddsFunctionToolStrictDefault(t *testing.T) {
+	hydrated := HydrateResponseRequestSurface(Response{}, `{
+		"tools": [
+			{
+				"type": "function",
+				"name": "lookup",
+				"parameters": {"type":"object","properties":{}}
+			}
+		]
+	}`)
+
+	var tools []map[string]any
+	require.NoError(t, json.Unmarshal(hydrated.Tools, &tools))
+	require.Len(t, tools, 1)
+	require.Equal(t, false, tools[0]["strict"])
+}
+
+func TestResponseMarshalJSONUsesOpenAICompatibleDefaults(t *testing.T) {
+	response := NewResponse("resp_test", "test-model", "OK", "", "", 1741900000)
+	response = HydrateResponseRequestSurface(response, `{}`)
+
+	raw, err := json.Marshal(response)
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(raw, &payload))
+	require.Contains(t, payload, "previous_response_id")
+	require.Nil(t, payload["previous_response_id"])
+	require.Equal(t, float64(0), payload["frequency_penalty"])
+	require.Equal(t, float64(0), payload["presence_penalty"])
+	require.Equal(t, "default", payload["service_tier"])
+	require.Equal(t, float64(0), payload["top_logprobs"])
+
+	output, ok := payload["output"].([]any)
+	require.True(t, ok)
+	require.Len(t, output, 1)
+	message, ok := output[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "completed", message["status"])
+
+	content, ok := message["content"].([]any)
+	require.True(t, ok)
+	require.Len(t, content, 1)
+	part, ok := content[0].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, []any{}, part["annotations"])
+	require.Equal(t, []any{}, part["logprobs"])
+}
+
 func TestHydrateResponseRequestSurfaceHydratesContinuationFields(t *testing.T) {
 	hydrated := HydrateResponseRequestSurface(Response{}, `{
 		"previous_response_id": "resp_prev",

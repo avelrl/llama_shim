@@ -619,6 +619,18 @@ func TestSupportsLocalShimStateAcceptsContextManagementCompactionPolicy(t *testi
 	require.True(t, supportsLocalShimState(rawFields))
 }
 
+func TestSupportsLocalDerivedResponsesStateAcceptsPromptCacheMetadata(t *testing.T) {
+	rawFields := map[string]json.RawMessage{
+		"model":                  json.RawMessage(`"test-model"`),
+		"input":                  json.RawMessage(`"compact this"`),
+		"prompt_cache_key":       json.RawMessage(`"thread_123"`),
+		"prompt_cache_retention": json.RawMessage(`"24h"`),
+	}
+
+	require.True(t, supportsLocalDerivedResponsesState(rawFields))
+	require.Empty(t, unsupportedLocalDerivedFields(rawFields))
+}
+
 func TestSupportsLocalToolLoopAcceptsCodexNoopRequestMetadata(t *testing.T) {
 	rawFields := map[string]json.RawMessage{
 		"model":               json.RawMessage(`"test-model"`),

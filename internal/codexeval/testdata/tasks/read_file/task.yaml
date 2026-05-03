@@ -4,10 +4,14 @@ category: read
 suites:
   - codex-smoke
   - codex-core
+  - codex-bench-lite
   - codex-real-upstream
   - codex-real-upstream-expanded
 timeout: 120s
 attempts: 2
+provenance:
+  source: repo-owned Codex retrieval regression
+  notes: Deterministic file-read and final-marker task.
 prompt: |
   This is the Codex eval read file case. Use exec_command to read README.md and confirm it contains llama-shim-42. Then reply READ_OK.
 expected:

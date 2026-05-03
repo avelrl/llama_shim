@@ -10,9 +10,12 @@ var (
 	rawJSONNull             = json.RawMessage("null")
 	rawJSONTrue             = json.RawMessage("true")
 	rawJSONAuto             = json.RawMessage(`"auto"`)
+	rawJSONDefault          = json.RawMessage(`"default"`)
 	rawJSONDisabled         = json.RawMessage(`"disabled"`)
 	rawJSONDefaultReasoning = json.RawMessage(`{"effort":null,"summary":null}`)
 	rawJSONEmptyArray       = json.RawMessage("[]")
+	rawJSONZero             = json.RawMessage("0")
+	rawJSONZeroPointZero    = json.RawMessage("0.0")
 	rawJSONOnePointZero     = json.RawMessage("1.0")
 )
 
@@ -34,11 +37,13 @@ func HydrateResponseRequestSurface(response Response, requestJSON string) Respon
 	response.PromptCacheRetention = coalesceRawMessage(response.PromptCacheRetention, fields["prompt_cache_retention"], rawJSONNull)
 	response.Reasoning = coalesceRawMessage(response.Reasoning, normalizeReasoningRaw(fields["reasoning"]), rawJSONDefaultReasoning)
 	response.SafetyIdentifier = coalesceRawMessage(response.SafetyIdentifier, fields["safety_identifier"], rawJSONNull)
-	response.ServiceTier = coalesceRawMessage(response.ServiceTier, fields["service_tier"], rawJSONNull)
+	response.ServiceTier = coalesceRawMessage(response.ServiceTier, fields["service_tier"], rawJSONDefault)
+	response.FrequencyPenalty = coalesceRawMessage(response.FrequencyPenalty, fields["frequency_penalty"], rawJSONZeroPointZero)
+	response.PresencePenalty = coalesceRawMessage(response.PresencePenalty, fields["presence_penalty"], rawJSONZeroPointZero)
 	response.Temperature = coalesceRawMessage(response.Temperature, fields["temperature"], rawJSONOnePointZero)
 	response.ToolChoice = coalesceRawMessage(response.ToolChoice, fields["tool_choice"], rawJSONAuto)
 	response.Tools = coalesceRawMessage(response.Tools, fields["tools"], rawJSONEmptyArray)
-	response.TopLogprobs = coalesceRawMessage(response.TopLogprobs, fields["top_logprobs"], rawJSONNull)
+	response.TopLogprobs = coalesceRawMessage(response.TopLogprobs, fields["top_logprobs"], rawJSONZero)
 	response.TopP = coalesceRawMessage(response.TopP, fields["top_p"], rawJSONOnePointZero)
 	response.Truncation = coalesceRawMessage(response.Truncation, fields["truncation"], rawJSONDisabled)
 	response.User = coalesceRawMessage(response.User, fields["user"], rawJSONNull)
@@ -134,7 +139,15 @@ func sanitizeResponseRequestToolsRaw(raw json.RawMessage) json.RawMessage {
 
 	changed := false
 	for _, tool := range tools {
-		if strings.TrimSpace(asString(tool["type"])) != "mcp" {
+		switch strings.TrimSpace(asString(tool["type"])) {
+		case "function":
+			if _, ok := tool["strict"]; !ok {
+				tool["strict"] = false
+				changed = true
+			}
+			continue
+		case "mcp":
+		default:
 			continue
 		}
 		if _, ok := tool["authorization"]; ok {

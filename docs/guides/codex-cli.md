@@ -18,6 +18,10 @@ WebSocket is an optional transport, not a replacement.
 For staged manual validation of real Codex CLI against a model/upstream pair,
 use [Codex Testing Plan](codex-testing-plan.md). It keeps tests small enough to
 separate shim compatibility problems from upstream model quality problems.
+For manual TUI, slash-command, multi-agent, MCP, approval, and other
+interactive Codex feature checks, use
+[V3 Codex Interactive Features Manual Plan](../v3-codex-interactive-features-manual-plan.md)
+and convert durable failures back into deterministic eval tasks or profiles.
 
 ## Shim Config
 
@@ -706,7 +710,9 @@ that is the behavior under test. The script waits for `/healthz` and then
 probes `/v1/models` with the configured Codex
 bearer key; it does not block on `/readyz`, because
 auth-required real upstream gateways can fail the unauthenticated readiness
-probe while ordinary authorized `/v1/*` paths work. Use
+probe while ordinary authorized `/v1/*` paths work unless
+`llama.readiness_bearer_token` or `LLAMA_READINESS_BEARER_TOKEN` is configured
+for the server-side readiness check. Use
 [Codex Testing Plan](codex-testing-plan.md) for the manual phase-by-phase
 version of the same gate.
 
@@ -755,6 +761,12 @@ plan writing with required markers, and multi-file edit. The `codex-real-upstrea
 suite adds the first mixed text-plus-file-change regression task. This is a
 local quality/regression signal; it does not strengthen hosted OpenAI parity
 claims by itself.
+
+For longer Codex-through-shim stability checks, use `make codex-eval-bench-lite`
+locally or `make codex-eval-loop-bench-lite` for devstack-control versus
+real-upstream comparison. The `codex-bench-lite` suite is repo-owned and
+deterministic; it is not a default CI gate and does not import third-party
+benchmark repositories.
 
 For Codex-through-shim request-shape coverage, use the shim-native profiles:
 

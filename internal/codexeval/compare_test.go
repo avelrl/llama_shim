@@ -196,6 +196,58 @@ func TestBuildCompareReportCountsCandidateOnlyRetryDependentTask(t *testing.T) {
 	}
 }
 
+func TestBuildCompareReportClassifiesTimeoutAfterCheckerAsModelBehavior(t *testing.T) {
+	root := t.TempDir()
+	controlDir := filepath.Join(root, "control")
+	candidateDir := filepath.Join(root, "candidate")
+	control := Summary{
+		RunID: "control",
+		Environment: Environment{
+			Model: "devstack-model",
+			Suite: "codex-bench-lite",
+		},
+		Counts: map[string]int{StatusPassed: 1},
+		Tasks:  []TaskResult{{ID: "command_recovery", Status: StatusPassed}},
+	}
+	candidate := Summary{
+		RunID: "candidate",
+		Environment: Environment{
+			Model: "deepseek-v4-pro",
+			Suite: "codex-bench-lite",
+		},
+		Counts:         map[string]int{StatusFailedTimeout: 1},
+		FailureBuckets: map[string]int{BucketTimeout: 1},
+		Tasks: []TaskResult{
+			{
+				ID:            "command_recovery",
+				Status:        StatusFailedTimeout,
+				FailureBucket: BucketTimeout,
+				Attempts: []AttemptResult{
+					{Attempt: 1, Status: StatusFailedChecker, FailureBucket: BucketCheckerDiff},
+					{Attempt: 2, Status: StatusFailedTimeout, FailureBucket: BucketTimeout},
+				},
+			},
+		},
+	}
+	if err := writeJSON(filepath.Join(controlDir, "summary.json"), control); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSON(filepath.Join(candidateDir, "summary.json"), candidate); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := BuildCompareReport(controlDir, []string{candidateDir})
+	if err != nil {
+		t.Fatalf("BuildCompareReport failed: %v", err)
+	}
+	if got := report.Candidates[0].Tasks[0].Diagnosis; got != DiagnosisCandidateModel {
+		t.Fatalf("diagnosis = %q, want %q", got, DiagnosisCandidateModel)
+	}
+	if got := report.Candidates[0].Counts[DiagnosisCandidateModel]; got != 1 {
+		t.Fatalf("candidate model count = %d, want 1", got)
+	}
+}
+
 func TestBuildCompareReportClassifiesControlFailure(t *testing.T) {
 	root := t.TempDir()
 	controlDir := filepath.Join(root, "control")

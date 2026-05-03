@@ -88,7 +88,7 @@ func NewInputTextMessage(role, text string) Item {
 }
 
 func NewOutputTextMessage(text string) Item {
-	item, _ := NewItem([]byte(fmt.Sprintf(`{"type":"message","role":"assistant","content":[{"type":"output_text","text":%q}]}`, text)))
+	item, _ := NewItem([]byte(fmt.Sprintf(`{"type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":%q,"annotations":[],"logprobs":[]}]}`, text)))
 	return item
 }
 

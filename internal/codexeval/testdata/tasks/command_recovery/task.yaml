@@ -4,10 +4,15 @@ category: regression
 suites:
   - codex-smoke
   - codex-core
+  - codex-bench-lite
   - codex-real-upstream
   - codex-real-upstream-expanded
 timeout: 180s
 attempts: 2
+provenance:
+  source: repo-owned synthesis inspired by Terminal-Bench
+  url: https://www.tbench.ai/benchmarks
+  notes: Command failure recovery task; no third-party files imported.
 env:
   LLAMA_SHIM_CODEX_MATRIX_WORKDIR: ${workspace}
 prompt: |

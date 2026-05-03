@@ -84,6 +84,10 @@ llama:
   # Base URL of the upstream server.
   # Local generation calls its /v1/chat/completions endpoint.
   base_url: http://127.0.0.1:8081
+  # Optional bearer token used only by server-side /readyz checks against
+  # upstream /v1/models. This is not shim ingress auth and is not forwarded
+  # for ordinary client requests.
+  readiness_bearer_token: ""
   # Timeout for ordinary upstream requests.
   # Streaming uses a dedicated client without a shared request timeout.
   timeout: 60s

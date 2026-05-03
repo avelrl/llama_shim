@@ -155,7 +155,11 @@ func (c *Client) CreateChatCompletionText(ctx context.Context, requestBody []byt
 }
 
 func (c *Client) CheckReady(ctx context.Context) error {
-	_, err := c.listModels(ctx)
+	return c.CheckReadyWithBearerToken(ctx, "")
+}
+
+func (c *Client) CheckReadyWithBearerToken(ctx context.Context, bearerToken string) error {
+	_, err := c.listModelsWithBearerToken(ctx, bearerToken)
 	return err
 }
 

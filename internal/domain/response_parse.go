@@ -15,12 +15,14 @@ func ParseUpstreamResponse(raw []byte) (Response, error) {
 		Status               string            `json:"status"`
 		CompletedAt          *int64            `json:"completed_at"`
 		Error                json.RawMessage   `json:"error"`
+		FrequencyPenalty     json.RawMessage   `json:"frequency_penalty"`
 		IncompleteDetails    json.RawMessage   `json:"incomplete_details"`
 		Instructions         json.RawMessage   `json:"instructions"`
 		MaxOutputTokens      json.RawMessage   `json:"max_output_tokens"`
 		MaxToolCalls         json.RawMessage   `json:"max_tool_calls"`
 		Model                string            `json:"model"`
 		ParallelToolCalls    json.RawMessage   `json:"parallel_tool_calls"`
+		PresencePenalty      json.RawMessage   `json:"presence_penalty"`
 		PreviousResponseID   string            `json:"previous_response_id"`
 		Prompt               json.RawMessage   `json:"prompt"`
 		PromptCacheKey       json.RawMessage   `json:"prompt_cache_key"`
@@ -58,12 +60,14 @@ func ParseUpstreamResponse(raw []byte) (Response, error) {
 		Status:               strings.TrimSpace(payload.Status),
 		CompletedAt:          payload.CompletedAt,
 		Error:                payload.Error,
+		FrequencyPenalty:     payload.FrequencyPenalty,
 		IncompleteDetails:    payload.IncompleteDetails,
 		Instructions:         payload.Instructions,
 		MaxOutputTokens:      payload.MaxOutputTokens,
 		MaxToolCalls:         payload.MaxToolCalls,
 		Model:                payload.Model,
 		ParallelToolCalls:    payload.ParallelToolCalls,
+		PresencePenalty:      payload.PresencePenalty,
 		PreviousResponseID:   payload.PreviousResponseID,
 		Prompt:               payload.Prompt,
 		PromptCacheKey:       payload.PromptCacheKey,

@@ -3,9 +3,14 @@ title: Tiny JavaScript bugfix
 category: code
 suites:
   - codex-core
+  - codex-bench-lite
   - codex-real-upstream-expanded
 timeout: 180s
 attempts: 2
+provenance:
+  source: repo-owned synthesis inspired by SWE-bench
+  url: https://www.swebench.com/SWE-bench/
+  notes: Tiny JavaScript failing-test repair; no third-party files imported.
 prompt: |
   This is the Codex JS bugfix case. Use exec_command to inspect math.js and math.test.js, fix the bug, run `node math.test.js`, and reply JS_BUGFIX_OK.
 expected:

@@ -3,10 +3,15 @@ title: Long stdout handling
 category: command
 suites:
   - codex-core
+  - codex-bench-lite
   - codex-real-upstream
   - codex-real-upstream-expanded
 timeout: 180s
 attempts: 2
+provenance:
+  source: repo-owned synthesis inspired by Terminal-Bench
+  url: https://www.tbench.ai/benchmarks
+  notes: Long stdout handling task; no third-party files imported.
 prompt: |
   This is the Codex long stdout case. Use exec_command to run `sh long_stdout.sh`.
   The command prints many lines and ends with LONG_STDOUT_DONE. That marker belongs only to command output.

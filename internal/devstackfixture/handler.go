@@ -469,6 +469,12 @@ func fixtureCodexFunctionFinalOutput(request chatCompletionRequest) (string, boo
 		}
 		return "BUGFIXED", true
 	}
+	if containsAny(joined, "mixed_bugfix_ok", "mixed_cause_found") {
+		if !strings.Contains(joined, "mixed bugfix task passed") {
+			return "command did not report mixed bugfix completion: " + strings.TrimSpace(message.Content), true
+		}
+		return "MIXED_CAUSE_FOUND: Add used subtraction.\nMIXED_BUGFIX_OK", true
+	}
 	if containsAny(joined, "codex task matrix plan doc", "matrix plan doc") {
 		if !strings.Contains(joined, "plan task written") {
 			return "command did not report plan completion: " + strings.TrimSpace(message.Content), true
@@ -613,11 +619,14 @@ func fixtureCodexFunctionPlannedCall(request chatCompletionRequest) (string, str
 		return "", "", false
 	}
 	joined := strings.ToLower(strings.TrimSpace(joinMessageContent(request.Messages)))
-	if !containsAny(joined, "exec_command", "shell tool", "run command", " run ", "pwd", "remember code 777", "write stdin pty case", "fallback shell case", "websocket read case", "websocket patch case") {
+	if !containsAny(joined, "exec_command", "shell tool", "run command", " run ", "pwd", "remember code 777", "mixed_cause_found", "mixed_bugfix_ok", "write stdin pty case", "fallback shell case", "websocket read case", "websocket patch case") {
 		return "", "", false
 	}
 	if containsAny(joined, "codex task matrix bugfix go", "matrix bugfix go") {
 		return name, fixtureCodexCommandArguments(kind, "python3 -c \"import os, subprocess; from pathlib import Path; d=Path(os.environ['LLAMA_SHIM_CODEX_MATRIX_WORKDIR']); p=d/'calc.go'; p.write_text(p.read_text().replace('return a - b', 'return a + b')); os.environ['GOCACHE']=str(d/'.gocache'); subprocess.run(['go','test','./...'], cwd=d, check=True); print('bugfix go task passed')\"", 60000), true
+	}
+	if containsAny(joined, "mixed_bugfix_ok", "mixed_cause_found") {
+		return name, fixtureCodexCommandArguments(kind, "python3 -c \"import os, subprocess; from pathlib import Path; d=Path.cwd(); p=d/'mathutil.go'; p.write_text(p.read_text().replace('return a - b', 'return a + b')); os.environ['GOCACHE']=str(d/'.gocache'); subprocess.run(['go','test','./...'], cwd=d, check=True); print('mixed bugfix task passed')\"", 60000), true
 	}
 	if containsAny(joined, "codex task matrix plan doc", "matrix plan doc") {
 		return name, fixtureCodexCommandArguments(kind, "python3 -c \"import os; from pathlib import Path; d=Path(os.environ['LLAMA_SHIM_CODEX_MATRIX_WORKDIR']); (d/'PLAN.md').write_text('# Implementation Plan\\n\\n- [x] Read requirements\\n- [x] Identify API change\\n- [x] Add regression test\\n'); print('plan task written')\"", 60000), true

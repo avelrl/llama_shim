@@ -64,7 +64,9 @@ make codex-cli-real-upstream-smoke
 The smoke waits for shim process liveness with `/healthz`, then probes
 `/v1/models` with the same bearer key that Codex will use. It intentionally does
 not block on `/readyz`: real upstream gateways can require request auth while
-`/readyz` is a terse unauthenticated operator probe.
+`/readyz` is a terse unauthenticated operator probe unless
+`llama.readiness_bearer_token` or `LLAMA_READINESS_BEARER_TOKEN` is configured
+for the server-side upstream readiness check.
 
 Default cases:
 

@@ -70,6 +70,7 @@ storage:
   backend: sqlite
 llama:
   base_url: http://127.0.0.1:9091
+  readiness_bearer_token: readiness-yaml-secret
   timeout: 12s
   max_concurrent_requests: 6
   max_queue_wait: 12s
@@ -236,6 +237,7 @@ responses:
 	require.Equal(t, "./tmp/test.db", cfg.SQLitePath)
 	require.Equal(t, 17*time.Minute, cfg.SQLiteMaintenanceCleanupInterval)
 	require.Equal(t, "http://127.0.0.1:9091", cfg.LlamaBaseURL)
+	require.Equal(t, "readiness-yaml-secret", cfg.LlamaReadinessBearerToken)
 	require.Equal(t, 12*time.Second, cfg.LlamaTimeout)
 	require.Equal(t, 6, cfg.LlamaMaxConcurrentRequests)
 	require.Equal(t, 12*time.Second, cfg.LlamaMaxQueueWait)
@@ -432,6 +434,7 @@ responses:
 	t.Setenv("SHIM_LIMITS_RETRIEVAL_MAX_GROUNDING_CHUNKS", "11")
 	t.Setenv("SHIM_LIMITS_CODE_INTERPRETER_MAX_CONCURRENT_RUNS", "7")
 	t.Setenv("SQLITE_MAINTENANCE_CLEANUP_INTERVAL", "21m")
+	t.Setenv("LLAMA_READINESS_BEARER_TOKEN", "readiness-env-secret")
 	t.Setenv("LLAMA_TIMEOUT", "25s")
 	t.Setenv("LLAMA_MAX_CONCURRENT_REQUESTS", "7")
 	t.Setenv("LLAMA_MAX_QUEUE_WAIT", "14s")
@@ -511,6 +514,7 @@ responses:
 	require.Equal(t, 5, cfg.RetrievalMaxSearchQueries)
 	require.Equal(t, 11, cfg.RetrievalMaxGroundingChunks)
 	require.Equal(t, 7, cfg.ResponsesCodeInterpreterMaxConcurrentRuns)
+	require.Equal(t, "readiness-env-secret", cfg.LlamaReadinessBearerToken)
 	require.Equal(t, 25*time.Second, cfg.LlamaTimeout)
 	require.Equal(t, 7, cfg.LlamaMaxConcurrentRequests)
 	require.Equal(t, 14*time.Second, cfg.LlamaMaxQueueWait)
@@ -637,6 +641,7 @@ func TestLoadUsesCodexSafeDefaults(t *testing.T) {
 	require.EqualValues(t, 2<<20, cfg.ResponsesCodeInterpreterGeneratedFileBytes)
 	require.EqualValues(t, 8<<20, cfg.ResponsesCodeInterpreterGeneratedTotalBytes)
 	require.EqualValues(t, 50<<20, cfg.ResponsesCodeInterpreterRemoteInputFileBytes)
+	require.Empty(t, cfg.LlamaReadinessBearerToken)
 	require.Equal(t, 4, cfg.LlamaMaxConcurrentRequests)
 	require.Equal(t, time.Duration(0), cfg.LlamaMaxQueueWait)
 	require.Equal(t, 32, cfg.LlamaHTTPMaxIdleConns)

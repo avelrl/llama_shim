@@ -1,6 +1,6 @@
 # Responses Compatibility External Tester
 
-Last updated: April 29, 2026.
+Last updated: May 3, 2026.
 
 Status: repo-owned runner and Broad subset profile are in place. This is an
 engineering runbook, not a stronger hosted-parity claim.
@@ -10,6 +10,9 @@ engineering runbook, not a stronger hosted-parity claim.
 This runbook was checked against the local docs index in
 [`openapi/llms.txt`](../../openapi/llms.txt), the OpenAI Docs MCP, and the
 official OpenAI docs on April 27, 2026.
+The real-upstream runner command notes and `/responses/compact` boundary were
+rechecked against the local runner, OpenAI Docs MCP, and the official
+`/responses/compact` API reference on May 3, 2026.
 Official DeepSeek upstream dialect notes were checked on April 27, 2026.
 Official Kimi/Moonshot upstream dialect notes were checked on April 27, 2026.
 Official Qwen Code upstream dialect notes were checked on April 28, 2026.
@@ -418,8 +421,10 @@ base URL as an operator assertion in the run artifacts.
 waits only for `/healthz` and captures `/readyz` as evidence by default because
 many OpenAI-compatible gateways do not expose a health probe that satisfies the
 shim's backend readiness check while ordinary `/v1/*` requests still work.
-Override this with `RESPONSES_COMPAT_REQUIRE_READYZ=1` when a real-upstream run
-must be gated on backend readiness.
+For auth-required upstream `/v1/models` checks, configure
+`llama.readiness_bearer_token` or `LLAMA_READINESS_BEARER_TOKEN`. Override this
+with `RESPONSES_COMPAT_REQUIRE_READYZ=1` when a real-upstream run must be gated
+on backend readiness.
 
 Devstack fixture capture-only preflight:
 
@@ -546,13 +551,99 @@ tester logs, and tester report together.
 If `readyz.status` is non-2xx in `real-upstream` mode, do not treat that alone
 as a failed tester verdict. This mode only requires `/healthz` by default
 because gateway readiness probes can be stricter than the ordinary `/v1/*`
-request path. Set `RESPONSES_COMPAT_REQUIRE_READYZ=1` when readiness must be a
-hard gate.
+request path. For auth-required upstream `/v1/models` checks, configure
+`llama.readiness_bearer_token` or `LLAMA_READINESS_BEARER_TOKEN`. Set
+`RESPONSES_COMPAT_REQUIRE_READYZ=1` when readiness must be a hard gate.
 
 Do not interpret a `devstack-fixture` run with a real-model profile as a real
 Qwen, GPT, vLLM, SGLang, llama.cpp, or OpenAI compatibility verdict. The runner
 writes `harness-warnings.txt` when the profile or command appears
 real-model-specific while the mode is still `devstack-fixture`.
+
+## Running OpenResponses Compliance
+
+Use this flow when validating a running shim with the OpenResponses compliance
+tester. Keep local checkout paths and real keys in your shell only.
+
+1. Start the shim against the intended upstream.
+
+For example, in one terminal:
+
+```bash
+CONFIG=<shim-config.yaml> make run
+```
+
+If the upstream `/v1/models` endpoint requires bearer auth for readiness,
+configure either `llama.readiness_bearer_token` in the shim config or
+`LLAMA_READINESS_BEARER_TOKEN` in the shim process environment.
+
+2. Export local tester settings in another terminal:
+
+```bash
+export OPENRESPONSES_DIR=<path-to-openresponses>
+export SHIM_BASE_URL=http://127.0.0.1:8080
+export TESTER_MODEL=deepseek-v4-pro
+export OPENAI_API_KEY=<temporary-or-local-test-key>
+```
+
+3. Run the tester through the real-upstream harness mode:
+
+```bash
+RESPONSES_COMPAT_EXPECTED_UPSTREAM=<upstream-base-url> \
+RESPONSES_COMPAT_REQUIRE_TESTER=1 \
+RESPONSES_COMPAT_TESTER_CMD='cd "$OPENRESPONSES_DIR" && bun run test:compliance --base-url "$OPENAI_BASE_URL" --api-key "$OPENAI_API_KEY" --model "$TESTER_MODEL" --filter basic-response,streaming-response,tool-calling,multi-turn,compact-response --json > "$RESPONSES_COMPAT_ARTIFACT_DIR/openresponses-compliance.json"' \
+make responses-compat-external-real-smoke
+```
+
+Equivalent explicit form:
+
+```bash
+RESPONSES_COMPAT_RUN_MODE=real-upstream \
+RESPONSES_COMPAT_EXPECTED_UPSTREAM=<upstream-base-url> \
+RESPONSES_COMPAT_REQUIRE_TESTER=1 \
+RESPONSES_COMPAT_TESTER_CMD='cd "$OPENRESPONSES_DIR" && bun run test:compliance --base-url "$OPENAI_BASE_URL" --api-key "$OPENAI_API_KEY" --model "$TESTER_MODEL" --filter basic-response,streaming-response,tool-calling,multi-turn,compact-response --json > "$RESPONSES_COMPAT_ARTIFACT_DIR/openresponses-compliance.json"' \
+make responses-compat-external-smoke
+```
+
+Do not use plain `make responses-compat-external-smoke` for a real-upstream
+verdict unless `RESPONSES_COMPAT_RUN_MODE=real-upstream` is set. That target
+defaults to `devstack-fixture`, so `run.env` will otherwise record
+`RESPONSES_COMPAT_RUN_MODE=devstack-fixture` even if `SHIM_BASE_URL` points at
+a shim process that is connected to a real upstream.
+
+OpenResponses writes its JSON result to:
+
+```text
+.data/responses-compat-external/<run-id>/openresponses-compliance.json
+```
+
+The harness also writes `readyz.*`, `capabilities.*`, `tester.*`, `run.env`,
+and `harness-warnings.txt` in the same run directory.
+
+### Compact Response Interpretation
+
+The OpenResponses `compact-response` compliance case checks the observable
+endpoint behavior and response shape for `POST /v1/responses/compact`. It does
+not, by itself, prove model-assisted compaction quality.
+
+If the shim is configured with `responses.compaction.backend:
+model_assisted_text` and the configured compaction backend is unavailable, the
+shim can log a warning and fall back to heuristic compaction. A passing
+OpenResponses compliance run in that state is still useful for API shape
+compatibility, but it should not be recorded as a model-assisted compaction
+quality result.
+
+For a clean shape-only external compliance run, configure:
+
+```yaml
+responses:
+  compaction:
+    backend: heuristic
+```
+
+For a model-assisted compaction run, start the configured compaction backend
+and verify from `/debug/capabilities` and `.data/shim.log` that no heuristic
+fallback warning occurred during `/v1/responses/compact`.
 
 ## Environment Contract
 

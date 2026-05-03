@@ -3,9 +3,14 @@ title: Shell script fix
 category: code
 suites:
   - codex-core
+  - codex-bench-lite
   - codex-real-upstream-expanded
 timeout: 180s
 attempts: 2
+provenance:
+  source: repo-owned synthesis inspired by Terminal-Bench
+  url: https://www.tbench.ai/benchmarks
+  notes: Shell script repair and verifier task; no third-party files imported.
 prompt: |
   This is the Codex shell script fix case. Use exec_command to inspect app.sh and verify.sh, fix app.sh so `sh verify.sh` passes, and reply SHELL_SCRIPT_OK.
 expected:

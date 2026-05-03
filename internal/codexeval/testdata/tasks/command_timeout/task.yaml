@@ -3,8 +3,13 @@ title: Command timeout recovery
 category: command
 suites:
   - codex-core
+  - codex-bench-lite
 timeout: 180s
 attempts: 2
+provenance:
+  source: repo-owned synthesis inspired by Terminal-Bench
+  url: https://www.tbench.ai/benchmarks
+  notes: Bounded timeout recovery task; no third-party files imported.
 prompt: |
   This is the Codex command timeout recovery case. Use exec_command to run `sh slow.sh`.
   It is expected to fail with a timeout marker. After that, use exec_command to run `sh fast.sh`, confirm it prints TIMEOUT_RECOVERED, and reply TIMEOUT_RECOVERED.

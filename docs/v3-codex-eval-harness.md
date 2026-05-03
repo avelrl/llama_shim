@@ -5,16 +5,20 @@ Last updated: May 1, 2026.
 Task id: `v3-codex-eval-harness`
 
 Status: Phase 5 regression import workflow implemented; Phase 3 deterministic
-core suite and profile gates implemented; Phase 6 benchmark-lite pending.
-Shim-native Codex request-shape and interactive-session coverage is split into
-[v3-codex-shim-native-coverage.md](v3-codex-shim-native-coverage.md).
+core suite and profile gates implemented; Phase 6 benchmark-lite implemented.
+Shim-native Codex request-shape, interactive-session coverage, and manual TUI
+feature exploration are split into
+[v3-codex-shim-native-coverage.md](v3-codex-shim-native-coverage.md),
+[v3-codex-interactive-command-session-bridge.md](v3-codex-interactive-command-session-bridge.md),
+and
+[v3-codex-interactive-features-manual-plan.md](v3-codex-interactive-features-manual-plan.md).
 
 This task defines a repeatable evaluation and regression loop for running the
 real Codex CLI through `llama_shim` against local or OpenAI-compatible upstream
 models. The goal is to stop relying on one-off manual Codex sessions as the
 primary compatibility signal.
 
-Implemented slice through the current Phase 5 work:
+Implemented slice through the current Phase 6 work:
 
 - `cmd/codex-eval-runner`
 - `internal/codexeval`
@@ -27,6 +31,8 @@ Implemented slice through the current Phase 5 work:
   - `make codex-eval-core-shell`
   - `make codex-eval-core-websocket`
   - `make codex-eval-core-profiles`
+  - `make codex-eval-bench-lite`
+  - `make codex-eval-loop-bench-lite`
   - `make codex-eval-shim-native`
   - `make codex-eval-shim-native-websocket`
   - `make codex-eval-shim-native-profiles`
@@ -217,6 +223,14 @@ work are tracked in
 - model-metadata edge profiles for reasoning summaries, verbosity, truncation,
   context-window/auto-compaction, parallel tool calls, image input/detail, and
   experimental supported tools.
+
+Manual TUI and app-server feature exploration is tracked separately in
+[v3-codex-interactive-features-manual-plan.md](v3-codex-interactive-features-manual-plan.md).
+That document covers slash commands such as `/goal`, `/review`, `/plan`, and
+`/compact`, queued follow-ups, approval prompts, multi-agent tools, MCP
+resources, apps, plugins, and external-agent import. Those checks should become
+automated tasks only after a failure can be reduced to a deterministic runner
+or shim-native profile case.
 
 ## Goal
 
@@ -560,6 +574,14 @@ To clear local eval artifacts after extracting the reports you need:
 make codex-eval-clean
 ```
 
+To keep summaries, compare reports, Codex JSONL, diffs, and workspace
+snapshots while dropping transient Codex plugin clones and similar
+`CODEX_HOME` temp payloads:
+
+```bash
+make codex-eval-prune
+```
+
 By default, candidate failures do not stop the loop after their own run because
 failed real-upstream candidates are the data being collected. Set
 `CODEX_EVAL_LOOP_STRICT_REAL_UPSTREAM=true` when the loop should return a
@@ -839,12 +861,14 @@ Target runtime: allowed to be long; not a normal pre-commit gate.
 
 ### `codex-bench-lite`
 
-Purpose: small external benchmark subset after the in-repo harness is stable.
+Purpose: longer-running, repo-owned benchmark-lite breadth after the in-repo
+harness is stable.
 
 Rules:
 
-- pin benchmark sources
-- copy only small sanitized task definitions into repo-owned fixtures
+- pin benchmark-source inspiration in manifest provenance metadata
+- copy only small sanitized task definitions into repo-owned fixtures when a
+  third-party source is actually imported
 - keep source attribution in task metadata
 - prefer tasks with deterministic local checkers
 - do not include tasks that require network during execution unless the task is
@@ -853,6 +877,33 @@ Rules:
 
 Candidate sources can include agent/coding benchmark tasks, but they must be
 adapted into this repo's task manifest and checker model before becoming a gate.
+The current first milestone uses 20 repo-owned synthetic tasks with local
+fixtures only. They are inspired by the public shape of
+[SWE-bench](https://www.swebench.com/SWE-bench/) and
+[Terminal-Bench](https://www.tbench.ai/benchmarks), but no third-party task
+files are imported.
+`bugfix_mixed` stays out of `codex-bench-lite` because its useful signal is the
+real Codex `file_change` event after a natural-language preamble. The devstack
+fixture can patch that workspace through command execution, but it cannot
+honestly stand in for a real model choosing Codex apply-patch/file-change
+behavior.
+
+Commands:
+
+```bash
+make codex-eval-bench-lite
+```
+
+For control-vs-real stability checks, run the same bench-lite suite on both
+the devstack control and the candidate upstream:
+
+```bash
+SHIM_BASE_URL=http://127.0.0.1:8080 \
+CODEX_MODEL=<model> \
+CODEX_PROVIDER=gateway-shim \
+CODEX_API_KEY_ENV=GW_API_KEY \
+make codex-eval-loop-bench-lite
+```
 
 ## Failure Buckets
 
@@ -946,17 +997,20 @@ Current status on May 1, 2026:
   baselines to 5/8 by increasing protocol-shaped final text such as
   `<resolve_conflicts>` and `<toolCall::apply_patch>`.
 - Phase 5 regression import workflow is implemented.
-- Phase 6 is still pending.
+- Phase 6 benchmark-lite is implemented as `codex-bench-lite`: 20 repo-owned
+  deterministic tasks with manifest provenance metadata and Make targets for
+  local and control-vs-real runs.
 
 Remaining work is split into two tracks:
 
-- Phase 6 here: benchmark-lite breadth after the repo-owned harness is stable.
 - Interactive command-session bridge:
   [v3-codex-interactive-command-session-bridge.md](v3-codex-interactive-command-session-bridge.md).
 - Shim-native Codex profile/request-shape follow-up:
   [v3-codex-shim-native-coverage.md](v3-codex-shim-native-coverage.md).
 
-Next practical milestone for this document: Phase 6 benchmark-lite import.
+Next practical milestone for this document: keep benchmark-lite results out of
+the model matrix until a model has a clean or intentionally accepted
+control-vs-real `codex-bench-lite` run.
 
 ### Phase 0: Preserve Current Smoke Behavior
 
@@ -1122,17 +1176,22 @@ Exit criteria:
 
 Deliverables:
 
-- identify candidate external coding-agent benchmark sources
-- choose only small deterministic tasks
-- pin provenance in task metadata
-- adapt tasks into the repo-owned manifest/checker model
-- keep third-party source imports out of normal CI unless explicitly enabled
+- identify candidate external coding-agent benchmark sources: implemented with
+  SWE-bench and Terminal-Bench as first source-shape references
+- choose only small deterministic tasks: implemented with 20 repo-owned tasks
+- pin provenance in task metadata: implemented through manifest `provenance`
+- adapt tasks into the repo-owned manifest/checker model: implemented; no
+  third-party fixtures are imported
+- keep third-party source imports out of normal CI unless explicitly enabled:
+  implemented; `codex-bench-lite` is an explicit target only
 
 Exit criteria:
 
-- `codex-bench-lite` exists with at least 10 tasks
-- every task has deterministic local pass/fail
-- no network-required or long-running task is in the default local gate
+- `codex-bench-lite` exists with at least 10 tasks: implemented with 20 tasks
+- every task has deterministic local pass/fail: implemented with file, command,
+  event, and forbidden-output checkers
+- no network-required or long-running task is in the default local gate:
+  implemented; the suite is not part of the default local gate
 
 ## Checker Requirements
 

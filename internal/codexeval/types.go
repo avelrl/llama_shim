@@ -76,11 +76,18 @@ type Manifest struct {
 	Timeout     string            `yaml:"timeout" json:"timeout"`
 	Attempts    int               `yaml:"attempts" json:"attempts"`
 	Tags        []string          `yaml:"tags" json:"tags,omitempty"`
+	Provenance  *Provenance       `yaml:"provenance" json:"provenance,omitempty"`
 	Prompt      string            `yaml:"prompt" json:"prompt"`
 	Env         map[string]string `yaml:"env" json:"env,omitempty"`
 	Expected    Expected          `yaml:"expected" json:"expected"`
 	Quarantine  *Quarantine       `yaml:"quarantine" json:"quarantine,omitempty"`
 	timeoutOnce time.Duration
+}
+
+type Provenance struct {
+	Source string `yaml:"source" json:"source"`
+	URL    string `yaml:"url" json:"url,omitempty"`
+	Notes  string `yaml:"notes" json:"notes,omitempty"`
 }
 
 type Quarantine struct {
@@ -186,6 +193,7 @@ type TaskResult struct {
 	ID             string          `json:"id"`
 	Title          string          `json:"title,omitempty"`
 	Category       string          `json:"category,omitempty"`
+	Provenance     *Provenance     `json:"provenance,omitempty"`
 	Status         string          `json:"status"`
 	FailureBucket  string          `json:"failure_bucket,omitempty"`
 	Attempts       []AttemptResult `json:"attempts"`

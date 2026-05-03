@@ -836,6 +836,9 @@ Shim reality:
 - `heuristic` returns a single shim-owned compaction item.
 - `model_assisted_text` standalone compaction returns retained recent items plus
   a shim-owned compaction item.
+- Standalone local compaction accepts prompt-cache request metadata as a
+  no-op; cache bucketing is upstream-owned and is not represented in the
+  shim-owned compaction item.
 - Automatic compaction prefixes the response with one compaction item that can
   rebuild local effective context.
 

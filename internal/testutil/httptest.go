@@ -94,6 +94,7 @@ type TestAppOptions struct {
 	CodeInterpreterMaxConcurrentRuns      int
 	DBPath                                string
 	LlamaBaseURL                          string
+	LlamaReadinessBearerToken             string
 	LlamaStartupCalibrationBearerToken    string
 	LlamaMaxConcurrentRequests            int
 	LlamaMaxQueueWait                     time.Duration
@@ -174,15 +175,16 @@ func NewTestAppWithOptions(t *testing.T, options TestAppOptions) *TestApp {
 	httpapi.StartLocalCodeInterpreterCleanupLoop(testCtx, logger, localCodeInterpreter, store, store, options.CodeInterpreterCleanupInterval)
 
 	server := httptest.NewServer(httpapi.NewRouter(httpapi.RouterDeps{
-		Logger:              logger,
-		LlamaClient:         llamaClient,
-		ResponseService:     responseService,
-		ConversationService: conversationService,
-		Auth:                httpapi.StaticBearerAuthConfig{Mode: options.AuthMode, BearerTokens: append([]string(nil), options.BearerTokens...)},
-		RateLimit:           httpapi.RateLimitConfig{Enabled: options.RateLimitEnabled, RequestsPerMinute: options.RateLimitRequestsPerMinute, Burst: options.RateLimitBurst},
-		MetricsConfig:       httpapi.MetricsConfig{Enabled: metricsEnabled, Path: options.MetricsPath},
-		Metrics:             metrics,
-		StorageBackend:      config.StorageBackendSQLite,
+		Logger:                    logger,
+		LlamaClient:               llamaClient,
+		LlamaReadinessBearerToken: options.LlamaReadinessBearerToken,
+		ResponseService:           responseService,
+		ConversationService:       conversationService,
+		Auth:                      httpapi.StaticBearerAuthConfig{Mode: options.AuthMode, BearerTokens: append([]string(nil), options.BearerTokens...)},
+		RateLimit:                 httpapi.RateLimitConfig{Enabled: options.RateLimitEnabled, RequestsPerMinute: options.RateLimitRequestsPerMinute, Burst: options.RateLimitBurst},
+		MetricsConfig:             httpapi.MetricsConfig{Enabled: metricsEnabled, Path: options.MetricsPath},
+		Metrics:                   metrics,
+		StorageBackend:            config.StorageBackendSQLite,
 		ServiceLimits: httpapi.ServiceLimits{
 			JSONBodyBytes:                     options.JSONBodyLimitBytes,
 			RetrievalFileUploadBytes:          options.RetrievalFileUploadMaxBytes,

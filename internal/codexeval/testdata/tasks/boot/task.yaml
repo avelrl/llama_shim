@@ -4,10 +4,14 @@ category: boot
 suites:
   - codex-smoke
   - codex-core
+  - codex-bench-lite
   - codex-real-upstream
   - codex-real-upstream-expanded
 timeout: 120s
 attempts: 1
+provenance:
+  source: repo-owned control canary
+  notes: Provider boot and final-text sentinel task; no third-party files imported.
 prompt: |
   Reply READY.
 expected:

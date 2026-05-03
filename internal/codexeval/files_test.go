@@ -35,6 +35,7 @@ func TestPruneAttemptArtifactsRemovesPluginCatalog(t *testing.T) {
 	attemptDir := t.TempDir()
 	mustWriteNested(t, filepath.Join(attemptDir, "codex-home", "config.toml"), "model = test\n")
 	mustWriteNested(t, filepath.Join(attemptDir, "codex-home", ".tmp", "plugins", "catalog.txt"), "drop\n")
+	mustWriteNested(t, filepath.Join(attemptDir, "codex-home", ".tmp", "plugins-clone-abc123", ".git", "objects", "pack", "pack.bin"), "drop\n")
 
 	if err := pruneAttemptArtifacts(attemptDir); err != nil {
 		t.Fatalf("pruneAttemptArtifacts failed: %v", err)
@@ -42,8 +43,8 @@ func TestPruneAttemptArtifactsRemovesPluginCatalog(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(attemptDir, "codex-home", "config.toml")); err != nil {
 		t.Fatalf("expected config to remain: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(attemptDir, "codex-home", ".tmp", "plugins")); !os.IsNotExist(err) {
-		t.Fatalf("expected plugin catalog to be pruned, err=%v", err)
+	if _, err := os.Stat(filepath.Join(attemptDir, "codex-home", ".tmp")); !os.IsNotExist(err) {
+		t.Fatalf("expected codex-home .tmp to be pruned, err=%v", err)
 	}
 }
 

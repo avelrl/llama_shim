@@ -49,6 +49,34 @@ func TestLoadTasksRealUpstreamExpandedSuite(t *testing.T) {
 	}
 }
 
+func TestLoadTasksBenchLiteSuite(t *testing.T) {
+	tasks, err := LoadTasks("testdata/tasks", "codex-bench-lite")
+	if err != nil {
+		t.Fatalf("LoadTasks failed: %v", err)
+	}
+	if len(tasks) != 20 {
+		t.Fatalf("bench-lite task count = %d, want 20", len(tasks))
+	}
+	byID := map[string]bool{}
+	for _, task := range tasks {
+		if !task.Manifest.InSuite("codex-bench-lite") {
+			t.Fatalf("loaded task outside suite: %s", task.Manifest.ID)
+		}
+		if task.Manifest.Provenance == nil || task.Manifest.Provenance.Source == "" {
+			t.Fatalf("bench-lite task %s missing provenance", task.Manifest.ID)
+		}
+		byID[task.Manifest.ID] = true
+	}
+	for _, id := range []string{"boot", "basic_patch", "bugfix_go", "command_pipeline", "command_recovery", "command_timeout", "env_var_command", "js_bugfix", "json_config_edit", "long_stdout", "multi_file", "no_delete", "no_edit", "patch_after_context", "plan_doc", "python_bugfix", "read_file", "shell_script_fix", "stderr_handling", "workdir_nested"} {
+		if !byID[id] {
+			t.Fatalf("bench-lite suite missing %s", id)
+		}
+	}
+	if byID["bugfix_mixed"] {
+		t.Fatalf("bench-lite suite unexpectedly includes real-upstream-only bugfix_mixed")
+	}
+}
+
 func TestManifestRejectsAbsoluteFilePath(t *testing.T) {
 	manifest := Manifest{
 		ID:       "bad_task",

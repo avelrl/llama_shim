@@ -3,9 +3,14 @@ title: Tiny Python bugfix
 category: code
 suites:
   - codex-core
+  - codex-bench-lite
   - codex-real-upstream-expanded
 timeout: 180s
 attempts: 2
+provenance:
+  source: repo-owned synthesis inspired by SWE-bench
+  url: https://www.swebench.com/SWE-bench/
+  notes: Tiny Python failing-test repair; no third-party files imported.
 prompt: |
   This is the Codex Python bugfix case. Use exec_command to inspect mathutil.py and test_mathutil.py, fix the bug, run `python3 test_mathutil.py`, and reply PY_BUGFIX_OK.
 expected:

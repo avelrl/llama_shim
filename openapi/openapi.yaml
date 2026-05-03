@@ -948,10 +948,10 @@ paths:
                 type: string
               example: |
                 event: response.created
-                data: {"type":"response.created","sequence_number":1,"response":{"id":"resp_123","object":"response","created_at":1741900000,"status":"in_progress","completed_at":null,"instructions":"Be terse.","max_output_tokens":null,"max_tool_calls":null,"error":null,"incomplete_details":null,"model":"test-model","output":[],"parallel_tool_calls":true,"previous_response_id":"","prompt":null,"prompt_cache_key":null,"prompt_cache_retention":null,"reasoning":{"effort":null,"summary":null},"safety_identifier":null,"service_tier":null,"conversation":null,"background":false,"store":true,"temperature":1.0,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[],"top_logprobs":null,"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{},"output_text":""}}
+                data: {"type":"response.created","sequence_number":1,"response":{"id":"resp_123","object":"response","created_at":1741900000,"status":"in_progress","completed_at":null,"instructions":"Be terse.","max_output_tokens":null,"max_tool_calls":null,"error":null,"incomplete_details":null,"model":"test-model","output":[],"parallel_tool_calls":true,"previous_response_id":null,"prompt":null,"prompt_cache_key":null,"prompt_cache_retention":null,"reasoning":{"effort":null,"summary":null},"safety_identifier":null,"service_tier":"default","conversation":null,"background":false,"store":true,"temperature":1.0,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{},"frequency_penalty":0.0,"presence_penalty":0.0,"output_text":""}}
 
                 event: response.in_progress
-                data: {"type":"response.in_progress","sequence_number":2,"response":{"id":"resp_123","object":"response","created_at":1741900000,"status":"in_progress","completed_at":null,"instructions":"Be terse.","max_output_tokens":null,"max_tool_calls":null,"error":null,"incomplete_details":null,"model":"test-model","output":[],"parallel_tool_calls":true,"previous_response_id":"","prompt":null,"prompt_cache_key":null,"prompt_cache_retention":null,"reasoning":{"effort":null,"summary":null},"safety_identifier":null,"service_tier":null,"conversation":null,"background":false,"store":true,"temperature":1.0,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[],"top_logprobs":null,"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{},"output_text":""}}
+                data: {"type":"response.in_progress","sequence_number":2,"response":{"id":"resp_123","object":"response","created_at":1741900000,"status":"in_progress","completed_at":null,"instructions":"Be terse.","max_output_tokens":null,"max_tool_calls":null,"error":null,"incomplete_details":null,"model":"test-model","output":[],"parallel_tool_calls":true,"previous_response_id":null,"prompt":null,"prompt_cache_key":null,"prompt_cache_retention":null,"reasoning":{"effort":null,"summary":null},"safety_identifier":null,"service_tier":"default","conversation":null,"background":false,"store":true,"temperature":1.0,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{},"frequency_penalty":0.0,"presence_penalty":0.0,"output_text":""}}
 
                 event: response.content_part.added
                 data: {"type":"response.content_part.added","sequence_number":4,"item_id":"msg_123","output_index":0,"content_index":0,"part":{"type":"output_text","text":"","annotations":[]}}
@@ -963,7 +963,7 @@ paths:
                 data: {"type":"response.content_part.done","sequence_number":7,"item_id":"msg_123","output_index":0,"content_index":0,"part":{"type":"output_text","text":"OK","annotations":[]}}
 
                 event: response.completed
-                data: {"type":"response.completed","sequence_number":8,"response":{"id":"resp_123","object":"response","created_at":1741900000,"status":"completed","completed_at":1741900000,"instructions":"Be terse.","max_output_tokens":null,"max_tool_calls":null,"error":null,"incomplete_details":null,"model":"test-model","output":[{"id":"msg_123","type":"message","role":"assistant","content":[{"type":"output_text","text":"OK"}]}],"parallel_tool_calls":true,"previous_response_id":"","prompt":null,"prompt_cache_key":null,"prompt_cache_retention":null,"reasoning":{"effort":null,"summary":null},"safety_identifier":null,"service_tier":null,"conversation":null,"background":false,"store":true,"temperature":1.0,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[],"top_logprobs":null,"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{},"output_text":"OK"}}
+                data: {"type":"response.completed","sequence_number":8,"response":{"id":"resp_123","object":"response","created_at":1741900000,"status":"completed","completed_at":1741900000,"instructions":"Be terse.","max_output_tokens":null,"max_tool_calls":null,"error":null,"incomplete_details":null,"model":"test-model","output":[{"id":"msg_123","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"OK","annotations":[],"logprobs":[]}]}],"parallel_tool_calls":true,"previous_response_id":null,"prompt":null,"prompt_cache_key":null,"prompt_cache_retention":null,"reasoning":{"effort":null,"summary":null},"safety_identifier":null,"service_tier":"default","conversation":null,"background":false,"store":true,"temperature":1.0,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{},"frequency_penalty":0.0,"presence_penalty":0.0,"output_text":"OK"}}
 
                 data: [DONE]
         "404":
@@ -3004,6 +3004,8 @@ components:
         - `previous_response_id`
         - `conversation`
         - `instructions`
+        - `prompt_cache_key` and `prompt_cache_retention` as local
+          compatibility no-ops
 
         `text` and `metadata` are accepted as compatibility no-ops in the
         shim-local path. Requests with other fields may still be proxied
@@ -3029,6 +3031,10 @@ components:
         conversation:
           $ref: "#/components/schemas/ConversationInputReference"
         instructions:
+          type: string
+        prompt_cache_key:
+          type: string
+        prompt_cache_retention:
           type: string
         include:
           type: array
@@ -3139,6 +3145,10 @@ components:
             - object
             - "null"
           additionalProperties: true
+        frequency_penalty:
+          type:
+            - number
+            - "null"
         incomplete_details:
           type:
             - object
@@ -3161,7 +3171,9 @@ components:
             - boolean
             - "null"
         previous_response_id:
-          type: string
+          type:
+            - string
+            - "null"
         prompt:
           $ref: "#/components/schemas/AnyJSON"
         prompt_cache_key:
@@ -3173,7 +3185,9 @@ components:
         safety_identifier:
           $ref: "#/components/schemas/AnyJSON"
         service_tier:
-          $ref: "#/components/schemas/AnyJSON"
+          type:
+            - string
+            - "null"
         conversation:
           $ref: "#/components/schemas/ConversationReference"
         background:
@@ -3193,7 +3207,9 @@ components:
         tools:
           $ref: "#/components/schemas/AnyJSON"
         top_logprobs:
-          $ref: "#/components/schemas/AnyJSON"
+          type:
+            - integer
+            - "null"
         top_p:
           $ref: "#/components/schemas/AnyJSON"
         truncation:
@@ -3214,6 +3230,10 @@ components:
           additionalProperties:
             type: string
             maxLength: 512
+        presence_penalty:
+          type:
+            - number
+            - "null"
         output_text:
           type: string
     ResponseDeletion:

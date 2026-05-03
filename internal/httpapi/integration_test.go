@@ -280,6 +280,70 @@ func TestReadyzReturns503WhenImageGenerationBackendIsUnavailable(t *testing.T) {
 	require.Equal(t, "image generation backend is not ready", payload["error"]["message"])
 }
 
+func TestReadyzUsesConfiguredReadinessBearerToken(t *testing.T) {
+	var seenAuthorization string
+	llamaServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenAuthorization = r.Header.Get("Authorization")
+		if seenAuthorization != "Bearer readiness-secret" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"object": "list",
+			"data": []map[string]any{
+				{"id": "test-model", "object": "model", "created": time.Now().Unix(), "owned_by": "shim-test"},
+			},
+		}))
+	}))
+	defer llamaServer.Close()
+
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		LlamaBaseURL:                       llamaServer.URL,
+		LlamaReadinessBearerToken:          "readiness-secret",
+		LlamaStartupCalibrationBearerToken: "startup-probe-secret",
+	})
+
+	req, err := http.NewRequest(http.MethodGet, app.Server.URL+"/readyz", nil)
+	require.NoError(t, err)
+
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, "Bearer readiness-secret", seenAuthorization)
+}
+
+func TestCapabilitiesUsesConfiguredReadinessBearerToken(t *testing.T) {
+	var seenAuthorization string
+	llamaServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenAuthorization = r.Header.Get("Authorization")
+		if seenAuthorization != "Bearer readiness-secret" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"object": "list",
+			"data": []map[string]any{
+				{"id": "test-model", "object": "model", "created": time.Now().Unix(), "owned_by": "shim-test"},
+			},
+		}))
+	}))
+	defer llamaServer.Close()
+
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		LlamaBaseURL:              llamaServer.URL,
+		LlamaReadinessBearerToken: "readiness-secret",
+	})
+
+	status, payload := rawRequest(t, app, http.MethodGet, "/debug/capabilities", nil)
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, true, payload["ready"])
+	require.Equal(t, "Bearer readiness-secret", seenAuthorization)
+}
+
 func TestReadyzDoesNotUseStartupCalibrationToken(t *testing.T) {
 	var seenAuthorization string
 	llamaServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

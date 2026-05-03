@@ -1513,13 +1513,15 @@ var shimLocalStateBaseFields = map[string]struct{}{
 }
 
 var shimLocalDerivedResponsesBaseFields = map[string]struct{}{
-	"model":                {},
-	"input":                {},
-	"text":                 {},
-	"metadata":             {},
-	"previous_response_id": {},
-	"conversation":         {},
-	"instructions":         {},
+	"model":                  {},
+	"input":                  {},
+	"text":                   {},
+	"metadata":               {},
+	"previous_response_id":   {},
+	"conversation":           {},
+	"instructions":           {},
+	"prompt_cache_key":       {},
+	"prompt_cache_retention": {},
 }
 
 func decodeRawFields(raw []byte) (map[string]json.RawMessage, error) {

@@ -101,6 +101,16 @@ func (m *Manifest) Validate() error {
 			return fmt.Errorf("env %s contains an absolute path; use ${workspace}", key)
 		}
 	}
+	if m.Provenance != nil {
+		if strings.TrimSpace(m.Provenance.Source) == "" {
+			return fmt.Errorf("provenance source is required")
+		}
+		if strings.TrimSpace(m.Provenance.URL) != "" &&
+			!strings.HasPrefix(m.Provenance.URL, "https://") &&
+			!strings.HasPrefix(m.Provenance.URL, "http://") {
+			return fmt.Errorf("provenance url must be http(s)")
+		}
+	}
 	return nil
 }
 

@@ -1,6 +1,6 @@
 # V2 Compatibility Matrix
 
-Last updated: April 27, 2026.
+Last updated: May 3, 2026.
 
 This document is the source of truth for the current V2-compatible surface of
 `llama_shim`.
@@ -53,6 +53,65 @@ Current external evidence:
   thinking defaults, and JSON-mode fallback for Chat `json_schema` requests.
   This remains a practical bridge, not a stronger native DeepSeek
   `json_schema` or forced tool-choice parity claim.
+
+## OpenResponses Cross-Check
+
+OpenResponses ([`openresponses/openresponses`](https://github.com/openresponses/openresponses))
+is useful as a supplemental portability check, not as the source of truth for
+OpenAI wire contracts. Continue to validate OpenAI-facing claims against the
+official OpenAI docs first, then use OpenResponses to catch drift in the
+provider-neutral Responses core.
+
+As of the May 3, 2026 research pass, there is no known intentional mismatch in
+the shared OpenResponses/OpenAI core that `llama_shim` claims. The shim exposes
+more than OpenResponses standardizes, so failures outside the shared core should
+be classified as OpenAI-only or shim-owned boundaries before changing code or
+docs.
+
+| Surface | OpenResponses core | Official OpenAI surface | `llama_shim` classification |
+| --- | --- | --- | --- |
+| `POST /v1/responses` basic create, items, function tools, `previous_response_id` | Yes | Yes | Broad subset; keep the portable core green where local routing owns the request |
+| Semantic SSE and Responses WebSocket `response.create` | Yes | Yes | Broad subset; exact hosted tool-specific choreography remains outside the broad claim unless backed by docs or fixtures |
+| `/v1/responses/compact` | Yes | Yes | Broad subset; local compaction is continuation-compatible but not byte-for-byte hosted encrypted state parity |
+| `/v1/responses/{id}`, cancel, delete, input items, and input tokens | No | Yes | OpenAI-only compatibility surface; `input_tokens` remains a local deterministic estimate unless proxied upstream |
+| `/v1/conversations` and conversation item endpoints | No | Yes | OpenAI-only compatibility surface; implemented as a shim-owned durable-state subset |
+| `/v1/chat/completions` and stored Chat Completions | No | Yes | OpenAI-only compatibility surface; local shadow store plus optional upstream bridge |
+| Hosted/native OpenAI tools such as file search, web search, image generation, computer, code interpreter, MCP connectors, shell, apply patch, and tool search | No; extension types must be implementor-prefixed | Yes, with OpenAI-specific item and event families | Broad subsets or proxy-only bridges; do not present as OpenResponses-portable core |
+| `responses.mode`, `responses.upstream_transport`, local backends, `/debug/capabilities`, `/healthz`, `/readyz`, `/metrics` | No | No | Shim-owned operational and routing surface |
+
+Periodic OpenResponses check:
+
+1. Keep the OpenResponses checkout outside this repository, preferably as a
+   sibling checkout. Do not vendor it and do not add it as a submodule unless a
+   pinned OpenResponses compliance job becomes part of CI.
+2. Update that checkout with `git fetch --all --prune` and `git pull --ff-only`.
+   If dependencies or generated artifacts are stale, run the OpenResponses repo
+   commands that refresh its spec and generated validators.
+3. Run a focused OpenResponses compliance pass through the existing external
+   tester harness. Start with the shared core filters; run the full suite only
+   when the shim configuration supports the relevant transport and runtime
+   features.
+4. Classify each failure before filing work: shared OpenResponses/OpenAI core,
+   OpenAI-only surface, shim-owned extension, upstream model behavior, or
+   tester/schema drift.
+5. Update this matrix only for durable compatibility conclusions. Keep
+   transient run logs under `.data/responses-compat-external/`.
+
+Example: run the OpenResponses CLI through the shim external-test harness.
+`make responses-compat-external-real-smoke` is the local wrapper: it probes the
+shim, writes readiness/capability artifacts, exports `OPENAI_BASE_URL`, and then
+executes `RESPONSES_COMPAT_TESTER_CMD`. The actual OpenResponses test in this
+example is `bun run test:compliance` from the sibling OpenResponses checkout.
+
+```bash
+export OPENRESPONSES_DIR=<path-to-openresponses-checkout>
+export OPENRESPONSES_API_KEY=<shim-or-test-key>
+export TESTER_MODEL=<model-id>
+
+RESPONSES_COMPAT_REQUIRE_TESTER=1 \
+RESPONSES_COMPAT_TESTER_CMD='cd "$OPENRESPONSES_DIR" && bun run test:compliance --base-url "$OPENAI_BASE_URL" --api-key "$OPENRESPONSES_API_KEY" --model "$TESTER_MODEL" --filter basic-response,streaming-response,websocket-response,websocket-continuation,tool-calling,multi-turn,compact-response --json > "$RESPONSES_COMPAT_ARTIFACT_DIR/openresponses-compliance.json"' \
+make responses-compat-external-real-smoke
+```
 
 ## Responses And Conversations
 

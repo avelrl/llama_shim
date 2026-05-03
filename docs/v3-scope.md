@@ -194,7 +194,7 @@ edge cases, and Realtime API WebSocket compatibility are deferred to
 
 ### 8. Codex eval harness and auto-regression loop
 
-Status: Phase 5 implemented; Phase 6 benchmark-lite pending. See
+Status: Phase 6 benchmark-lite implemented. See
 [v3-codex-eval-harness.md](v3-codex-eval-harness.md).
 
 The existing Codex CLI smokes are useful canaries, but manual Codex sessions
@@ -231,9 +231,13 @@ Implemented scope:
   skeleton import
 - `make codex-eval-loop` for automated devstack-control versus real-upstream
   model orchestration
+- `codex-bench-lite` profile plus `make codex-eval-bench-lite` and
+  `make codex-eval-loop-bench-lite` for longer repo-owned benchmark-lite
+  stability checks
 
-Remaining V3 work in this track is Phase 6 benchmark-lite import. Shim-native
-Codex request-shape/profile coverage is split into
+Remaining V3 work in this track is ongoing result curation and future imported
+benchmark tasks when they are worth sanitizing. Shim-native Codex
+request-shape/profile coverage is split into
 [v3-codex-shim-native-coverage.md](v3-codex-shim-native-coverage.md).
 
 This is a quality and automation track. It does not strengthen any hosted
@@ -253,6 +257,8 @@ This track covers Codex-through-shim behavior that is not benchmark breadth:
 - `apply_patch` freeform/function/disabled model-metadata profiles
 - shell-tool profile variants that should stay out of the default core gate
   until stable
+- manual Codex TUI and app-server feature exploration, tracked separately in
+  [v3-codex-interactive-features-manual-plan.md](v3-codex-interactive-features-manual-plan.md)
 
 This is a V3 compatibility-quality track. It should not claim exact hosted
 parity and should not promote flaky profile tasks into `codex-core` or

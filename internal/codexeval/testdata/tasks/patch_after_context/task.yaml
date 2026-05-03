@@ -3,8 +3,13 @@ title: Patch after reading context
 category: edit
 suites:
   - codex-core
+  - codex-bench-lite
 timeout: 180s
 attempts: 2
+provenance:
+  source: repo-owned synthesis inspired by SWE-bench
+  url: https://www.swebench.com/SWE-bench/
+  notes: Context-reading before patch task; no third-party files imported.
 prompt: |
   This is the Codex context patch case. Use exec_command to read requirements.txt and service.txt, then update service.txt so it contains mode=compatible and requirement=requirement: preserve api. Verify the file, then reply CONTEXT_PATCH_OK.
 expected:

@@ -3,9 +3,14 @@ title: Command environment propagation
 category: command
 suites:
   - codex-core
+  - codex-bench-lite
   - codex-real-upstream-expanded
 timeout: 120s
 attempts: 2
+provenance:
+  source: repo-owned synthesis inspired by Terminal-Bench
+  url: https://www.tbench.ai/benchmarks
+  notes: Environment propagation task; no third-party files imported.
 env:
   CODEX_EVAL_MAGIC: phase3-core
 prompt: |

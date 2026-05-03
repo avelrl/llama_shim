@@ -4,10 +4,15 @@ category: edit
 suites:
   - codex-smoke
   - codex-core
+  - codex-bench-lite
   - codex-real-upstream
   - codex-real-upstream-expanded
 timeout: 180s
 attempts: 2
+provenance:
+  source: repo-owned synthesis inspired by SWE-bench
+  url: https://www.swebench.com/SWE-bench/
+  notes: Multi-file deterministic edit task; no third-party files imported.
 env:
   LLAMA_SHIM_CODEX_MATRIX_WORKDIR: ${workspace}
 prompt: |

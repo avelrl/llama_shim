@@ -482,6 +482,13 @@ func TestChatCompletionsCodexTaskMatrixRules(t *testing.T) {
 			final:         "BUGFIXED",
 		},
 		{
+			name:          "mixed bugfix",
+			prompt:        "This is a single-turn coding task. First include exactly MIXED_CAUSE_FOUND, then use tools to fix mathutil.go and finish with MIXED_BUGFIX_OK.",
+			commandMarker: "mixed bugfix task passed",
+			toolOutput:    "mixed bugfix task passed",
+			final:         "MIXED_CAUSE_FOUND: Add used subtraction.\nMIXED_BUGFIX_OK",
+		},
+		{
 			name:          "plan doc",
 			prompt:        "This is the Codex task matrix plan doc case. Use exec_command to write PLAN.md and reply PLANNED.",
 			commandMarker: "PLAN.md",

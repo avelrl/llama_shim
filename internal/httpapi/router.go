@@ -18,6 +18,7 @@ import (
 type RouterDeps struct {
 	Logger                                              *slog.Logger
 	LlamaClient                                         *llama.Client
+	LlamaReadinessBearerToken                           string
 	ResponseService                                     *service.ResponseService
 	ConversationService                                 *service.ConversationService
 	Auth                                                StaticBearerAuthConfig
@@ -123,7 +124,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 		}
 		upstreamCtx, cancel := context.WithTimeout(r.Context(), readyzUpstreamTimeout)
 		defer cancel()
-		if err := deps.LlamaClient.CheckReady(upstreamCtx); err != nil {
+		if err := deps.LlamaClient.CheckReadyWithBearerToken(upstreamCtx, deps.LlamaReadinessBearerToken); err != nil {
 			WriteError(w, http.StatusServiceUnavailable, "service_unavailable", "llama backend is not ready", "")
 			return
 		}

@@ -3,10 +3,15 @@ title: Stderr command handling
 category: command
 suites:
   - codex-core
+  - codex-bench-lite
   - codex-real-upstream
   - codex-real-upstream-expanded
 timeout: 120s
 attempts: 2
+provenance:
+  source: repo-owned synthesis inspired by Terminal-Bench
+  url: https://www.tbench.ai/benchmarks
+  notes: Stderr handling task; no third-party files imported.
 prompt: |
   This is the Codex stderr handling case. Use exec_command to run `sh emit_stderr.sh`.
   Confirm the command output includes stderr-token, then reply STDERR_OK.

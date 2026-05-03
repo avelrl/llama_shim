@@ -576,7 +576,7 @@ func collectCapabilityProbes(ctx context.Context, deps RouterDeps) capabilityPro
 
 	if deps.LlamaClient != nil {
 		upstreamCtx, cancel := context.WithTimeout(ctx, readyzUpstreamTimeout)
-		err := deps.LlamaClient.CheckReady(upstreamCtx)
+		err := deps.LlamaClient.CheckReadyWithBearerToken(upstreamCtx, deps.LlamaReadinessBearerToken)
 		cancel()
 		if err != nil {
 			probes.Llama.Ready = false

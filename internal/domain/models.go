@@ -9,6 +9,7 @@ type Response struct {
 	Status               string                 `json:"status"`
 	CompletedAt          *int64                 `json:"completed_at"`
 	Error                json.RawMessage        `json:"error"`
+	FrequencyPenalty     json.RawMessage        `json:"frequency_penalty"`
 	IncompleteDetails    json.RawMessage        `json:"incomplete_details"`
 	Instructions         json.RawMessage        `json:"instructions"`
 	MaxOutputTokens      json.RawMessage        `json:"max_output_tokens"`
@@ -16,6 +17,7 @@ type Response struct {
 	Model                string                 `json:"model"`
 	Output               []Item                 `json:"output"`
 	ParallelToolCalls    json.RawMessage        `json:"parallel_tool_calls"`
+	PresencePenalty      json.RawMessage        `json:"presence_penalty"`
 	PreviousResponseID   string                 `json:"previous_response_id,omitempty"`
 	Prompt               json.RawMessage        `json:"prompt"`
 	PromptCacheKey       json.RawMessage        `json:"prompt_cache_key"`

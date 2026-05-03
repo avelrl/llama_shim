@@ -1,4 +1,4 @@
-.PHONY: run build lint test vet diff-check ci-check maint-cleanup maint-optimize maint-vacuum maint-backup docker-build compose-up compose-down devstack-up devstack-down devstack-smoke devstack-ci-smoke devstack-full-smoke responses-compat-external-smoke responses-compat-external-real-smoke responses-websocket-smoke v3-coding-tools-smoke v3-constrained-decoding-smoke v3-vllm-constrained-smoke codex-cli-devstack-smoke codex-cli-shell-tool-smoke codex-cli-coding-task-smoke codex-cli-task-matrix-smoke codex-cli-real-upstream-smoke codex-eval-smoke codex-eval-core codex-eval-core-shell codex-eval-core-websocket codex-eval-core-profiles codex-eval-shim-native codex-eval-shim-native-websocket codex-eval-shim-native-profiles codex-eval-real-upstream codex-eval-real-upstream-expanded codex-eval-matrix codex-eval-loop codex-eval-clean
+.PHONY: run build lint test vet diff-check ci-check maint-cleanup maint-optimize maint-vacuum maint-backup docker-build compose-up compose-down devstack-up devstack-down devstack-smoke devstack-ci-smoke devstack-full-smoke responses-compat-external-smoke responses-compat-external-real-smoke responses-websocket-smoke v3-coding-tools-smoke v3-constrained-decoding-smoke v3-vllm-constrained-smoke codex-cli-devstack-smoke codex-cli-shell-tool-smoke codex-cli-coding-task-smoke codex-cli-task-matrix-smoke codex-cli-real-upstream-smoke codex-eval-smoke codex-eval-core codex-eval-core-shell codex-eval-core-websocket codex-eval-core-profiles codex-eval-bench-lite codex-eval-loop-bench-lite codex-eval-shim-native codex-eval-shim-native-websocket codex-eval-shim-native-profiles codex-eval-real-upstream codex-eval-real-upstream-expanded codex-eval-matrix codex-eval-loop codex-eval-prune codex-eval-clean
 
 CONFIG ?= config.yaml
 BACKUP ?= ./.data/shim-backup.db
@@ -132,6 +132,12 @@ codex-eval-core-websocket:
 
 codex-eval-core-profiles: codex-eval-core codex-eval-core-shell codex-eval-core-websocket
 
+codex-eval-bench-lite:
+	OPENAI_API_KEY=$${OPENAI_API_KEY:-shim-dev-key} CODEX_EVAL_SUITE=codex-bench-lite bash ./scripts/codex-eval-runner.sh
+
+codex-eval-loop-bench-lite:
+	CODEX_EVAL_CONTROL_SUITE=codex-bench-lite CODEX_EVAL_CANDIDATE_SUITE=codex-bench-lite bash ./scripts/codex-eval-loop.sh
+
 codex-eval-shim-native:
 	OPENAI_API_KEY=$${OPENAI_API_KEY:-shim-dev-key} CODEX_EVAL_SUITE=codex-shim-native bash ./scripts/codex-eval-runner.sh
 
@@ -163,6 +169,9 @@ codex-eval-matrix:
 
 codex-eval-loop:
 	bash ./scripts/codex-eval-loop.sh
+
+codex-eval-prune:
+	find .tmp/codex-eval-runs .tmp/codex-eval-loops -path '*/codex-home/.tmp' -type d -prune -exec rm -rf {} + 2>/dev/null || true
 
 codex-eval-clean:
 	rm -rf .tmp/codex-eval-runs .tmp/codex-eval-loops

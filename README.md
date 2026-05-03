@@ -245,6 +245,7 @@ Supported environment overrides:
 - `LOG_LEVEL` default `info`; set `debug` to emit an additional debug log line with request and response bodies
 - `LOG_FILE_PATH` overrides `log.file_path`; when set, logs are duplicated to stdout and the configured file
 - `LLAMA_BASE_URL` overrides `llama.base_url`
+- `LLAMA_READINESS_BEARER_TOKEN` overrides `llama.readiness_bearer_token`; this token is used only by server-side `/readyz` upstream `/v1/models` checks
 - `STORAGE_BACKEND` overrides `storage.backend`; supported values: `sqlite`
 - `SQLITE_PATH` overrides `sqlite.path`
 - `SQLITE_MAINTENANCE_CLEANUP_INTERVAL` overrides `sqlite.maintenance.cleanup_interval`
@@ -383,6 +384,7 @@ Important behavior:
 - `/healthz` and `/readyz` stay unauthenticated and unthrottled so external probes keep working
 - `/debug/capabilities` is a shim-owned operator/debug route that reports current surfaces, routing classes, runtime config, and dependency probe state; it returns `200` even when some dependencies are degraded, and shares normal shim auth and request rate limiting
 - `shimctl probe` remains shim-owned and separate from the running HTTP server: it reads `probe.*` from the shared `config.yaml`, probes documented upstream `/v1/models` and `/v1/chat/completions` endpoints on demand, and prints a structured JSON snapshot with conservative sizing guidance
+- `llama.readiness_bearer_token` is scoped only to `/readyz` upstream `/v1/models` checks; normal request handling, proxy/backend traffic, and `/debug/capabilities` do not borrow it
 - the optional calibration token is scoped only to `shimctl probe`; `/readyz`, normal request handling, proxy/backend traffic, and `/debug/capabilities` never borrow it
 - `/metrics` is skipped by the request rate limiter but still shares ingress auth when shim auth is enabled
 - when shim ingress auth is enabled, the ingress `Authorization` header is consumed by the shim and is not forwarded to the upstream text-generation backend; `X-Client-Request-Id` still propagates upstream
@@ -461,6 +463,10 @@ EMBEDANYTHING_DIR=../EmbedAnything ./scripts/embedanything-actix-local.sh
 ```
 
 When `retrieval.index.backend=sqlite_vec` is enabled, `/readyz` also checks the retrieval embedder. For `embedanything`, the shim probes the sidecar `GET /health_check` endpoint before returning `ready`.
+
+When the upstream `/v1/models` endpoint requires a bearer key even for health
+checks, set `llama.readiness_bearer_token` or `LLAMA_READINESS_BEARER_TOKEN`.
+The token is used only for the server-side `/readyz` upstream probe.
 
 When `responses.web_search.backend=searxng` is enabled, `/readyz` also checks that the configured web search backend answers before returning `ready`.
 

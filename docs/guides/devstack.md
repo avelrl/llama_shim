@@ -182,8 +182,10 @@ operator assertion. The harness cannot read `llama.base_url` from public shim
 probes, so the assertion is explicit rather than inferred. This mode waits for
 `/healthz` and captures `/readyz` without requiring it to be 2xx by default;
 set `RESPONSES_COMPAT_REQUIRE_READYZ=1` if the real-upstream run must be
-blocked on the shim backend readiness probe. It also leaves `OPENAI_API_KEY`
-unset by default so external testers can load their own `.env` credentials.
+blocked on the shim backend readiness probe. For auth-required upstream
+`/v1/models` checks, configure `llama.readiness_bearer_token` or
+`LLAMA_READINESS_BEARER_TOKEN`. The harness also leaves `OPENAI_API_KEY` unset
+by default so external testers can load their own `.env` credentials.
 
 `make devstack-full-smoke` is the local heavy smoke gate. It runs the
 CI-compatible gate plus real Codex CLI checks:
@@ -323,6 +325,12 @@ and writes matrix, compare, JSON summary, and failure-bundle artifacts under
 `.tmp/codex-eval-loops/<loop-id>/`. Single-model `codex-real-upstream` loops
 default to `<model>_baseline_<timestamp>` so promoted baseline candidates are
 recognizable before `.tmp` is cleaned.
+
+`make codex-eval-bench-lite` runs the longer repo-owned benchmark-lite profile
+against the configured local target. `make codex-eval-loop-bench-lite` runs the
+same `codex-bench-lite` suite against both the devstack control and the real
+candidate model, which is the preferred stability check before promoting a
+bench-lite result into the model matrix.
 
 ## Files
 

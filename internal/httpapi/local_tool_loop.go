@@ -898,14 +898,8 @@ func extractChatCompletionContent(raw json.RawMessage) string {
 
 func newLocalReasoningItem(text string) (domain.Item, error) {
 	raw, err := json.Marshal(map[string]any{
-		"type":   "reasoning",
-		"status": "completed",
-		"content": []map[string]any{
-			{
-				"type": "reasoning_text",
-				"text": text,
-			},
-		},
+		"type":    "reasoning",
+		"summary": []map[string]any{},
 	})
 	if err != nil {
 		return domain.Item{}, err

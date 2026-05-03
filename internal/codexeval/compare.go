@@ -270,6 +270,14 @@ func compareTask(controlTask, candidateTask *TaskResult) TaskCompare {
 }
 
 func candidateDiagnosis(task TaskResult) string {
+	if task.FailureBucket == BucketTimeout {
+		if attemptHasAnyBucket(task.Attempts, BucketRawToolMarkup, BucketModelBadToolArgs, BucketCodexToolMissing, BucketCodexToolExec) {
+			return DiagnosisCandidateToolContract
+		}
+		if attemptHasAnyBucket(task.Attempts, BucketModelNoTool, BucketCheckerDiff, BucketCheckerTests) {
+			return DiagnosisCandidateModel
+		}
+	}
 	switch task.FailureBucket {
 	case BucketShimAuth, BucketShimTransport, BucketUpstreamHTTP, BucketUpstreamStream, BucketTimeout:
 		return DiagnosisCandidateTransport
@@ -290,6 +298,19 @@ func candidateDiagnosis(task TaskResult) string {
 	default:
 		return DiagnosisCandidateModel
 	}
+}
+
+func attemptHasAnyBucket(attempts []AttemptResult, buckets ...string) bool {
+	wanted := make(map[string]bool, len(buckets))
+	for _, bucket := range buckets {
+		wanted[bucket] = true
+	}
+	for _, attempt := range attempts {
+		if wanted[attempt.FailureBucket] {
+			return true
+		}
+	}
+	return false
 }
 
 func compareRunRef(source string, summary Summary) CompareRunRef {

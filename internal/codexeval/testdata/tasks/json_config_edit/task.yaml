@@ -3,9 +3,14 @@ title: JSON config edit
 category: edit
 suites:
   - codex-core
+  - codex-bench-lite
   - codex-real-upstream-expanded
 timeout: 180s
 attempts: 2
+provenance:
+  source: repo-owned synthesis inspired by Terminal-Bench
+  url: https://www.tbench.ai/benchmarks
+  notes: JSON config edit and validation task; no third-party files imported.
 prompt: |
   This is the Codex JSON config edit case. Use exec_command to update config.json so feature.enabled is true and feature.mode is strict. Validate the JSON, then reply JSON_CONFIG_OK.
 expected:

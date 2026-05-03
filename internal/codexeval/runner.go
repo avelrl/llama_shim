@@ -334,6 +334,7 @@ func (runner *Runner) runTask(ctx context.Context, task Task) TaskResult {
 		ID:          task.Manifest.ID,
 		Title:       task.Manifest.Title,
 		Category:    task.Manifest.Category,
+		Provenance:  task.Manifest.Provenance,
 		Status:      StatusFailedSetup,
 		ArtifactDir: taskDir,
 	}
@@ -478,7 +479,7 @@ func (runner *Runner) runAttempt(ctx context.Context, task Task, attempt int) At
 
 func pruneAttemptArtifacts(attemptDir string) error {
 	for _, rel := range []string{
-		filepath.Join("codex-home", ".tmp", "plugins"),
+		filepath.Join("codex-home", ".tmp"),
 	} {
 		if err := os.RemoveAll(filepath.Join(attemptDir, rel)); err != nil {
 			return err

@@ -74,6 +74,9 @@ Important distinction:
 
 - `/readyz` is a terse public probe and returns `503` when a required
   dependency is unavailable
+- if the upstream `/v1/models` readiness check requires auth, configure
+  `llama.readiness_bearer_token` or `LLAMA_READINESS_BEARER_TOKEN`; this token
+  is used only for the `/readyz` upstream probe
 - `/debug/capabilities` remains a normal shim route, so it shares shim ingress
   auth and request rate limiting, and reports degraded dependencies inside
   `ready` and `probes.*` instead of failing the route itself
