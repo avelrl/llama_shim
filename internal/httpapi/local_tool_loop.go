@@ -390,6 +390,8 @@ func buildChatCompletionMessagesFromItems(items []domain.Item) ([]map[string]any
 
 	for _, item := range items {
 		switch item.Type {
+		case "reasoning":
+			continue
 		case "message":
 			if item.HasNonTextMessageContent() {
 				return nil, domain.ErrUnsupportedShape

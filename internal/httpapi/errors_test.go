@@ -27,6 +27,13 @@ func TestMapError(t *testing.T) {
 	require.Equal(t, "input", *payload.Param)
 	require.Nil(t, payload.Code)
 
+	status, payload = httpapi.MapError(context.Background(), logger, domain.ErrUnsupportedShape)
+	require.Equal(t, 400, status)
+	require.Equal(t, "invalid_request_error", payload.Type)
+	require.Equal(t, "unsupported input shape", payload.Message)
+	require.NotNil(t, payload.Param)
+	require.Equal(t, "input", *payload.Param)
+
 	status, payload = httpapi.MapError(context.Background(), logger, service.ErrUpstreamTimeout)
 	require.Equal(t, 504, status)
 	require.Equal(t, "upstream_timeout_error", payload.Type)

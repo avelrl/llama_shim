@@ -695,19 +695,41 @@ func classifyRunError(err error, outputFile string) (string, string) {
 	raw, _ := os.ReadFile(outputFile)
 	text := strings.ToLower(string(raw) + "\n" + err.Error())
 	switch {
-	case strings.Contains(text, "unauthorized") || strings.Contains(text, "401") || strings.Contains(text, "invalid api key"):
+	case containsAuthFailure(text):
 		return StatusFailedTransport, BucketShimAuth
 	case strings.Contains(text, "unsupported call: apply_patch"):
 		return StatusFailedCodexExit, BucketCodexToolMissing
 	case strings.Contains(text, "failed to parse function arguments") || strings.Contains(text, "invalid arguments"):
 		return StatusFailedCodexExit, BucketModelBadToolArgs
-	case strings.Contains(text, "unexpected status") || strings.Contains(text, "bad gateway") || strings.Contains(text, "upstream"):
+	case strings.Contains(text, "unsupported input shape"):
+		return StatusFailedTransport, BucketShimTransport
+	case strings.Contains(text, "high demand") || strings.Contains(text, "rate limit") || strings.Contains(text, "unexpected status") || strings.Contains(text, "bad gateway") || strings.Contains(text, "upstream"):
 		return StatusFailedTransport, BucketUpstreamHTTP
 	case strings.Contains(text, "websocket") || strings.Contains(text, "405"):
 		return StatusFailedTransport, BucketShimTransport
 	default:
 		return StatusFailedCodexExit, BucketCodexConfig
 	}
+}
+
+func containsAuthFailure(text string) bool {
+	if strings.Contains(text, "unauthorized") || strings.Contains(text, "invalid api key") {
+		return true
+	}
+	for _, marker := range []string{
+		"status 401",
+		"status: 401",
+		"status=401",
+		"http 401",
+		"401 unauthorized",
+		"401: unauthorized",
+		"unexpected status 401",
+	} {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func classifyCheckFailure(result CheckResult, finalText string) (string, string) {

@@ -148,6 +148,28 @@ func TestBuildChatCompletionMessagesFromItemsGroupsParallelToolCalls(t *testing.
 	require.Equal(t, "user", messages[4]["role"])
 }
 
+func TestBuildChatCompletionMessagesFromItemsSkipsReasoningItems(t *testing.T) {
+	items := []domain.Item{
+		mustDomainItem(t, `{"type":"message","role":"user","content":"Inspect the file."}`),
+		mustDomainItem(t, `{"type":"reasoning","summary":[]}`),
+		mustDomainItem(t, `{"type":"function_call","id":"item_read","call_id":"call_read","name":"exec_command","arguments":"{\"cmd\":\"cat README.md\"}"}`),
+		mustDomainItem(t, `{"type":"function_call_output","call_id":"call_read","output":"README contents"}`),
+		mustDomainItem(t, `{"type":"message","role":"user","content":"Continue."}`),
+	}
+
+	messages, err := buildChatCompletionMessagesFromItems(items)
+
+	require.NoError(t, err)
+	require.Len(t, messages, 4)
+	require.Equal(t, "assistant", messages[1]["role"])
+	toolCalls, ok := messages[1]["tool_calls"].([]map[string]any)
+	require.True(t, ok)
+	require.Len(t, toolCalls, 1)
+	require.Equal(t, "call_read", toolCalls[0]["id"])
+	require.Equal(t, "tool", messages[2]["role"])
+	require.Equal(t, "user", messages[3]["role"])
+}
+
 func TestBuildChatCompletionMessagesFromItemsSynthesizesMissingToolOutput(t *testing.T) {
 	items := []domain.Item{
 		mustDomainItem(t, `{"type":"message","role":"user","content":"Call add."}`),

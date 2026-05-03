@@ -9,6 +9,42 @@ import (
 	"testing"
 )
 
+func TestClassifyRunErrorHighDemand(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "codex.jsonl")
+	if err := os.WriteFile(path, []byte(`{"type":"error","message":"We're currently experiencing high demand, which may cause temporary errors."}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	status, bucket := classifyRunError(os.ErrInvalid, path)
+	if status != StatusFailedTransport || bucket != BucketUpstreamHTTP {
+		t.Fatalf("classifyRunError = (%q, %q), want (%q, %q)", status, bucket, StatusFailedTransport, BucketUpstreamHTTP)
+	}
+}
+
+func TestClassifyRunErrorDoesNotTreatRunTimestampAsAuth(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run-20260503T204014Z.jsonl")
+	if err := os.WriteFile(path, []byte(`{"type":"error","message":"We're currently experiencing high demand, which may cause temporary errors."}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	status, bucket := classifyRunError(os.ErrInvalid, path)
+	if bucket == BucketShimAuth {
+		t.Fatalf("classifyRunError = (%q, %q), timestamp path was misclassified as auth", status, bucket)
+	}
+}
+
+func TestClassifyRunErrorUnsupportedInputShape(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "codex.jsonl")
+	if err := os.WriteFile(path, []byte(`{"type":"error","message":"unexpected status 400 Bad Request: unsupported input shape"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	status, bucket := classifyRunError(os.ErrInvalid, path)
+	if status != StatusFailedTransport || bucket != BucketShimTransport {
+		t.Fatalf("classifyRunError = (%q, %q), want (%q, %q)", status, bucket, StatusFailedTransport, BucketShimTransport)
+	}
+}
+
 func TestWriteCodexConfigDoesNotAddQwenDeveloperInstructions(t *testing.T) {
 	runner := NewRunner(Config{
 		Model:    "Qwen3.6-35B-A3B",
