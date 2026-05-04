@@ -1,6 +1,6 @@
 # V3 Codex Interactive Features Manual Plan
 
-Last updated: May 3, 2026.
+Last updated: May 4, 2026.
 
 Task id: `v3-codex-interactive-features-manual-plan`
 
@@ -10,6 +10,12 @@ This document keeps the manual Codex interactive feature work separate from the
 deterministic eval harness. The harness should remain the default regression
 signal; this plan is for features that require the TUI, app-server protocol, or
 human interaction before they can be reduced into deterministic tasks.
+
+Automated compatibility pieces that already have deterministic reductions are
+tracked in [V3 Codex Eval Harness](v3-codex-eval-harness.md) and
+[V3 Codex Shim-Native Coverage](v3-codex-shim-native-coverage.md). Run
+`make codex-eval-automated-profiles` for those non-manual gates. This document
+is only for the remaining interactive feature work.
 
 ## References Checked
 

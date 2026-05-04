@@ -57,6 +57,11 @@ func runCheckers(ctx context.Context, manifest Manifest, workspace, outputFile s
 			result.addFailure("final_text", fmt.Sprintf("final text %q does not contain %q (case-insensitive)", finalText, expected))
 		}
 	}
+	for _, expected := range manifest.Expected.OutputContains {
+		if expected != "" && !strings.Contains(string(rawOutput), expected) {
+			result.addFailure("output_contains", fmt.Sprintf("raw Codex output does not contain %q", expected))
+		}
+	}
 	for _, expected := range manifest.Expected.CodexEvents {
 		if !hasCodexEvent(events, expected) {
 			result.addFailure("codex_event", fmt.Sprintf("missing Codex event %q", expected))

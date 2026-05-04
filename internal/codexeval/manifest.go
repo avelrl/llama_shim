@@ -137,6 +137,8 @@ func (m *Manifest) TimeoutDuration() (time.Duration, error) {
 func (expected Expected) Validate() error {
 	hasChecker := expected.FinalTextEquals != "" ||
 		len(expected.FinalTextContains) > 0 ||
+		len(expected.FinalTextContainsFold) > 0 ||
+		len(expected.OutputContains) > 0 ||
 		len(expected.Files) > 0 ||
 		len(expected.Commands) > 0 ||
 		len(expected.RequestShapes) > 0 ||

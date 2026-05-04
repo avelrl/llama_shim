@@ -11,6 +11,9 @@ prompt: |
 expected:
   final_text_contains:
     - STDIN_OK
+  output_contains:
+    - READY_FOR_STDIN
+    - STDIN_DONE codex-stdin-token
   min_command_executions: 1
   codex_events:
     - item.started:command_execution

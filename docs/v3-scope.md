@@ -194,7 +194,7 @@ edge cases, and Realtime API WebSocket compatibility are deferred to
 
 ### 8. Codex eval harness and auto-regression loop
 
-Status: Phase 6 benchmark-lite implemented. See
+Status: Phase 6 benchmark-lite and automated profile gates implemented. See
 [v3-codex-eval-harness.md](v3-codex-eval-harness.md).
 
 The existing Codex CLI smokes are useful canaries, but manual Codex sessions
@@ -224,6 +224,8 @@ Implemented scope:
   `failure.md`, workspace snapshots, and `git.diff` artifacts
 - `make codex-eval-smoke`, `make codex-eval-core`, and
   `make codex-eval-real-upstream`
+- `make codex-eval-core-profiles`, `make codex-eval-shim-native-profiles`,
+  `make codex-eval-compat`, and `make codex-eval-automated-profiles`
 - `codex-real-upstream` and `codex-real-upstream-expanded` profiles
 - `codex-eval-runner matrix`, `codex-eval-runner compare`, and
   `codex-eval-runner failure-bundle`
@@ -236,8 +238,9 @@ Implemented scope:
   stability checks
 
 Remaining V3 work in this track is ongoing result curation and future imported
-benchmark tasks when they are worth sanitizing. Shim-native Codex
-request-shape/profile coverage is split into
+benchmark tasks when they are worth sanitizing. Manual TUI/app-server features
+stay in their own plan until they have deterministic reductions. Shim-native
+Codex request-shape/profile coverage is split into
 [v3-codex-shim-native-coverage.md](v3-codex-shim-native-coverage.md).
 
 This is a quality and automation track. It does not strengthen any hosted
@@ -245,7 +248,8 @@ OpenAI parity claim by itself.
 
 ### 9. Codex shim-native request-shape and profile coverage
 
-Status: planned follow-up. See
+Status: automated profile coverage implemented; manual feature exploration
+remains separate. See
 [v3-codex-shim-native-coverage.md](v3-codex-shim-native-coverage.md).
 
 This track covers Codex-through-shim behavior that is not benchmark breadth:

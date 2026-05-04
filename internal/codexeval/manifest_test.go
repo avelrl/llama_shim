@@ -150,6 +150,49 @@ func TestRunCheckersFinalTextContainsFold(t *testing.T) {
 	}
 }
 
+func TestRunCheckersOutputContains(t *testing.T) {
+	workspace := t.TempDir()
+	output := filepath.Join(workspace, "codex.jsonl")
+	raw := `{"type":"item.started","item":{"type":"command_execution"}}
+{"type":"item.completed","item":{"type":"command_execution","aggregated_output":"Chunk ID: abc\nProcess running with session ID 7\nOutput:\nREADY_FOR_STDIN\n"}}
+{"type":"item.completed","item":{"type":"command_execution","aggregated_output":"STDIN_DONE codex-stdin-token\n"}}
+{"type":"item.completed","item":{"type":"agent_message","text":"STDIN_OK"}}
+{"type":"turn.completed"}
+`
+	if err := os.WriteFile(output, []byte(raw), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	manifest := Manifest{
+		ID: "write_stdin_pty",
+		Expected: Expected{
+			FinalTextContains: []string{"STDIN_OK"},
+			OutputContains: []string{
+				"Process running with session ID",
+				"STDIN_DONE codex-stdin-token",
+			},
+		},
+	}
+	result, _, err := runCheckers(t.Context(), manifest, workspace, output, nil)
+	if err != nil {
+		t.Fatalf("runCheckers failed: %v", err)
+	}
+	if !result.Passed {
+		t.Fatalf("expected checker pass, got %#v", result.Failures)
+	}
+
+	manifest.Expected.OutputContains = []string{"missing-session-output"}
+	result, _, err = runCheckers(t.Context(), manifest, workspace, output, nil)
+	if err != nil {
+		t.Fatalf("runCheckers failed: %v", err)
+	}
+	if result.Passed {
+		t.Fatalf("expected checker failure")
+	}
+	if got := result.Failures[0].Kind; got != "output_contains" {
+		t.Fatalf("expected output_contains, got %s", got)
+	}
+}
+
 func TestRunCheckersRejectsTooFewCommandExecutions(t *testing.T) {
 	workspace := t.TempDir()
 	output := filepath.Join(workspace, "codex.jsonl")

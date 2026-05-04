@@ -1,11 +1,12 @@
 # V3 Codex Shim-Native Coverage
 
-Last updated: May 1, 2026.
+Last updated: May 4, 2026.
 
 Task id: `v3-codex-shim-native-coverage`
 
-Status: request-shape capture, HTTP/WebSocket profile tasks, and
-`apply_patch` tool-mode request-shape profiles implemented.
+Status: request-shape capture, HTTP/WebSocket profile tasks,
+interactive-session profile coverage, and `apply_patch` tool-mode
+request-shape profiles implemented.
 
 This document indexes Codex-through-shim compatibility gaps that are not just
 benchmark breadth. They are shim-native or profile-specific behaviors that need
@@ -18,13 +19,15 @@ semantics, or Chat-backed Responses behavior in the shim.
 
 ## References Checked
 
-Checked on May 1, 2026:
+Checked on May 1, 2026. Codex configuration and WebSocket continuation
+sections were spot-checked again on May 4, 2026:
 
 - local official-docs index: [openapi/llms.txt](../openapi/llms.txt)
 - OpenAI docs:
   - [Codex configuration reference](https://developers.openai.com/codex/config-reference)
   - [Apply Patch](https://developers.openai.com/api/docs/guides/tools-apply-patch)
   - [WebSocket Mode](https://developers.openai.com/api/docs/guides/websocket-mode)
+  - [Conversation state](https://developers.openai.com/api/docs/guides/conversation-state)
   - [Evaluation best practices](https://developers.openai.com/api/docs/guides/evaluation-best-practices)
   - [Codex app-server API overview](https://developers.openai.com/codex/app-server)
 - local `openai/codex` source checkout at commit
@@ -57,10 +60,12 @@ Relevant source/docs constraints:
 Dedicated task:
 [v3-codex-interactive-command-session-bridge.md](v3-codex-interactive-command-session-bridge.md).
 
-Summary: keep `write_stdin_pty` in `codex-core-interactive` and `codex-compat`
-until `exec_command` reliably preserves live session state, exposes a stable
-model-visible `session_id`, and routes later `write_stdin` calls to the correct
-process through both HTTP Responses and Chat-backed Responses paths.
+Summary: `write_stdin_pty` stays in `codex-core-interactive` and
+`codex-compat`, not the default core gate. Focused shim tests verify that
+`exec_command` exposes a model-visible live session marker and that later
+`write_stdin` can target that session; the dedicated profile verifies observable
+runtime behavior by checking raw Codex output for `READY_FOR_STDIN` and
+`STDIN_DONE codex-stdin-token`.
 
 ### 2. Codex Request-Shape Capture And Profile Checks
 
@@ -175,8 +180,7 @@ for real-upstream coding evals or the native Responses `tools:
 
 ### 4. WebSocket Incremental Continuation Profile
 
-Status: request-shape path implemented; failure-state invalidation remains in
-the broader V3 WebSocket track.
+Status: Codex-specific automated coverage implemented.
 
 Problem:
 
@@ -189,13 +193,17 @@ Implemented coverage:
 - WebSocket-enabled Codex profile uses WebSocket transport, not HTTP fallback;
 - the second turn sends only incremental input plus `previous_response_id`;
 - `store=false` behavior is handled as a connection-local cache path;
+- unexpected WebSocket dial/pump errors are captured as `websocket_error`
+  request-shape diagnostics instead of being silently hidden by the harness.
 
-Remaining coverage:
+Boundary:
 
-- failed continuation invalidates the relevant cached state where applicable.
-
-This profile belongs with V3 WebSocket coverage, but it is tracked here because
-Codex is the caller whose request shape needs to be observed.
+This is the Codex caller/request-shape profile. Lower-level WebSocket API error
+semantics, close-code parity, and hosted cache edge cases are not Codex eval
+tasks; they belong to the WebSocket transport track and direct HTTP/WebSocket
+tests. API compaction is covered by devstack and external Responses
+compatibility smokes. Codex slash-command `/compact` remains a manual TUI
+feature until a deterministic non-TUI reduction exists.
 
 ## Non-Goals
 
@@ -214,13 +222,15 @@ Codex is the caller whose request shape needs to be observed.
 This follow-up is done when:
 
 - `write_stdin_pty` passes in a dedicated interactive profile without relying
-  on model-visible luck; tracked in
+  on final model text alone; tracked in
   [v3-codex-interactive-command-session-bridge.md](v3-codex-interactive-command-session-bridge.md)
 - request-shape artifacts are redacted, bounded, and checked deterministically
   (done);
 - HTTP and WebSocket Codex request-shape profile tasks exist (done);
 - freeform, function, and disabled `apply_patch` request-shape profile checks
   exist (done);
+- API compaction is covered outside Codex eval by devstack/external Responses
+  compatibility smokes, while Codex slash-command `/compact` remains manual;
 - docs and run commands are linked from
   [docs/guides/codex-cli.md](guides/codex-cli.md) and
   [docs/v3-codex-eval-harness.md](v3-codex-eval-harness.md);

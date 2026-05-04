@@ -99,6 +99,7 @@ type Expected struct {
 	FinalTextEquals       string                    `yaml:"final_text_equals" json:"final_text_equals,omitempty"`
 	FinalTextContains     []string                  `yaml:"final_text_contains" json:"final_text_contains,omitempty"`
 	FinalTextContainsFold []string                  `yaml:"final_text_contains_fold" json:"final_text_contains_fold,omitempty"`
+	OutputContains        []string                  `yaml:"output_contains" json:"output_contains,omitempty"`
 	Files                 []FileExpectation         `yaml:"files" json:"files,omitempty"`
 	Commands              []CommandExpectation      `yaml:"commands" json:"commands,omitempty"`
 	RequestShapes         []RequestShapeExpectation `yaml:"request_shapes" json:"request_shapes,omitempty"`

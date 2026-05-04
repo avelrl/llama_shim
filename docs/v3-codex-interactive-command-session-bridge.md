@@ -1,16 +1,16 @@
 # V3 Codex Interactive Command Session Bridge
 
-Last updated: May 1, 2026.
+Last updated: May 4, 2026.
 
 Task id: `v3-codex-interactive-command-session-bridge`
 
-Status: initial shim bridge coverage implemented; dedicated profile passes on
-devstack.
+Status: implemented as a dedicated profile; kept outside default `codex-core`
+because it exercises a long-running interactive PTY session.
 
-This task isolates the `exec_command -> session_id -> write_stdin` problem from
-the broader eval-harness and benchmark-lite work. The failure mode is not that
-Codex lacks interactive command support; it is that the shim's current
-Chat-backed Responses bridge does not yet prove stable live-session state and
+This task isolates the `exec_command -> session_id -> write_stdin` profile from
+the broader eval-harness and benchmark-lite work. The original failure mode was
+not that Codex lacked interactive command support; it was that the shim's
+Chat-backed Responses bridge did not yet prove stable live-session state and
 model-visible session identity across a tool-output follow-up.
 
 ## References Checked
@@ -37,7 +37,9 @@ Relevant constraints:
 ## Problem Statement
 
 `write_stdin_pty` is intentionally outside default `codex-core` and stays in
-`codex-core-interactive` / `codex-compat` until the bridge is proven stable.
+`codex-core-interactive` / `codex-compat`. The bridge is implemented and
+profile-tested, but the task remains a profile gate because it starts a live
+process and is not appropriate for the normal non-interactive core suite.
 
 The compatibility work must verify all of these:
 
@@ -76,10 +78,16 @@ The compatibility work must verify all of these:
   output, or lookup/routing. The May 1, 2026 failure was in the devstack
   fixture: it parsed only JSON `"session_id"` values, while real Codex unified
   exec emits model-visible text `Process running with session ID N`.
+- The manifest checker now verifies raw Codex output for both the waiting
+  process marker (`READY_FOR_STDIN`) and the post-stdin marker
+  (`STDIN_DONE codex-stdin-token`), so success is not inferred from final model
+  text alone. Codex CLI does not expose the live `session_id` in `--json`
+  output; model-visible session identity is covered by focused shim tests and
+  debug log diagnostics.
 - After implementation, run the profile:
 
 ```bash
-CODEX_EVAL_SUITE=codex-core-interactive bash ./scripts/codex-eval-runner.sh
+make codex-eval-core-interactive
 ```
 
 Validation on May 1, 2026:
@@ -88,7 +96,7 @@ Validation on May 1, 2026:
 - `go test ./...`
 - `make lint`
 - `git diff --check`
-- `OPENAI_API_KEY=shim-dev-key CODEX_EVAL_SUITE=codex-core-interactive bash ./scripts/codex-eval-runner.sh`
+- `make codex-eval-core-interactive`
 
 ## Acceptance Criteria
 

@@ -6,12 +6,10 @@ Task id: `v3-codex-eval-harness`
 
 Status: Phase 5 regression import workflow implemented; Phase 3 deterministic
 core suite and profile gates implemented; Phase 6 benchmark-lite implemented
-and validated against the current DeepSeek control-vs-real loops.
-Shim-native Codex request-shape, interactive-session coverage, and manual TUI
-feature exploration remain split into
-[v3-codex-shim-native-coverage.md](v3-codex-shim-native-coverage.md),
-[v3-codex-interactive-command-session-bridge.md](v3-codex-interactive-command-session-bridge.md),
-and
+and validated against the current DeepSeek control-vs-real loops. Shim-native
+Codex request-shape, `apply_patch` tool-mode profiles, and interactive
+`exec_command -> session_id -> write_stdin` coverage are implemented in
+dedicated profiles. Manual TUI feature exploration remains split into
 [v3-codex-interactive-features-manual-plan.md](v3-codex-interactive-features-manual-plan.md).
 
 This task defines a repeatable evaluation and regression loop for running the
@@ -31,7 +29,10 @@ Implemented slice through the current Phase 6 work:
   - `make codex-eval-core`
   - `make codex-eval-core-shell`
   - `make codex-eval-core-websocket`
+  - `make codex-eval-core-interactive`
   - `make codex-eval-core-profiles`
+  - `make codex-eval-compat`
+  - `make codex-eval-automated-profiles`
   - `make codex-eval-bench-lite`
   - `make codex-eval-loop-bench-lite`
   - `make codex-eval-shim-native`
@@ -72,8 +73,16 @@ WebSocket transport tasks with `supports_websockets=true`, and
 `codex-shim-native` / `codex-shim-native-websocket` verify redacted Codex
 request shapes for HTTP and WebSocket transports. The
 `write_stdin_pty` task is kept in `codex-core-interactive` and `codex-compat`
-instead of the default core gate because the current Codex Chat bridge does not
-expose a reliable live process session id in model-visible tool output.
+instead of the default core gate because it is a long-running interactive
+process profile, not a normal non-interactive pre-commit core task. Focused
+shim tests prove model-visible `session_id` preservation; the profile checks
+raw Codex output for `READY_FOR_STDIN` and `STDIN_DONE codex-stdin-token`, so it
+does not rely on final model text alone.
+`make codex-eval-automated-profiles` runs the current automated non-manual
+profile gates in one command. `make codex-eval-compat` is the broader
+compatibility-suite entrypoint; today it intentionally overlaps with the
+interactive profile, and future deterministic reductions from manual findings
+should land there before any promotion discussion.
 
 The `codex-real-upstream` suite tracks the current real-upstream-safe stable
 subset plus the first mixed text-plus-file-change regression task,
@@ -136,8 +145,9 @@ failure recovery, and output formatting.
 
 ## Official References Reviewed
 
-This task was checked on April 29, 2026 and re-checked on May 1, 2026
-against:
+This task was checked on April 29, 2026, re-checked on May 1, 2026, and
+spot-checked again on May 4, 2026 for the Codex config and WebSocket
+continuation sections against:
 
 - local official-docs index: `openapi/llms.txt`
 - OpenAI docs:
@@ -904,60 +914,28 @@ across real providers.
 
 ### `codex-compat`
 
-Purpose: broader compatibility and regression discovery.
+Purpose: broader deterministic compatibility and regression discovery outside
+the default core gate.
 
-Task families:
+Current automated coverage:
 
-- `previous_response_id` continuity over multi-turn Codex sessions
-- `store=false` and same-session continuation where Codex exposes it
-- create-stream and WebSocket variants for the same small tasks
-- model metadata variants:
-  - context-window present
-  - context-window absent
-  - auto-compaction threshold present
-  - truncation policy bytes vs tokens
-  - reasoning summaries enabled vs disabled
-  - verbosity enabled vs disabled
-  - parallel tool calls enabled vs disabled
-  - apply-patch freeform enabled
-  - apply-patch function enabled
-  - apply-patch disabled
-  - image input/detail enabled
-  - WebSocket enabled
-  - WebSocket disabled
-- tool availability variants:
-  - unified exec
-  - `write_stdin` available after a live process
-  - fallback shell
-  - local shell
-  - no shell
-  - request permissions disabled
-  - request permissions enabled with a deterministic denial/approval fixture
-  - request user input unavailable in non-interactive mode
-  - MCP resource tools disabled
-  - deferred tool search disabled
-  - dynamic tools disabled
-  - subagent tools disabled
-  - web search disabled
-  - app/connectors disabled
-  - tool search disabled
-- response formatting variants:
-  - sentinel-only final answer
-  - final answer after file change
-  - final answer after failed command
-  - final answer after large command output
-- transport/retry variants:
-  - HTTP SSE idle timeout
-  - retryable stream interruption
-  - WebSocket connect timeout
-  - WebSocket unsupported/fallback-to-HTTP path
-  - stream closed before `response.completed`
-  - `response.failed` and `response.incomplete` mapping
-- remote compaction variants:
-  - pre-turn auto-compaction
-  - mid-turn compaction after tool output
-  - WebSocket session reset after compaction
-- regression cases imported from manual failures
+- `write_stdin_pty`, shared with `codex-core-interactive`, verifies
+  `exec_command -> session_id -> write_stdin` on a live PTY process and checks
+  raw Codex output for both the pre-stdin and post-stdin markers.
+
+Run command:
+
+```bash
+make codex-eval-compat
+```
+
+Future additions must start as small deterministic reductions from observed
+manual failures or shim-native profile gaps. Candidate families include
+same-session continuity, transport/retry variants, model-metadata variants,
+tool-availability variants, response-formatting variants, and imported manual
+regressions. API-level compaction remains covered by devstack and external
+Responses compatibility smokes; Codex slash-command `/compact` belongs to the
+manual interactive feature plan until it has a deterministic non-TUI reduction.
 
 Target runtime: allowed to be long; not a normal pre-commit gate.
 
@@ -1066,31 +1044,30 @@ actually passed.
 
 ## Implementation Phases
 
-Current status on May 1, 2026:
+Current status on May 4, 2026:
 
 - Phase 0 is complete: the previous smoke scripts remain documented and
   available.
 - Phase 1 is implemented: the runner, manifests, isolated workspaces,
   `CODEX_HOME`, summaries, artifacts, and deterministic checkers exist.
-- Phase 2 is partially implemented: Make targets exist and use the runner, but
-  older smoke scripts have not been deduplicated into shared runner logic.
+- Phase 2 is implemented for the eval harness. Older smoke scripts remain as
+  compatibility canaries instead of being silently rewritten into the runner.
 - Phase 3 is implemented for deterministic core coverage and first
   tool/transport profile gates: `codex-core` has 20 deterministic tasks,
   `codex-core-shell` covers fallback shell mode, and
   `codex-core-websocket` covers WebSocket mode plus a tool-follow-up
-  continuation path. The shim-native request-shape profile is implemented and
+  continuation path. `codex-core-interactive` covers
+  `exec_command -> session_id -> write_stdin` PTY continuation without
+  promoting it into the default core gate. The shim-native request-shape
+  profile is implemented and
   tracked in
   [v3-codex-shim-native-coverage.md](v3-codex-shim-native-coverage.md),
   including HTTP, WebSocket, and `apply_patch` model-metadata tool-mode
-  profiles.
-  `write_stdin_pty` is scaffolded as an interactive
-  compatibility profile task, not a default core task, because the current
-  Chat-backed Codex bridge does not expose a stable session id for a follow-up
-  `write_stdin` call; the fix is tracked separately in
+  profiles. The detailed interactive bridge evidence is tracked in
   [v3-codex-interactive-command-session-bridge.md](v3-codex-interactive-command-session-bridge.md).
-  Remote compaction/reset is kept in the broader
-  `codex-compat` family because it needs a separate low-context or
-  remote-state profile rather than the normal pre-commit core gate.
+  API-level compaction is covered by devstack and external Responses
+  compatibility smokes. Codex slash-command `/compact` remains a manual TUI
+  feature until a deterministic non-TUI reduction exists.
 - Phase 4 daily-loop tooling is implemented: real-upstream runs, manifest
   quarantine, task-id filtering, failed-task rerun, matrix generation, and
   packaged failure review bundles exist.
@@ -1103,16 +1080,10 @@ Current status on May 1, 2026:
   deterministic tasks with manifest provenance metadata and Make targets for
   local and control-vs-real runs.
 
-Remaining work is split into two tracks:
-
-- Interactive command-session bridge:
-  [v3-codex-interactive-command-session-bridge.md](v3-codex-interactive-command-session-bridge.md).
-- Shim-native Codex profile/request-shape follow-up:
-  [v3-codex-shim-native-coverage.md](v3-codex-shim-native-coverage.md).
-
-Next practical milestone for this document: keep benchmark-lite results out of
-the model matrix until a model has a clean or intentionally accepted
-control-vs-real `codex-bench-lite` run.
+The automatable eval-harness work is closed as of this status update. Remaining
+work is intentionally outside the main automated phases: manual TUI feature
+exploration and future MCP/multi-agent/app-server tasks only after they have
+small deterministic reductions.
 
 ### Phase 0: Preserve Current Smoke Behavior
 
@@ -1202,8 +1173,8 @@ Deliverables:
 - WebSocket mode task through the `codex-core-websocket` profile
 - WebSocket tool-follow-up continuation task through the
   `codex-core-websocket` profile
-- remote compaction/reset task moved to `codex-compat`, not the default core
-  gate
+- API compaction covered by devstack/external Responses smokes, with
+  slash-command `/compact` left in the manual TUI plan
 
 Exit criteria:
 
@@ -1217,7 +1188,10 @@ Implemented Phase 3 profile commands:
 make codex-eval-core
 make codex-eval-core-shell
 make codex-eval-core-websocket
+make codex-eval-core-interactive
 make codex-eval-core-profiles
+make codex-eval-compat
+make codex-eval-automated-profiles
 make codex-eval-shim-native
 make codex-eval-shim-native-websocket
 make codex-eval-shim-native-profiles
@@ -1333,7 +1307,8 @@ not block closing the eval-harness phases that are already implemented.
 - `unified_exec=false`
 - local command execution
 - command stdout, stderr, non-zero exit, and timeout
-- long-running command continuation through `write_stdin` (shim-native follow-up)
+- long-running command continuation through `write_stdin`
+  (`codex-core-interactive`)
 - single-file edit
 - multi-file edit
 - patch-style file change
@@ -1401,8 +1376,9 @@ This V3 task is done when:
 - at least one local real-upstream model profile such as Qwen 3.6 is documented
 - at least three prior manual failure modes are permanent regression tasks
 - shim-native request-shape, `write_stdin`, and `apply_patch` profile coverage
-  are either implemented or explicitly tracked in
-  [v3-codex-shim-native-coverage.md](v3-codex-shim-native-coverage.md)
+  are implemented in dedicated profiles and documented in
+  [v3-codex-shim-native-coverage.md](v3-codex-shim-native-coverage.md) and
+  [v3-codex-interactive-command-session-bridge.md](v3-codex-interactive-command-session-bridge.md)
 - `go test ./...` passes
 - `make lint` passes
 - `git diff --check` passes

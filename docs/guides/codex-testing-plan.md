@@ -140,7 +140,7 @@ Important eval knobs:
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `CODEX_EVAL_SUITE` | `codex-smoke` | Task suite: `codex-smoke` for the fast gate, `codex-core` for the current deterministic devstack set, `codex-real-upstream` for real model/provider regression. |
+| `CODEX_EVAL_SUITE` | `codex-smoke` | Task suite: `codex-smoke` for the fast gate, `codex-core` for the current deterministic devstack set, `codex-core-interactive` for `exec_command -> session_id -> write_stdin`, `codex-compat` for broader deterministic compatibility regressions, `codex-real-upstream` for real model/provider regression. |
 | `CODEX_EVAL_OUT` | `.tmp/codex-eval-runs/run-<timestamp>` | Artifact directory containing `summary.json`, `summary.md`, per-task JSONL, diffs, and checker output. |
 | `CODEX_EVAL_ATTEMPTS` | manifest value | Override per-task retry count. |
 | `CODEX_EVAL_REASONING_EFFORT` | `minimal` | Reasoning effort for tiny deterministic tasks. |
@@ -178,6 +178,30 @@ The auto loop prints a terminal bell on completion by default. Set
 `CODEX_EVAL_NOTIFY=off` for silent runs.
 
 The auto loop also reuses identical control-suite runs inside one auto pass.
+
+For the interactive command-session bridge specifically, run the dedicated
+profile rather than the normal core gate:
+
+```bash
+make codex-eval-core-interactive
+```
+
+That profile checks raw Codex output for `READY_FOR_STDIN` and the post-stdin
+`STDIN_DONE codex-stdin-token` marker, not just final assistant text. The live
+`session_id` itself is model-visible inside the tool loop and covered by focused
+shim tests; Codex CLI does not expose it in `--json` output.
+
+For all currently automated non-manual Codex profile gates, run:
+
+```bash
+make codex-eval-automated-profiles
+```
+
+This runs the core tool/transport profiles and shim-native request-shape
+profiles. Manual TUI slash commands, approvals, MCP, multi-agent, apps, and
+plugin workflows remain in
+[`docs/v3-codex-interactive-features-manual-plan.md`](../v3-codex-interactive-features-manual-plan.md)
+until a failure has a small deterministic reduction.
 For the default profiles, `expanded` reuses the `baseline` `codex-core`
 control. Candidate runs are still separate, because baseline, expanded, and
 benchmark-lite intentionally measure different real-upstream task profiles.

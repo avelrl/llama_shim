@@ -792,17 +792,27 @@ profile.
 For Codex-through-shim request-shape coverage, use the shim-native profiles:
 
 ```bash
+make codex-eval-core-interactive
+make codex-eval-core-profiles
+make codex-eval-compat
 make codex-eval-shim-native
 make codex-eval-shim-native-websocket
 make codex-eval-shim-native-profiles
+make codex-eval-automated-profiles
 ```
 
-Tasks in these profiles write a redacted, bounded
-`request-shapes.json` under each attempt directory. Use it to inspect the
-actual Codex HTTP or WebSocket request shape, including headers, body fields,
-tool names, WebSocket warmup `generate:false`, and incremental
+The interactive profile verifies `exec_command -> session_id -> write_stdin`
+with a live PTY and checks raw Codex output for both `READY_FOR_STDIN` and
+post-stdin output. Shim-native request-shape tasks write a redacted, bounded
+`request-shapes.json` under each attempt directory. Use it to inspect the actual
+Codex HTTP or WebSocket request shape, including headers, body fields, tool
+names, WebSocket warmup `generate:false`, and incremental
 `previous_response_id`. This is Codex compatibility evidence, not a standalone
 hosted OpenAI parity claim.
+`make codex-eval-automated-profiles` runs the current automated non-manual
+profile gates. `make codex-eval-compat` is the broader deterministic
+compatibility-suite entrypoint for future minimized regressions; today it
+overlaps with the interactive PTY profile.
 
 ## Boundaries
 
