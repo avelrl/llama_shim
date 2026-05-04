@@ -23,7 +23,7 @@ expected:
     - RECOVERED
   files:
     - path: status.txt
-      equals: |
+      equals_trim_space: |
         status=ready
   commands:
     - name: verify
