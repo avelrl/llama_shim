@@ -237,36 +237,45 @@ for profile in "${profiles[@]}"; do
   profile_dirs+=("${profile_dir}")
 
   echo "==> codex eval auto: ${profile} (${control_suite} -> ${candidate_suite})"
-  control_reuse=()
-  control_reused=0
+  control_reuse_path=""
   case "${control_suite}" in
     codex-core)
       if [[ -n "${codex_core_control_run}" ]]; then
-        control_reuse=(CODEX_EVAL_CONTROL_RUN="${codex_core_control_run}")
-        control_reused=1
+        control_reuse_path="${codex_core_control_run}"
       fi
       ;;
     codex-bench-lite)
       if [[ -n "${codex_bench_lite_control_run}" ]]; then
-        control_reuse=(CODEX_EVAL_CONTROL_RUN="${codex_bench_lite_control_run}")
-        control_reused=1
+        control_reuse_path="${codex_bench_lite_control_run}"
       fi
       ;;
   esac
   log_start="$(shim_log_size "${shim_log}")"
   set +e
-  (
-    CODEX_EVAL_LOOP_OUT="${profile_dir}" \
-    CODEX_EVAL_CONTROL_SUITE="${control_suite}" \
-    CODEX_EVAL_CANDIDATE_SUITE="${candidate_suite}" \
-    CODEX_EVAL_LOOP_STRICT_REAL_UPSTREAM=false \
-    env "${control_reuse[@]}" bash ./scripts/codex-eval-loop.sh
-  ) 2>&1 | tee "${profile_dir}/loop.log"
-  status=${PIPESTATUS[0]}
+  if [[ -n "${control_reuse_path}" ]]; then
+    (
+      CODEX_EVAL_LOOP_OUT="${profile_dir}" \
+      CODEX_EVAL_CONTROL_SUITE="${control_suite}" \
+      CODEX_EVAL_CANDIDATE_SUITE="${candidate_suite}" \
+      CODEX_EVAL_LOOP_STRICT_REAL_UPSTREAM=false \
+      CODEX_EVAL_CONTROL_RUN="${control_reuse_path}" \
+      bash ./scripts/codex-eval-loop.sh
+    ) 2>&1 | tee "${profile_dir}/loop.log"
+    status=${PIPESTATUS[0]}
+  else
+    (
+      CODEX_EVAL_LOOP_OUT="${profile_dir}" \
+      CODEX_EVAL_CONTROL_SUITE="${control_suite}" \
+      CODEX_EVAL_CANDIDATE_SUITE="${candidate_suite}" \
+      CODEX_EVAL_LOOP_STRICT_REAL_UPSTREAM=false \
+      bash ./scripts/codex-eval-loop.sh
+    ) 2>&1 | tee "${profile_dir}/loop.log"
+    status=${PIPESTATUS[0]}
+  fi
   set -e
   printf '%s\n' "${status}" > "${profile_dir}/runner-exit-code.txt"
   capture_shim_log "${shim_log}" "${log_start}" "${profile_dir}"
-  if [[ ${status} -eq 0 && ${control_reused} -eq 0 && -f "${profile_dir}/control/summary.json" ]]; then
+  if [[ ${status} -eq 0 && -z "${control_reuse_path}" && -f "${profile_dir}/control/summary.json" ]]; then
     case "${control_suite}" in
       codex-core)
         codex_core_control_run="${profile_dir}/control"
