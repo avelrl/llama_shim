@@ -26,6 +26,11 @@ Usage:
     --out imported_basic_patch_regression \
     .tmp/codex-eval-runs/<run-id>
 
+  ./scripts/codex-eval-runner.sh auto-report \
+    --out .tmp/codex-eval-auto/<auto-id>/summary.md \
+    --json-out .tmp/codex-eval-auto/<auto-id>/summary.json \
+    .tmp/codex-eval-auto/<auto-id>/profiles/*
+
 Common real-upstream usage:
   SHIM_BASE_URL=http://127.0.0.1:8080 \
   CODEX_MODEL=Qwen3.6-35B-A3B \
@@ -61,6 +66,9 @@ Optional:
   CODEX_EVAL_IMPORT_TASK=basic_patch
   CODEX_EVAL_IMPORT_OUT=imported_basic_patch_regression
   CODEX_EVAL_IMPORT_ATTEMPT=1
+  CODEX_EVAL_AUTO_REPORT_OUT=.tmp/codex-eval-auto/<auto-id>/summary.md
+  CODEX_EVAL_AUTO_REPORT_JSON_OUT=.tmp/codex-eval-auto/<auto-id>/summary.json
+  CODEX_EVAL_AUTO_STRICT=baseline|all|none
 
 Profile gates:
   CODEX_EVAL_SUITE=codex-core-shell CODEX_EVAL_UNIFIED_EXEC=false \

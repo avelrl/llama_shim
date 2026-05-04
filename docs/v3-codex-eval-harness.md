@@ -1,13 +1,14 @@
 # V3 Codex Eval Harness
 
-Last updated: May 1, 2026.
+Last updated: May 4, 2026.
 
 Task id: `v3-codex-eval-harness`
 
 Status: Phase 5 regression import workflow implemented; Phase 3 deterministic
-core suite and profile gates implemented; Phase 6 benchmark-lite implemented.
+core suite and profile gates implemented; Phase 6 benchmark-lite implemented
+and validated against the current DeepSeek control-vs-real loops.
 Shim-native Codex request-shape, interactive-session coverage, and manual TUI
-feature exploration are split into
+feature exploration remain split into
 [v3-codex-shim-native-coverage.md](v3-codex-shim-native-coverage.md),
 [v3-codex-interactive-command-session-bridge.md](v3-codex-interactive-command-session-bridge.md),
 and
@@ -35,8 +36,17 @@ Implemented slice through the current Phase 6 work:
   - `make codex-eval-loop-bench-lite`
   - `make codex-eval-shim-native`
   - `make codex-eval-shim-native-websocket`
+  - `make codex-eval-shim-native-apply-patch-freeform`
+  - `make codex-eval-shim-native-apply-patch-function`
+  - `make codex-eval-shim-native-apply-patch-disabled`
+  - `make codex-eval-shim-native-apply-patch-profiles`
   - `make codex-eval-shim-native-profiles`
   - `make codex-eval-real-upstream`
+  - `make codex-eval-real-upstream-expanded`
+  - `make codex-eval-loop`
+  - `make codex-eval-auto`
+  - `make codex-eval-prune`
+  - `make codex-eval-clean`
 - isolated task workspace and `CODEX_HOME` per attempt
 - generated Codex custom-provider config
 - deterministic file, command, Codex event, request-shape, forbidden-event,
@@ -76,6 +86,22 @@ tasks (`command_pipeline`, `env_var_command`, `json_config_edit`, `js_bugfix`,
 high-noise or deliberately adversarial tasks such as `command_timeout`,
 `no_delete`, and `patch_after_context` out of the expanded profile until a real
 provider proves them stable enough to be useful.
+
+Current DeepSeek V4 Pro evidence from May 4, 2026:
+
+- `deepseek-v4-pro_baseline_20260504T063358Z`: `codex-core` control passed
+  20/20 and `codex-real-upstream` candidate passed 11/11 with no retries.
+- `deepseek-v4-pro_codex-real-upstream-expanded_20260504T065057Z`:
+  `codex-core` control passed 20/20 and expanded candidate passed 18/18; two
+  candidate tasks were retry-dependent.
+- `deepseek-v4-pro_codex-bench-lite_20260504T081412Z`: `codex-bench-lite`
+  control and candidate both passed 20/20; the candidate had one
+  retry-dependent task, `patch_after_context`, caused by model formatting
+  whitespace on the first attempt.
+
+These are scratch artifact ids under `.tmp/codex-eval-loops/`, not committed
+fixtures. They are recorded here only as the latest validation evidence for the
+harness and should be regenerated when comparing future shim or model changes.
 
 This is a V3 quality and automation track. It does not change the frozen V2
 compatibility contract and must not strengthen any hosted OpenAI parity claim
@@ -409,11 +435,17 @@ Environment and flags should cover:
 - `CODEX_EVAL_KEEP_WORKSPACES`
 - `CODEX_EVAL_LOOP_OUT`
 - `CODEX_EVAL_LOOP_STRICT_REAL_UPSTREAM`
+- `CODEX_EVAL_CONTROL_RUN`
 - `CODEX_EVAL_MODELS`
 - `CODEX_EVAL_CONTROL_SHIM_BASE_URL`
 - `CODEX_EVAL_CONTROL_MODEL`
 - `CODEX_EVAL_CONTROL_SUITE`
 - `CODEX_EVAL_CANDIDATE_SUITE`
+- `CODEX_EVAL_AUTO_OUT`
+- `CODEX_EVAL_AUTO_PROFILES`
+- `CODEX_EVAL_AUTO_STRICT`
+- `CODEX_EVAL_NOTIFY`
+- `CODEX_EVAL_SHIM_LOG`
 
 Default to serial execution for the first version. Codex tasks mutate
 workspaces, produce logs, and can stress one upstream model; parallelism should
@@ -523,9 +555,76 @@ suite scope such as `control`, `real-stable`, or `real-expanded`, so a stable
 and a `codex-real-upstream`-only mixed text/tool task should not make an
 otherwise green candidate look like a tool or transport regression.
 
-For the normal local automation loop, use the wrapper. It first runs the
-deterministic control, then each real-upstream model, then generates matrix,
-compare, JSON summary, and failure-bundle artifacts:
+For a full local model qualification pass, use the auto wrapper. It runs the
+normal baseline, expanded diagnostic, and benchmark-lite profile in one command,
+captures a shim log slice for each profile, then writes one top-level
+`summary.md` and `summary.json`:
+
+```bash
+SHIM_BASE_URL=http://127.0.0.1:8080 \
+CODEX_PROVIDER=gateway-shim \
+CODEX_API_KEY_ENV=GW_API_KEY \
+GW_API_KEY=sk-... \
+CODEX_EVAL_MODELS="deepseek-v4-pro" \
+CODEX_EVAL_ATTEMPTS=2 \
+make codex-eval-auto
+```
+
+By default, `CODEX_EVAL_AUTO_PROFILES` is
+`baseline,expanded,bench-lite`:
+
+- `baseline`: `codex-core` control vs `codex-real-upstream` candidate;
+- `expanded`: `codex-core` control vs `codex-real-upstream-expanded`
+  candidate;
+- `bench-lite`: `codex-bench-lite` control vs `codex-bench-lite` candidate.
+
+The default exit policy is `CODEX_EVAL_AUTO_STRICT=baseline`: the command exits
+non-zero when the baseline profile fails, while expanded and benchmark-lite
+failures are still reported as diagnostics. Set `CODEX_EVAL_AUTO_STRICT=all`
+when every profile must be green for a zero exit code, or `none` when collecting
+diagnostics should never fail the command.
+
+At completion the wrapper sends a small local notification. The default is
+`CODEX_EVAL_NOTIFY=bell`, which prints a terminal bell character. Use
+`CODEX_EVAL_NOTIFY=macos` to also attempt a best-effort macOS notification via
+`osascript`, or `CODEX_EVAL_NOTIFY=off` to disable notifications.
+
+Auto artifacts live under `.tmp/codex-eval-auto/<auto-id>/`:
+
+```text
+.tmp/codex-eval-auto/<auto-id>/
+  summary.md
+  summary.json
+  profiles/
+    baseline/
+      compare.md
+      matrix.md
+      summary.json
+      failure-bundle.md
+      shim.log.slice
+      shim-log-diagnostics.md
+      loop.log
+    expanded/
+    bench-lite/
+```
+
+Use `summary.md` first. It shows profile pass counts, retry-dependent tasks,
+failed tasks, coverage differences, and links to each profile's compare report
+and shim-log diagnostics. The generated report is mechanical; copy only the
+interpreted facts into
+`docs/engineering/codex-upstream-model-matrix.md`.
+
+The auto wrapper reuses a previously completed control run when multiple
+profiles use the same control suite. In the default profile set this means the
+`expanded` profile reuses the `baseline` profile's `codex-core` control instead
+of running the same 20 deterministic control tasks again. Candidate runs are not
+deduplicated, because they intentionally test different real-upstream profiles
+and retry behavior.
+
+For a lower-level control-vs-real loop over one suite, use `make
+codex-eval-loop`. It first runs the deterministic control, then each
+real-upstream model, then generates matrix, compare, JSON summary, and
+failure-bundle artifacts:
 
 ```bash
 SHIM_BASE_URL=http://127.0.0.1:8080 \
@@ -536,6 +635,9 @@ CODEX_EVAL_MODELS="deepseek-v4-pro,kimi-k2,Qwen3.6-35B-A3B" \
 CODEX_EVAL_ATTEMPTS=2 \
 make codex-eval-loop
 ```
+
+To reuse an existing control run in a focused lower-level loop, set
+`CODEX_EVAL_CONTROL_RUN` to a run directory containing `summary.json`.
 
 For a larger real-upstream diagnostic pass, switch only the candidate suite:
 

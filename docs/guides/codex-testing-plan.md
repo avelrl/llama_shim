@@ -153,27 +153,38 @@ Use `make codex-eval-real-upstream` when the result needs durable artifacts,
 failure buckets, and a workspace diff that can become a permanent regression
 task.
 
-For repeated model checks, use the automated control-vs-real loop instead of
-running each model by hand. The loop runs a deterministic `codex-core` control
-against the devstack fixture, then runs `codex-real-upstream` for each model in
-`CODEX_EVAL_MODELS`, and finally writes `matrix.md`, `compare.md`,
-`summary.json`, and `failure-bundle.md` under one loop directory:
+For repeated model checks, use the full auto loop instead of running each suite
+by hand. The auto loop runs the stable baseline, expanded diagnostic, and
+benchmark-lite profiles, captures a per-profile shim-log slice, and writes one
+top-level `summary.md` / `summary.json`:
 
 ```bash
 SHIM_BASE_URL=http://127.0.0.1:8080 \
 CODEX_PROVIDER=gateway-shim \
 CODEX_API_KEY_ENV=GW_API_KEY \
 GW_API_KEY="$GW_API_KEY" \
-CODEX_EVAL_MODELS="deepseek-v4-pro,kimi-k2,Qwen3.6-35B-A3B" \
+CODEX_EVAL_MODELS="deepseek-v4-pro" \
 CODEX_EVAL_ATTEMPTS=2 \
-make codex-eval-loop
+make codex-eval-auto
 ```
 
-The generated `compare.md` is the first file to read. It separates
-`control_failed` issues from real-upstream transport, tool-contract,
-model-behavior, and retry-dependent failures. Human-written model matrix
-updates should copy interpretation from that report, not recalculate counts by
-hand.
+The generated `.tmp/codex-eval-auto/<auto-id>/summary.md` is the first file to
+read. It links to each profile's `compare.md`, shim-log diagnostics, matrix, and
+failure bundle. Human-written model matrix updates should copy interpretation
+from those reports, not recalculate counts by hand.
+
+The auto loop prints a terminal bell on completion by default. Set
+`CODEX_EVAL_NOTIFY=macos` for a best-effort macOS notification, or
+`CODEX_EVAL_NOTIFY=off` for silent runs.
+
+The auto loop also reuses identical control-suite runs inside one auto pass.
+For the default profiles, `expanded` reuses the `baseline` `codex-core`
+control. Candidate runs are still separate, because baseline, expanded, and
+benchmark-lite intentionally measure different real-upstream task profiles.
+
+Use the lower-level `make codex-eval-loop` only when you intentionally want one
+control-vs-real suite, for example a quick baseline-only check or a focused
+expanded rerun.
 
 When a failed task should become a permanent regression, import it into a task
 skeleton instead of copying `.tmp` artifacts by hand:

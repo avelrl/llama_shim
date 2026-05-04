@@ -15,6 +15,7 @@ Common optional knobs:
   CODEX_EVAL_LOOP_OUT=.tmp/codex-eval-loops/<loop-id>
   # Default single-model baseline loops use <model>_baseline_<timestamp>.
   CODEX_EVAL_LOOP_STRICT_REAL_UPSTREAM=false
+  CODEX_EVAL_CONTROL_RUN=.tmp/codex-eval-loops/<loop-id>/control
   CODEX_EVAL_CONTROL_SHIM_BASE_URL=http://127.0.0.1:18080
   CODEX_EVAL_CONTROL_MODEL=devstack-model
   CODEX_EVAL_CONTROL_SUITE=codex-core
@@ -66,7 +67,12 @@ else
   loop_out=".tmp/codex-eval-loops/loop-${timestamp}"
 fi
 
-control_dir="${loop_out}/control"
+control_run="${CODEX_EVAL_CONTROL_RUN:-}"
+if [[ -n "${control_run}" ]]; then
+  control_dir="${control_run}"
+else
+  control_dir="${loop_out}/control"
+fi
 matrix_out="${loop_out}/matrix.md"
 compare_out="${loop_out}/compare.md"
 summary_out="${loop_out}/summary.json"
@@ -114,8 +120,16 @@ run_eval() {
     bash ./scripts/codex-eval-runner.sh
 }
 
-echo "==> codex eval loop: control ${control_model} (${control_suite})"
-run_eval "${control_dir}" "${control_suite}" "${control_model}" "${control_provider}" "${control_base_url}" "${control_api_key_env}" "${control_api_key}"
+if [[ -n "${control_run}" ]]; then
+  if [[ ! -f "${control_dir}/summary.json" ]]; then
+    echo "codex eval loop failed: CODEX_EVAL_CONTROL_RUN has no summary.json: ${control_dir}" >&2
+    exit 2
+  fi
+  echo "==> codex eval loop: reuse control ${control_dir}"
+else
+  echo "==> codex eval loop: control ${control_model} (${control_suite})"
+  run_eval "${control_dir}" "${control_suite}" "${control_model}" "${control_provider}" "${control_base_url}" "${control_api_key_env}" "${control_api_key}"
+fi
 
 candidate_dirs=()
 candidate_failed=0

@@ -768,6 +768,27 @@ real-upstream comparison. The `codex-bench-lite` suite is repo-owned and
 deterministic; it is not a default CI gate and does not import third-party
 benchmark repositories.
 
+For a complete model qualification pass, prefer the auto wrapper:
+
+```bash
+SHIM_BASE_URL=http://127.0.0.1:8080 \
+CODEX_PROVIDER=gateway-shim \
+CODEX_API_KEY_ENV=GW_API_KEY \
+GW_API_KEY="$GW_API_KEY" \
+CODEX_EVAL_MODELS="deepseek-v4-pro" \
+CODEX_EVAL_ATTEMPTS=2 \
+make codex-eval-auto
+```
+
+It runs the baseline, expanded, and benchmark-lite profiles, captures per-profile
+shim-log slices, and writes `.tmp/codex-eval-auto/<auto-id>/summary.md`. The
+single-suite targets remain useful for focused reruns, but the auto wrapper is
+the preferred path before updating the model matrix. Set
+`CODEX_EVAL_NOTIFY=off` to silence the default terminal bell, or
+`CODEX_EVAL_NOTIFY=macos` for a best-effort macOS notification. Within one auto
+pass, identical control-suite runs are reused; candidate runs remain separate by
+profile.
+
 For Codex-through-shim request-shape coverage, use the shim-native profiles:
 
 ```bash

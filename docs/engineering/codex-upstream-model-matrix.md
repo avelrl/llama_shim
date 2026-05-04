@@ -1,6 +1,6 @@
 # Codex Upstream Model Matrix
 
-Last updated: May 1, 2026.
+Last updated: May 4, 2026.
 
 Status: practical Codex-through-shim model notes. This is not a general model
 benchmark and not an OpenAI API parity claim. Scores below reflect only the
@@ -85,20 +85,24 @@ Use the eval runner to generate the mechanical table from local run artifacts:
 make codex-eval-matrix
 ```
 
-For a fresh control-vs-real pass across several models, use the loop wrapper:
+For a fresh full pass, use the auto wrapper. It runs baseline, expanded, and
+benchmark-lite profiles, captures per-profile shim-log slices, and writes a
+single top-level report:
 
 ```bash
 SHIM_BASE_URL=http://127.0.0.1:8080 \
 CODEX_PROVIDER=gateway-shim \
 CODEX_API_KEY_ENV=GW_API_KEY \
-CODEX_EVAL_MODELS="deepseek-v4-pro,kimi-k2,Qwen3.6-35B-A3B" \
-make codex-eval-loop
+CODEX_EVAL_MODELS="deepseek-v4-pro" \
+make codex-eval-auto
 ```
 
-The loop writes generated artifacts under `.tmp/codex-eval-loops/<loop-id>/`.
-Use `compare.md` to separate control failures, real-upstream transport
-failures, tool-contract failures, model-behavior failures, and
-retry-dependent passes before updating this matrix by hand.
+The auto wrapper writes generated artifacts under
+`.tmp/codex-eval-auto/<auto-id>/`. Use `summary.md` first, then the linked
+profile `compare.md` files to separate control failures, real-upstream
+transport failures, tool-contract failures, model-behavior failures, and
+retry-dependent passes before updating this matrix by hand. Use the lower-level
+`make codex-eval-loop` target only for a focused single-suite rerun.
 
 The generated table is intentionally not the source of interpretation. It
 copies facts from `summary.json`: date, run id, model, suite, pass count,
@@ -113,7 +117,7 @@ Latest successful per-model baseline set:
 | Model | Baseline id | Result | Retries | Interpretation |
 | --- | --- | ---: | ---: | --- |
 | MiMo v2.5 Pro | `run-20260429T225025Z` | 8/8 | 0 | Strict-clean chat-transport baseline. |
-| DeepSeek V4 Pro | `deepseek-v4-pro_baseline_20260501T200951Z` | 11/11 | 0 | Current strict-clean control-vs-real baseline: DeepSeek candidate 11/11, devstack control 20/20, no shim log errors in the checked run window. |
+| DeepSeek V4 Pro | `deepseek-v4-pro_baseline_20260504T063358Z` | 11/11 | 0 | Current strict-clean control-vs-real baseline: DeepSeek candidate 11/11, devstack control 20/20, no shim log errors in the checked run window. Expanded and bench-lite evidence below stays separate from the stable baseline. |
 | Qwen3.6-35B-A3B | `run-20260430T182633Z` | 8/8 | 3 | Green but retry-dependent; keep using for discipline regressions. |
 | Kimi K2.6 | `run-20260430T190648Z` | 8/8 | 0 | Strict-clean after bounded final-text repair; still a tuned-provider path. |
 
@@ -129,7 +133,10 @@ Latest successful per-model baseline set:
 | 2026-04-29 | MiMo v2.5 Pro | `codex-real-upstream` | 2 | 7/7 tasks passed | none | Former MiMo baseline `run-20260429T202049Z` after XML-style raw tool-call marker repair. Earlier run `run-20260429T195801Z` leaked `<tool_call>...` text in `multi_file`; the post-tool raw-markup detector now catches and repairs that class. This run still needed retry for `multi_file`, so it is superseded by the strict-clean 8-task `run-20260429T225025Z` baseline. |
 | 2026-04-29 | MiMo v2.5 Pro | `codex-real-upstream` | 2 | 8/8 tasks passed | none | Current MiMo baseline `run-20260429T225025Z`. The generated matrix reports 0 retries and `strict-clean`. This is the current chat-transport Codex eval baseline for MiMo, while still not claiming native upstream Responses parity. |
 | 2026-04-30 | DeepSeek V4 Pro | `codex-real-upstream` | 2 | 8/8 tasks passed | none | Current DeepSeek baseline `run-20260430T132430Z`. The generated matrix reports 0 retries and `strict-clean`, superseding the previous 7-task rows after the suite expansion. |
-| 2026-05-01 | DeepSeek V4 Pro | `codex-real-upstream` + `codex-core` control | 2 | 11/11 candidate tasks passed, 20/20 control tasks passed | none | Current DeepSeek baseline `deepseek-v4-pro_baseline_20260501T200951Z`, promoted from the local loop generated at `20260501T200951Z`. The generated loop matrix reports 0 retries and `strict-clean` for both the devstack control and DeepSeek candidate. The shim log spot-check for the run window found no structured `ERROR`/`WARN`, no `4xx`/`5xx`, and all `/v1/responses` request entries completed with HTTP 200. This row intentionally records the baseline suite only; keep `codex-real-upstream-expanded` runs separate until they are stable enough to become a baseline. |
+| 2026-05-01 | DeepSeek V4 Pro | `codex-real-upstream` + `codex-core` control | 2 | 11/11 candidate tasks passed, 20/20 control tasks passed | none | Former DeepSeek baseline `deepseek-v4-pro_baseline_20260501T200951Z`. The generated loop matrix reported 0 retries and `strict-clean` for both the devstack control and DeepSeek candidate. Superseded by the May 4 baseline after the raw-markup detector and checker refinements. |
+| 2026-05-04 | DeepSeek V4 Pro | `codex-real-upstream` + `codex-core` control | 2 | 11/11 candidate tasks passed, 20/20 control tasks passed | none | Current DeepSeek baseline `deepseek-v4-pro_baseline_20260504T063358Z`. The generated loop matrix reports 0 retries and `strict-clean` for both the devstack control and DeepSeek candidate. The shim log spot-check for the run window found no structured `ERROR`/`WARN`, no `4xx`/`5xx`, no raw-tool repair, and all relevant `/v1/responses` request entries completed with HTTP 200. |
+| 2026-05-04 | DeepSeek V4 Pro | `codex-real-upstream-expanded` + `codex-core` control | 2 | 18/18 candidate tasks passed, 20/20 control tasks passed | none | Expanded diagnostic run `deepseek-v4-pro_codex-real-upstream-expanded_20260504T065057Z`. It was green but not strict-clean: `bugfix_mixed` and `command_recovery` were retry-dependent. The shim log spot-check found no transport or request-level errors. Keep this separate from the stable baseline because expanded coverage intentionally includes more model-discipline-sensitive tasks. |
+| 2026-05-04 | DeepSeek V4 Pro | `codex-bench-lite` + `codex-bench-lite` control | 2 | 20/20 candidate tasks passed, 20/20 control tasks passed | none | Benchmark-lite loop `deepseek-v4-pro_codex-bench-lite_20260504T081412Z`. It was green with one retry-dependent task: `patch_after_context` failed the first checker because the model inserted leading spaces into config-like lines, then passed on retry. The shim log spot-check found no `WARN`/`ERROR`, `502`, failed stream event, raw-tool repair, or upstream transport issue. |
 | 2026-04-30 | Qwen3.6-35B-A3B | `codex-real-upstream` | 2 | 6/8 tasks passed | `checker_diff`: 1, `timeout`: 1 | Earlier Qwen eval run `run-20260430T133543Z` after the eight-task suite expansion. `boot`, `read_file`, `basic_patch`, `bugfix_go`, `command_recovery`, and `multi_file` passed. `bugfix_mixed` failed by emitting Qwen template/function-output text instead of completing the required final marker, and `plan_doc` first emitted pseudo function-output text then timed out with no events. The shim log also showed one recovered invalid `apply_patch` 502 during `bugfix_go`; it did not fail the task. After this run, raw-markup detection was extended for Qwen `<|mask_start|>`, `<|mask_end|>`, and `<function_call_output>` forms, so rerun before treating this as the stable Qwen baseline. |
 | 2026-04-30 | Qwen3.6-35B-A3B | `codex-real-upstream` | 2 | 6/8 tasks passed | `checker_diff`: 2 | Follow-up Qwen run `run-20260430T140247Z`. The previous timeout disappeared and `command_recovery` passed cleanly, but `bugfix_mixed` still missed the required final marker after doing partial work, and `plan_doc` printed pseudo patch markup (`<apply_patch><command>...`) instead of executing a tool call. After this run, raw-markup detection was extended again for `<prelude>`, `<apply_patch>`, and `<command>` forms. This remains a Qwen tool-discipline issue rather than a shim transport failure. |
 | 2026-04-30 | Qwen3.6-35B-A3B | `codex-real-upstream` | 2 | 7/8 tasks passed | `upstream_http`: 1 | Follow-up Qwen run `run-20260430T142106Z`. `boot`, `basic_patch`, `bugfix_go`, `command_recovery`, `multi_file`, and `plan_doc` passed on the first attempt; `read_file` passed on retry after first-attempt context leakage instead of the required final marker. `bugfix_mixed` first emitted raw `<command>` markup, which the harness now classifies correctly, then failed with a shim-local constrained `apply_patch` 502 caused by an otherwise valid patch hunk whose unchanged `}` context line missed the required leading space. After this run, apply_patch input repair was extended for that formal grammar case. |
@@ -171,10 +178,12 @@ keep the run id in the notes and interpret only like-for-like suites.
 ## Interpretation
 
 DeepSeek V4 Pro is the strongest current API compatibility gate. It passed the
-strict external tester profile after the Chat compatibility fixes and the
-current control-vs-real Codex baseline without retries: 11/11 real-upstream
-candidate tasks and 20/20 devstack control tasks. Use it when the question is
-whether the shim's broad OpenAI-compatible surface still works.
+strict external tester profile after the Chat compatibility fixes, the current
+control-vs-real Codex baseline without retries, the expanded 18-task
+diagnostic profile, and the 20-task benchmark-lite loop. The expanded and
+benchmark-lite runs still showed model retry-dependence on a small number of
+formatting/discipline-sensitive tasks, so use the 11-task baseline as the
+strict-clean gate and the larger suites as stability diagnostics.
 
 MiMo v2.5 Pro is now a green API-surface and Codex-eval candidate for chat-only
 gateways when `responses.upstream_transport: chat_completions` is enabled. The

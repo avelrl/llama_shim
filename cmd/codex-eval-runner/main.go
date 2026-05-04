@@ -30,6 +30,9 @@ func main() {
 		case "import-failure":
 			runImportFailure(os.Args[2:])
 			return
+		case "auto-report":
+			runAutoReport(os.Args[2:])
+			return
 		}
 	}
 
@@ -219,6 +222,52 @@ func runImportFailure(args []string) {
 		os.Exit(1)
 	}
 	fmt.Printf("codex eval imported failure: %s\n", result.TaskDir)
+}
+
+func runAutoReport(args []string) {
+	flags := flag.NewFlagSet("auto-report", flag.ExitOnError)
+	out := flags.String("out", envString("CODEX_EVAL_AUTO_REPORT_OUT", ""), "write markdown auto report to this file instead of stdout")
+	jsonOut := flags.String("json-out", envString("CODEX_EVAL_AUTO_REPORT_JSON_OUT", ""), "write machine-readable auto report JSON to this file")
+	strict := flags.String("strict", envString("CODEX_EVAL_AUTO_STRICT", "baseline"), "exit non-zero policy: none, baseline, or all")
+	if err := flags.Parse(args); err != nil {
+		fmt.Fprintf(os.Stderr, "codex eval auto report failed: %v\n", err)
+		os.Exit(2)
+	}
+	if flags.NArg() == 0 {
+		fmt.Fprintf(os.Stderr, "codex eval auto report failed: at least one loop directory or compare summary path is required\n")
+		os.Exit(2)
+	}
+	report, err := codexeval.BuildAutoReport(flags.Args())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "codex eval auto report failed: %v\n", err)
+		os.Exit(1)
+	}
+	markdown := codexeval.RenderAutoReportMarkdown(report)
+	if strings.TrimSpace(*out) == "" {
+		fmt.Print(markdown)
+	} else {
+		if err := writeTextFile(*out, markdown); err != nil {
+			fmt.Fprintf(os.Stderr, "codex eval auto report failed: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("codex eval auto report: %s\n", *out)
+	}
+	if strings.TrimSpace(*jsonOut) != "" {
+		raw, err := json.MarshalIndent(report, "", "  ")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "codex eval auto report failed: %v\n", err)
+			os.Exit(1)
+		}
+		raw = append(raw, '\n')
+		if err := writeTextFile(*jsonOut, string(raw)); err != nil {
+			fmt.Fprintf(os.Stderr, "codex eval auto report failed: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("codex eval auto report summary: %s\n", *jsonOut)
+	}
+	if codexeval.AutoReportShouldFail(report, *strict) {
+		os.Exit(1)
+	}
 }
 
 func writeTextFile(path, value string) error {
