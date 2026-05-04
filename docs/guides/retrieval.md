@@ -85,8 +85,15 @@ curl http://127.0.0.1:8080/v1/responses \
   only supported backend is `sqlite`; the key is explicit so future Postgres or
   pgvector work can be added without changing the OpenAI-shaped routes.
 - Lexical search works in the default local setup.
+- `retrieval.index.backend=sqlite_fts5` enables an indexed SQLite FTS5 lexical
+  backend while keeping the same local vector-store search response shape. The
+  first search can lazily repair missing FTS5 rows for an existing vector
+  store.
 - Semantic, hybrid, and local rerank subsets become available when
   `retrieval.index.backend=sqlite_vec` and a retrieval embedder are configured.
+- `/debug/capabilities.runtime.retrieval` reports the active storage backend,
+  retrieval index backend, embedder backend, semantic/hybrid/rerank support,
+  and whether the active local index can lazily repair stale chunks.
 - Canonical ranking values are `auto` and `default-2024-08-21`; shim-local
   `none` disables the local rerank stage.
 - `include=["file_search_call.results"]` returns the practical local result

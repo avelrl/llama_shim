@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"llama_shim/internal/domain"
+	"llama_shim/internal/retrieval"
 )
 
 func (s *Store) SaveFile(ctx context.Context, file domain.StoredFile) error {
@@ -152,7 +153,7 @@ func (s *Store) DeleteFile(ctx context.Context, id string) error {
 		return ErrNotFound
 	}
 	for vectorStoreID, chunkIDs := range affectedStores {
-		if err := s.retrieval.DeleteVectorStoreFile(ctx, tx, deleteVectorStoreFileParams{
+		if err := s.retrieval.DeleteVectorStoreFile(ctx, tx, retrieval.DeleteFileParams{
 			VectorStoreID:   vectorStoreID,
 			FileID:          id,
 			CreatedAt:       domain.NowUTC().Unix(),
@@ -400,7 +401,7 @@ func (s *Store) SaveVectorStoreFile(ctx context.Context, file domain.StoredVecto
 		return fmt.Errorf("touch vector store activity: %w", err)
 	}
 
-	if err := s.retrieval.IndexVectorStoreFile(ctx, tx, indexVectorStoreFileParams{
+	if err := s.retrieval.IndexVectorStoreFile(ctx, tx, retrieval.IndexFileParams{
 		VectorStoreID:    file.VectorStoreID,
 		FileID:           file.ID,
 		CreatedAt:        file.CreatedAt,
@@ -507,7 +508,7 @@ func (s *Store) DeleteVectorStoreFile(ctx context.Context, vectorStoreID, fileID
 	if rowsAffected == 0 {
 		return ErrNotFound
 	}
-	if err := s.retrieval.DeleteVectorStoreFile(ctx, tx, deleteVectorStoreFileParams{
+	if err := s.retrieval.DeleteVectorStoreFile(ctx, tx, retrieval.DeleteFileParams{
 		VectorStoreID:   vectorStoreID,
 		FileID:          fileID,
 		CreatedAt:       domain.NowUTC().Unix(),
@@ -523,6 +524,13 @@ func (s *Store) DeleteVectorStoreFile(ctx context.Context, vectorStoreID, fileID
 
 func (s *Store) SearchVectorStore(ctx context.Context, query domain.VectorStoreSearchQuery) (domain.VectorStoreSearchPage, error) {
 	return s.retrieval.SearchVectorStore(ctx, s, query)
+}
+
+func (s *Store) RetrievalIndexCapabilities() retrieval.IndexCapabilities {
+	if s == nil || s.retrieval == nil {
+		return retrieval.IndexCapabilities{}
+	}
+	return s.retrieval.Capabilities()
 }
 
 func (s *Store) searchVectorStoreLexical(ctx context.Context, query domain.VectorStoreSearchQuery) (domain.VectorStoreSearchPage, error) {
@@ -625,6 +633,155 @@ func (s *Store) searchVectorStoreLexicalResults(ctx context.Context, query domai
 		return results[i].Score > results[j].Score
 	})
 	return results, nil
+}
+
+func (s *Store) searchVectorStoreFTS5Results(ctx context.Context, query domain.VectorStoreSearchQuery, scoreThreshold *float64) ([]domain.VectorStoreSearchResult, error) {
+	if _, err := s.GetVectorStore(ctx, query.VectorStoreID); err != nil {
+		return nil, err
+	}
+	if err := s.ensureFTS5VectorStoreIndex(ctx, query.VectorStoreID); err != nil {
+		return nil, err
+	}
+	ftsQuery := buildFTS5Query(query.Queries)
+	if ftsQuery == "" {
+		return []domain.VectorStoreSearchResult{}, nil
+	}
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT c.file_id, f.filename, v.attributes_json, c.content
+		FROM vector_store_chunks_fts
+		JOIN vector_store_chunks c ON c.id = vector_store_chunks_fts.rowid
+		JOIN files f ON f.id = c.file_id
+		JOIN vector_store_files v ON v.vector_store_id = c.vector_store_id AND v.file_id = c.file_id
+		WHERE vector_store_chunks_fts MATCH ?
+		  AND vector_store_chunks_fts.vector_store_id = ?
+		  AND v.status = 'completed'
+		ORDER BY bm25(vector_store_chunks_fts), c.id ASC
+	`, ftsQuery, query.VectorStoreID)
+	if err != nil {
+		return nil, fmt.Errorf("query fts5 vector store chunks: %w", err)
+	}
+	defer rows.Close()
+
+	bestByFile := map[string]aggregatedSearchResult{}
+	for rows.Next() {
+		var (
+			fileID         string
+			filename       string
+			attributesJSON string
+			content        string
+		)
+		if err := rows.Scan(&fileID, &filename, &attributesJSON, &content); err != nil {
+			return nil, fmt.Errorf("scan fts5 vector store chunk: %w", err)
+		}
+
+		attributes := map[string]any{}
+		if strings.TrimSpace(attributesJSON) != "" {
+			if err := json.Unmarshal([]byte(attributesJSON), &attributes); err != nil {
+				return nil, fmt.Errorf("decode vector store file attributes: %w", err)
+			}
+		}
+		if !domain.MatchVectorStoreSearchFilter(attributes, query.Filters) {
+			continue
+		}
+
+		score := chunkScore(content, query.Queries)
+		if scoreThreshold != nil && score < *scoreThreshold {
+			continue
+		}
+		if score <= 0 {
+			continue
+		}
+
+		current, exists := bestByFile[fileID]
+		if !exists {
+			current = newAggregatedSearchResult(fileID, filename, attributes)
+		}
+		if !exists || current.Score < score {
+			current.Score = score
+		}
+		current.addContent(content, score)
+		bestByFile[fileID] = current
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate fts5 vector store chunks: %w", err)
+	}
+
+	results := make([]domain.VectorStoreSearchResult, 0, len(bestByFile))
+	for _, result := range bestByFile {
+		result.finalizeContent()
+		results = append(results, result.VectorStoreSearchResult)
+	}
+	sort.Slice(results, func(i, j int) bool {
+		if results[i].Score == results[j].Score {
+			if results[i].Filename == results[j].Filename {
+				return results[i].FileID < results[j].FileID
+			}
+			return results[i].Filename < results[j].Filename
+		}
+		return results[i].Score > results[j].Score
+	})
+	return results, nil
+}
+
+func (s *Store) ensureFTS5VectorStoreIndex(ctx context.Context, vectorStoreID string) error {
+	var (
+		sourceCount int
+		sourceMaxID int64
+	)
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*), COALESCE(MAX(c.id), 0)
+		FROM vector_store_chunks c
+		JOIN vector_store_files v ON v.vector_store_id = c.vector_store_id AND v.file_id = c.file_id
+		WHERE c.vector_store_id = ? AND v.status = 'completed'
+	`, vectorStoreID).Scan(&sourceCount, &sourceMaxID); err != nil {
+		return fmt.Errorf("query fts5 source chunk state: %w", err)
+	}
+
+	var (
+		indexCount int
+		indexMaxID int64
+	)
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*), COALESCE(MAX(rowid), 0)
+		FROM vector_store_chunks_fts
+		WHERE vector_store_id = ?
+	`, vectorStoreID).Scan(&indexCount, &indexMaxID); err != nil {
+		return fmt.Errorf("query fts5 index state: %w", err)
+	}
+	if sourceCount == indexCount && sourceMaxID == indexMaxID {
+		return nil
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin fts5 index repair tx: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+	if err := (sqliteFTS5RetrievalBackend{}).RefreshVectorStore(ctx, tx, vectorStoreID, domain.NowUTC().Unix()); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit fts5 index repair tx: %w", err)
+	}
+	return nil
+}
+
+func buildFTS5Query(queries []string) string {
+	seen := map[string]struct{}{}
+	terms := make([]string, 0, len(queries))
+	for _, query := range queries {
+		for _, term := range tokenizeTerms(query) {
+			if _, exists := seen[term]; exists {
+				continue
+			}
+			seen[term] = struct{}{}
+			terms = append(terms, `"`+strings.ReplaceAll(term, `"`, `""`)+`"`)
+		}
+	}
+	return strings.Join(terms, " OR ")
 }
 
 func (s *Store) touchVectorStoreSearchActivity(ctx context.Context, vectorStoreID string) error {

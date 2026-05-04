@@ -6,8 +6,9 @@ import (
 )
 
 const (
-	IndexBackendLexical   = "lexical"
-	IndexBackendSQLiteVec = "sqlite_vec"
+	IndexBackendLexical    = "lexical"
+	IndexBackendSQLiteFTS5 = "sqlite_fts5"
+	IndexBackendSQLiteVec  = "sqlite_vec"
 
 	EmbedderBackendDisabled         = "disabled"
 	EmbedderBackendOpenAICompatible = "openai_compatible"
@@ -31,7 +32,7 @@ func NormalizeConfig(cfg Config) (Config, error) {
 		cfg.IndexBackend = IndexBackendLexical
 	}
 	switch cfg.IndexBackend {
-	case IndexBackendLexical, IndexBackendSQLiteVec:
+	case IndexBackendLexical, IndexBackendSQLiteFTS5, IndexBackendSQLiteVec:
 	default:
 		return Config{}, fmt.Errorf("unsupported retrieval index backend %q", cfg.IndexBackend)
 	}

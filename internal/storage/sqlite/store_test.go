@@ -384,6 +384,199 @@ func TestOpenWithOptionsRejectsSQLiteVecBackendWithoutEmbedder(t *testing.T) {
 	require.ErrorContains(t, err, `retrieval index backend "sqlite_vec" requires a configured embedder backend`)
 }
 
+func TestStoreReportsRetrievalIndexCapabilities(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	lexicalStore, err := sqlite.OpenWithOptions(ctx, testutil.TempDBPath(t), sqlite.OpenOptions{})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, lexicalStore.Close())
+	})
+
+	lexical := lexicalStore.RetrievalIndexCapabilities()
+	require.Equal(t, retrieval.IndexBackendLexical, lexical.Backend)
+	require.False(t, lexical.SemanticSearch)
+	require.False(t, lexical.HybridSearch)
+	require.False(t, lexical.LocalRerank)
+	require.False(t, lexical.LazyRepair)
+
+	semanticStore, err := sqlite.OpenWithOptions(ctx, testutil.TempDBPath(t), sqlite.OpenOptions{
+		Retrieval: retrieval.Config{
+			IndexBackend: retrieval.IndexBackendSQLiteVec,
+		},
+		Embedder: fakeEmbedder{},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, semanticStore.Close())
+	})
+
+	semantic := semanticStore.RetrievalIndexCapabilities()
+	require.Equal(t, retrieval.IndexBackendSQLiteVec, semantic.Backend)
+	require.True(t, semantic.SemanticSearch)
+	require.True(t, semantic.HybridSearch)
+	require.True(t, semantic.LocalRerank)
+	require.True(t, semantic.LazyRepair)
+}
+
+func TestStoreSearchVectorStoreSQLiteFTS5Backend(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := testutil.TempDBPath(t)
+	store, err := sqlite.OpenWithOptions(ctx, dbPath, sqlite.OpenOptions{
+		Retrieval: retrieval.Config{
+			IndexBackend: retrieval.IndexBackendSQLiteFTS5,
+		},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+
+	rawDB, err := sql.Open("sqlite", dbPath)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, rawDB.Close())
+	})
+
+	fileAlpha := domain.StoredFile{
+		ID:        "file_fts_alpha",
+		Filename:  "alpha.txt",
+		Purpose:   "assistants",
+		Bytes:     int64(len("alpha retention policy renewal policy")),
+		CreatedAt: 1712059200,
+		Status:    "processed",
+		Content:   []byte("alpha retention policy renewal policy"),
+	}
+	fileBeta := domain.StoredFile{
+		ID:        "file_fts_beta",
+		Filename:  "beta.txt",
+		Purpose:   "assistants",
+		Bytes:     int64(len("beta billing notes")),
+		CreatedAt: 1712059201,
+		Status:    "processed",
+		Content:   []byte("beta billing notes"),
+	}
+	require.NoError(t, store.SaveFile(ctx, fileAlpha))
+	require.NoError(t, store.SaveFile(ctx, fileBeta))
+
+	vectorStore := domain.StoredVectorStore{
+		ID:           "vs_fts",
+		Name:         "FTS Store",
+		Metadata:     map[string]string{},
+		CreatedAt:    1712059202,
+		LastActiveAt: 1712059202,
+	}
+	require.NoError(t, store.SaveVectorStore(ctx, vectorStore))
+	_, err = store.AttachFileToVectorStore(ctx, vectorStore.ID, fileAlpha.ID, map[string]any{}, domain.DefaultFileChunkingStrategy(), 1712059203)
+	require.NoError(t, err)
+	_, err = store.AttachFileToVectorStore(ctx, vectorStore.ID, fileBeta.ID, map[string]any{}, domain.DefaultFileChunkingStrategy(), 1712059204)
+	require.NoError(t, err)
+
+	var indexed int
+	require.NoError(t, rawDB.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM vector_store_chunks_fts
+		WHERE vector_store_id = ?
+	`, vectorStore.ID).Scan(&indexed))
+	require.Equal(t, 2, indexed)
+
+	page, err := store.SearchVectorStore(ctx, domain.VectorStoreSearchQuery{
+		VectorStoreID:  vectorStore.ID,
+		Queries:        []string{"retention policy"},
+		MaxNumResults:  5,
+		RawSearchQuery: "retention policy",
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, page.Results)
+	require.Equal(t, fileAlpha.ID, page.Results[0].FileID)
+	require.Equal(t, "alpha.txt", page.Results[0].Filename)
+
+	require.NoError(t, store.DeleteVectorStoreFile(ctx, vectorStore.ID, fileAlpha.ID))
+	page, err = store.SearchVectorStore(ctx, domain.VectorStoreSearchQuery{
+		VectorStoreID:  vectorStore.ID,
+		Queries:        []string{"retention policy"},
+		MaxNumResults:  5,
+		RawSearchQuery: "retention policy",
+	})
+	require.NoError(t, err)
+	require.Empty(t, page.Results)
+}
+
+func TestStoreSearchVectorStoreSQLiteFTS5RepairsExistingChunks(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := testutil.TempDBPath(t)
+	store, err := sqlite.OpenWithOptions(ctx, dbPath, sqlite.OpenOptions{})
+	require.NoError(t, err)
+
+	file := domain.StoredFile{
+		ID:        "file_fts_repair",
+		Filename:  "repair.txt",
+		Purpose:   "assistants",
+		Bytes:     int64(len("repairable retention policy")),
+		CreatedAt: 1712059300,
+		Status:    "processed",
+		Content:   []byte("repairable retention policy"),
+	}
+	require.NoError(t, store.SaveFile(ctx, file))
+	vectorStore := domain.StoredVectorStore{
+		ID:           "vs_fts_repair",
+		Name:         "FTS Repair Store",
+		Metadata:     map[string]string{},
+		CreatedAt:    1712059301,
+		LastActiveAt: 1712059301,
+	}
+	require.NoError(t, store.SaveVectorStore(ctx, vectorStore))
+	_, err = store.AttachFileToVectorStore(ctx, vectorStore.ID, file.ID, map[string]any{}, domain.DefaultFileChunkingStrategy(), 1712059302)
+	require.NoError(t, err)
+	require.NoError(t, store.Close())
+
+	rawDB, err := sql.Open("sqlite", dbPath)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, rawDB.Close())
+	})
+	var beforeRepair int
+	require.NoError(t, rawDB.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM vector_store_chunks_fts
+		WHERE vector_store_id = ?
+	`, vectorStore.ID).Scan(&beforeRepair))
+	require.Zero(t, beforeRepair)
+
+	store, err = sqlite.OpenWithOptions(ctx, dbPath, sqlite.OpenOptions{
+		Retrieval: retrieval.Config{
+			IndexBackend: retrieval.IndexBackendSQLiteFTS5,
+		},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+
+	page, err := store.SearchVectorStore(ctx, domain.VectorStoreSearchQuery{
+		VectorStoreID:  vectorStore.ID,
+		Queries:        []string{"retention policy"},
+		MaxNumResults:  5,
+		RawSearchQuery: "retention policy",
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, page.Results)
+	require.Equal(t, file.ID, page.Results[0].FileID)
+
+	var afterRepair int
+	require.NoError(t, rawDB.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM vector_store_chunks_fts
+		WHERE vector_store_id = ?
+	`, vectorStore.ID).Scan(&afterRepair))
+	require.Equal(t, 1, afterRepair)
+}
+
 func TestStoreSearchVectorStoreSQLiteVecBackend(t *testing.T) {
 	t.Parallel()
 

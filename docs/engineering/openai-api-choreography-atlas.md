@@ -494,8 +494,9 @@ Shim reality:
 - Durable retrieval object storage is currently `storage.backend=sqlite`; V3
   backend expansion is tracked in
   [v3-storage-retrieval-backends.md](../v3-storage-retrieval-backends.md).
-- Lexical search is the default local substrate; semantic and hybrid paths
-  depend on configured retrieval indexing.
+- Lexical scan is the default local substrate; `sqlite_fts5` adds an indexed
+  lexical backend, and semantic, hybrid, local rerank, and lazy-repair paths
+  are exposed by the active retrieval-index contract when configured.
 - Local `file_search` injects bounded grounding context before final answer
   generation.
 - Hosted ranking quality, billing semantics, and exact citation placement are

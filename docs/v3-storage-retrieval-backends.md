@@ -1,6 +1,6 @@
 # V3 Storage And Retrieval Backends
 
-Last updated: April 27, 2026.
+Last updated: May 4, 2026.
 
 This is the V3 plan for expanding durable storage and retrieval backends
 without changing the public OpenAI-shaped HTTP surface.
@@ -29,6 +29,7 @@ Current runtime ownership:
 
 - durable object state is SQLite
 - default retrieval index is local lexical search
+- optional indexed lexical retrieval uses `retrieval.index.backend=sqlite_fts5`
 - optional semantic retrieval uses `retrieval.index.backend=sqlite_vec` plus a
   configured embedder
 - local `file_search` uses the same vector-store substrate and injects bounded
@@ -44,7 +45,8 @@ flowchart LR
   client["Client"]
   http["OpenAI-shaped HTTP routes"]
   sqlite["SQLite store"]
-  lexical["Lexical index"]
+  lexical["Lexical scan"]
+  fts5["sqlite_fts5 index"]
   sqlitevec["sqlite_vec index"]
   embedder["Optional embedder backend"]
   model["Upstream text model"]
@@ -52,6 +54,7 @@ flowchart LR
   client --> http
   http --> sqlite
   http --> lexical
+  http --> fts5
   http --> sqlitevec
   sqlitevec --> embedder
   http --> model
@@ -93,7 +96,8 @@ flowchart TB
   sqliteStore["sqlite.Store"]
   futurePg["future postgres.Store"]
   retrievalIndex["retrieval index contract"]
-  lexical["lexical"]
+  lexical["lexical scan"]
+  fts5["sqlite_fts5"]
   sqliteVec["sqlite_vec"]
   futurePgVector["future pgvector"]
   embedder["embedder provider"]
@@ -106,6 +110,7 @@ flowchart TB
 
   routes --> retrievalIndex
   retrievalIndex --> lexical
+  retrievalIndex --> fts5
   retrievalIndex --> sqliteVec
   retrievalIndex -. future .-> futurePgVector
   sqliteVec --> embedder
@@ -116,8 +121,10 @@ The first code slices now add `internal/storage` contracts, a composite
 `storage.Store` boundary, compile-time SQLite conformance checks, and HTTP
 handler wiring that depends on storage interfaces for router health,
 chat-completion shadow storage, retrieval routes, vector-store search, and
-code-interpreter file/session stores. They do not introduce a second runtime
-backend yet.
+code-interpreter file/session stores. The retrieval index is now a separate
+generic internal contract with SQLite implementations for lexical scan,
+`sqlite_fts5`, and `sqlite_vec` indexing. These slices do not introduce a
+second durable object-storage runtime backend yet.
 
 ## Configuration
 
@@ -142,7 +149,7 @@ Retrieval indexing remains configured separately:
 ```yaml
 retrieval:
   index:
-    backend: lexical
+    backend: lexical   # lexical, sqlite_fts5, or sqlite_vec
   embedder:
     backend: disabled
 ```
@@ -171,14 +178,19 @@ runtime section is:
       "embedder_backend": "disabled",
       "semantic_search": false,
       "hybrid_search": false,
-      "local_rerank": false
+      "local_rerank": false,
+      "lazy_repair": false
     }
   }
 }
 ```
 
-When `sqlite_vec` and an embedder are active, `semantic_search`,
-`hybrid_search`, and `local_rerank` can become `true`. That is a local
+When `sqlite_fts5` is active, `index_backend` reports `sqlite_fts5` while
+semantic/hybrid/rerank flags remain `false`; it reports `lazy_repair=true`
+because search can repair a missing or stale FTS5 index for the queried vector
+store. It is an indexed lexical backend, not a semantic backend. When
+`sqlite_vec` and an embedder are active, `semantic_search`, `hybrid_search`,
+`local_rerank`, and `lazy_repair` can become `true`. That is a local
 capability claim, not a hosted OpenAI ranking claim.
 
 ## Implementation Phases
@@ -196,7 +208,7 @@ Status: implemented for the SQLite-only foundation.
 
 ### 1. Interface Boundary Hardening
 
-Status: in progress.
+Status: implemented for the current SQLite-only V3 slice.
 
 Move route and service dependencies gradually from concrete `*sqlite.Store` to
 the narrowest `internal/storage` interface each path needs.
@@ -217,14 +229,17 @@ Current completed slice:
 - local code-interpreter container/file paths use storage contracts and shared
   storage errors
 
-Still intentionally SQLite-specific:
+Still intentionally SQLite-specific after this phase:
 
 - startup store opening and maintenance loops
 - SQLite migrations, backup/restore, optimize, and vacuum operations
-- concrete SQLite retrieval-index internals until phase 2 extracts a retrieval
-  index contract
+- concrete SQLite SQL/FTS5/vec0 operations inside the lexical, `sqlite_fts5`,
+  and `sqlite_vec` retrieval index implementations
 
 ### 2. Retrieval Index Contract
+
+Status: implemented for the current SQLite lexical scan, `sqlite_fts5`, and
+`sqlite_vec` backends.
 
 Define a retrieval-index contract that is separate from vector-store object
 storage.
@@ -238,8 +253,29 @@ The contract should cover:
   active
 - lazy repair or reindex hooks where a backend supports them
 
-This is the point where `sqlite_vec` should stop being an implementation detail
-leaking through higher-level handlers.
+Implemented boundary:
+
+- `internal/retrieval.Index[Mutation, Corpus]` defines the index operations.
+- SQLite lexical scan, `sqlite_fts5`, and `sqlite_vec` implementations satisfy
+  that contract.
+- `internal/retrieval.IndexCapabilities` reports backend, semantic, hybrid,
+  rerank, and lazy-repair capability bits.
+- `storage.RetrievalIndexReporter` lets `/debug/capabilities` read the actual
+  active store/index capabilities instead of reconstructing them only from
+  router config.
+
+The first concrete added backend is `retrieval.index.backend=sqlite_fts5`.
+It keeps a maintained FTS5 chunk index in SQLite and uses the same public
+`/v1/vector_stores/{id}/search` and local `file_search` response shapes as
+the default lexical scan backend. It does not change hosted-parity wording and
+does not make semantic-search claims. Search lazily repairs missing FTS5 rows
+for the queried vector store, which covers enabling this backend on an existing
+SQLite database.
+
+This keeps `sqlite_fts5` and `sqlite_vec` behind the storage/retrieval
+boundary. Higher-level handlers still see the same OpenAI-shaped vector-store
+and `file_search` surface, while future Postgres/pgvector work can implement
+the same index contract without changing HTTP handlers.
 
 ### 3. Postgres Object Storage Alpha
 

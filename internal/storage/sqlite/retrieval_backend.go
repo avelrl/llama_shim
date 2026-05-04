@@ -21,30 +21,12 @@ type OpenOptions struct {
 	Embedder  retrieval.Embedder
 }
 
-type indexVectorStoreFileParams struct {
-	VectorStoreID    string
-	FileID           string
-	CreatedAt        int64
-	ReplacedChunkIDs []int64
-}
-
-type deleteVectorStoreFileParams struct {
-	VectorStoreID   string
-	FileID          string
-	CreatedAt       int64
-	RemovedChunkIDs []int64
-}
-
 type retrievalBackend interface {
-	Name() string
-	IndexVectorStoreFile(ctx context.Context, tx *sql.Tx, params indexVectorStoreFileParams) error
-	DeleteVectorStoreFile(ctx context.Context, tx *sql.Tx, params deleteVectorStoreFileParams) error
-	RefreshVectorStore(ctx context.Context, tx *sql.Tx, vectorStoreID string, createdAt int64) error
-	DeleteVectorStore(ctx context.Context, tx *sql.Tx, vectorStoreID string) error
-	SearchVectorStore(ctx context.Context, store *Store, query domain.VectorStoreSearchQuery) (domain.VectorStoreSearchPage, error)
+	retrieval.Index[*sql.Tx, *Store]
 }
 
 type lexicalRetrievalBackend struct{}
+type sqliteFTS5RetrievalBackend struct{}
 type sqliteVecRetrievalBackend struct {
 	embedder retrieval.Embedder
 	model    string
@@ -103,11 +85,15 @@ func (lexicalRetrievalBackend) Name() string {
 	return retrieval.IndexBackendLexical
 }
 
-func (lexicalRetrievalBackend) IndexVectorStoreFile(context.Context, *sql.Tx, indexVectorStoreFileParams) error {
+func (lexicalRetrievalBackend) Capabilities() retrieval.IndexCapabilities {
+	return retrieval.IndexCapabilitiesForConfig(retrieval.Config{IndexBackend: retrieval.IndexBackendLexical}, false)
+}
+
+func (lexicalRetrievalBackend) IndexVectorStoreFile(context.Context, *sql.Tx, retrieval.IndexFileParams) error {
 	return nil
 }
 
-func (lexicalRetrievalBackend) DeleteVectorStoreFile(context.Context, *sql.Tx, deleteVectorStoreFileParams) error {
+func (lexicalRetrievalBackend) DeleteVectorStoreFile(context.Context, *sql.Tx, retrieval.DeleteFileParams) error {
 	return nil
 }
 
@@ -121,6 +107,134 @@ func (lexicalRetrievalBackend) DeleteVectorStore(context.Context, *sql.Tx, strin
 
 func (lexicalRetrievalBackend) SearchVectorStore(ctx context.Context, store *Store, query domain.VectorStoreSearchQuery) (domain.VectorStoreSearchPage, error) {
 	return store.searchVectorStoreLexical(ctx, query)
+}
+
+func (sqliteFTS5RetrievalBackend) Name() string {
+	return retrieval.IndexBackendSQLiteFTS5
+}
+
+func (sqliteFTS5RetrievalBackend) Capabilities() retrieval.IndexCapabilities {
+	capabilities := retrieval.IndexCapabilitiesForConfig(retrieval.Config{IndexBackend: retrieval.IndexBackendSQLiteFTS5}, false)
+	capabilities.LazyRepair = true
+	return capabilities
+}
+
+func (sqliteFTS5RetrievalBackend) IndexVectorStoreFile(ctx context.Context, tx *sql.Tx, params retrieval.IndexFileParams) error {
+	if err := deleteFTS5Rows(ctx, tx, params.ReplacedChunkIDs); err != nil {
+		return err
+	}
+	return indexFTS5Chunks(ctx, tx, `
+		SELECT c.id, c.vector_store_id, c.file_id, c.content
+		FROM vector_store_chunks c
+		JOIN vector_store_files v ON v.vector_store_id = c.vector_store_id AND v.file_id = c.file_id
+		WHERE c.vector_store_id = ? AND c.file_id = ? AND v.status = 'completed'
+		ORDER BY c.chunk_index ASC, c.id ASC
+	`, params.VectorStoreID, params.FileID)
+}
+
+func (sqliteFTS5RetrievalBackend) DeleteVectorStoreFile(ctx context.Context, tx *sql.Tx, params retrieval.DeleteFileParams) error {
+	if err := deleteFTS5Rows(ctx, tx, params.RemovedChunkIDs); err != nil {
+		return err
+	}
+	if len(params.RemovedChunkIDs) != 0 {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM vector_store_chunks_fts
+		WHERE vector_store_id = ? AND file_id = ?
+	`, params.VectorStoreID, params.FileID); err != nil {
+		return fmt.Errorf("delete fts5 vector store file rows: %w", err)
+	}
+	return nil
+}
+
+func (sqliteFTS5RetrievalBackend) RefreshVectorStore(ctx context.Context, tx *sql.Tx, vectorStoreID string, _ int64) error {
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM vector_store_chunks_fts
+		WHERE vector_store_id = ?
+	`, vectorStoreID); err != nil {
+		return fmt.Errorf("delete fts5 vector store rows before refresh: %w", err)
+	}
+	return indexFTS5Chunks(ctx, tx, `
+		SELECT c.id, c.vector_store_id, c.file_id, c.content
+		FROM vector_store_chunks c
+		JOIN vector_store_files v ON v.vector_store_id = c.vector_store_id AND v.file_id = c.file_id
+		WHERE c.vector_store_id = ? AND v.status = 'completed'
+		ORDER BY c.chunk_index ASC, c.id ASC
+	`, vectorStoreID)
+}
+
+func (sqliteFTS5RetrievalBackend) DeleteVectorStore(ctx context.Context, tx *sql.Tx, vectorStoreID string) error {
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM vector_store_chunks_fts
+		WHERE vector_store_id = ?
+	`, vectorStoreID); err != nil {
+		return fmt.Errorf("delete fts5 vector store rows: %w", err)
+	}
+	return nil
+}
+
+func (sqliteFTS5RetrievalBackend) SearchVectorStore(ctx context.Context, store *Store, query domain.VectorStoreSearchQuery) (domain.VectorStoreSearchPage, error) {
+	results, err := store.searchVectorStoreFTS5Results(ctx, query, query.ScoreThreshold)
+	if err != nil {
+		return domain.VectorStoreSearchPage{}, err
+	}
+	if len(results) > query.MaxNumResults {
+		results = results[:query.MaxNumResults]
+	}
+
+	if err := store.touchVectorStoreSearchActivity(ctx, query.VectorStoreID); err != nil {
+		return domain.VectorStoreSearchPage{}, err
+	}
+
+	return domain.VectorStoreSearchPage{
+		SearchQuery: query.RawSearchQuery,
+		Results:     results,
+		HasMore:     false,
+		NextPage:    nil,
+	}, nil
+}
+
+func indexFTS5Chunks(ctx context.Context, tx *sql.Tx, statement string, args ...any) error {
+	rows, err := tx.QueryContext(ctx, statement, args...)
+	if err != nil {
+		return fmt.Errorf("query vector store chunks for fts5 index: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			chunkID       int64
+			vectorStoreID string
+			fileID        string
+			content       string
+		)
+		if err := rows.Scan(&chunkID, &vectorStoreID, &fileID, &content); err != nil {
+			return fmt.Errorf("scan vector store chunk for fts5 index: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO vector_store_chunks_fts(rowid, vector_store_id, file_id, content)
+			VALUES (?, ?, ?, ?)
+		`, chunkID, vectorStoreID, fileID, content); err != nil {
+			return fmt.Errorf("insert fts5 vector store chunk: %w", err)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate vector store chunks for fts5 index: %w", err)
+	}
+	return nil
+}
+
+func deleteFTS5Rows(ctx context.Context, tx *sql.Tx, chunkIDs []int64) error {
+	for _, chunkID := range chunkIDs {
+		if _, err := tx.ExecContext(ctx, `
+			DELETE FROM vector_store_chunks_fts
+			WHERE rowid = ?
+		`, chunkID); err != nil {
+			return fmt.Errorf("delete fts5 vector store chunk row: %w", err)
+		}
+	}
+	return nil
 }
 
 func normalizeOpenOptions(options OpenOptions) (OpenOptions, error) {
@@ -140,6 +254,8 @@ func newRetrievalBackendWithOptions(cfg retrieval.Config, embedder retrieval.Emb
 	switch cfg.IndexBackend {
 	case retrieval.IndexBackendLexical:
 		return lexicalRetrievalBackend{}, nil
+	case retrieval.IndexBackendSQLiteFTS5:
+		return sqliteFTS5RetrievalBackend{}, nil
 	case retrieval.IndexBackendSQLiteVec:
 		if embedder == nil {
 			var err error
@@ -219,7 +335,11 @@ func (sqliteVecRetrievalBackend) Name() string {
 	return retrieval.IndexBackendSQLiteVec
 }
 
-func (b sqliteVecRetrievalBackend) IndexVectorStoreFile(ctx context.Context, tx *sql.Tx, params indexVectorStoreFileParams) error {
+func (b sqliteVecRetrievalBackend) Capabilities() retrieval.IndexCapabilities {
+	return retrieval.IndexCapabilitiesForConfig(retrieval.Config{IndexBackend: retrieval.IndexBackendSQLiteVec}, b.embedder != nil)
+}
+
+func (b sqliteVecRetrievalBackend) IndexVectorStoreFile(ctx context.Context, tx *sql.Tx, params retrieval.IndexFileParams) error {
 	rows, err := tx.QueryContext(ctx, `
 		SELECT id, content
 		FROM vector_store_chunks
@@ -256,7 +376,7 @@ func (b sqliteVecRetrievalBackend) RefreshVectorStore(ctx context.Context, tx *s
 	return b.refreshVectorStoreVec0Index(ctx, tx, vectorStoreID, b.model, 0, createdAt)
 }
 
-func (b sqliteVecRetrievalBackend) DeleteVectorStoreFile(ctx context.Context, tx *sql.Tx, params deleteVectorStoreFileParams) error {
+func (b sqliteVecRetrievalBackend) DeleteVectorStoreFile(ctx context.Context, tx *sql.Tx, params retrieval.DeleteFileParams) error {
 	return b.syncVectorStoreFileIndex(ctx, tx, params.VectorStoreID, params.FileID, params.RemovedChunkIDs, params.CreatedAt)
 }
 

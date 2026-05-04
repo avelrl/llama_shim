@@ -83,7 +83,9 @@ Status: `Planned`. See [v3-image-backends.md](v3-image-backends.md).
 
 ### 2. More retrieval and storage backends
 
-Status: `Partial`; foundation started. See
+Status: `Partial`; SQLite storage contracts, the retrieval-index contract, and
+the first added retrieval backend (`sqlite_fts5`) are implemented, while
+additional durable backends are still planned. See
 [v3-storage-retrieval-backends.md](v3-storage-retrieval-backends.md).
 
 - ANN indexing beyond the current exact local subset

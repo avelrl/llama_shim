@@ -631,6 +631,7 @@ func TestCapabilitiesEndpointReportsConfiguredRuntime(t *testing.T) {
 	require.Equal(t, true, retrievalRuntime["semantic_search"])
 	require.Equal(t, true, retrievalRuntime["hybrid_search"])
 	require.Equal(t, true, retrievalRuntime["local_rerank"])
+	require.Equal(t, true, retrievalRuntime["lazy_repair"])
 
 	ops := runtime["ops"].(map[string]any)
 	require.Equal(t, config.ShimAuthModeDisabled, asStringAny(ops["auth_mode"]))
@@ -694,6 +695,27 @@ func TestCapabilitiesEndpointReportsConfiguredRuntime(t *testing.T) {
 	require.Equal(t, true, imageGenerationProbe["enabled"])
 	require.Equal(t, true, imageGenerationProbe["checked"])
 	require.Equal(t, true, imageGenerationProbe["ready"])
+}
+
+func TestCapabilitiesEndpointReportsSQLiteFTS5RetrievalBackend(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		RetrievalConfig: retrieval.Config{
+			IndexBackend: retrieval.IndexBackendSQLiteFTS5,
+		},
+	})
+
+	status, payload := rawRequest(t, app, http.MethodGet, "/debug/capabilities", nil)
+	require.Equal(t, http.StatusOK, status)
+
+	runtime := payload["runtime"].(map[string]any)
+	retrievalRuntime := runtime["retrieval"].(map[string]any)
+	require.Equal(t, "sqlite", asStringAny(retrievalRuntime["storage_backend"]))
+	require.Equal(t, retrieval.IndexBackendSQLiteFTS5, asStringAny(retrievalRuntime["index_backend"]))
+	require.Equal(t, retrieval.EmbedderBackendDisabled, asStringAny(retrievalRuntime["embedder_backend"]))
+	require.Equal(t, false, retrievalRuntime["semantic_search"])
+	require.Equal(t, false, retrievalRuntime["hybrid_search"])
+	require.Equal(t, false, retrievalRuntime["local_rerank"])
+	require.Equal(t, true, retrievalRuntime["lazy_repair"])
 }
 
 func TestCapabilitiesEndpointReportsVLLMConstrainedRuntime(t *testing.T) {

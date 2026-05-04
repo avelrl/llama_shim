@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"llama_shim/internal/domain"
+	"llama_shim/internal/retrieval"
 )
 
 const BackendSQLite = "sqlite"
@@ -72,6 +73,10 @@ type VectorStore interface {
 	ListVectorStoreFiles(ctx context.Context, query domain.ListVectorStoreFilesQuery) (domain.StoredVectorStoreFilePage, error)
 	DeleteVectorStoreFile(ctx context.Context, vectorStoreID, fileID string) error
 	SearchVectorStore(ctx context.Context, query domain.VectorStoreSearchQuery) (domain.VectorStoreSearchPage, error)
+}
+
+type RetrievalIndexReporter interface {
+	RetrievalIndexCapabilities() retrieval.IndexCapabilities
 }
 
 type ChatCompletionStore interface {

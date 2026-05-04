@@ -2645,14 +2645,14 @@ components:
           type: boolean
     ShimCapabilityRetrievalRuntime:
       type: object
-      required: [storage_backend, index_backend, embedder_backend, semantic_search, hybrid_search, local_rerank]
+      required: [storage_backend, index_backend, embedder_backend, semantic_search, hybrid_search, local_rerank, lazy_repair]
       properties:
         storage_backend:
           type: string
           description: Durable object storage backend used by files, vector stores, and local file_search state.
         index_backend:
           type: string
-          description: Retrieval index backend. `lexical` is the default; `sqlite_vec` enables local semantic retrieval when an embedder is configured.
+          description: Retrieval index backend. `lexical` is the default scan backend; `sqlite_fts5` enables an indexed local lexical backend; `sqlite_vec` enables local semantic retrieval when an embedder is configured.
         embedder_backend:
           type: string
         semantic_search:
@@ -2661,6 +2661,9 @@ components:
           type: boolean
         local_rerank:
           type: boolean
+        lazy_repair:
+          type: boolean
+          description: Whether the active local retrieval index can lazily repair or reindex stale chunks before search.
     ShimCapabilityOpsConfig:
       type: object
       required: [auth_mode, rate_limit, metrics, health_public, readyz_public]

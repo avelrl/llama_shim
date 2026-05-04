@@ -158,6 +158,7 @@ type capabilityRetrievalConfig struct {
 	SemanticSearch  bool   `json:"semantic_search"`
 	HybridSearch    bool   `json:"hybrid_search"`
 	LocalRerank     bool   `json:"local_rerank"`
+	LazyRepair      bool   `json:"lazy_repair"`
 }
 
 type capabilityOpsConfig struct {
@@ -475,10 +476,6 @@ func capabilityRetrieval(deps RouterDeps) capabilityRetrievalConfig {
 	if storageBackend == "" {
 		storageBackend = "none"
 	}
-	indexBackend := strings.ToLower(strings.TrimSpace(deps.RetrievalIndexBackend))
-	if indexBackend == "" {
-		indexBackend = retrieval.IndexBackendLexical
-	}
 	embedderBackend := strings.ToLower(strings.TrimSpace(deps.RetrievalEmbedderBackend))
 	if embedderBackend == "" {
 		if deps.RetrievalEmbedder != nil {
@@ -487,14 +484,22 @@ func capabilityRetrieval(deps RouterDeps) capabilityRetrievalConfig {
 			embedderBackend = retrieval.EmbedderBackendDisabled
 		}
 	}
-	semantic := indexBackend == retrieval.IndexBackendSQLiteVec && deps.RetrievalEmbedder != nil
+	indexCapabilities := retrieval.IndexCapabilitiesForConfig(retrieval.Config{
+		IndexBackend: strings.ToLower(strings.TrimSpace(deps.RetrievalIndexBackend)),
+	}, deps.RetrievalEmbedder != nil)
+	if reporter, ok := deps.Store.(storage.RetrievalIndexReporter); ok {
+		if reported := reporter.RetrievalIndexCapabilities(); reported.Backend != "" {
+			indexCapabilities = reported
+		}
+	}
 	return capabilityRetrievalConfig{
 		StorageBackend:  storageBackend,
-		IndexBackend:    indexBackend,
+		IndexBackend:    indexCapabilities.Backend,
 		EmbedderBackend: embedderBackend,
-		SemanticSearch:  semantic,
-		HybridSearch:    semantic,
-		LocalRerank:     semantic,
+		SemanticSearch:  indexCapabilities.SemanticSearch,
+		HybridSearch:    indexCapabilities.HybridSearch,
+		LocalRerank:     indexCapabilities.LocalRerank,
+		LazyRepair:      indexCapabilities.LazyRepair,
 	}
 }
 
