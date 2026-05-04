@@ -16,9 +16,18 @@ not practical user guides and are not release scope documents.
   contract for external API-surface compatibility tests.
 - [Codex Upstream Model Matrix](codex-upstream-model-matrix.md): practical
   DeepSeek, Qwen, and Kimi comparison for Codex-through-shim smoke testing.
+- [V3 Codex Eval Curation](../v3-codex-eval-curation.md): human review
+  procedure for generated Codex auto-run artifacts and baseline promotion.
 - [V3 Storage and Retrieval Backends](../v3-storage-retrieval-backends.md):
   backend-expansion plan, storage contracts, capability reporting, and
   Postgres/pgvector staging.
+- [V3 Alternative Image Backends](../v3-image-backends.md):
+  planned local image-generation backend expansion without hosted parity
+  overclaims.
+- [V3 Richer Local-Only Runtimes](../v3-local-runtimes.md):
+  planned local runtime expansion slices and capability-gating requirements.
+- [V3 Ops and Deployment Expansion](../v3-ops-deployment.md):
+  candidate deployment, observability, tenanting, and governance staging.
 - [V3 Coding Tools Test Runbook](v3-coding-tools-test-runbook.md): manual and
   deterministic checks for the shim-local native coding-tools subset.
 - [V3 Coding Tools Status Decision](v3-coding-tools-status-decision.md):

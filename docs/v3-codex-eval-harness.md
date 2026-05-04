@@ -11,6 +11,8 @@ Codex request-shape, `apply_patch` tool-mode profiles, and interactive
 `exec_command -> session_id -> write_stdin` coverage are implemented in
 dedicated profiles. Manual TUI feature exploration remains split into
 [v3-codex-interactive-features-manual-plan.md](v3-codex-interactive-features-manual-plan.md).
+Human review and baseline-promotion rules for generated auto-run artifacts are
+kept in [v3-codex-eval-curation.md](v3-codex-eval-curation.md).
 
 This task defines a repeatable evaluation and regression loop for running the
 real Codex CLI through `llama_shim` against local or OpenAI-compatible upstream
@@ -620,9 +622,9 @@ Auto artifacts live under `.tmp/codex-eval-auto/<auto-id>/`:
 
 Use `summary.md` first. It shows profile pass counts, retry-dependent tasks,
 failed tasks, coverage differences, and links to each profile's compare report
-and shim-log diagnostics. The generated report is mechanical; copy only the
-interpreted facts into
-`docs/engineering/codex-upstream-model-matrix.md`.
+and shim-log diagnostics. The generated report is mechanical; follow
+[v3-codex-eval-curation.md](v3-codex-eval-curation.md) before copying only the
+interpreted facts into `docs/engineering/codex-upstream-model-matrix.md`.
 
 The auto wrapper reuses a previously completed control run when multiple
 profiles use the same control suite. In the default profile set this means the

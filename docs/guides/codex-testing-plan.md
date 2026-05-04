@@ -171,7 +171,9 @@ make codex-eval-auto
 The generated `.tmp/codex-eval-auto/<auto-id>/summary.md` is the first file to
 read. It links to each profile's `compare.md`, shim-log diagnostics, matrix, and
 failure bundle. Human-written model matrix updates should copy interpretation
-from those reports, not recalculate counts by hand.
+from those reports, not recalculate counts by hand. Use the
+[V3 Codex Eval Curation](../v3-codex-eval-curation.md) runbook for the review
+order, rerun policy, and baseline-promotion rules.
 
 The auto loop prints a terminal bell on completion by default. Set
 `CODEX_EVAL_NOTIFY=macos` for a best-effort macOS notification, or

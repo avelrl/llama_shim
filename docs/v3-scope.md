@@ -1,6 +1,6 @@
 # V3 Expansion Staging
 
-Last updated: April 29, 2026.
+Last updated: May 4, 2026.
 
 This document is the parking lot for work that did not make the V2 ship bar
 and should not be reintroduced into the frozen V2 scope.
@@ -62,15 +62,28 @@ These items are useful, but they are no longer part of the V2 ship bar:
 The tracks below assume the small preflight substrate in
 [v3-preflight.md](v3-preflight.md) is already in place.
 
+Status labels in this section are intentionally coarse:
+
+- `Implemented`: the V3 slice is closed for the current practical scope.
+- `Partial`: implementation has started, but material V3 phases remain.
+- `Planned`: the track is accepted for V3, but still needs a first
+  implementation slice.
+- `Candidate`: useful V3 work, but not yet prioritized into a concrete
+  implementation phase.
+
 ### 1. Alternative image backends
+
+Status: `Planned`. See [v3-image-backends.md](v3-image-backends.md).
 
 - Stable Diffusion / ComfyUI / other image-generation backends
 - provider-specific image pipelines that are useful locally but are not part of
   the core OpenAI compatibility promise
+- capability, config, and replay boundaries for additional shim-local
+  `image_generation` providers without claiming hosted image-generation parity
 
 ### 2. More retrieval and storage backends
 
-Status: foundation started. See
+Status: `Partial`; foundation started. See
 [v3-storage-retrieval-backends.md](v3-storage-retrieval-backends.md).
 
 - ANN indexing beyond the current exact local subset
@@ -79,13 +92,17 @@ Status: foundation started. See
 
 ### 3. Richer local-only runtimes
 
+Status: `Planned`. See [v3-local-runtimes.md](v3-local-runtimes.md).
+
 - additional local tools that do not map cleanly to current OpenAI surface area
 - more ambitious local shell / browser / multimodal runtime loops after the V2
   contract is stable
+- deterministic fixture and capability-gated runtime slices before any
+  production-grade runtime claims
 
 ### 4. Native coding tools for local execution
 
-Status: closed as a `Broad subset` in
+Status: `Implemented` as a `Broad subset` in
 [compatibility-matrix.md](compatibility-matrix.md), with remaining exact hosted
 choreography deferred to V5.
 
@@ -109,7 +126,8 @@ reopen the frozen V2 contract before code, tests, and capabilities exist.
 
 ### 5. Deeper constrained decoding work
 
-Status: first conservative runtime slice implemented as a `Broad subset` in
+Status: `Partial`; first conservative runtime slice implemented as a
+`Broad subset` in
 [compatibility-matrix.md](compatibility-matrix.md). The default path still
 does not claim backend-native constrained sampling. An optional vLLM adapter can
 now claim `grammar_native` for `grammar.syntax=regex` and the shim-supported
@@ -156,7 +174,7 @@ requirement.
 
 ### 6. Higher-fidelity compaction runtime
 
-Status: closed as a `Broad subset` in
+Status: `Implemented` as a `Broad subset` in
 [compatibility-matrix.md](compatibility-matrix.md).
 
 The closed slice covers model-assisted text compaction, retained-window
@@ -169,7 +187,7 @@ encrypted payload parity, and exact hosted stream choreography remain deferred.
 
 ### 7. Responses WebSocket mode
 
-Status: closed as a `Broad subset` in
+Status: `Implemented` as a `Broad subset` in
 [compatibility-matrix.md](compatibility-matrix.md), with exact hosted close
 codes, quotas, cache edges, and upstream WebSocket proxying deferred to V5.
 
@@ -194,7 +212,8 @@ edge cases, and Realtime API WebSocket compatibility are deferred to
 
 ### 8. Codex eval harness and auto-regression loop
 
-Status: Phase 6 benchmark-lite and automated profile gates implemented. See
+Status: `Implemented` for the current automated V3 scope. Phase 6
+benchmark-lite and automated profile gates are implemented. See
 [v3-codex-eval-harness.md](v3-codex-eval-harness.md).
 
 The existing Codex CLI smokes are useful canaries, but manual Codex sessions
@@ -237,10 +256,11 @@ Implemented scope:
   `make codex-eval-loop-bench-lite` for longer repo-owned benchmark-lite
   stability checks
 
-Remaining V3 work in this track is ongoing result curation and future imported
-benchmark tasks when they are worth sanitizing. Manual TUI/app-server features
-stay in their own plan until they have deterministic reductions. Shim-native
-Codex request-shape/profile coverage is split into
+Remaining V3 work in this track is result curation, trend reporting across
+multiple run directories, and future imported benchmark tasks when they are
+worth sanitizing. Manual TUI/app-server features stay in their own plan until
+they have deterministic reductions. Shim-native Codex request-shape/profile
+coverage is split into
 [v3-codex-shim-native-coverage.md](v3-codex-shim-native-coverage.md).
 
 This is a quality and automation track. It does not strengthen any hosted
@@ -248,8 +268,8 @@ OpenAI parity claim by itself.
 
 ### 9. Codex shim-native request-shape and profile coverage
 
-Status: automated profile coverage implemented; manual feature exploration
-remains separate. See
+Status: `Implemented` for automated profile coverage; manual feature
+exploration remains separate. See
 [v3-codex-shim-native-coverage.md](v3-codex-shim-native-coverage.md).
 
 This track covers Codex-through-shim behavior that is not benchmark breadth:
@@ -270,11 +290,47 @@ parity and should not promote flaky profile tasks into `codex-core` or
 
 ### 10. Ops and deployment expansion
 
+Status: `Candidate`. See [v3-ops-deployment.md](v3-ops-deployment.md).
+
 - multi-tenant authz / tenant isolation
 - richer exporters and dashboards
 - governance-heavy storage features such as encryption-at-rest options,
   redaction policy, and hard-delete controls
 - Postgres / multi-instance / shared-state deployment modes
+
+This track should stay behind storage-backend interface hardening. It must not
+add hidden OpenAI-surface limits or tenant-specific request behavior that makes
+the public compatibility story less truthful.
+
+## Current V3 Implementation Queue
+
+The next practical implementation work should be selected from this queue:
+
+1. Finish [V3 Storage And Retrieval Backends](v3-storage-retrieval-backends.md)
+   phase 1 and then extract the retrieval-index contract in phase 2.
+2. Turn [V3 Alternative Image Backends](v3-image-backends.md) into a first
+   concrete backend slice only after selecting one reproducible provider path.
+3. Turn [V3 Richer Local-Only Runtimes](v3-local-runtimes.md) into one focused
+   runtime slice with deterministic fixtures and capability gates.
+4. Use [V3 Ops And Deployment Expansion](v3-ops-deployment.md) to stage
+   Postgres/multi-instance deployment work after storage contracts are narrow
+   enough.
+
+## V3 Result-Curation Work
+
+The automated Codex eval work is now useful enough that V3 needs a standing
+curation loop, not only one-off run inspection. The operational runbook is
+[V3 Codex Eval Curation](v3-codex-eval-curation.md):
+
+- summarize each `codex-eval-auto` run into the model matrix only after
+  checking profile summaries and relevant shim logs
+- classify failures as shim, transport, Codex tool registration, upstream
+  model/tool-following, checker, harness, or environment
+- keep retry-dependent passes visible instead of treating them as clean passes
+- import manual or real-upstream failures as deterministic regression tasks
+  only when they reduce to a stable repo-owned scenario
+- prefer trend summaries across multiple run directories before changing a
+  model's documented quality rating
 
 ## V3 Anti-Scope For Now
 
