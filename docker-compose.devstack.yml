@@ -12,6 +12,8 @@ services:
     command: ["/usr/local/bin/shim", "-config", "/app/config.yaml"]
     depends_on:
       - fixture
+    environment:
+      RETRIEVAL_INDEX_BACKEND: ${RETRIEVAL_INDEX_BACKEND:-lexical}
     ports:
       - "18080:8080"
     volumes:

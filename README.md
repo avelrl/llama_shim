@@ -359,7 +359,8 @@ Minimal local packaging is now checked into the repo:
 - `make maint-cleanup`, `make maint-optimize`, `make maint-vacuum`, `make maint-backup`
 - `docker build -t llama-shim:local .`
 - `docker compose up --build`
-- `make devstack-up`, `make devstack-smoke`, `make devstack-down`
+- `make devstack-up`, `make devstack-smoke`,
+  `make devstack-sqlite-fts5-smoke`, `make devstack-down`
 
 The compose setup mounts `./config.yaml` into the container and keeps SQLite
 state in `./.data`.

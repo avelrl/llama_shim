@@ -133,6 +133,8 @@ Equivalent individual commands:
 
 ```bash
 bash ./scripts/devstack-smoke.sh
+RETRIEVAL_INDEX_BACKEND=sqlite_fts5 docker compose -f docker-compose.devstack.yml up -d --build
+bash ./scripts/devstack-sqlite-fts5-smoke.sh
 bash ./scripts/responses-compat-external-smoke.sh
 RESPONSES_COMPAT_RUN_MODE=real-upstream RESPONSES_COMPAT_EXPECTED_UPSTREAM=<upstream-base-url> bash ./scripts/responses-compat-external-smoke.sh
 bash ./scripts/v3-coding-tools-smoke.sh
@@ -219,6 +221,13 @@ CI-compatible gate plus real Codex CLI checks:
 - streamed generic replay for `tool_search`
 - `/debug/capabilities` exposes the active compaction backend and retained
   window limits
+
+`scripts/devstack-sqlite-fts5-smoke.sh` is the focused retrieval-index smoke.
+Run the stack with `RETRIEVAL_INDEX_BACKEND=sqlite_fts5` first, then run
+`make devstack-sqlite-fts5-smoke`. It checks that `/debug/capabilities`
+reports SQLite storage plus the `sqlite_fts5` index backend, uploads text
+files, creates a vector store, verifies direct vector-store search, and then
+verifies local Responses `file_search` over the same store.
 
 `cmd/responses-websocket-smoke` checks the focused V3 Responses WebSocket
 transport:

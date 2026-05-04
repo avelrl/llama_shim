@@ -94,6 +94,9 @@ curl http://127.0.0.1:8080/v1/responses \
 - `/debug/capabilities.runtime.retrieval` reports the active storage backend,
   retrieval index backend, embedder backend, semantic/hybrid/rerank support,
   and whether the active local index can lazily repair stale chunks.
+- Devstack has a focused `sqlite_fts5` smoke path:
+  `RETRIEVAL_INDEX_BACKEND=sqlite_fts5 make devstack-up` followed by
+  `make devstack-sqlite-fts5-smoke`.
 - Canonical ranking values are `auto` and `default-2024-08-21`; shim-local
   `none` disables the local rerank stage.
 - `include=["file_search_call.results"]` returns the practical local result
