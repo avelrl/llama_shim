@@ -13,6 +13,11 @@ func TestContainsPseudoToolTextProviderMarkers(t *testing.T) {
 		{name: "qwen_tool_call", text: `<toolCall::apply_patch>*** Begin Patch</toolCall::apply_patch>`},
 		{name: "xml_tool_call", text: `<tool_call><function=shell></function></tool_call>`},
 		{name: "deepseek_dsml", text: "<\uFF5C\uFF5CDSML\uFF5C\uFF5Ctool_calls><\uFF5C\uFF5CDSML\uFF5C\uFF5Cinvoke name=\"read\">"},
+		{name: "deepseek_read_file_with_attribute", text: `<read_file path=mathutil.go><failing to read>`},
+		{name: "deepseek_bash_with_attribute", text: `<bash command="find . -name 'mathutil.go'">./mathutil.go</bash>`},
+		{name: "codex_command_message", text: `<command-message>exec_command is running...</command-message>`},
+		{name: "codex_command_name", text: `<command-name>/bin/bash -c 'ls -la'</command-name>`},
+		{name: "codex_command_output", text: `<command-output>total 0</command-output>`},
 		{name: "fenced_cli_command", text: "```json\n{\"agent\":\"cli\",\"command\":[\"bash\",\"-c\",\"cat README.md\"],\"cwd\":\"/tmp/ws\"}\n```"},
 		{name: "fenced_apply_patch_command", text: "```json\n{\"command\":[\"apply_patch\",\"*** Begin Patch\\n*** End Patch\"]}\n```"},
 	}

@@ -901,6 +901,12 @@ Practical finding:
 - Local final-text repair is bounded and only asks the model to produce plain
   text from already-returned tool outputs; the shim does not execute pseudo-tool
   markup printed inside assistant text.
+- Chat-backed Codex tool-loop repair is also bounded to one re-ask when the
+  assistant text leaks obvious provider pseudo-tool syntax such as
+  `<read_file ...>`, `<bash ...>`, `<command-message>`,
+  `<command-name>`, or `<command-output>`. The retry only asks for a structured
+  function tool call or final plain text; it never converts that text into a
+  local command or patch.
 - They do not prove that current Codex emits native Responses `shell` or
   `apply_patch` declarations.
 - Practical model/provider quality is tracked separately in

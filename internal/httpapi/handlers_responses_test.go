@@ -437,6 +437,143 @@ func TestRunPreparedLocalToolLoopFallsBackToFinalTextAfterEmptyAssistantResponse
 	require.Len(t, requestBodies, 2)
 }
 
+func TestRunPreparedLocalToolLoopRetriesRawPseudoToolMarkupText(t *testing.T) {
+	var requestBodies []map[string]any
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, http.MethodPost, r.Method)
+		require.Equal(t, "/v1/chat/completions", r.URL.Path)
+
+		var payload map[string]any
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+		requestBodies = append(requestBodies, payload)
+
+		w.Header().Set("Content-Type", "application/json")
+		if len(requestBodies) == 1 {
+			require.Contains(t, payload, "tools")
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+				"choices": []map[string]any{
+					{
+						"message": map[string]any{
+							"content": "MIXED_CAUSE_FOUND - let me inspect the file.\n\n<read_file path=mathutil.go><failing to read>\nError reading file\n</failing to read>",
+						},
+					},
+				},
+			}))
+			return
+		}
+
+		require.Contains(t, payload, "tools")
+		rawMessages, err := json.Marshal(payload["messages"])
+		require.NoError(t, err)
+		require.Contains(t, string(rawMessages), "printed internal tool-call markup as text")
+		require.Contains(t, string(rawMessages), "emit a structured function tool call")
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{
+				{
+					"message": map[string]any{
+						"tool_calls": []map[string]any{
+							{
+								"id":   "call_read",
+								"type": "function",
+								"function": map[string]any{
+									"name":      "read_file",
+									"arguments": `{"path":"mathutil.go"}`,
+								},
+							},
+						},
+					},
+				},
+			},
+		}))
+	}))
+	defer upstream.Close()
+
+	handler := &responseHandler{
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		service: service.NewResponseService(nil, nil, llama.NewClientWithOptions(upstream.URL, time.Second, llama.ClientOptions{
+			ChatCompletionsCompatibility: nil,
+		})),
+		proxy: newProxyHandler(nil, llama.NewClientWithOptions(upstream.URL, time.Second, llama.ClientOptions{
+			ChatCompletionsCompatibility: nil,
+		}), nil, ServiceLimits{}, false, nil),
+		codexCompatibilityEnabled: true,
+	}
+	input := service.CreateResponseInput{Model: "deepseek-v4-pro"}
+	prepared := service.PreparedResponseContext{
+		NormalizedInput: []domain.Item{domain.NewInputTextMessage("user", "Inspect mathutil.go.")},
+		ContextItems:    []domain.Item{domain.NewInputTextMessage("user", "Inspect mathutil.go.")},
+		ToolCallRefs:    map[string]domain.ToolCallReference{},
+	}
+	rawFields := map[string]json.RawMessage{
+		"model":        json.RawMessage(`"deepseek-v4-pro"`),
+		"instructions": json.RawMessage(`"You are a coding agent running in the Codex CLI, a terminal-based coding assistant."`),
+		"input":        json.RawMessage(`"Inspect mathutil.go."`),
+		"tools": json.RawMessage(`[
+			{"type":"function","name":"exec_command","parameters":{"type":"object","properties":{"cmd":{"type":"string"}},"required":["cmd"]}},
+			{"type":"function","name":"read_file","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}}
+		]`),
+	}
+
+	response, err := handler.runPreparedLocalToolLoopResponse(context.Background(), input, prepared, rawFields)
+
+	require.NoError(t, err)
+	require.Len(t, requestBodies, 2)
+	require.Len(t, response.Output, 1)
+	require.Equal(t, "function_call", response.Output[0].Type)
+	require.Equal(t, "read_file", response.Output[0].Name())
+	require.JSONEq(t, `{"path":"mathutil.go"}`, response.Output[0].Arguments())
+}
+
+func TestRunPreparedLocalToolLoopDoesNotRetryRawPseudoToolMarkupOutsideCodexCompat(t *testing.T) {
+	var requestCount int
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, http.MethodPost, r.Method)
+		require.Equal(t, "/v1/chat/completions", r.URL.Path)
+		requestCount++
+		w.Header().Set("Content-Type", "application/json")
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{
+				{
+					"message": map[string]any{
+						"content": "<read_file path=mathutil.go><failing to read>",
+					},
+				},
+			},
+		}))
+	}))
+	defer upstream.Close()
+
+	handler := &responseHandler{
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		service: service.NewResponseService(nil, nil, llama.NewClientWithOptions(upstream.URL, time.Second, llama.ClientOptions{
+			ChatCompletionsCompatibility: nil,
+		})),
+		proxy: newProxyHandler(nil, llama.NewClientWithOptions(upstream.URL, time.Second, llama.ClientOptions{
+			ChatCompletionsCompatibility: nil,
+		}), nil, ServiceLimits{}, false, nil),
+		codexCompatibilityEnabled: true,
+	}
+	input := service.CreateResponseInput{Model: "test-model"}
+	prepared := service.PreparedResponseContext{
+		NormalizedInput: []domain.Item{domain.NewInputTextMessage("user", "Inspect mathutil.go.")},
+		ContextItems:    []domain.Item{domain.NewInputTextMessage("user", "Inspect mathutil.go.")},
+		ToolCallRefs:    map[string]domain.ToolCallReference{},
+	}
+	rawFields := map[string]json.RawMessage{
+		"model": json.RawMessage(`"test-model"`),
+		"input": json.RawMessage(`"Inspect mathutil.go."`),
+		"tools": json.RawMessage(`[
+			{"type":"function","name":"read_file","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}}
+		]`),
+	}
+
+	_, err := handler.runPreparedLocalToolLoopResponse(context.Background(), input, prepared, rawFields)
+
+	var markupErr *rawToolCallMarkupError
+	require.ErrorAs(t, err, &markupErr)
+	require.Equal(t, 1, requestCount)
+}
+
 func TestSelectResponsesCreateRoute(t *testing.T) {
 	t.Parallel()
 
@@ -1398,6 +1535,18 @@ func TestParseLocalToolLoopChatCompletionRejectsNaturalLanguageToolCallMarkupTex
 		{
 			content:     "Writing now.\n\n<apply_patch>\n<command>*** Begin Patch\n*** End Patch</command>\n</apply_patch>",
 			wantContent: "apply_patch",
+		},
+		{
+			content:     "Let me inspect it.\n\n<read_file path=mathutil.go><failing to read>\nError reading file</failing to read>",
+			wantContent: "read_file",
+		},
+		{
+			content:     "Finding files.\n\n<bash command=\"find . -name 'mathutil.go'\">./mathutil.go</bash>",
+			wantContent: "bash",
+		},
+		{
+			content:     "I'll inspect the workspace.\n\n<command-message>exec_command is running...</command-message>\n<command-name>/bin/bash -c 'ls -la'</command-name>\n<command-output>total 0</command-output>",
+			wantContent: "command-message",
 		},
 	}
 

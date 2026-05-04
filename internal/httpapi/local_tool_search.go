@@ -640,7 +640,7 @@ func (h *responseHandler) runPreparedLocalToolLoopResponse(ctx context.Context, 
 			return domain.Response{}, buildConstrainedCustomToolRepairExhaustedError(validationErr, attempt)
 		}
 		var rawMarkupErr *rawToolCallMarkupError
-		if errors.As(err, &rawMarkupErr) && attempt < maxLocalRawToolCallMarkupRepairAttempts {
+		if errors.As(err, &rawMarkupErr) && h.shouldRetryLocalToolLoopRawToolMarkup(rawFields) && attempt < maxLocalRawToolCallMarkupRepairAttempts {
 			if h.logger != nil {
 				h.logger.DebugContext(ctx, "repairing chat completion raw tool-call markup emitted as assistant text",
 					"attempt", attempt,
@@ -651,6 +651,13 @@ func (h *responseHandler) runPreparedLocalToolLoopResponse(ctx context.Context, 
 		}
 		return domain.Response{}, err
 	}
+}
+
+func (h *responseHandler) shouldRetryLocalToolLoopRawToolMarkup(rawFields map[string]json.RawMessage) bool {
+	if h == nil || !h.codexCompatibilityEnabled {
+		return false
+	}
+	return shouldApplyCodexCompatibility(rawFields, decodeToolList(rawFields), h.codexCompatibilityEnabled)
 }
 
 func (h *responseHandler) shouldRetryLocalToolLoopInvalidToolArguments(input service.CreateResponseInput, err error) bool {

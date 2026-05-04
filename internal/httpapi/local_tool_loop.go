@@ -870,7 +870,7 @@ func containsRawToolCallMarkup(text string) bool {
 }
 
 func buildRawToolCallMarkupRepairPrompt() string {
-	return "Your previous assistant message printed internal tool-call markup as text. That is invalid. If you still need a tool, emit a structured function tool call through the tools interface. If the task is complete, reply with final plain text only. Do not include pseudo-tool markup such as <|tool_call, <|tool_calls_section, <|mask_start|>, <prelude>, <tool_call>, <function_call>, <tool_code_call>, <read_file>, <patch>, <apply_patch>, <command>, <function_call_output>, <invoke name=..., <||DSML||tool_calls>, fenced JSON command/apply_patch blocks, or <bash> in assistant text."
+	return "Your previous assistant message printed internal tool-call markup as text. That is invalid. If you still need a tool, emit a structured function tool call through the tools interface. If the task is complete, reply with final plain text only. Do not include pseudo-tool markup such as <|tool_call, <|tool_calls_section, <|mask_start|>, <prelude>, <tool_call>, <function_call>, <tool_code_call>, <read_file>, <patch>, <apply_patch>, <command>, <command-message>, <command-name>, <command-output>, <command-arg>, <function_call_output>, <invoke name=..., <||DSML||tool_calls>, fenced JSON command/apply_patch blocks, or <bash> in assistant text."
 }
 
 func extractChatCompletionContent(raw json.RawMessage) string {

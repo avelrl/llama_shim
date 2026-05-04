@@ -12,12 +12,16 @@ func ContainsPseudoToolText(text string) bool {
 // pseudo-tool call. The returned value is for diagnostics only.
 func FirstPseudoToolMarker(text string) string {
 	normalized := normalizeProviderToolText(text)
+	lower := strings.ToLower(normalized)
 	for _, marker := range pseudoToolTextMarkers() {
-		if strings.Contains(normalized, marker) {
+		if strings.Contains(lower, marker) {
 			return marker
 		}
 	}
-	if containsFencedJSONPseudoCommand(normalized) {
+	if marker := firstPseudoToolTagMarker(lower); marker != "" {
+		return marker
+	}
+	if containsFencedJSONPseudoCommand(lower) {
 		return "```json command/apply_patch block"
 	}
 	return ""
@@ -36,15 +40,14 @@ func pseudoToolTextMarkers() []string {
 		"<prelude>",
 		"</prelude>",
 		"<tool call:",
-		"[Tool call:",
+		"[tool call:",
 		"<function_call>",
 		"</function_call>",
 		"<function_call_output",
-		"<FUNCTION_CALL_OUTPUT",
-		"<antThinking>",
-		"</antThinking>",
-		"<toolCall::",
-		"</toolCall::",
+		"<antthinking>",
+		"</antthinking>",
+		"<toolcall::",
+		"</toolcall::",
 		"<apply_patch>",
 		"</apply_patch>",
 		"<command>",
@@ -61,28 +64,74 @@ func pseudoToolTextMarkers() []string {
 		"</patch>",
 		"<bash>",
 		"</bash>",
-		"<||DSML||tool_calls",
-		"</||DSML||tool_calls",
-		"<||DSML||invoke",
-		"</||DSML||invoke",
-		"<||DSML||parameter",
-		"</||DSML||parameter",
+		"<||dsml||tool_calls",
+		"</||dsml||tool_calls",
+		"<||dsml||invoke",
+		"</||dsml||invoke",
+		"<||dsml||parameter",
+		"</||dsml||parameter",
+	}
+}
+
+func firstPseudoToolTagMarker(text string) string {
+	for _, name := range pseudoToolTagNames() {
+		if hasPseudoToolTag(text, name) {
+			return "<" + name
+		}
+	}
+	return ""
+}
+
+func pseudoToolTagNames() []string {
+	return []string{
+		"read_file",
+		"bash",
+		"command-message",
+		"command-name",
+		"command-output",
+		"command-arg",
+	}
+}
+
+func hasPseudoToolTag(text string, name string) bool {
+	for _, prefix := range []string{"<" + name, "</" + name} {
+		offset := 0
+		for {
+			idx := strings.Index(text[offset:], prefix)
+			if idx < 0 {
+				break
+			}
+			end := offset + idx + len(prefix)
+			if end >= len(text) || isPseudoToolTagBoundary(text[end]) {
+				return true
+			}
+			offset = end
+		}
+	}
+	return false
+}
+
+func isPseudoToolTagBoundary(ch byte) bool {
+	switch ch {
+	case ' ', '\n', '\r', '\t', '>', '/', '=':
+		return true
+	default:
+		return false
 	}
 }
 
 func containsFencedJSONPseudoCommand(text string) bool {
-	lower := strings.ToLower(text)
 	offset := 0
 	for {
-		startRelative := strings.Index(lower[offset:], "```json")
+		startRelative := strings.Index(text[offset:], "```json")
 		if startRelative < 0 {
 			return false
 		}
 		blockStart := offset + startRelative + len("```json")
-		blockEndRelative := strings.Index(lower[blockStart:], "```")
-		block := lower[blockStart:]
+		blockEndRelative := strings.Index(text[blockStart:], "```")
+		block := text[blockStart:]
 		if blockEndRelative >= 0 {
-			block = lower[blockStart : blockStart+blockEndRelative]
+			block = text[blockStart : blockStart+blockEndRelative]
 		}
 		if isPseudoCommandJSONBlock(block) {
 			return true
