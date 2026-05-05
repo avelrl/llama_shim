@@ -83,13 +83,15 @@ Status: `Planned`. See [v3-image-backends.md](v3-image-backends.md).
 
 ### 2. More retrieval and storage backends
 
-Status: `Partial`; SQLite storage contracts, the retrieval-index contract, and
-the first added retrieval backend (`sqlite_fts5`) are implemented, while
-additional durable backends are still planned. See
+Status: `Partial`; SQLite storage contracts, the retrieval-index contract,
+`sqlite_fts5`, `sqlite_vec`, and the Postgres/pgvector alpha path for
+retrieval objects are implemented, while broader durable-store migration is
+still planned. See
 [v3-storage-retrieval-backends.md](v3-storage-retrieval-backends.md).
 
 - ANN indexing beyond the current exact local subset
-- Postgres / pgvector / multi-instance storage modes
+- broader Postgres / multi-instance storage modes beyond files/vector stores
+- SQLite-to-Postgres migration and non-retrieval store ownership
 - more embedders and rerankers beyond the current compatibility-driven set
 
 ### 3. Richer local-only runtimes

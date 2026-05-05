@@ -7,7 +7,10 @@ import (
 	"llama_shim/internal/retrieval"
 )
 
-const BackendSQLite = "sqlite"
+const (
+	BackendSQLite   = "sqlite"
+	BackendPostgres = "postgres"
+)
 
 type HealthStore interface {
 	PingContext(ctx context.Context) error

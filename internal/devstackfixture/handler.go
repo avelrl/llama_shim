@@ -37,6 +37,7 @@ func NewHandler() http.Handler {
 	mux.HandleFunc("/", handleRoot)
 	mux.HandleFunc("/healthz", handleHealthz)
 	mux.HandleFunc("/v1/models", handleModels)
+	mux.HandleFunc("/v1/embeddings", handleEmbeddings)
 	mux.HandleFunc("/v1/chat/completions", handleChatCompletions)
 	mux.HandleFunc("/v1/responses", handleResponses)
 	mux.HandleFunc("/mcp", server.handleMCP)
@@ -46,6 +47,79 @@ func NewHandler() http.Handler {
 	mux.HandleFunc("/pages/web-search-guide", handleWebSearchGuidePage)
 	mux.HandleFunc("/pages/project-sunbeam", handleProjectSunbeamPage)
 	return mux
+}
+
+func handleEmbeddings(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeMethodNotAllowed(w)
+		return
+	}
+
+	var request struct {
+		Model string `json:"model"`
+		Input any    `json:"input"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"error": map[string]any{
+				"type":    "invalid_request_error",
+				"message": "malformed JSON body",
+			},
+		})
+		return
+	}
+
+	inputs := normalizeEmbeddingInputs(request.Input)
+	data := make([]map[string]any, 0, len(inputs))
+	for i, input := range inputs {
+		data = append(data, map[string]any{
+			"object":    "embedding",
+			"index":     i,
+			"embedding": fixtureEmbedding(input),
+		})
+	}
+	model := strings.TrimSpace(request.Model)
+	if model == "" {
+		model = "devstack-embedding"
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"object": "list",
+		"model":  model,
+		"data":   data,
+		"usage": map[string]any{
+			"prompt_tokens": len(inputs),
+			"total_tokens":  len(inputs),
+		},
+	})
+}
+
+func normalizeEmbeddingInputs(input any) []string {
+	switch typed := input.(type) {
+	case string:
+		return []string{typed}
+	case []any:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			out = append(out, asString(item))
+		}
+		return out
+	default:
+		return []string{asString(input)}
+	}
+}
+
+func fixtureEmbedding(input string) []float64 {
+	text := strings.ToLower(input)
+	switch {
+	case strings.Contains(text, "orionpepper") || strings.Contains(text, "777") || strings.Contains(text, "code"):
+		return []float64{1, 0, 0, 0}
+	case strings.Contains(text, "ordinary") || strings.Contains(text, "decoy"):
+		return []float64{0, 1, 0, 0}
+	case strings.Contains(text, "sunbeam"):
+		return []float64{0, 0, 1, 0}
+	default:
+		return []float64{0, 0, 0, 1}
+	}
 }
 
 type chatCompletionRequest struct {

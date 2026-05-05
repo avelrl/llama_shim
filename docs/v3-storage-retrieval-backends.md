@@ -27,11 +27,17 @@ The shim already exposes a practical local subset for:
 
 Current runtime ownership:
 
-- durable object state is SQLite
+- default durable object state is SQLite
+- optional alpha object storage uses Postgres for files, vector stores,
+  vector-store files, and vector-store chunks while keeping SQLite as a
+  sidecar for responses, conversations, stored chat completions, and
+  code-interpreter state
 - default retrieval index is local lexical search
 - optional indexed lexical retrieval uses `retrieval.index.backend=sqlite_fts5`
 - optional semantic retrieval uses `retrieval.index.backend=sqlite_vec` plus a
   configured embedder
+- optional alpha pgvector retrieval uses `storage.backend=postgres`,
+  `retrieval.index.backend=pgvector`, and a configured retrieval embedder
 - local `file_search` uses the same vector-store substrate and injects bounded
   grounding context before final model generation
 
@@ -45,18 +51,23 @@ flowchart LR
   client["Client"]
   http["OpenAI-shaped HTTP routes"]
   sqlite["SQLite store"]
+  postgres["Postgres file/vector store alpha"]
   lexical["Lexical scan"]
   fts5["sqlite_fts5 index"]
   sqlitevec["sqlite_vec index"]
+  pgvector["pgvector exact dense index"]
   embedder["Optional embedder backend"]
   model["Upstream text model"]
 
   client --> http
   http --> sqlite
+  http --> postgres
   http --> lexical
   http --> fts5
   http --> sqlitevec
+  http --> pgvector
   sqlitevec --> embedder
+  pgvector --> embedder
   http --> model
 ```
 
@@ -94,27 +105,27 @@ flowchart TB
   services["Services"]
   storageContracts["internal/storage contracts"]
   sqliteStore["sqlite.Store"]
-  futurePg["future postgres.Store"]
+  pgStore["postgres.Store alpha"]
   retrievalIndex["retrieval index contract"]
   lexical["lexical scan"]
   fts5["sqlite_fts5"]
   sqliteVec["sqlite_vec"]
-  futurePgVector["future pgvector"]
+  pgVector["pgvector"]
   embedder["embedder provider"]
 
   routes --> services
   routes --> storageContracts
   services --> storageContracts
   storageContracts --> sqliteStore
-  storageContracts -. future .-> futurePg
+  storageContracts --> pgStore
 
   routes --> retrievalIndex
   retrievalIndex --> lexical
   retrievalIndex --> fts5
   retrievalIndex --> sqliteVec
-  retrievalIndex -. future .-> futurePgVector
+  retrievalIndex --> pgVector
   sqliteVec --> embedder
-  futurePgVector -. future .-> embedder
+  pgVector --> embedder
 ```
 
 The first code slices now add `internal/storage` contracts, a composite
@@ -123,36 +134,51 @@ handler wiring that depends on storage interfaces for router health,
 chat-completion shadow storage, retrieval routes, vector-store search, and
 code-interpreter file/session stores. The retrieval index is now a separate
 generic internal contract with SQLite implementations for lexical scan,
-`sqlite_fts5`, and `sqlite_vec` indexing. These slices do not introduce a
-second durable object-storage runtime backend yet.
+`sqlite_fts5`, and `sqlite_vec` indexing. The Postgres alpha adds a second
+durable backend for retrieval objects only. It intentionally keeps SQLite as a
+sidecar for the non-retrieval stores until a later migration slice exists.
 
 ## Configuration
 
-Current supported storage configuration:
+Supported storage configuration:
 
 ```yaml
 storage:
   backend: sqlite
+
+postgres:
+  dsn: ""
 ```
 
 Environment override:
 
 ```bash
 STORAGE_BACKEND=sqlite
+POSTGRES_DSN=postgres://llama_shim:llama_shim@127.0.0.1:15432/llama_shim?sslmode=disable
 ```
 
-Only `sqlite` is accepted today. Unsupported values fail during config loading,
-before any HTTP route starts.
+`sqlite` remains the default. `postgres` is accepted for the alpha retrieval
+object-storage slice and requires `postgres.dsn`. Unsupported values fail
+during config loading, before any HTTP route starts.
 
 Retrieval indexing remains configured separately:
 
 ```yaml
 retrieval:
   index:
-    backend: lexical   # lexical, sqlite_fts5, or sqlite_vec
+    backend: lexical   # lexical, sqlite_fts5, sqlite_vec, or pgvector
   embedder:
     backend: disabled
 ```
+
+`retrieval.index.backend=pgvector` requires `storage.backend=postgres` and a
+configured retrieval embedder. It is an exact pgvector search path plus the
+shim's existing lexical fallback/hybrid fusion, not hosted OpenAI ranking
+parity.
+
+When `storage.backend=postgres` is active, `retrieval.index.backend` must be
+`lexical` or `pgvector`; `sqlite_fts5` and `sqlite_vec` are SQLite-specific
+index backends.
 
 ## Capability Manifest
 
@@ -193,13 +219,43 @@ store. It is an indexed lexical backend, not a semantic backend. When
 `local_rerank`, and `lazy_repair` can become `true`. That is a local
 capability claim, not a hosted OpenAI ranking claim.
 
+When Postgres/pgvector alpha is active, the manifest reports Postgres for the
+retrieval object stores and SQLite sidecar ownership for the stores that have
+not moved yet:
+
+```json
+{
+  "runtime": {
+    "persistence": {
+      "backend": "postgres",
+      "response_store": "sqlite_sidecar",
+      "conversation_store": "sqlite_sidecar",
+      "chat_completion_store": "sqlite_sidecar",
+      "file_store": "postgres",
+      "vector_store": "postgres",
+      "code_interpreter_store": "sqlite_sidecar",
+      "expected_durable": true
+    },
+    "retrieval": {
+      "storage_backend": "postgres",
+      "index_backend": "pgvector",
+      "embedder_backend": "openai_compatible",
+      "semantic_search": true,
+      "hybrid_search": true,
+      "local_rerank": false,
+      "lazy_repair": false
+    }
+  }
+}
+```
+
 ## Implementation Phases
 
 ### 0. Foundation
 
 Status: implemented for the SQLite-only foundation.
 
-- Add `storage.backend` with `sqlite` as the only supported value.
+- Add `storage.backend`, initially with `sqlite` as the only supported value.
 - Add `internal/storage` contracts for the existing durable surfaces.
 - Reuse shared storage errors across SQLite and services.
 - Add compile-time SQLite conformance checks.
@@ -272,22 +328,35 @@ does not make semantic-search claims. Search lazily repairs missing FTS5 rows
 for the queried vector store, which covers enabling this backend on an existing
 SQLite database.
 
-This keeps `sqlite_fts5` and `sqlite_vec` behind the storage/retrieval
-boundary. Higher-level handlers still see the same OpenAI-shaped vector-store
-and `file_search` surface, while future Postgres/pgvector work can implement
-the same index contract without changing HTTP handlers.
+This keeps `sqlite_fts5`, `sqlite_vec`, and `pgvector` behind the
+storage/retrieval boundary. Higher-level handlers still see the same
+OpenAI-shaped vector-store and `file_search` surface. The current
+Postgres/pgvector alpha validates that boundary for retrieval objects without
+changing HTTP handlers.
 
 ### 3. Postgres Object Storage Alpha
 
-Add a `postgres` durable backend only after the interface boundary is narrow.
+Status: implemented as an alpha hybrid store.
 
-First alpha scope:
+The `postgres` durable backend owns the retrieval object-storage surfaces:
 
 - files metadata and content
 - vector stores
 - vector-store files
 - vector-store chunk metadata
-- direct vector-store search only if backed by a retrieval index from phase 4
+- direct vector-store search when backed by `retrieval.index.backend=pgvector`
+
+Implementation boundary:
+
+- `internal/storage/postgres.Store` satisfies the shared `storage.Store`
+  contract.
+- Postgres stores file/vector-store data; SQLite remains a sidecar for
+  responses, conversations, stored Chat Completions, code-interpreter sessions,
+  and maintenance operations that still require SQLite internals.
+- The alpha schema creates the pgvector extension because this slice is paired
+  with pgvector retrieval in devstack.
+- List endpoints use SQL-side pagination and do not fetch file content just to
+  build pages.
 
 Out of first alpha scope:
 
@@ -295,24 +364,31 @@ Out of first alpha scope:
 - stored chat completions migration
 - code-interpreter artifact storage migration
 - mixed SQLite/Postgres cross-store transactions
+- SQLite-to-Postgres migration tooling
 
 ### 4. pgvector Retrieval Alpha
 
-Add `retrieval.index.backend=pgvector` after Postgres object storage is stable.
+Status: implemented as an alpha exact pgvector backend.
 
-Expected behavior:
+Implemented behavior:
 
-- semantic search through pgvector
-- lexical fallback or hybrid fusion when configured
+- semantic search through pgvector exact vector distance ordering
+- lexical fallback when semantic search returns no usable results
+- weighted hybrid dense+text ranking when `ranking_options.hybrid_search` is
+  configured
 - same public `/v1/vector_stores/{id}/search` response shape
 - same local `file_search` grounding contract
+- deterministic query rewrite and multi-query planning stay in the local
+  HTTP/service layer, not in the pgvector index itself
 
 The quality bar is practical local RAG behavior, not hosted OpenAI reranker
 equivalence.
 
 ### 5. Devstack And Smokes
 
-Add repo-owned smoke coverage before upgrading compatibility wording:
+Status: implemented for the Postgres/pgvector alpha path.
+
+Repo-owned smoke coverage:
 
 - Docker Compose service for Postgres with pgvector
 - upload file
@@ -322,7 +398,25 @@ Add repo-owned smoke coverage before upgrading compatibility wording:
 - run `/v1/responses` with `file_search`
 - delete file/vector-store state
 - verify `/debug/capabilities`
-- verify `local_only`, `prefer_local`, and `prefer_upstream` do not regress
+
+Run:
+
+```bash
+STORAGE_BACKEND=postgres \
+RETRIEVAL_INDEX_BACKEND=pgvector \
+RETRIEVAL_EMBEDDER_BACKEND=openai_compatible \
+RETRIEVAL_EMBEDDER_BASE_URL=http://fixture:8081 \
+RETRIEVAL_EMBEDDER_MODEL=devstack-embedding \
+RESPONSES_MODE=prefer_local \
+make devstack-up
+
+RESPONSES_MODE=prefer_local make devstack-postgres-pgvector-smoke
+```
+
+The smoke checks `prefer_local`, because it exercises the shim-owned local
+Responses `file_search` path. `local_only` and `prefer_upstream` remain covered
+by the existing Responses mode tests and should be expanded only when the
+Postgres store starts owning non-retrieval response state.
 
 ### 6. Broader Storage Expansion
 

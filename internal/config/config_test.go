@@ -721,12 +721,117 @@ func TestLoadRejectsUnsupportedStorageBackend(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
 	writeFile(t, configPath, `
 storage:
+  backend: mysql
+`)
+
+	_, err := config.Load(configPath)
+	require.Error(t, err)
+	require.ErrorContains(t, err, `unsupported storage backend "mysql"`)
+}
+
+func TestLoadRejectsPostgresStorageWithoutDSN(t *testing.T) {
+	disableDotEnv(t)
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	writeFile(t, configPath, `
+storage:
   backend: postgres
 `)
 
 	_, err := config.Load(configPath)
 	require.Error(t, err)
-	require.ErrorContains(t, err, `unsupported storage backend "postgres"`)
+	require.ErrorContains(t, err, "parse postgres.dsn")
+}
+
+func TestLoadAcceptsPostgresStorageWithDSN(t *testing.T) {
+	disableDotEnv(t)
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	writeFile(t, configPath, `
+storage:
+  backend: postgres
+postgres:
+  dsn: postgres://llama_shim:llama_shim@127.0.0.1:15432/llama_shim?sslmode=disable
+`)
+
+	cfg, err := config.Load(configPath)
+	require.NoError(t, err)
+	require.Equal(t, "postgres", cfg.StorageBackend)
+	require.Equal(t, "postgres://llama_shim:llama_shim@127.0.0.1:15432/llama_shim?sslmode=disable", cfg.PostgresDSN)
+}
+
+func TestLoadRejectsPGVectorWithoutPostgresStorage(t *testing.T) {
+	disableDotEnv(t)
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	writeFile(t, configPath, `
+retrieval:
+  index:
+    backend: pgvector
+  embedder:
+    backend: openai_compatible
+`)
+
+	_, err := config.Load(configPath)
+	require.Error(t, err)
+	require.ErrorContains(t, err, `requires storage.backend="postgres"`)
+}
+
+func TestLoadRejectsPGVectorWithoutEmbedder(t *testing.T) {
+	disableDotEnv(t)
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	writeFile(t, configPath, `
+storage:
+  backend: postgres
+postgres:
+  dsn: postgres://llama_shim:llama_shim@127.0.0.1:15432/llama_shim?sslmode=disable
+retrieval:
+  index:
+    backend: pgvector
+`)
+
+	_, err := config.Load(configPath)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "requires a configured embedder backend")
+}
+
+func TestLoadRejectsSQLiteIndexWithPostgresStorage(t *testing.T) {
+	disableDotEnv(t)
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	writeFile(t, configPath, `
+storage:
+  backend: postgres
+postgres:
+  dsn: postgres://llama_shim:llama_shim@127.0.0.1:15432/llama_shim?sslmode=disable
+retrieval:
+  index:
+    backend: sqlite_fts5
+`)
+
+	_, err := config.Load(configPath)
+	require.Error(t, err)
+	require.ErrorContains(t, err, `storage.backend="postgres" supports "lexical" or "pgvector"`)
+}
+
+func TestLoadAcceptsPGVectorWithPostgresAndEmbedder(t *testing.T) {
+	disableDotEnv(t)
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	writeFile(t, configPath, `
+storage:
+  backend: postgres
+postgres:
+  dsn: postgres://llama_shim:llama_shim@127.0.0.1:15432/llama_shim?sslmode=disable
+retrieval:
+  index:
+    backend: pgvector
+  embedder:
+    backend: openai_compatible
+    base_url: http://fixture:8081
+    model: devstack-embedding
+`)
+
+	cfg, err := config.Load(configPath)
+	require.NoError(t, err)
+	require.Equal(t, "postgres", cfg.StorageBackend)
+	require.Equal(t, "pgvector", cfg.RetrievalIndexBackend)
+	require.Equal(t, "openai_compatible", cfg.RetrievalEmbedderBackend)
 }
 
 func TestLoadRejectsImageGenerationResponsesBackendWithoutBaseURL(t *testing.T) {

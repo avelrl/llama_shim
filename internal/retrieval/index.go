@@ -44,12 +44,14 @@ func IndexCapabilitiesForConfig(cfg Config, embedderConfigured bool) IndexCapabi
 	if backend == "" {
 		backend = IndexBackendLexical
 	}
-	semantic := backend == IndexBackendSQLiteVec && embedderConfigured
+	semantic := (backend == IndexBackendSQLiteVec || backend == IndexBackendPGVector) && embedderConfigured
+	localRerank := backend == IndexBackendSQLiteVec && embedderConfigured
+	lazyRepair := backend == IndexBackendSQLiteVec && embedderConfigured
 	return IndexCapabilities{
 		Backend:        backend,
 		SemanticSearch: semantic,
 		HybridSearch:   semantic,
-		LocalRerank:    semantic,
-		LazyRepair:     semantic,
+		LocalRerank:    localRerank,
+		LazyRepair:     lazyRepair,
 	}
 }

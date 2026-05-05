@@ -208,7 +208,9 @@ type capabilityRouting struct {
 }
 
 type capabilityProbeSet struct {
+	Storage                capabilityProbe `json:"storage"`
 	SQLite                 capabilityProbe `json:"sqlite"`
+	Postgres               capabilityProbe `json:"postgres"`
 	Llama                  capabilityProbe `json:"llama"`
 	RetrievalEmbedder      capabilityProbe `json:"retrieval_embedder"`
 	WebSearchBackend       capabilityProbe `json:"web_search_backend"`
@@ -458,13 +460,25 @@ func capabilityPersistence(deps RouterDeps) capabilityPersistenceInfo {
 	}
 	return capabilityPersistenceInfo{
 		Backend:              backend,
-		ResponseStore:        backend,
-		ConversationStore:    backend,
-		ChatCompletionStore:  backend,
-		FileStore:            backend,
-		VectorStore:          backend,
-		CodeInterpreterStore: backend,
+		ResponseStore:        persistenceStoreBackend(backend, "response"),
+		ConversationStore:    persistenceStoreBackend(backend, "conversation"),
+		ChatCompletionStore:  persistenceStoreBackend(backend, "chat_completion"),
+		FileStore:            persistenceStoreBackend(backend, "file"),
+		VectorStore:          persistenceStoreBackend(backend, "vector"),
+		CodeInterpreterStore: persistenceStoreBackend(backend, "code_interpreter"),
 		ExpectedDurable:      deps.Store != nil,
+	}
+}
+
+func persistenceStoreBackend(backend, surface string) string {
+	if backend != storage.BackendPostgres {
+		return backend
+	}
+	switch surface {
+	case "file", "vector":
+		return storage.BackendPostgres
+	default:
+		return storage.BackendSQLite + "_sidecar"
 	}
 }
 
@@ -555,12 +569,28 @@ func constrainedDecodingCapability(deps RouterDeps) capabilityConstrainedDecodin
 }
 
 func collectCapabilityProbes(ctx context.Context, deps RouterDeps) capabilityProbeSet {
+	storageBackend := strings.ToLower(strings.TrimSpace(deps.StorageBackend))
+	if storageBackend == "" {
+		storageBackend = storage.BackendSQLite
+	}
 	probes := capabilityProbeSet{
-		SQLite: capabilityProbe{
+		Storage: capabilityProbe{
 			Enabled: true,
 			Checked: true,
 			Ready:   deps.Store != nil,
-			Error:   probeErrorMessage(deps.Store == nil, "sqlite is not ready"),
+			Error:   probeErrorMessage(deps.Store == nil, "storage backend is not ready"),
+		},
+		SQLite: capabilityProbe{
+			Enabled: storageBackend == storage.BackendSQLite,
+			Checked: storageBackend == storage.BackendSQLite,
+			Ready:   deps.Store != nil,
+			Error:   probeErrorMessage(deps.Store == nil && storageBackend == storage.BackendSQLite, "sqlite is not ready"),
+		},
+		Postgres: capabilityProbe{
+			Enabled: storageBackend == storage.BackendPostgres,
+			Checked: storageBackend == storage.BackendPostgres,
+			Ready:   deps.Store != nil,
+			Error:   probeErrorMessage(deps.Store == nil && storageBackend == storage.BackendPostgres, "postgres is not ready"),
 		},
 		Llama: capabilityProbe{
 			Enabled: true,
@@ -572,10 +602,24 @@ func collectCapabilityProbes(ctx context.Context, deps RouterDeps) capabilityPro
 
 	if deps.Store != nil {
 		if err := deps.Store.PingContext(ctx); err != nil {
-			probes.SQLite.Ready = false
-			probes.SQLite.Error = "sqlite is not ready"
+			probes.Storage.Ready = false
+			probes.Storage.Error = "storage backend is not ready"
+			if probes.SQLite.Enabled {
+				probes.SQLite.Ready = false
+				probes.SQLite.Error = "sqlite is not ready"
+			}
+			if probes.Postgres.Enabled {
+				probes.Postgres.Ready = false
+				probes.Postgres.Error = "postgres is not ready"
+			}
 		} else {
-			probes.SQLite.Error = ""
+			probes.Storage.Error = ""
+			if probes.SQLite.Enabled {
+				probes.SQLite.Error = ""
+			}
+			if probes.Postgres.Enabled {
+				probes.Postgres.Error = ""
+			}
 		}
 	}
 
@@ -592,7 +636,7 @@ func collectCapabilityProbes(ctx context.Context, deps RouterDeps) capabilityPro
 	}
 
 	probes.RetrievalEmbedder = capabilityProbe{
-		Enabled: deps.RetrievalIndexBackend == retrieval.IndexBackendSQLiteVec,
+		Enabled: deps.RetrievalIndexBackend == retrieval.IndexBackendSQLiteVec || deps.RetrievalIndexBackend == retrieval.IndexBackendPGVector,
 	}
 	if probes.RetrievalEmbedder.Enabled {
 		if checker, ok := deps.RetrievalEmbedder.(retrieval.ReadyChecker); ok {
@@ -636,7 +680,9 @@ func collectCapabilityProbes(ctx context.Context, deps RouterDeps) capabilityPro
 }
 
 func (p capabilityProbeSet) ready() bool {
-	return probeReady(p.SQLite) &&
+	return probeReady(p.Storage) &&
+		probeReady(p.SQLite) &&
+		probeReady(p.Postgres) &&
 		probeReady(p.Llama) &&
 		probeReady(p.RetrievalEmbedder) &&
 		probeReady(p.WebSearchBackend) &&

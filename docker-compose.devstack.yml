@@ -6,16 +6,44 @@ services:
     ports:
       - "18081:8081"
 
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: llama_shim
+      POSTGRES_USER: llama_shim
+      POSTGRES_PASSWORD: llama_shim
+    ports:
+      - "15432:5432"
+    volumes:
+      - devstack-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U llama_shim -d llama_shim"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
   shim:
     build:
       context: .
     command: ["/usr/local/bin/shim", "-config", "/app/config.yaml"]
     depends_on:
-      - fixture
+      fixture:
+        condition: service_started
+      postgres:
+        condition: service_healthy
     environment:
+      STORAGE_BACKEND: ${STORAGE_BACKEND:-sqlite}
+      POSTGRES_DSN: ${POSTGRES_DSN:-postgres://llama_shim:llama_shim@postgres:5432/llama_shim?sslmode=disable}
       RETRIEVAL_INDEX_BACKEND: ${RETRIEVAL_INDEX_BACKEND:-lexical}
+      RETRIEVAL_EMBEDDER_BACKEND: ${RETRIEVAL_EMBEDDER_BACKEND:-disabled}
+      RETRIEVAL_EMBEDDER_BASE_URL: ${RETRIEVAL_EMBEDDER_BASE_URL:-}
+      RETRIEVAL_EMBEDDER_MODEL: ${RETRIEVAL_EMBEDDER_MODEL:-}
+      RESPONSES_MODE: ${RESPONSES_MODE:-prefer_local}
     ports:
       - "18080:8080"
     volumes:
       - ./config.devstack.yaml:/app/config.yaml:ro
       - ./.data:/app/.data
+
+volumes:
+  devstack-postgres-data:

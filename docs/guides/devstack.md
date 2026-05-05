@@ -9,7 +9,7 @@ integration suite.
 
 ## What It Starts
 
-The dev stack consists of two processes:
+The dev stack consists of three Compose services:
 
 - `shim`: the normal `llama_shim` server
 - `devstack-fixture`: a deterministic helper backend that provides:
@@ -23,6 +23,8 @@ The dev stack consists of two processes:
     shim-local `mcp.server_url`
   - fixed HTML pages linked from deterministic search results for targeted
     debugging and explicit tests
+- `postgres`: a pgvector-enabled Postgres service used by the optional
+  Postgres/pgvector retrieval smoke path
 
 ## Quick Start
 
@@ -91,6 +93,20 @@ Run the focused V3 constrained-decoding smoke path:
 make v3-constrained-decoding-smoke
 ```
 
+Run the focused Postgres/pgvector retrieval smoke path:
+
+```bash
+STORAGE_BACKEND=postgres \
+RETRIEVAL_INDEX_BACKEND=pgvector \
+RETRIEVAL_EMBEDDER_BACKEND=openai_compatible \
+RETRIEVAL_EMBEDDER_BASE_URL=http://fixture:8081 \
+RETRIEVAL_EMBEDDER_MODEL=devstack-embedding \
+RESPONSES_MODE=prefer_local \
+make devstack-up
+
+RESPONSES_MODE=prefer_local make devstack-postgres-pgvector-smoke
+```
+
 Run the real Codex CLI smoke path:
 
 ```bash
@@ -137,6 +153,8 @@ RETRIEVAL_INDEX_BACKEND=sqlite_fts5 docker compose -f docker-compose.devstack.ym
 bash ./scripts/devstack-sqlite-fts5-smoke.sh
 bash ./scripts/responses-compat-external-smoke.sh
 RESPONSES_COMPAT_RUN_MODE=real-upstream RESPONSES_COMPAT_EXPECTED_UPSTREAM=<upstream-base-url> bash ./scripts/responses-compat-external-smoke.sh
+STORAGE_BACKEND=postgres RETRIEVAL_INDEX_BACKEND=pgvector RETRIEVAL_EMBEDDER_BACKEND=openai_compatible RETRIEVAL_EMBEDDER_BASE_URL=http://fixture:8081 RETRIEVAL_EMBEDDER_MODEL=devstack-embedding docker compose -f docker-compose.devstack.yml up -d --build
+bash ./scripts/devstack-postgres-pgvector-smoke.sh
 bash ./scripts/v3-coding-tools-smoke.sh
 bash ./scripts/v3-constrained-decoding-smoke.sh
 bash ./scripts/codex-cli-devstack-smoke.sh
@@ -150,9 +168,11 @@ docker compose -f docker-compose.devstack.yml down --remove-orphans
 
 - shim: `http://127.0.0.1:18080`
 - fixture backend: `http://127.0.0.1:18081`
+- postgres: `127.0.0.1:15432`
 
 The shim itself talks to the fixture backend over the Compose network as
-`http://fixture:8081`.
+`http://fixture:8081`. In Postgres/pgvector mode it talks to Postgres over the
+Compose network as `postgres:5432`.
 
 ## What The Smoke Path Verifies
 
@@ -228,6 +248,15 @@ Run the stack with `RETRIEVAL_INDEX_BACKEND=sqlite_fts5` first, then run
 reports SQLite storage plus the `sqlite_fts5` index backend, uploads text
 files, creates a vector store, verifies direct vector-store search, and then
 verifies local Responses `file_search` over the same store.
+
+`scripts/devstack-postgres-pgvector-smoke.sh` is the focused Postgres/pgvector
+retrieval smoke. Run the stack with `STORAGE_BACKEND=postgres`,
+`RETRIEVAL_INDEX_BACKEND=pgvector`, and the fixture OpenAI-compatible embedder
+environment first, then run `make devstack-postgres-pgvector-smoke`. It checks
+that `/debug/capabilities` reports Postgres for files/vector stores,
+`sqlite_sidecar` for response/conversation/chat/code-interpreter stores,
+pgvector semantic/hybrid retrieval, direct vector-store search, local
+Responses `file_search`, and cleanup.
 
 `cmd/responses-websocket-smoke` checks the focused V3 Responses WebSocket
 transport:
@@ -373,8 +402,9 @@ bench-lite result into the model matrix.
 
 ## Notes
 
-- The dev stack uses lexical retrieval, not `sqlite_vec`, to avoid extra local
-  embedder requirements.
+- The default dev stack uses lexical retrieval, not `sqlite_vec`, to avoid
+  extra local embedder requirements. The Postgres/pgvector smoke opts into the
+  deterministic fixture embedder explicitly.
 - The fixture backend is deterministic by design. If the smoke path fails, the
   failure should usually be actionable as a shim or environment issue rather
   than a model-quality fluctuation.

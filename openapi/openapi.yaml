@@ -56,12 +56,12 @@ paths:
       summary: Readiness probe
       x-shim-status: implemented
       description: |
-        Returns `200` only when the SQLite store is reachable, the configured
-        upstream llama-compatible backend responds successfully to
+        Returns `200` only when the active storage backend is reachable, the
+        configured upstream llama-compatible backend responds successfully to
         `GET /v1/models` with a models-list payload, and, when
-        `retrieval.index.backend=sqlite_vec` is enabled with a readiness-aware
-        embedder backend such as `embedanything`, the local retrieval embedder
-        is also reachable. When `responses.web_search.backend=searxng` is
+        `retrieval.index.backend=sqlite_vec` or `pgvector` is enabled with a
+        readiness-aware embedder backend, the local retrieval embedder is also
+        reachable. When `responses.web_search.backend=searxng` is
         enabled, `/readyz` also checks that the configured web-search backend
         is reachable. When `responses.image_generation.backend=responses` is
         enabled, `/readyz` also checks that the configured image-generation
@@ -278,15 +278,14 @@ paths:
           flattened shim-local text field
         - search uses deterministic local lexical retrieval by default and can
           use exact dense semantic search via per-store `sqlite-vec` `vec0`
-          KNN tables plus weighted hybrid ranking and a shim-local rerank
-          stage when `retrieval.index.backend=sqlite_vec` and a retrieval
-          embedder are configured; omitted
-          `ranking_options.ranker` defaults to local `auto`, and
-          `ranker=none` disables that local rerank stage; the shim lazy
-          reindexes stale chunks in the queried `vector_store` when the
-          configured embedder model or vector dimensions change, and still
-          does not claim hosted reranking or full hosted semantic-search
-          parity
+          KNN tables when `retrieval.index.backend=sqlite_vec` and a retrieval
+          embedder are configured, or via alpha Postgres pgvector retrieval
+          when `storage.backend=postgres`, `retrieval.index.backend=pgvector`,
+          and a retrieval embedder are configured; the SQLite semantic path
+          also supports a shim-local rerank stage where omitted
+          `ranking_options.ranker` defaults to local `auto` and `ranker=none`
+          disables reranking; the shim does not claim hosted reranking or full
+          hosted semantic-search parity
         - before local retrieval, the shim applies a small deterministic
           query-rewrite pass and can fan a complex prompt out into several
           rewritten search queries; this is a pragmatic local planning subset,
@@ -1736,9 +1735,10 @@ paths:
         Current implementation supports deterministic lexical chunk search by
         default, attribute filtering, optional exact dense semantic ranking,
         weighted hybrid dense+text ranking, deterministic `rewrite_query`, and
-        a shim-local rerank layer via `ranking_options` when
-        `retrieval.index.backend=sqlite_vec` plus a configured embedder
-        backend are enabled. Exact hosted OpenAI
+        a shim-local rerank layer via `ranking_options`. Exact dense search is
+        available with `retrieval.index.backend=sqlite_vec` plus a configured
+        embedder, or with the alpha `storage.backend=postgres` plus
+        `retrieval.index.backend=pgvector` path. Exact hosted OpenAI
         semantic/reranker/planner parity is not claimed.
       parameters:
         - $ref: "#/components/parameters/VectorStoreID"
@@ -2628,7 +2628,7 @@ components:
       properties:
         backend:
           type: string
-          description: Active durable storage backend selector. `sqlite` is the only implemented backend in the current release.
+          description: Active durable storage backend selector. `sqlite` is the default. `postgres` is an alpha hybrid backend for files/vector stores/chunks while responses, conversations, stored Chat Completions, and code-interpreter state remain SQLite sidecar stores.
         response_store:
           type: string
         conversation_store:
@@ -2652,7 +2652,7 @@ components:
           description: Durable object storage backend used by files, vector stores, and local file_search state.
         index_backend:
           type: string
-          description: Retrieval index backend. `lexical` is the default scan backend; `sqlite_fts5` enables an indexed local lexical backend; `sqlite_vec` enables local semantic retrieval when an embedder is configured.
+          description: Retrieval index backend. `lexical` is the default scan backend; `sqlite_fts5` enables an indexed local lexical backend; `sqlite_vec` enables local semantic retrieval when an embedder is configured; `pgvector` enables alpha Postgres-backed exact dense retrieval when Postgres storage and an embedder are configured. With `storage.backend=postgres`, only `lexical` and `pgvector` are valid.
         embedder_backend:
           type: string
         semantic_search:
@@ -2746,9 +2746,13 @@ components:
           type: string
     ShimCapabilityProbeSet:
       type: object
-      required: [sqlite, llama, retrieval_embedder, web_search_backend, image_generation_backend]
+      required: [storage, sqlite, postgres, llama, retrieval_embedder, web_search_backend, image_generation_backend]
       properties:
+        storage:
+          $ref: "#/components/schemas/ShimCapabilityProbe"
         sqlite:
+          $ref: "#/components/schemas/ShimCapabilityProbe"
+        postgres:
           $ref: "#/components/schemas/ShimCapabilityProbe"
         llama:
           $ref: "#/components/schemas/ShimCapabilityProbe"
@@ -2869,10 +2873,13 @@ components:
 
         The local `file_search` subset uses deterministic lexical retrieval by
         default and can use exact dense semantic search via per-store
-        `sqlite-vec` `vec0` KNN tables plus weighted hybrid ranking and a
-        local rerank layer when
+        `sqlite-vec` `vec0` KNN tables when
         `retrieval.index.backend=sqlite_vec` and a retrieval embedder are
-        configured. Omitted `ranking_options.ranker` defaults to local
+        configured, or via alpha Postgres pgvector retrieval when
+        `storage.backend=postgres`, `retrieval.index.backend=pgvector`, and a
+        retrieval embedder are configured. The SQLite semantic path also
+        exposes a local rerank layer. Omitted `ranking_options.ranker` defaults
+        to local
         `auto`; `ranker=none` disables that local rerank stage. When the
         configured embedder model or vector dimensions change, the shim lazy
         reindexes stale chunks in the queried `vector_store` before semantic
@@ -3985,9 +3992,11 @@ components:
                 mode, omitted `ranker` behaves like `auto`, `none` disables
                 the local rerank stage, the canonical public dated value is
                 `default-2024-08-21`, and the legacy compatibility alias
-                `default_2024_08_21` is also accepted. Both map to the same
-                conservative local rerank profile. Exact hosted ranker parity
-                is not claimed.
+                `default_2024_08_21` is also accepted. Both dated forms map
+                to the same conservative local rerank profile. In alpha
+                `pgvector` mode the field is accepted for request-shape
+                compatibility, but no local rerank layer is claimed. Exact
+                hosted ranker parity is not claimed.
             score_threshold:
               type: number
               minimum: 0
@@ -4009,9 +4018,12 @@ components:
         profile, legacy compatibility alias `default_2024_08_21` is also
         accepted, and `none` disables local reranking.
         `ranking_options.hybrid_search` is also honored in that
-        `sqlite_vec` path. Without `sqlite_vec`, the local implementation
-        falls back to deterministic lexical search plus optional
-        score-threshold filtering.
+        `sqlite_vec` path. In alpha `pgvector` mode,
+        `ranking_options.hybrid_search` is honored for weighted dense+text
+        fusion, while `ranking_options.ranker` does not imply a local rerank
+        layer. Without a semantic backend, the local implementation falls back
+        to deterministic lexical search plus optional score-threshold
+        filtering.
     VectorStoreHybridSearchOptions:
       type: object
       properties:

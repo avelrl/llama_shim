@@ -491,12 +491,14 @@ Shim reality:
 
 - `/v1/files`, `/v1/vector_stores`, vector-store files, and vector-store search
   are local-first.
-- Durable retrieval object storage is currently `storage.backend=sqlite`; V3
-  backend expansion is tracked in
-  [v3-storage-retrieval-backends.md](../v3-storage-retrieval-backends.md).
+- Durable retrieval object storage is `storage.backend=sqlite` by default.
+  `storage.backend=postgres` is an alpha hybrid path for files, vector stores,
+  vector-store files, and chunks; responses, conversations, stored Chat
+  Completions, and code-interpreter state remain SQLite sidecar stores there.
 - Lexical scan is the default local substrate; `sqlite_fts5` adds an indexed
-  lexical backend, and semantic, hybrid, local rerank, and lazy-repair paths
-  are exposed by the active retrieval-index contract when configured.
+  lexical backend, `sqlite_vec` adds exact local semantic/rerank support with
+  an embedder, and `pgvector` adds exact Postgres-backed semantic/hybrid
+  retrieval for the Postgres alpha path.
 - Local `file_search` injects bounded grounding context before final answer
   generation.
 - Hosted ranking quality, billing semantics, and exact citation placement are

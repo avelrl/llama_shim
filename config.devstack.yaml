@@ -92,3 +92,9 @@ responses:
       generated_file_bytes: 2MiB
       generated_total_bytes: 8MiB
       remote_input_file_bytes: 50MiB
+
+storage:
+  backend: sqlite
+
+postgres:
+  dsn: ""

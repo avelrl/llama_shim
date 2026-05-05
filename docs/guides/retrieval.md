@@ -81,9 +81,11 @@ curl http://127.0.0.1:8080/v1/responses \
 
 ## Shim-Specific Notes
 
-- Durable retrieval objects are stored through `storage.backend`. Today the
-  only supported backend is `sqlite`; the key is explicit so future Postgres or
-  pgvector work can be added without changing the OpenAI-shaped routes.
+- Durable retrieval objects are stored through `storage.backend`. `sqlite` is
+  the default. `postgres` is available as an alpha backend for files, vector
+  stores, vector-store files, and vector-store chunks; responses,
+  conversations, stored Chat Completions, and code-interpreter state remain in
+  the SQLite sidecar for that alpha path.
 - Lexical search works in the default local setup.
 - `retrieval.index.backend=sqlite_fts5` enables an indexed SQLite FTS5 lexical
   backend while keeping the same local vector-store search response shape. The
@@ -91,12 +93,25 @@ curl http://127.0.0.1:8080/v1/responses \
   store.
 - Semantic, hybrid, and local rerank subsets become available when
   `retrieval.index.backend=sqlite_vec` and a retrieval embedder are configured.
+- `retrieval.index.backend=pgvector` enables alpha exact pgvector semantic
+  search when `storage.backend=postgres` and a retrieval embedder are
+  configured. It supports the same direct search and local `file_search`
+  response shapes, plus lexical fallback and weighted hybrid ranking, but it
+  does not claim hosted OpenAI ranking parity.
+- With `storage.backend=postgres`, the retrieval index must be `lexical` or
+  `pgvector`; `sqlite_fts5` and `sqlite_vec` remain SQLite-specific.
 - `/debug/capabilities.runtime.retrieval` reports the active storage backend,
   retrieval index backend, embedder backend, semantic/hybrid/rerank support,
   and whether the active local index can lazily repair stale chunks.
 - Devstack has a focused `sqlite_fts5` smoke path:
   `RETRIEVAL_INDEX_BACKEND=sqlite_fts5 make devstack-up` followed by
   `make devstack-sqlite-fts5-smoke`.
+- Devstack has a focused Postgres/pgvector alpha smoke path:
+  `STORAGE_BACKEND=postgres RETRIEVAL_INDEX_BACKEND=pgvector
+  RETRIEVAL_EMBEDDER_BACKEND=openai_compatible
+  RETRIEVAL_EMBEDDER_BASE_URL=http://fixture:8081
+  RETRIEVAL_EMBEDDER_MODEL=devstack-embedding make devstack-up` followed by
+  `make devstack-postgres-pgvector-smoke`.
 - Canonical ranking values are `auto` and `default-2024-08-21`; shim-local
   `none` disables the local rerank stage.
 - `include=["file_search_call.results"]` returns the practical local result

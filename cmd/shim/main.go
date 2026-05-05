@@ -18,6 +18,8 @@ import (
 	"llama_shim/internal/retrieval"
 	"llama_shim/internal/sandbox"
 	"llama_shim/internal/service"
+	"llama_shim/internal/storage"
+	"llama_shim/internal/storage/postgres"
 	"llama_shim/internal/storage/sqlite"
 	"llama_shim/internal/upstreamcompat"
 	"llama_shim/internal/websearch"
@@ -133,7 +135,7 @@ func main() {
 		os.Exit(1)
 	}
 	httpapi.StartLocalCodeInterpreterCleanupLoop(processCtx, logger, localCodeInterpreter, store, store, cfg.ResponsesCodeInterpreterCleanupInterval)
-	startSQLiteMaintenanceCleanupLoop(processCtx, logger, store, cfg.SQLiteMaintenanceCleanupInterval)
+	startSQLiteMaintenanceCleanupLoop(processCtx, logger, sqliteMaintenanceStore(store), cfg.SQLiteMaintenanceCleanupInterval)
 
 	server := &http.Server{
 		Addr: cfg.Addr,
@@ -288,10 +290,38 @@ func main() {
 	}
 }
 
-func openStore(ctx context.Context, cfg config.Config, retrievalEmbedder retrieval.Embedder) (*sqlite.Store, error) {
+type sqliteSidecarProvider interface {
+	SQLiteSidecar() *sqlite.Store
+}
+
+func sqliteMaintenanceStore(store storage.Store) *sqlite.Store {
+	switch typed := store.(type) {
+	case *sqlite.Store:
+		return typed
+	case sqliteSidecarProvider:
+		return typed.SQLiteSidecar()
+	default:
+		return nil
+	}
+}
+
+func openStore(ctx context.Context, cfg config.Config, retrievalEmbedder retrieval.Embedder) (storage.Store, error) {
 	switch cfg.StorageBackend {
 	case config.StorageBackendSQLite:
 		return sqlite.OpenWithOptions(ctx, cfg.SQLitePath, sqlite.OpenOptions{
+			Retrieval: retrieval.Config{
+				IndexBackend: cfg.RetrievalIndexBackend,
+				Embedder: retrieval.EmbedderConfig{
+					Backend: cfg.RetrievalEmbedderBackend,
+					BaseURL: cfg.RetrievalEmbedderBaseURL,
+					Model:   cfg.RetrievalEmbedderModel,
+				},
+			},
+			Embedder: retrievalEmbedder,
+		})
+	case config.StorageBackendPostgres:
+		return postgres.OpenWithOptions(ctx, cfg.PostgresDSN, postgres.OpenOptions{
+			SQLitePath: cfg.SQLitePath,
 			Retrieval: retrieval.Config{
 				IndexBackend: cfg.RetrievalIndexBackend,
 				Embedder: retrieval.EmbedderConfig{

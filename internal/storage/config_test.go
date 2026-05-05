@@ -20,7 +20,16 @@ func TestNormalizeBackendTrimsAndLowercases(t *testing.T) {
 	require.Equal(t, storage.BackendSQLite, backend)
 }
 
+func TestNormalizeBackendAcceptsPostgres(t *testing.T) {
+	backend, err := storage.NormalizeBackend(" POSTGRES ")
+	require.NoError(t, err)
+	require.Equal(t, storage.BackendPostgres, backend)
+}
+
 func TestNormalizeBackendRejectsUnsupportedBackend(t *testing.T) {
-	_, err := storage.NormalizeBackend("postgres")
-	require.ErrorContains(t, err, `unsupported storage backend "postgres"`)
+	_, err := storage.NormalizeBackend("mysql")
+	require.ErrorContains(t, err, `unsupported storage backend "mysql"`)
+
+	_, err = storage.NormalizeBackend(" PostgreSQL ")
+	require.ErrorContains(t, err, `unsupported storage backend "postgresql"`)
 }

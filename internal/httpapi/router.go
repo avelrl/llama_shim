@@ -128,7 +128,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 			WriteError(w, http.StatusServiceUnavailable, "service_unavailable", "llama backend is not ready", "")
 			return
 		}
-		if deps.RetrievalIndexBackend == retrieval.IndexBackendSQLiteVec {
+		if deps.RetrievalIndexBackend == retrieval.IndexBackendSQLiteVec || deps.RetrievalIndexBackend == retrieval.IndexBackendPGVector {
 			checker, ok := deps.RetrievalEmbedder.(retrieval.ReadyChecker)
 			if ok {
 				retrievalCtx, cancel := context.WithTimeout(r.Context(), readyzUpstreamTimeout)

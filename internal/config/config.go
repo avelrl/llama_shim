@@ -22,6 +22,7 @@ type Config struct {
 	Addr                                                string
 	StorageBackend                                      string
 	SQLitePath                                          string
+	PostgresDSN                                         string
 	SQLiteMaintenanceCleanupInterval                    time.Duration
 	LlamaBaseURL                                        string
 	LlamaReadinessBearerToken                           string
@@ -189,6 +190,7 @@ const (
 	ResponsesConstrainedDecodingBackendShimValidateRepair          = "shim_validate_repair"
 	ResponsesConstrainedDecodingBackendVLLM                        = "vllm"
 	StorageBackendSQLite                                           = storage.BackendSQLite
+	StorageBackendPostgres                                         = storage.BackendPostgres
 )
 
 func Load(configPath string) (Config, error) {
@@ -210,6 +212,7 @@ func Load(configPath string) (Config, error) {
 		Addr:                                  strings.TrimSpace(v.GetString("shim.addr")),
 		StorageBackend:                        strings.ToLower(strings.TrimSpace(v.GetString("storage.backend"))),
 		SQLitePath:                            strings.TrimSpace(v.GetString("sqlite.path")),
+		PostgresDSN:                           strings.TrimSpace(v.GetString("postgres.dsn")),
 		SQLiteMaintenanceCleanupInterval:      0,
 		LlamaBaseURL:                          strings.TrimRight(strings.TrimSpace(v.GetString("llama.base_url")), "/"),
 		LlamaReadinessBearerToken:             strings.TrimSpace(v.GetString("llama.readiness_bearer_token")),
@@ -283,6 +286,9 @@ func Load(configPath string) (Config, error) {
 		return Config{}, fmt.Errorf("parse storage.backend: %w", err)
 	}
 	cfg.StorageBackend = storageBackend
+	if cfg.StorageBackend == StorageBackendPostgres && strings.TrimSpace(cfg.PostgresDSN) == "" {
+		return Config{}, fmt.Errorf("parse postgres.dsn: %w", strconv.ErrSyntax)
+	}
 
 	if err := parseDuration(v.GetString("llama.timeout"), &cfg.LlamaTimeout); err != nil {
 		return Config{}, fmt.Errorf("parse llama.timeout: %w", err)
@@ -358,6 +364,21 @@ func Load(configPath string) (Config, error) {
 	cfg.RetrievalEmbedderBackend = normalizedRetrieval.Embedder.Backend
 	cfg.RetrievalEmbedderBaseURL = normalizedRetrieval.Embedder.BaseURL
 	cfg.RetrievalEmbedderModel = normalizedRetrieval.Embedder.Model
+	if cfg.RetrievalIndexBackend == retrieval.IndexBackendPGVector {
+		if cfg.StorageBackend != StorageBackendPostgres {
+			return Config{}, fmt.Errorf("parse retrieval.index.backend: %q requires storage.backend=%q", retrieval.IndexBackendPGVector, StorageBackendPostgres)
+		}
+		if cfg.RetrievalEmbedderBackend == retrieval.EmbedderBackendDisabled {
+			return Config{}, fmt.Errorf("parse retrieval.embedder.backend: %q requires a configured embedder backend", retrieval.IndexBackendPGVector)
+		}
+	}
+	if cfg.StorageBackend == StorageBackendPostgres {
+		switch cfg.RetrievalIndexBackend {
+		case retrieval.IndexBackendLexical, retrieval.IndexBackendPGVector:
+		default:
+			return Config{}, fmt.Errorf("parse retrieval.index.backend: storage.backend=%q supports %q or %q, got %q", StorageBackendPostgres, retrieval.IndexBackendLexical, retrieval.IndexBackendPGVector, cfg.RetrievalIndexBackend)
+		}
+	}
 	normalizedWebSearch, err := websearch.NormalizeConfig(websearch.Config{
 		Backend:    cfg.ResponsesWebSearchBackend,
 		BaseURL:    cfg.ResponsesWebSearchBaseURL,
@@ -600,6 +621,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("shim.limits.code_interpreter_max_concurrent_runs", "2")
 	v.SetDefault("storage.backend", storage.BackendSQLite)
 	v.SetDefault("sqlite.path", "./data/shim.db")
+	v.SetDefault("postgres.dsn", "")
 	v.SetDefault("sqlite.maintenance.cleanup_interval", "15m")
 	v.SetDefault("llama.base_url", "http://127.0.0.1:8081")
 	v.SetDefault("llama.readiness_bearer_token", "")

@@ -11,7 +11,7 @@ func NormalizeBackend(backend string) (string, error) {
 		return BackendSQLite, nil
 	}
 	switch backend {
-	case BackendSQLite:
+	case BackendSQLite, BackendPostgres:
 		return backend, nil
 	default:
 		return "", fmt.Errorf("unsupported storage backend %q", backend)
