@@ -1,8 +1,9 @@
 # V3 Ops And Deployment Expansion
 
-Status: candidate design stub.
+Status: partial; Phase 0 inventory and the first bounded observability slice
+are implemented.
 
-Last updated: May 4, 2026.
+Last updated: May 5, 2026.
 
 This document tracks V3 operations and deployment work that is useful for real
 installations but should not be confused with OpenAI API parity.
@@ -21,10 +22,17 @@ The shim already exposes basic operational surfaces:
 - `/metrics`
 - `/debug/capabilities`
 - local devstack and smoke targets
-- SQLite-backed local persistence for the current supported storage subset
+- SQLite-backed local persistence for the default durable subset
+- Postgres/pgvector alpha persistence for files, vector stores, vector-store
+  files, and vector-store chunks, with SQLite sidecar ownership for responses,
+  conversations, stored Chat Completions, code-interpreter sessions, and
+  maintenance commands
+- package-level `make postgres-storage-test` and HTTP-level
+  `make devstack-postgres-pgvector-smoke` coverage for the Postgres alpha path
 
-The current supported durable storage backend remains SQLite unless a more
-specific V3 storage document says otherwise.
+The current default durable storage backend remains SQLite. Postgres is an
+alpha retrieval-object storage backend only for the surfaces named in
+[V3 Storage And Retrieval Backends](v3-storage-retrieval-backends.md).
 
 ## Goals
 
@@ -60,7 +68,20 @@ Potential work:
 
 ### 2. Observability
 
-Potential work:
+Implemented first slice:
+
+- `/readyz` and `/debug/capabilities` readiness probes emit bounded
+  Prometheus counters and latency histograms:
+  `shim_readiness_probe_total` and `shim_readiness_probe_duration_ms`.
+- Labels are deliberately low-cardinality:
+  `source` is `readyz` or `capabilities`, `component` is one of the fixed
+  runtime components such as `storage`, `llama`, `retrieval_embedder`,
+  `web_search_backend`, or `image_generation_backend`, and `outcome` is
+  `ready` or `unready`.
+- Existing upstream admission, queue wait, in-flight, queued, retrieval search,
+  code-interpreter, auth, rate-limit, and HTTP metrics remain unchanged.
+
+Potential future work:
 
 - richer metrics labels for routing mode, upstream transport, tool family, and
   failure class
@@ -97,23 +118,35 @@ Potential work:
 
 ### Phase 0: Ops Inventory
 
-Status: not started.
+Status: implemented on May 5, 2026.
 
-- Inventory current probes, metrics, log fields, storage maintenance loops, and
-  backup/restore commands.
-- Identify which are SQLite-specific and which are backend-neutral.
+Inventory summary:
+
+| Area | Current state | Backend boundary |
+| --- | --- | --- |
+| Liveness | `/healthz` checks process liveness only. | backend-neutral |
+| Readiness | `/readyz` checks storage, upstream model backend, and optional retrieval, web-search, and image-generation backends. | backend-neutral API, component-specific probes |
+| Capability manifest | `/debug/capabilities` reports active storage, retrieval, tool, runtime, compaction, metrics, and probe state. | backend-neutral manifest with backend-specific values |
+| Metrics | `/metrics` exposes HTTP, auth, rate-limit, upstream admission/queue, in-flight/queued, retrieval, code-interpreter, and readiness-probe metrics. | backend-neutral, bounded labels |
+| Storage maintenance | `shimctl cleanup`, `optimize`, `vacuum`, and `backup` currently operate on the SQLite store. | SQLite-specific |
+| Default persistence | SQLite owns responses, conversations, chat completions, files, vector stores, code-interpreter state, and maintenance. | SQLite |
+| Postgres alpha persistence | Postgres owns files, vector stores, vector-store files, and vector-store chunks; SQLite remains sidecar for other stores. | Postgres alpha plus SQLite sidecar |
+| Devstack smokes | Default, sqlite_fts5, Postgres/pgvector, WebSocket, constrained decoding, coding-tools, Codex, and external tester smokes. | mixed, documented per smoke |
 
 ### Phase 1: Observability First Slice
 
-Status: not started.
+Status: implemented for readiness-probe metrics on May 5, 2026.
 
-- Add metrics/logging that helps classify real-upstream and eval failures.
+- Add metrics/logging that helps classify real-upstream and eval failures:
+  first slice adds readiness probe counters and duration histograms for
+  `/readyz` and `/debug/capabilities`.
 - Keep label cardinality bounded.
 - Add tests for new metrics or structured fields where practical.
 
 ### Phase 2: Shared Storage Deployment
 
-Status: blocked on storage backend phases.
+Status: ready to design against the current Postgres alpha boundary, but not
+implemented.
 
 - Document and test Postgres-backed deployment only after the storage track
   provides the backend.

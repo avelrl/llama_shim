@@ -1,6 +1,6 @@
 # V3 Expansion Staging
 
-Last updated: May 4, 2026.
+Last updated: May 5, 2026.
 
 This document is the parking lot for work that did not make the V2 ship bar
 and should not be reintroduced into the frozen V2 scope.
@@ -84,9 +84,9 @@ Status: `Planned`. See [v3-image-backends.md](v3-image-backends.md).
 ### 2. More retrieval and storage backends
 
 Status: `Partial`; SQLite storage contracts, the retrieval-index contract,
-`sqlite_fts5`, `sqlite_vec`, and the Postgres/pgvector alpha path for
-retrieval objects are implemented, while broader durable-store migration is
-still planned. See
+`sqlite_fts5`, `sqlite_vec`, the Postgres/pgvector alpha path for retrieval
+objects, and Postgres alpha hardening coverage are implemented, while broader
+durable-store migration is still planned. See
 [v3-storage-retrieval-backends.md](v3-storage-retrieval-backends.md).
 
 - ANN indexing beyond the current exact local subset
@@ -294,7 +294,9 @@ parity and should not promote flaky profile tasks into `codex-core` or
 
 ### 10. Ops and deployment expansion
 
-Status: `Candidate`. See [v3-ops-deployment.md](v3-ops-deployment.md).
+Status: `Partial`; Phase 0 inventory and the first bounded readiness-probe
+metrics slice are implemented. See
+[v3-ops-deployment.md](v3-ops-deployment.md).
 
 - multi-tenant authz / tenant isolation
 - richer exporters and dashboards
@@ -310,15 +312,16 @@ the public compatibility story less truthful.
 
 The next practical implementation work should be selected from this queue:
 
-1. Finish [V3 Storage And Retrieval Backends](v3-storage-retrieval-backends.md)
-   phase 1 and then extract the retrieval-index contract in phase 2.
-2. Turn [V3 Alternative Image Backends](v3-image-backends.md) into a first
+1. Continue [V3 Ops And Deployment Expansion](v3-ops-deployment.md) with
+   Postgres/multi-instance readiness and maintenance behavior only after the
+   current Postgres alpha boundaries remain green.
+2. Continue [V3 Storage And Retrieval Backends](v3-storage-retrieval-backends.md)
+   only for broader durable-store migration, ANN indexing, migration tooling,
+   or additional embedders/rerankers.
+3. Turn [V3 Alternative Image Backends](v3-image-backends.md) into a first
    concrete backend slice only after selecting one reproducible provider path.
-3. Turn [V3 Richer Local-Only Runtimes](v3-local-runtimes.md) into one focused
+4. Turn [V3 Richer Local-Only Runtimes](v3-local-runtimes.md) into one focused
    runtime slice with deterministic fixtures and capability gates.
-4. Use [V3 Ops And Deployment Expansion](v3-ops-deployment.md) to stage
-   Postgres/multi-instance deployment work after storage contracts are narrow
-   enough.
 
 ## V3 Result-Curation Work
 

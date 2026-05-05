@@ -147,6 +147,10 @@ What exists today:
   model call used by many local tool planners.
 - `/debug/capabilities` is the operator-visible truth for active local runtime
   capabilities.
+- `/readyz` and `/debug/capabilities` emit bounded readiness-probe metrics so
+  operators can distinguish storage, upstream model, retrieval embedder, web
+  search, and image-generation readiness failures without widening any
+  OpenAI-compatible API contract.
 
 ## Chat Completions Compatibility
 

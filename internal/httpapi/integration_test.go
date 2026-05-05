@@ -1080,6 +1080,36 @@ func TestShimMetricsEndpointExposesPrometheusTextAndSharesIngressAuth(t *testing
 	require.Contains(t, text, `shim_queued{scope="upstream_chat_completions_generate"} 0`)
 }
 
+func TestShimMetricsEndpointExposesReadinessProbeMetrics(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	req, err := http.NewRequest(http.MethodGet, app.Server.URL+"/readyz", nil)
+	require.NoError(t, err)
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	status, payload := rawRequest(t, app, http.MethodGet, "/debug/capabilities", nil)
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, true, payload["ready"])
+
+	req, err = http.NewRequest(http.MethodGet, app.Server.URL+"/metrics", nil)
+	require.NoError(t, err)
+	resp, err = app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	text := string(body)
+	require.Contains(t, text, `shim_readiness_probe_total{source="readyz",component="storage",outcome="ready"} 1`)
+	require.Contains(t, text, `shim_readiness_probe_total{source="readyz",component="llama",outcome="ready"} 1`)
+	require.Contains(t, text, `shim_readiness_probe_total{source="capabilities",component="storage",outcome="ready"} 1`)
+	require.Contains(t, text, `shim_readiness_probe_total{source="capabilities",component="llama",outcome="ready"} 1`)
+	require.Contains(t, text, `shim_readiness_probe_duration_ms_count{source="readyz",component="storage",outcome="ready"} 1`)
+}
+
 func TestShimJSONBodyLimitReturnsInvalidRequestError(t *testing.T) {
 	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
 		JSONBodyLimitBytes: 128,

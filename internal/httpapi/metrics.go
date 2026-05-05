@@ -21,6 +21,8 @@ type Metrics struct {
 	rateLimitRejects    map[string]uint64
 	retrievalSearches   map[searchMetricKey]uint64
 	codeInterpreterRuns map[string]uint64
+	readinessProbes     map[readinessProbeMetricKey]uint64
+	readinessProbeWait  map[readinessProbeMetricKey]*httpMetricValue
 	upstreamAdmissions  map[upstreamAdmissionMetricKey]uint64
 	upstreamQueueWait   map[upstreamAdmissionMetricKey]*httpMetricValue
 	inFlight            map[string]int64
@@ -49,6 +51,12 @@ type upstreamAdmissionMetricKey struct {
 	Outcome string
 }
 
+type readinessProbeMetricKey struct {
+	Source    string
+	Component string
+	Outcome   string
+}
+
 func NewMetrics() *Metrics {
 	return &Metrics{
 		httpRequests:        make(map[httpMetricKey]*httpMetricValue),
@@ -56,6 +64,8 @@ func NewMetrics() *Metrics {
 		rateLimitRejects:    make(map[string]uint64),
 		retrievalSearches:   make(map[searchMetricKey]uint64),
 		codeInterpreterRuns: make(map[string]uint64),
+		readinessProbes:     make(map[readinessProbeMetricKey]uint64),
+		readinessProbeWait:  make(map[readinessProbeMetricKey]*httpMetricValue),
 		upstreamAdmissions:  make(map[upstreamAdmissionMetricKey]uint64),
 		upstreamQueueWait:   make(map[upstreamAdmissionMetricKey]*httpMetricValue),
 		inFlight:            make(map[string]int64),
@@ -148,6 +158,36 @@ func (m *Metrics) IncCodeInterpreterRun(outcome string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.codeInterpreterRuns[label]++
+}
+
+func (m *Metrics) ObserveReadinessProbe(source string, component string, outcome string, duration time.Duration) {
+	if m == nil {
+		return
+	}
+	key := readinessProbeMetricKey{
+		Source:    normalizeMetricLabel(source, "unknown"),
+		Component: normalizeMetricLabel(component, "unknown"),
+		Outcome:   normalizeMetricLabel(outcome, "unknown"),
+	}
+	durationMS := float64(duration.Milliseconds())
+	if duration > 0 && durationMS == 0 {
+		durationMS = float64(duration) / float64(time.Millisecond)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.readinessProbes[key]++
+	value := m.readinessProbeWait[key]
+	if value == nil {
+		value = &httpMetricValue{Buckets: make([]uint64, len(httpDurationBuckets))}
+		m.readinessProbeWait[key] = value
+	}
+	value.Count++
+	value.SumMS += durationMS
+	for i, upperBound := range httpDurationBuckets {
+		if durationMS <= upperBound {
+			value.Buckets[i]++
+		}
+	}
 }
 
 func (m *Metrics) AddInFlight(scope string, delta int64) {
@@ -280,6 +320,40 @@ func (m *Metrics) renderPrometheus() string {
 	builder.WriteString("# HELP shim_code_interpreter_runs_total Total local code interpreter runs executed by the shim.\n")
 	builder.WriteString("# TYPE shim_code_interpreter_runs_total counter\n")
 	appendStringCounterMetric(&builder, "shim_code_interpreter_runs_total", "outcome", m.codeInterpreterRuns)
+
+	builder.WriteString("# HELP shim_readiness_probe_total Total shim readiness probes by source, component, and outcome.\n")
+	builder.WriteString("# TYPE shim_readiness_probe_total counter\n")
+	readinessProbeKeys := make([]readinessProbeMetricKey, 0, len(m.readinessProbes))
+	for key := range m.readinessProbes {
+		readinessProbeKeys = append(readinessProbeKeys, key)
+	}
+	sort.Slice(readinessProbeKeys, func(i, j int) bool {
+		if readinessProbeKeys[i].Source == readinessProbeKeys[j].Source {
+			if readinessProbeKeys[i].Component == readinessProbeKeys[j].Component {
+				return readinessProbeKeys[i].Outcome < readinessProbeKeys[j].Outcome
+			}
+			return readinessProbeKeys[i].Component < readinessProbeKeys[j].Component
+		}
+		return readinessProbeKeys[i].Source < readinessProbeKeys[j].Source
+	})
+	builder.WriteString("# HELP shim_readiness_probe_duration_ms Shim readiness probe duration in milliseconds.\n")
+	builder.WriteString("# TYPE shim_readiness_probe_duration_ms histogram\n")
+	for _, key := range readinessProbeKeys {
+		labels := fmt.Sprintf(`source=%q,component=%q,outcome=%q`, key.Source, key.Component, key.Outcome)
+		builder.WriteString(fmt.Sprintf("shim_readiness_probe_total{%s} %d\n", labels, m.readinessProbes[key]))
+		value := m.readinessProbeWait[key]
+		if value == nil {
+			continue
+		}
+		var cumulative uint64
+		for i, upperBound := range httpDurationBuckets {
+			cumulative += value.Buckets[i]
+			builder.WriteString(fmt.Sprintf("shim_readiness_probe_duration_ms_bucket{%s,le=%q} %d\n", labels, formatPrometheusFloat(upperBound), cumulative))
+		}
+		builder.WriteString(fmt.Sprintf("shim_readiness_probe_duration_ms_bucket{%s,le=\"+Inf\"} %d\n", labels, value.Count))
+		builder.WriteString(fmt.Sprintf("shim_readiness_probe_duration_ms_sum{%s} %s\n", labels, formatPrometheusFloat(value.SumMS)))
+		builder.WriteString(fmt.Sprintf("shim_readiness_probe_duration_ms_count{%s} %d\n", labels, value.Count))
+	}
 
 	builder.WriteString("# HELP shim_upstream_admission_total Total upstream admission controller decisions.\n")
 	builder.WriteString("# TYPE shim_upstream_admission_total counter\n")

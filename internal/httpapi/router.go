@@ -114,47 +114,72 @@ func NewRouter(deps RouterDeps) http.Handler {
 			WriteError(w, http.StatusMethodNotAllowed, "invalid_request_error", "method not allowed", "")
 			return
 		}
-		if err := deps.Store.PingContext(r.Context()); err != nil {
+		if deps.Store == nil {
+			observeReadinessProbeOutcome(deps.Metrics, "readyz", "storage", "unready")
 			WriteError(w, http.StatusServiceUnavailable, "service_unavailable", "storage backend is not ready", "")
 			return
 		}
+		probeStart := time.Now()
+		if err := deps.Store.PingContext(r.Context()); err != nil {
+			observeReadinessProbe(deps.Metrics, "readyz", "storage", probeStart, err)
+			WriteError(w, http.StatusServiceUnavailable, "service_unavailable", "storage backend is not ready", "")
+			return
+		}
+		observeReadinessProbe(deps.Metrics, "readyz", "storage", probeStart, nil)
 		if deps.LlamaClient == nil {
+			observeReadinessProbeOutcome(deps.Metrics, "readyz", "llama", "unready")
 			WriteError(w, http.StatusServiceUnavailable, "service_unavailable", "llama backend is not ready", "")
 			return
 		}
 		upstreamCtx, cancel := context.WithTimeout(r.Context(), readyzUpstreamTimeout)
-		defer cancel()
+		probeStart = time.Now()
 		if err := deps.LlamaClient.CheckReadyWithBearerToken(upstreamCtx, deps.LlamaReadinessBearerToken); err != nil {
+			cancel()
+			observeReadinessProbe(deps.Metrics, "readyz", "llama", probeStart, err)
 			WriteError(w, http.StatusServiceUnavailable, "service_unavailable", "llama backend is not ready", "")
 			return
 		}
+		cancel()
+		observeReadinessProbe(deps.Metrics, "readyz", "llama", probeStart, nil)
 		if deps.RetrievalIndexBackend == retrieval.IndexBackendSQLiteVec || deps.RetrievalIndexBackend == retrieval.IndexBackendPGVector {
 			checker, ok := deps.RetrievalEmbedder.(retrieval.ReadyChecker)
 			if ok {
 				retrievalCtx, cancel := context.WithTimeout(r.Context(), readyzUpstreamTimeout)
-				defer cancel()
+				probeStart = time.Now()
 				if err := checker.CheckReady(retrievalCtx); err != nil {
+					cancel()
+					observeReadinessProbe(deps.Metrics, "readyz", "retrieval_embedder", probeStart, err)
 					WriteError(w, http.StatusServiceUnavailable, "service_unavailable", "retrieval embedder is not ready", "")
 					return
 				}
+				cancel()
+				observeReadinessProbe(deps.Metrics, "readyz", "retrieval_embedder", probeStart, nil)
 			}
 		}
 		checker, ok := deps.WebSearchProvider.(websearch.ReadyChecker)
 		if ok {
 			webSearchCtx, cancel := context.WithTimeout(r.Context(), readyzUpstreamTimeout)
-			defer cancel()
+			probeStart = time.Now()
 			if err := checker.CheckReady(webSearchCtx); err != nil {
+				cancel()
+				observeReadinessProbe(deps.Metrics, "readyz", "web_search_backend", probeStart, err)
 				WriteError(w, http.StatusServiceUnavailable, "service_unavailable", "web search backend is not ready", "")
 				return
 			}
+			cancel()
+			observeReadinessProbe(deps.Metrics, "readyz", "web_search_backend", probeStart, nil)
 		}
 		if deps.ImageGenerationProvider != nil {
 			imageGenerationCtx, cancel := context.WithTimeout(r.Context(), readyzUpstreamTimeout)
-			defer cancel()
+			probeStart = time.Now()
 			if err := deps.ImageGenerationProvider.CheckReady(imageGenerationCtx); err != nil {
+				cancel()
+				observeReadinessProbe(deps.Metrics, "readyz", "image_generation_backend", probeStart, err)
 				WriteError(w, http.StatusServiceUnavailable, "service_unavailable", "image generation backend is not ready", "")
 				return
 			}
+			cancel()
+			observeReadinessProbe(deps.Metrics, "readyz", "image_generation_backend", probeStart, nil)
 		}
 		WriteJSON(w, http.StatusOK, map[string]string{"status": "ready"})
 	})
@@ -431,6 +456,18 @@ func NewRouter(deps RouterDeps) http.Handler {
 		RateLimitMiddleware(rateLimitConfig, deps.Metrics, metricsConfig.Path),
 		ForwardHeadersMiddleware,
 	)
+}
+
+func observeReadinessProbe(metrics *Metrics, source string, component string, start time.Time, err error) {
+	outcome := "ready"
+	if err != nil {
+		outcome = "unready"
+	}
+	metrics.ObserveReadinessProbe(source, component, outcome, time.Since(start))
+}
+
+func observeReadinessProbeOutcome(metrics *Metrics, source string, component string, outcome string) {
+	metrics.ObserveReadinessProbe(source, component, outcome, 0)
 }
 
 func RequestContextWithID(ctx context.Context, requestID string) context.Context {

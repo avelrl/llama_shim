@@ -155,6 +155,27 @@ implemented, but they must stay conservative:
   parsing tests for the shared `config.yaml` `probe.*` knobs, `go test
   ./...`, `go vet ./...`, and `git diff --check`
 
+### 2026-05-05: Readiness probe metrics
+
+- Status: implemented
+- Symptom: `/readyz` and `/debug/capabilities` can say that the shim is not
+  ready, but operators need a stable metric split between storage, upstream
+  model, retrieval embedder, web-search, and image-generation readiness without
+  parsing response bodies or logs.
+- Invariant: readiness observability must stay shim-owned and must not add
+  request-visible limits, preflight behavior, or OpenAI API compatibility
+  claims.
+- Change:
+  emit `shim_readiness_probe_total` and
+  `shim_readiness_probe_duration_ms` from `/readyz` and
+  `/debug/capabilities` checks.
+- Label policy:
+  `source`, `component`, and `outcome` are bounded labels. They do not include
+  tenant ids, model ids, request ids, file ids, or upstream URLs.
+- Verification used:
+  focused metrics integration coverage, `go test ./internal/httpapi`, and the
+  standard V3 regression checks for the surrounding slice.
+
 ### 2026-04-25: Responses proxy body buffering
 
 - Status: implemented

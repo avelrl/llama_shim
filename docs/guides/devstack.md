@@ -174,6 +174,22 @@ The shim itself talks to the fixture backend over the Compose network as
 `http://fixture:8081`. In Postgres/pgvector mode it talks to Postgres over the
 Compose network as `postgres:5432`.
 
+## Operator Metrics
+
+`/metrics` exposes Prometheus text when metrics are enabled. The devstack path
+uses it for low-cardinality operational checks, not for OpenAI API parity
+claims.
+
+Useful readiness metrics:
+
+- `shim_readiness_probe_total{source,component,outcome}`
+- `shim_readiness_probe_duration_ms{source,component,outcome}`
+
+`source` is `readyz` or `capabilities`. `component` is a fixed runtime
+component such as `storage`, `llama`, `retrieval_embedder`,
+`web_search_backend`, or `image_generation_backend`. `outcome` is `ready` or
+`unready`.
+
 ## What The Smoke Path Verifies
 
 `make devstack-ci-smoke` is the repo-owned CI-compatible smoke gate. It runs:

@@ -27,7 +27,7 @@ not practical user guides and are not release scope documents.
 - [V3 Richer Local-Only Runtimes](../v3-local-runtimes.md):
   planned local runtime expansion slices and capability-gating requirements.
 - [V3 Ops and Deployment Expansion](../v3-ops-deployment.md):
-  candidate deployment, observability, tenanting, and governance staging.
+  deployment, readiness observability, tenanting, and governance staging.
 - [V3 Coding Tools Test Runbook](v3-coding-tools-test-runbook.md): manual and
   deterministic checks for the shim-local native coding-tools subset.
 - [V3 Coding Tools Status Decision](v3-coding-tools-status-decision.md):

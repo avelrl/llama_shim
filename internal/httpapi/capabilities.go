@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"strings"
+	"time"
 
 	"llama_shim/internal/compactor"
 	"llama_shim/internal/config"
@@ -601,7 +602,9 @@ func collectCapabilityProbes(ctx context.Context, deps RouterDeps) capabilityPro
 	}
 
 	if deps.Store != nil {
+		probeStart := time.Now()
 		if err := deps.Store.PingContext(ctx); err != nil {
+			observeReadinessProbe(deps.Metrics, "capabilities", "storage", probeStart, err)
 			probes.Storage.Ready = false
 			probes.Storage.Error = "storage backend is not ready"
 			if probes.SQLite.Enabled {
@@ -613,6 +616,7 @@ func collectCapabilityProbes(ctx context.Context, deps RouterDeps) capabilityPro
 				probes.Postgres.Error = "postgres is not ready"
 			}
 		} else {
+			observeReadinessProbe(deps.Metrics, "capabilities", "storage", probeStart, nil)
 			probes.Storage.Error = ""
 			if probes.SQLite.Enabled {
 				probes.SQLite.Error = ""
@@ -621,18 +625,25 @@ func collectCapabilityProbes(ctx context.Context, deps RouterDeps) capabilityPro
 				probes.Postgres.Error = ""
 			}
 		}
+	} else {
+		observeReadinessProbeOutcome(deps.Metrics, "capabilities", "storage", "unready")
 	}
 
 	if deps.LlamaClient != nil {
 		upstreamCtx, cancel := context.WithTimeout(ctx, readyzUpstreamTimeout)
+		probeStart := time.Now()
 		err := deps.LlamaClient.CheckReadyWithBearerToken(upstreamCtx, deps.LlamaReadinessBearerToken)
 		cancel()
 		if err != nil {
+			observeReadinessProbe(deps.Metrics, "capabilities", "llama", probeStart, err)
 			probes.Llama.Ready = false
 			probes.Llama.Error = "llama backend is not ready"
 		} else {
+			observeReadinessProbe(deps.Metrics, "capabilities", "llama", probeStart, nil)
 			probes.Llama.Error = ""
 		}
+	} else {
+		observeReadinessProbeOutcome(deps.Metrics, "capabilities", "llama", "unready")
 	}
 
 	probes.RetrievalEmbedder = capabilityProbe{
@@ -641,8 +652,10 @@ func collectCapabilityProbes(ctx context.Context, deps RouterDeps) capabilityPro
 	if probes.RetrievalEmbedder.Enabled {
 		if checker, ok := deps.RetrievalEmbedder.(retrieval.ReadyChecker); ok {
 			retrievalCtx, cancel := context.WithTimeout(ctx, readyzUpstreamTimeout)
+			probeStart := time.Now()
 			err := checker.CheckReady(retrievalCtx)
 			cancel()
+			observeReadinessProbe(deps.Metrics, "capabilities", "retrieval_embedder", probeStart, err)
 			probes.RetrievalEmbedder.Checked = true
 			probes.RetrievalEmbedder.Ready = err == nil
 			probes.RetrievalEmbedder.Error = probeErrorMessage(err != nil, "retrieval embedder is not ready")
@@ -657,8 +670,10 @@ func collectCapabilityProbes(ctx context.Context, deps RouterDeps) capabilityPro
 	}
 	if checker, ok := deps.WebSearchProvider.(websearch.ReadyChecker); ok {
 		webSearchCtx, cancel := context.WithTimeout(ctx, readyzUpstreamTimeout)
+		probeStart := time.Now()
 		err := checker.CheckReady(webSearchCtx)
 		cancel()
+		observeReadinessProbe(deps.Metrics, "capabilities", "web_search_backend", probeStart, err)
 		probes.WebSearchBackend.Checked = true
 		probes.WebSearchBackend.Ready = err == nil
 		probes.WebSearchBackend.Error = probeErrorMessage(err != nil, "web search backend is not ready")
@@ -669,8 +684,10 @@ func collectCapabilityProbes(ctx context.Context, deps RouterDeps) capabilityPro
 	}
 	if deps.ImageGenerationProvider != nil {
 		imageCtx, cancel := context.WithTimeout(ctx, readyzUpstreamTimeout)
+		probeStart := time.Now()
 		err := deps.ImageGenerationProvider.CheckReady(imageCtx)
 		cancel()
+		observeReadinessProbe(deps.Metrics, "capabilities", "image_generation_backend", probeStart, err)
 		probes.ImageGenerationBackend.Checked = true
 		probes.ImageGenerationBackend.Ready = err == nil
 		probes.ImageGenerationBackend.Error = probeErrorMessage(err != nil, "image generation backend is not ready")
