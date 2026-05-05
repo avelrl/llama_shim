@@ -65,7 +65,9 @@ paths:
         enabled, `/readyz` also checks that the configured web-search backend
         is reachable. When `responses.image_generation.backend=responses` is
         enabled, `/readyz` also checks that the configured image-generation
-        `/v1/responses` backend is reachable.
+        `/v1/responses` backend is reachable. The shim-owned
+        `responses.image_generation.backend=fixture` backend is deterministic
+        and readiness-local.
       responses:
         "200":
           description: SQLite store, upstream backend, and any configured retrieval, web-search, or image-generation backends are reachable
@@ -324,10 +326,14 @@ paths:
 
         Notes for the local `image_generation` subset:
         - the shim can execute one `image_generation` tool locally when
-          `responses.image_generation.backend=responses` is configured
-        - local execution delegates the tool call to a separate
-          OpenAI-compatible `/v1/responses` image backend instead of
-          proxying through the main upstream text-generation backend
+          `responses.image_generation.backend=responses` or `fixture` is
+          configured
+        - `responses` local execution delegates the tool call to a separate
+          OpenAI-compatible `/v1/responses` image backend instead of proxying
+          through the main upstream text-generation backend
+        - `fixture` local execution returns deterministic placeholder image
+          artifacts for devstack and regression tests; it is not a production
+          image-generation backend
         - non-stream and stream create paths are supported, and stored/retrieve
           replay remains consistent with persisted `image_generation_call`
           items

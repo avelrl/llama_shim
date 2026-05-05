@@ -1,8 +1,8 @@
 # V3 Alternative Image Backends
 
-Status: planned design stub.
+Status: partial; deterministic fixture backend implemented.
 
-Last updated: May 4, 2026.
+Last updated: May 5, 2026.
 
 This document tracks the V3 plan for adding additional shim-local image
 generation backends without widening the OpenAI compatibility promise.
@@ -18,13 +18,17 @@ The current shim-local image path is a practical subset:
 
 - `image_generation` can run through a configured Responses-compatible image
   backend
+- `image_generation` can also run through a deterministic `fixture` backend
+  for devstack and regression coverage
 - the shim owns the outer `/v1/responses` state, storage, and replay behavior
 - current-turn image inputs and edit lineage are projected into the image
   backend request
 - partial-image artifacts are stored for replay when the backend emits them
 
-There is no separate Stable Diffusion, ComfyUI, or provider-specific pipeline
-selected as the first V3 expansion slice yet.
+There is no separate Stable Diffusion, ComfyUI, or provider-specific production
+pipeline selected yet. The first V3 expansion slice intentionally uses the
+fixture backend so the adapter/replay contract is testable before a production
+backend is added.
 
 ## Goals
 
@@ -72,10 +76,10 @@ Required before implementation:
 
 ### 3. Fixture-Only Backend
 
-Useful as a first regression substrate if production backends are not stable
+Useful as a first regression substrate before production backends are stable
 enough for CI.
 
-Required before implementation:
+Status: implemented.
 
 - deterministic image placeholder artifacts
 - stable partial-image event simulation
@@ -86,27 +90,30 @@ Required before implementation:
 
 ### Phase 0: Backend Selection
 
-Status: not started.
+Status: implemented for the fixture backend.
 
-- Pick the first backend based on reproducibility, local availability, and
-  smoke-testability.
-- Document the selected provider's native request and response shape.
-- Add config examples with disabled-by-default behavior.
+- The selected first backend is `responses.image_generation.backend=fixture`.
+- It has no native external API; it returns deterministic
+  `image_generation_call` items and deterministic partial-image SSE events.
+- Config examples keep image generation disabled by default, while devstack
+  enables `fixture`.
 
 ### Phase 1: Adapter Boundary
 
-Status: not started.
+Status: implemented for the fixture backend.
 
-- Extract a small image backend interface behind the existing local
-  `image_generation` path.
+- The existing small image backend interface behind the local
+  `image_generation` path now supports `responses` and `fixture`.
 - Keep the outer Responses item and replay shape shim-owned.
-- Add adapter request-shaping tests.
+- Fixture adapter request-shaping and streaming tests cover the deterministic
+  first slice.
 
 ### Phase 2: Deterministic Smoke
 
-Status: not started.
+Status: implemented.
 
-- Add a devstack or fixture-backed smoke.
+- `make v3-image-backends-smoke` verifies fixture capabilities, non-stream
+  create, stream partial images, and retrieve-stream replay.
 - Verify `/debug/capabilities` reports backend readiness and supported modes.
 - Verify stored artifacts and retrieve-stream replay do not depend on live
   backend availability.
@@ -128,3 +135,8 @@ This track should only move out of planned status when:
 - `/debug/capabilities` reports the active image backend accurately
 - generated artifacts are bounded and replayable
 - docs avoid hosted parity claims beyond the implemented subset
+
+The fixture slice satisfies those criteria for deterministic regression
+coverage. The remaining open work is the first production backend adapter,
+which should stay blocked until its native request/response shape, artifact
+limits, and fixture server are documented.

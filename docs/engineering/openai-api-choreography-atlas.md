@@ -575,7 +575,7 @@ sequenceDiagram
   autonumber
   participant C as Client
   participant R as Responses
-  participant B as Image backend
+  participant B as Image backend<br/>(responses proxy or fixture)
   participant DB as Store
 
   C->>R: POST /v1/responses tools=[image_generation]
@@ -602,7 +602,10 @@ Official contract:
 Shim reality:
 
 - The shim keeps the outer Responses object, local state, storage, and replay.
-- Actual image work is delegated to a Responses-compatible image backend.
+- Actual image work is delegated to a configured image backend. The
+  `responses` backend calls a separate OpenAI-compatible `/v1/responses`
+  service; the `fixture` backend emits deterministic placeholder artifacts for
+  devstack and regression coverage only.
 - Current-turn image inputs and edit lineage are flattened into shim-owned
   backend input.
 - Exact hosted planner decisions, partial-image timing, and richer hosted

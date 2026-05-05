@@ -279,9 +279,9 @@ Supported environment overrides:
 - `RESPONSES_WEB_SEARCH_BASE_URL` overrides `responses.web_search.base_url`
 - `RESPONSES_WEB_SEARCH_TIMEOUT` overrides `responses.web_search.timeout`
 - `RESPONSES_WEB_SEARCH_MAX_RESULTS` overrides `responses.web_search.max_results`
-- `RESPONSES_IMAGE_GENERATION_BACKEND` overrides `responses.image_generation.backend`; supported values: `disabled`, `responses`
-- `RESPONSES_IMAGE_GENERATION_BASE_URL` overrides `responses.image_generation.base_url`
-- `RESPONSES_IMAGE_GENERATION_TIMEOUT` overrides `responses.image_generation.timeout`
+- `RESPONSES_IMAGE_GENERATION_BACKEND` overrides `responses.image_generation.backend`; supported values: `disabled`, `fixture`, `responses`
+- `RESPONSES_IMAGE_GENERATION_BASE_URL` overrides `responses.image_generation.base_url`; used by the `responses` backend only
+- `RESPONSES_IMAGE_GENERATION_TIMEOUT` overrides `responses.image_generation.timeout`; used by the `responses` backend only
 - `RESPONSES_COMPACTION_BACKEND` overrides `responses.compaction.backend`; supported values: `heuristic`, `model_assisted_text`
 - `RESPONSES_COMPACTION_BASE_URL` overrides `responses.compaction.base_url`; when omitted with `model_assisted_text`, the shim reuses `llama.base_url`
 - `RESPONSES_COMPACTION_MODEL` overrides `responses.compaction.model`
@@ -503,7 +503,7 @@ The token is used only for the server-side `/readyz` upstream probe.
 
 When `responses.web_search.backend=searxng` is enabled, `/readyz` also checks that the configured web search backend answers before returning `ready`.
 
-When `responses.image_generation.backend=responses` is enabled, `/readyz` also checks that the configured image-generation `/v1/responses` backend answers before returning `ready`.
+When `responses.image_generation.backend=responses` is enabled, `/readyz` also checks that the configured image-generation `/v1/responses` backend answers before returning `ready`. The deterministic `fixture` image backend is readiness-local.
 
 For a step-by-step local setup and a smoke test script, see [docs/semantic-retrieval-embedanything.md](docs/semantic-retrieval-embedanything.md).
 
@@ -526,7 +526,9 @@ The shim now has a pragmatic local `image_generation` subset inside
 `/v1/responses`:
 
 - one `image_generation` tool in `responses.mode=prefer_local|local_only`
-- a separate OpenAI-compatible `/v1/responses` image backend selected via
+- either a deterministic fixture backend selected via
+  `responses.image_generation.backend=fixture`, or a separate
+  OpenAI-compatible `/v1/responses` image backend selected via
   `responses.image_generation.backend=responses`
 - non-stream and stream create paths, with stored shadow-state and retrieve
   replay handled by the shim
@@ -540,8 +542,9 @@ The shim now has a pragmatic local `image_generation` subset inside
 
 This is intentionally not a claim of exact hosted live-stream timing or full
 hosted planner/failure choreography. The current local subset delegates image
-tool execution to a dedicated Responses-compatible backend and then replays the
-stored result through the shim-owned Responses surface.
+tool execution to a configured backend and then replays the stored result
+through the shim-owned Responses surface. The `fixture` backend is for
+devstack/regression coverage, not production image generation.
 
 ## Local computer use
 

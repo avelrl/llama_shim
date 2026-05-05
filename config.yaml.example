@@ -249,12 +249,15 @@ responses:
     max_results: 10
   image_generation:
     # disabled: no shim-local image_generation runtime
+    # fixture: deterministic built-in placeholder backend for devstack and tests
     # responses: delegate one image_generation tool to a separate
     # OpenAI-compatible /v1/responses image backend
     backend: disabled
-    # Base URL of the image backend, for example http://127.0.0.1:8085
+    # Base URL of the responses image backend, for example http://127.0.0.1:8085.
+    # Ignored by disabled and fixture backends.
     base_url: ""
-    # Timeout per local image generation request to the image backend.
+    # Timeout per local image generation request to the responses image backend.
+    # Ignored by disabled and fixture backends.
     timeout: 60s
   compaction:
     # heuristic: deterministic fallback compactor

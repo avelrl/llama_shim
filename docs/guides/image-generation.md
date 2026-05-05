@@ -5,8 +5,8 @@
 The shim supports a practical local `image_generation` subset inside
 `/v1/responses`.
 
-It delegates image work to a separate Responses-compatible image backend while
-keeping the surrounding response state, storage, and replay in the shim.
+It delegates image work to a configured shim-local image backend while keeping
+the surrounding response state, storage, and replay in the shim.
 
 ## When To Use It
 
@@ -43,13 +43,17 @@ curl http://127.0.0.1:8080/v1/responses \
 
 ## Shim-Specific Notes
 
-- Enable the local runtime with `responses.image_generation.backend=responses`.
+- Enable the local runtime with `responses.image_generation.backend=responses`
+  for a separate OpenAI-compatible image service, or `fixture` for the
+  deterministic devstack/test backend.
 - The shim keeps the outer response object, storage, and retrieve-stream story
   local, even though actual image generation is delegated.
 - Current-turn image inputs and local image-edit lineage are flattened into the
   shim-owned input sent to the image backend.
 - If the backend emits `response.image_generation_call.partial_image`, the shim
   persists those partial artifacts for later replay.
+- The `fixture` backend returns a deterministic placeholder image and partial
+  image stream. It is for regression coverage, not production image generation.
 
 ## Gotchas
 

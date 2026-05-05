@@ -65,9 +65,7 @@ responses:
     timeout: 10s
     max_results: 10
   image_generation:
-    backend: responses
-    base_url: http://fixture:8081
-    timeout: 30s
+    backend: fixture
   compaction:
     backend: model_assisted_text
     base_url: http://fixture:8081

@@ -117,7 +117,7 @@ func validateLocalImageGenerationParallelToolCalls(raw json.RawMessage) error {
 }
 
 func localImageGenerationDisabledError() error {
-	return domain.NewValidationError("tools", "shim-local image_generation runtime is disabled; set responses.image_generation.backend to responses or use responses.mode=prefer_upstream")
+	return domain.NewValidationError("tools", "shim-local image_generation runtime is disabled; set responses.image_generation.backend to responses or fixture, or use responses.mode=prefer_upstream")
 }
 
 func (h *responseHandler) createLocalImageGenerationResponse(ctx context.Context, request CreateResponseRequest, requestJSON string, rawFields map[string]json.RawMessage) (domain.Response, []domain.ResponseReplayArtifact, error) {

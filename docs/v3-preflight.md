@@ -181,6 +181,7 @@ This now ships as:
 - `cmd/responses-websocket-smoke`
 - `scripts/v3-coding-tools-smoke.sh`
 - `scripts/v3-constrained-decoding-smoke.sh`
+- `scripts/v3-image-backends-smoke.sh`
 - optional `scripts/v3-vllm-constrained-smoke.sh` for a local vLLM
   `structured_outputs.regex` / `structured_outputs.grammar` backend
 
@@ -218,9 +219,9 @@ ledger live in
 
 `make devstack-ci-smoke` is the CI-compatible gate on top of the stack. It
 combines the general devstack smoke, direct Responses WebSocket smoke, V3
-native coding-tools smoke, and V3 constrained-runtime smoke. It deliberately
-avoids real Codex CLI checks because CI runners should not need a locally
-installed `codex` binary.
+native coding-tools smoke, V3 constrained-runtime smoke, and the deterministic
+V3 image-backend smoke. It deliberately avoids real Codex CLI checks because
+CI runners should not need a locally installed `codex` binary.
 
 `make devstack-full-smoke` is the local heavy gate. It includes
 `make devstack-ci-smoke` plus real Codex CLI smoke paths that verify the

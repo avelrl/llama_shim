@@ -958,6 +958,22 @@ responses:
 	require.ErrorContains(t, err, "responses.image_generation.base_url must not be empty")
 }
 
+func TestLoadAcceptsImageGenerationFixtureBackendWithoutBaseURL(t *testing.T) {
+	disableDotEnv(t)
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	writeFile(t, configPath, `
+responses:
+  image_generation:
+    backend: fixture
+`)
+
+	cfg, err := config.Load(configPath)
+	require.NoError(t, err)
+	require.Equal(t, "fixture", cfg.ResponsesImageGenerationBackend)
+	require.Empty(t, cfg.ResponsesImageGenerationBaseURL)
+	require.Zero(t, cfg.ResponsesImageGenerationTimeout)
+}
+
 func TestLoadDefaultsCompactionBaseURLToLlamaBaseURL(t *testing.T) {
 	disableDotEnv(t)
 	configPath := filepath.Join(t.TempDir(), "config.yaml")

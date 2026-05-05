@@ -231,6 +231,7 @@ component such as `storage`, `llama`, `retrieval_embedder`,
 - `make responses-websocket-smoke`
 - `make v3-coding-tools-smoke`
 - `make v3-constrained-decoding-smoke`
+- `make v3-image-backends-smoke`
 
 It intentionally does not require the real `codex` binary.
 

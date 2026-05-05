@@ -15,6 +15,7 @@ import (
 
 const (
 	BackendDisabled  = "disabled"
+	BackendFixture   = "fixture"
 	BackendResponses = "responses"
 
 	defaultTimeout = 60 * time.Second
@@ -48,6 +49,10 @@ func NormalizeConfig(cfg Config) (Config, error) {
 		cfg.BaseURL = ""
 		cfg.Timeout = 0
 		return cfg, nil
+	case BackendFixture:
+		cfg.BaseURL = ""
+		cfg.Timeout = 0
+		return cfg, nil
 	case BackendResponses:
 	default:
 		return Config{}, fmt.Errorf("unsupported image_generation backend %q", cfg.Backend)
@@ -71,6 +76,8 @@ func NewProvider(cfg Config) (Provider, error) {
 	switch normalized.Backend {
 	case BackendDisabled:
 		return nil, nil
+	case BackendFixture:
+		return &fixtureProvider{}, nil
 	case BackendResponses:
 		return &responsesProvider{
 			client: llama.NewClient(normalized.BaseURL, normalized.Timeout),
