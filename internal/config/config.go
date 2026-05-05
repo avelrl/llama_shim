@@ -24,6 +24,8 @@ type Config struct {
 	SQLitePath                                          string
 	PostgresDSN                                         string
 	SQLiteMaintenanceCleanupInterval                    time.Duration
+	StorageResponseReplayArtifactsMaxAge                time.Duration
+	StorageResponseReplayArtifactsMaxResponses          int
 	LlamaBaseURL                                        string
 	LlamaReadinessBearerToken                           string
 	LlamaTimeout                                        time.Duration
@@ -334,6 +336,14 @@ func Load(configPath string) (Config, error) {
 	if err := parseDuration(v.GetString("sqlite.maintenance.cleanup_interval"), &cfg.SQLiteMaintenanceCleanupInterval); err != nil {
 		return Config{}, fmt.Errorf("parse sqlite.maintenance.cleanup_interval: %w", err)
 	}
+	if err := parseDuration(v.GetString("storage.retention.response_replay_artifacts.max_age"), &cfg.StorageResponseReplayArtifactsMaxAge); err != nil {
+		return Config{}, fmt.Errorf("parse storage.retention.response_replay_artifacts.max_age: %w", err)
+	}
+	responseReplayArtifactsMaxResponses, err := parseNonNegativeInt(v.GetString("storage.retention.response_replay_artifacts.max_responses"))
+	if err != nil {
+		return Config{}, fmt.Errorf("parse storage.retention.response_replay_artifacts.max_responses: %w", err)
+	}
+	cfg.StorageResponseReplayArtifactsMaxResponses = responseReplayArtifactsMaxResponses
 	if err := parseDuration(v.GetString("shim.read_timeout"), &cfg.ReadTimeout); err != nil {
 		return Config{}, fmt.Errorf("parse shim.read_timeout: %w", err)
 	}
@@ -594,6 +604,13 @@ func Load(configPath string) (Config, error) {
 	return cfg, nil
 }
 
+func (c Config) MaintenanceCleanupPolicy() storage.MaintenanceCleanupPolicy {
+	return storage.MaintenanceCleanupPolicy{
+		ResponseReplayArtifactsMaxAge:       c.StorageResponseReplayArtifactsMaxAge,
+		ResponseReplayArtifactsMaxResponses: c.StorageResponseReplayArtifactsMaxResponses,
+	}
+}
+
 func setDefaults(v *viper.Viper) {
 	v.SetDefault("shim.addr", ":8080")
 	v.SetDefault("shim.read_timeout", "15s")
@@ -623,6 +640,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("sqlite.path", "./data/shim.db")
 	v.SetDefault("postgres.dsn", "")
 	v.SetDefault("sqlite.maintenance.cleanup_interval", "15m")
+	v.SetDefault("storage.retention.response_replay_artifacts.max_age", "0s")
+	v.SetDefault("storage.retention.response_replay_artifacts.max_responses", "0")
 	v.SetDefault("llama.base_url", "http://127.0.0.1:8081")
 	v.SetDefault("llama.readiness_bearer_token", "")
 	v.SetDefault("llama.timeout", "60s")

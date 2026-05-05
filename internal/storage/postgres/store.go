@@ -1487,6 +1487,8 @@ CREATE INDEX IF NOT EXISTS idx_pg_responses_previous_response_id
 	ON responses(previous_response_id);
 CREATE INDEX IF NOT EXISTS idx_pg_responses_conversation_id
 	ON responses(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_pg_responses_created_at
+	ON responses(created_at, id);
 
 CREATE TABLE IF NOT EXISTS response_replay_artifacts (
 	response_id TEXT NOT NULL REFERENCES responses(id) ON DELETE CASCADE,

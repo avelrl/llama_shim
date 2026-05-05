@@ -135,7 +135,7 @@ func main() {
 		os.Exit(1)
 	}
 	httpapi.StartLocalCodeInterpreterCleanupLoop(processCtx, logger, localCodeInterpreter, store, store, cfg.ResponsesCodeInterpreterCleanupInterval)
-	startStorageMaintenanceCleanupLoop(processCtx, logger, storageMaintenanceStore(store), cfg.SQLiteMaintenanceCleanupInterval)
+	startStorageMaintenanceCleanupLoop(processCtx, logger, storageMaintenanceStore(store), cfg.SQLiteMaintenanceCleanupInterval, cfg.MaintenanceCleanupPolicy())
 
 	server := &http.Server{
 		Addr: cfg.Addr,
@@ -215,6 +215,8 @@ func main() {
 		"sqlite_path", cfg.SQLitePath,
 		"storage_backend", cfg.StorageBackend,
 		"sqlite_maintenance_cleanup_interval", cfg.SQLiteMaintenanceCleanupInterval,
+		"storage_response_replay_artifacts_max_age", cfg.StorageResponseReplayArtifactsMaxAge,
+		"storage_response_replay_artifacts_max_responses", cfg.StorageResponseReplayArtifactsMaxResponses,
 		"config_file", cfg.ConfigFile,
 		"log_file_path", cfg.LogFilePath,
 		"shim_auth_mode", cfg.ShimAuthMode,

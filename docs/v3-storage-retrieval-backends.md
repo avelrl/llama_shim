@@ -172,6 +172,10 @@ Supported storage configuration:
 ```yaml
 storage:
   backend: sqlite
+  retention:
+    response_replay_artifacts:
+      max_age: 0s
+      max_responses: 0
 
 postgres:
   dsn: ""
@@ -187,6 +191,8 @@ POSTGRES_DSN=postgres://llama_shim:llama_shim@127.0.0.1:15432/llama_shim?sslmode
 `sqlite` remains the default. `postgres` is accepted for the beta durable
 state/object-storage slice and requires `postgres.dsn`. Unsupported values
 fail during config loading, before any HTTP route starts.
+Replay-artifact retention is disabled by default and is a shim-local operator
+policy, not an OpenAI API retention claim.
 
 Retrieval indexing remains configured separately:
 
@@ -594,17 +600,24 @@ table extension.
 
 #### 6.3 Replay/artifact retention policy
 
-Status: planned.
+Status: implemented.
 
-Current cleanup is intentionally narrow and targets explicit `expires_at`
-resources. Add a shim-owned retention policy for local response replay
-artifacts only after the operator semantics are explicit:
+Current cleanup targets explicit `expires_at` resources and optional
+shim-owned response replay artifacts. Replay-artifact retention is disabled by
+default and configured under
+`storage.retention.response_replay_artifacts`:
 
-- configurable retention by age and/or count
-- non-fatal cleanup path that never changes the main Responses create result
-- tests for create-stream, retrieve-stream, and replay after retention cleanup
-- compatibility-matrix wording that this is shim-local retention behavior, not
-  hosted OpenAI retention parity
+- `max_age` prunes artifacts for standalone responses older than the configured
+  age
+- `max_responses` keeps replay artifacts for only the newest standalone
+  responses by `created_at`
+- stored `responses` rows are not deleted by this policy
+- responses attached to `/v1/conversations` are preserved to avoid implying an
+  OpenAI hosted 30-day TTL for conversation state
+
+This is a shim-local operator policy, not hosted OpenAI retention parity.
+Storage tests cover SQLite and Postgres artifact pruning; retrieve-stream
+tests cover replay behavior after artifacts are pruned.
 
 #### 6.4 Cluster-native Postgres backup guidance
 

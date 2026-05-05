@@ -624,6 +624,62 @@ func TestStorePostgresMaintenanceCleanup(t *testing.T) {
 	require.NoError(t, store.Vacuum(ctx))
 }
 
+func TestStorePostgresCleanupResponseReplayArtifactsRetentionPolicy(t *testing.T) {
+	store, ctx, prefix := openPostgresTestStore(t, retrieval.IndexBackendLexical, nil)
+	now := int64(1_777_000_000)
+
+	oldStandalone := testStoredResponseWithReplay(prefix+"resp_old", "2026-04-01T10:00:00Z", "")
+	recentStandalone := testStoredResponseWithReplay(prefix+"resp_recent", "2026-05-05T10:00:00Z", "")
+	oldConversation := testStoredResponseWithReplay(prefix+"resp_conv_old", "2026-04-01T09:00:00Z", prefix+"conv_keep")
+	for _, response := range []domain.StoredResponse{oldStandalone, recentStandalone, oldConversation} {
+		require.NoError(t, store.SaveResponse(ctx, response))
+		require.NoError(t, store.SaveResponseReplayArtifacts(ctx, response.ID, []domain.ResponseReplayArtifact{
+			{ResponseID: response.ID, Sequence: 1, EventType: "response.created", PayloadJSON: `{"type":"response.created"}`},
+			{ResponseID: response.ID, Sequence: 2, EventType: "response.completed", PayloadJSON: `{"type":"response.completed"}`},
+		}))
+	}
+
+	stats, err := store.CleanupExpiredState(ctx, now, storage.MaintenanceCleanupPolicy{
+		ResponseReplayArtifactsMaxAge: 24 * time.Hour,
+	})
+	require.NoError(t, err)
+	require.Equal(t, 2, stats.ResponseReplayArtifactsDeleted)
+	require.Equal(t, 1, stats.ResponseReplayArtifactResponsesPruned)
+
+	gotOldResponse, err := store.GetResponse(ctx, oldStandalone.ID)
+	require.NoError(t, err)
+	require.Equal(t, oldStandalone.ID, gotOldResponse.ID)
+	oldArtifacts, err := store.GetResponseReplayArtifacts(ctx, oldStandalone.ID)
+	require.NoError(t, err)
+	require.Empty(t, oldArtifacts)
+	recentArtifacts, err := store.GetResponseReplayArtifacts(ctx, recentStandalone.ID)
+	require.NoError(t, err)
+	require.Len(t, recentArtifacts, 2)
+	conversationArtifacts, err := store.GetResponseReplayArtifacts(ctx, oldConversation.ID)
+	require.NoError(t, err)
+	require.Len(t, conversationArtifacts, 2)
+
+	require.NoError(t, store.SaveResponseReplayArtifacts(ctx, oldStandalone.ID, []domain.ResponseReplayArtifact{
+		{ResponseID: oldStandalone.ID, Sequence: 1, EventType: "response.completed", PayloadJSON: `{"type":"response.completed"}`},
+	}))
+	stats, err = store.CleanupExpiredState(ctx, now, storage.MaintenanceCleanupPolicy{
+		ResponseReplayArtifactsMaxResponses: 1,
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, stats.ResponseReplayArtifactsDeleted)
+	require.Equal(t, 1, stats.ResponseReplayArtifactResponsesPruned)
+
+	oldArtifacts, err = store.GetResponseReplayArtifacts(ctx, oldStandalone.ID)
+	require.NoError(t, err)
+	require.Empty(t, oldArtifacts)
+	recentArtifacts, err = store.GetResponseReplayArtifacts(ctx, recentStandalone.ID)
+	require.NoError(t, err)
+	require.Len(t, recentArtifacts, 2)
+	conversationArtifacts, err = store.GetResponseReplayArtifacts(ctx, oldConversation.ID)
+	require.NoError(t, err)
+	require.Len(t, conversationArtifacts, 2)
+}
+
 func TestStorePostgresBackupRestoreRoundTrip(t *testing.T) {
 	source, ctx, prefix := openPostgresTestStore(t, retrieval.IndexBackendLexical, nil)
 	target, _, _ := openPostgresTestStore(t, retrieval.IndexBackendLexical, nil)
@@ -1100,5 +1156,22 @@ func testVectorStore(id, name string, createdAt int64) domain.StoredVectorStore 
 		Metadata:     map[string]string{"scope": "postgres-hardening"},
 		CreatedAt:    createdAt,
 		LastActiveAt: createdAt,
+	}
+}
+
+func testStoredResponseWithReplay(id, createdAt, conversationID string) domain.StoredResponse {
+	return domain.StoredResponse{
+		ID:                   id,
+		Model:                "test-model",
+		RequestJSON:          `{"input":"hello"}`,
+		ResponseJSON:         `{"id":"` + id + `","object":"response","status":"completed","output":[]}`,
+		NormalizedInputItems: []domain.Item{domain.NewInputTextMessage("user", "hello")},
+		EffectiveInputItems:  []domain.Item{domain.NewInputTextMessage("user", "hello")},
+		Output:               []domain.Item{domain.NewOutputTextMessage("ok")},
+		OutputText:           "ok",
+		ConversationID:       conversationID,
+		Store:                true,
+		CreatedAt:            createdAt,
+		CompletedAt:          createdAt,
 	}
 }

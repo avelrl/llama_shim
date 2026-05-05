@@ -68,6 +68,10 @@ sqlite:
     cleanup_interval: 17m
 storage:
   backend: sqlite
+  retention:
+    response_replay_artifacts:
+      max_age: 48h
+      max_responses: 256
 llama:
   base_url: http://127.0.0.1:9091
   readiness_bearer_token: readiness-yaml-secret
@@ -236,6 +240,8 @@ responses:
 	require.Equal(t, "sqlite", cfg.StorageBackend)
 	require.Equal(t, "./tmp/test.db", cfg.SQLitePath)
 	require.Equal(t, 17*time.Minute, cfg.SQLiteMaintenanceCleanupInterval)
+	require.Equal(t, 48*time.Hour, cfg.StorageResponseReplayArtifactsMaxAge)
+	require.Equal(t, 256, cfg.StorageResponseReplayArtifactsMaxResponses)
 	require.Equal(t, "http://127.0.0.1:9091", cfg.LlamaBaseURL)
 	require.Equal(t, "readiness-yaml-secret", cfg.LlamaReadinessBearerToken)
 	require.Equal(t, 12*time.Second, cfg.LlamaTimeout)
@@ -603,6 +609,8 @@ func TestLoadUsesCodexSafeDefaults(t *testing.T) {
 	require.Equal(t, 20, cfg.RetrievalMaxGroundingChunks)
 	require.Equal(t, 2, cfg.ResponsesCodeInterpreterMaxConcurrentRuns)
 	require.Equal(t, 15*time.Minute, cfg.SQLiteMaintenanceCleanupInterval)
+	require.Equal(t, 0*time.Second, cfg.StorageResponseReplayArtifactsMaxAge)
+	require.Equal(t, 0, cfg.StorageResponseReplayArtifactsMaxResponses)
 	require.Equal(t, "lexical", cfg.RetrievalIndexBackend)
 	require.Equal(t, "disabled", cfg.RetrievalEmbedderBackend)
 	require.Empty(t, cfg.RetrievalEmbedderBaseURL)

@@ -89,7 +89,8 @@ responses, conversations, stored Chat Completions, Postgres hardening coverage,
 backend-aware Postgres maintenance, and the first multi-instance shared-state
 smoke are implemented. SQLite-to-Postgres migration tooling is implemented for
 the current Postgres-owned beta tables, and code-interpreter state ownership is
-implemented as an explicit per-instance SQLite sidecar boundary.
+implemented as an explicit per-instance SQLite sidecar boundary. Shim-owned
+response replay-artifact retention is implemented for standalone responses.
 See
 [v3-storage-retrieval-backends.md](v3-storage-retrieval-backends.md).
 
@@ -98,8 +99,8 @@ See
   responses/conversations/stored-chat/file/vector boundary
 - code-interpreter store ownership stays sidecar-local unless a future shared
   runtime design exists
-- replay/artifact retention policy, cluster-native Postgres backup runbook,
-  hard-delete/governance hooks, and ANN index management
+- cluster-native Postgres backup runbook, hard-delete/governance hooks, and
+  ANN index management
 - more embedders and rerankers beyond the current compatibility-driven set
 
 ### 3. Richer local-only runtimes
@@ -324,9 +325,9 @@ the public compatibility story less truthful.
 The next practical implementation work should be selected from this queue:
 
 1. Continue [V3 Storage And Retrieval Backends](v3-storage-retrieval-backends.md)
-   for the remaining Postgres beta work: replay/artifact retention,
-   cluster-native backup guidance, hard-delete/governance hooks, ANN indexing,
-   or additional embedders/rerankers.
+   for the remaining Postgres beta work: cluster-native backup guidance,
+   hard-delete/governance hooks, ANN indexing, or additional
+   embedders/rerankers.
 2. Continue [V3 Ops And Deployment Expansion](v3-ops-deployment.md) only for
    governance/tenanting after the shared storage beta boundary is stable.
 3. Turn [V3 Alternative Image Backends](v3-image-backends.md) into a first

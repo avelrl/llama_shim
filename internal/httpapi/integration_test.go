@@ -32,6 +32,7 @@ import (
 	"llama_shim/internal/imagegen"
 	"llama_shim/internal/retrieval"
 	"llama_shim/internal/sandbox"
+	"llama_shim/internal/storage"
 	"llama_shim/internal/storage/sqlite"
 	"llama_shim/internal/testutil"
 	"llama_shim/internal/upstreamcompat"
@@ -2153,6 +2154,23 @@ func TestResponsesGetStreamReplaysImageGenerationCallReplaySubset(t *testing.T) 
 	partial1 := findNthEvent(t, events, "response.image_generation_call.partial_image", 1).Data
 	require.EqualValues(t, 1, partial1["partial_image_index"])
 	require.Equal(t, "cGFydGlhbC0x", asStringAny(partial1["partial_image_b64"]))
+
+	stats, err := app.Store.CleanupExpiredState(context.Background(), 1_778_000_000, storage.MaintenanceCleanupPolicy{
+		ResponseReplayArtifactsMaxAge: 24 * time.Hour,
+	})
+	require.NoError(t, err)
+	require.Equal(t, 2, stats.ResponseReplayArtifactsDeleted)
+
+	req, err = http.NewRequest(http.MethodGet, app.Server.URL+"/v1/responses/resp_image_generation_call?stream=true", nil)
+	require.NoError(t, err)
+	resp, err = app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	events = readSSEEvents(t, resp.Body)
+	require.Contains(t, eventTypes(events), "response.output_item.added")
+	require.Contains(t, eventTypes(events), "response.output_item.done")
+	require.NotContains(t, eventTypes(events), "response.image_generation_call.partial_image")
 }
 
 func TestResponsesGetStreamReplaysMCPApprovalRequestAsGenericOutputItemReplay(t *testing.T) {

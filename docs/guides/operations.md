@@ -95,6 +95,11 @@ Background cleanup:
   sweep interval for the active storage backend. In SQLite mode it sweeps
   SQLite resources with explicit `expires_at`; in Postgres mode it sweeps the
   Postgres-owned files and vector stores with explicit `expires_at`.
+- `storage.retention.response_replay_artifacts.max_age` and
+  `storage.retention.response_replay_artifacts.max_responses` are disabled by
+  default. When configured, the same maintenance sweep prunes only shim-local
+  replay artifacts for standalone responses; response rows and
+  conversation-attached response artifacts are preserved.
 - `responses.code_interpreter.cleanup_interval` handles expired local code
   interpreter containers separately
 - In Postgres mode, code-interpreter sessions and container-file membership
@@ -111,6 +116,10 @@ go run ./cmd/shimctl -config ./config.yaml vacuum
 go run ./cmd/shimctl -config ./config.yaml backup -out ./.data/shim-backup.db
 go run ./cmd/shimctl -config ./config.yaml restore -from ./.data/shim-backup.db
 ```
+
+`shimctl cleanup` uses the same replay-artifact retention settings as the
+background sweep and reports both expired-resource deletes and replay-artifact
+prunes.
 
 For Postgres mode, configure `storage.backend=postgres` and `postgres.dsn` in
 `config.yaml`, or provide matching environment overrides:

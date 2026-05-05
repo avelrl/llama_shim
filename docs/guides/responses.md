@@ -130,6 +130,9 @@ curl http://127.0.0.1:8080/v1/responses \
   hosted orchestration.
 - `store=false` changes outward retention behavior, but the shim may still keep
   hidden internal rows needed for local replay and state reconstruction.
+  Operators can separately prune shim-local replay artifacts with
+  `storage.retention.response_replay_artifacts.*`; that cleanup does not delete
+  stored response rows or conversation-attached response artifacts.
 
 ## Related Docs
 

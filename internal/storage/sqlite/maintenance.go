@@ -13,7 +13,7 @@ import (
 
 type MaintenanceCleanupStats = storage.MaintenanceCleanupStats
 
-func (s *Store) CleanupExpiredState(ctx context.Context, now int64) (MaintenanceCleanupStats, error) {
+func (s *Store) CleanupExpiredState(ctx context.Context, now int64, policies ...storage.MaintenanceCleanupPolicy) (MaintenanceCleanupStats, error) {
 	vectorStoreIDs, err := s.listExpiredVectorStoreIDs(ctx, now)
 	if err != nil {
 		return MaintenanceCleanupStats{}, err
@@ -42,6 +42,13 @@ func (s *Store) CleanupExpiredState(ctx context.Context, now int64) (Maintenance
 		}
 		stats.ExpiredFilesDeleted++
 	}
+	policy := storage.NormalizeMaintenanceCleanupPolicy(policies...)
+	replayArtifactsDeleted, replayArtifactResponses, err := s.cleanupResponseReplayArtifacts(ctx, now, policy)
+	if err != nil {
+		return stats, err
+	}
+	stats.ResponseReplayArtifactsDeleted = replayArtifactsDeleted
+	stats.ResponseReplayArtifactResponsesPruned = replayArtifactResponses
 	return stats, nil
 }
 
@@ -171,6 +178,129 @@ func (s *Store) listExpiredFileIDs(ctx context.Context, now int64) ([]string, er
 		return nil, fmt.Errorf("iterate expired files: %w", err)
 	}
 	return ids, nil
+}
+
+func (s *Store) cleanupResponseReplayArtifacts(ctx context.Context, now int64, policy storage.MaintenanceCleanupPolicy) (int, int, error) {
+	totalArtifactsDeleted := 0
+	totalResponsesPruned := 0
+
+	if cutoff, ok := policy.ResponseReplayArtifactsAgeCutoff(now); ok {
+		artifactsDeleted, responsesPruned, err := s.deleteStandaloneResponseReplayArtifactsByAge(ctx, cutoff)
+		if err != nil {
+			return totalArtifactsDeleted, totalResponsesPruned, err
+		}
+		totalArtifactsDeleted += artifactsDeleted
+		totalResponsesPruned += responsesPruned
+	}
+	if policy.ResponseReplayArtifactsCountRetentionEnabled() {
+		artifactsDeleted, responsesPruned, err := s.deleteStandaloneResponseReplayArtifactsBeyondMaxResponses(ctx, policy.ResponseReplayArtifactsMaxResponses)
+		if err != nil {
+			return totalArtifactsDeleted, totalResponsesPruned, err
+		}
+		totalArtifactsDeleted += artifactsDeleted
+		totalResponsesPruned += responsesPruned
+	}
+	return totalArtifactsDeleted, totalResponsesPruned, nil
+}
+
+func (s *Store) deleteStandaloneResponseReplayArtifactsByAge(ctx context.Context, cutoffCreatedAt string) (int, int, error) {
+	responsesPruned, err := s.countStandaloneResponseIDsWithReplayArtifactsBefore(ctx, cutoffCreatedAt)
+	if err != nil {
+		return 0, 0, err
+	}
+	if responsesPruned == 0 {
+		return 0, 0, nil
+	}
+	result, err := s.db.ExecContext(ctx, `
+		DELETE FROM response_replay_artifacts
+		WHERE response_id IN (
+			SELECT id
+			FROM responses
+			WHERE COALESCE(conversation_id, '') = ''
+			  AND created_at <> ''
+			  AND created_at < ?
+		)
+	`, cutoffCreatedAt)
+	if err != nil {
+		return 0, 0, fmt.Errorf("delete aged response replay artifacts: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return 0, 0, fmt.Errorf("count aged response replay artifacts deleted: %w", err)
+	}
+	return int(affected), responsesPruned, nil
+}
+
+func (s *Store) deleteStandaloneResponseReplayArtifactsBeyondMaxResponses(ctx context.Context, maxResponses int) (int, int, error) {
+	responsesPruned, err := s.countStandaloneResponseIDsWithReplayArtifactsBeyondMaxResponses(ctx, maxResponses)
+	if err != nil {
+		return 0, 0, err
+	}
+	if responsesPruned == 0 {
+		return 0, 0, nil
+	}
+	result, err := s.db.ExecContext(ctx, `
+		DELETE FROM response_replay_artifacts
+		WHERE response_id IN (
+			SELECT response_id
+			FROM (
+				SELECT rra.response_id, MAX(r.created_at) AS response_created_at
+				FROM response_replay_artifacts rra
+				JOIN responses r ON r.id = rra.response_id
+				WHERE COALESCE(r.conversation_id, '') = ''
+				  AND r.created_at <> ''
+				GROUP BY rra.response_id
+				ORDER BY response_created_at DESC, rra.response_id DESC
+				LIMIT -1 OFFSET ?
+			)
+		)
+	`, maxResponses)
+	if err != nil {
+		return 0, 0, fmt.Errorf("delete excess response replay artifacts: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return 0, 0, fmt.Errorf("count excess response replay artifacts deleted: %w", err)
+	}
+	return int(affected), responsesPruned, nil
+}
+
+func (s *Store) countStandaloneResponseIDsWithReplayArtifactsBefore(ctx context.Context, cutoffCreatedAt string) (int, error) {
+	var count int
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM (
+			SELECT DISTINCT r.id
+			FROM responses r
+			JOIN response_replay_artifacts rra ON rra.response_id = r.id
+			WHERE COALESCE(r.conversation_id, '') = ''
+			  AND r.created_at <> ''
+			  AND r.created_at < ?
+		)
+	`, cutoffCreatedAt).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count aged response replay artifact responses: %w", err)
+	}
+	return count, nil
+}
+
+func (s *Store) countStandaloneResponseIDsWithReplayArtifactsBeyondMaxResponses(ctx context.Context, maxResponses int) (int, error) {
+	var count int
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM (
+			SELECT rra.response_id, MAX(r.created_at) AS response_created_at
+			FROM response_replay_artifacts rra
+			JOIN responses r ON r.id = rra.response_id
+			WHERE COALESCE(r.conversation_id, '') = ''
+			  AND r.created_at <> ''
+			GROUP BY rra.response_id
+			ORDER BY response_created_at DESC, rra.response_id DESC
+			LIMIT -1 OFFSET ?
+		)
+	`, maxResponses).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count excess response replay artifact responses: %w", err)
+	}
+	return count, nil
 }
 
 func sqliteQuotedString(value string) string {

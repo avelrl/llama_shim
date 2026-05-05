@@ -5,10 +5,12 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"llama_shim/internal/domain"
+	"llama_shim/internal/storage"
 	"llama_shim/internal/storage/sqlite"
 	"llama_shim/internal/testutil"
 )
@@ -96,6 +98,65 @@ func TestStoreCleanupExpiredState(t *testing.T) {
 	require.Equal(t, 0, gotActiveStore.FileCounts.Total)
 }
 
+func TestStoreCleanupResponseReplayArtifactsRetentionPolicy(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store := openTestStore(t, ctx)
+	now := int64(1_777_000_000)
+
+	oldStandalone := testStoredResponseWithReplay("resp_old", "2026-04-01T10:00:00Z", "")
+	recentStandalone := testStoredResponseWithReplay("resp_recent", "2026-05-05T10:00:00Z", "")
+	oldConversation := testStoredResponseWithReplay("resp_conv_old", "2026-04-01T09:00:00Z", "conv_keep")
+	for _, response := range []domain.StoredResponse{oldStandalone, recentStandalone, oldConversation} {
+		require.NoError(t, store.SaveResponse(ctx, response))
+		require.NoError(t, store.SaveResponseReplayArtifacts(ctx, response.ID, []domain.ResponseReplayArtifact{
+			{ResponseID: response.ID, Sequence: 1, EventType: "response.created", PayloadJSON: `{"type":"response.created"}`},
+			{ResponseID: response.ID, Sequence: 2, EventType: "response.completed", PayloadJSON: `{"type":"response.completed"}`},
+		}))
+	}
+
+	stats, err := store.CleanupExpiredState(ctx, now, storage.MaintenanceCleanupPolicy{
+		ResponseReplayArtifactsMaxAge: 24 * time.Hour,
+	})
+	require.NoError(t, err)
+	require.Equal(t, 2, stats.ResponseReplayArtifactsDeleted)
+	require.Equal(t, 1, stats.ResponseReplayArtifactResponsesPruned)
+
+	gotOldResponse, err := store.GetResponse(ctx, oldStandalone.ID)
+	require.NoError(t, err)
+	require.Equal(t, oldStandalone.ID, gotOldResponse.ID)
+	oldArtifacts, err := store.GetResponseReplayArtifacts(ctx, oldStandalone.ID)
+	require.NoError(t, err)
+	require.Empty(t, oldArtifacts)
+	recentArtifacts, err := store.GetResponseReplayArtifacts(ctx, recentStandalone.ID)
+	require.NoError(t, err)
+	require.Len(t, recentArtifacts, 2)
+	conversationArtifacts, err := store.GetResponseReplayArtifacts(ctx, oldConversation.ID)
+	require.NoError(t, err)
+	require.Len(t, conversationArtifacts, 2)
+
+	require.NoError(t, store.SaveResponseReplayArtifacts(ctx, oldStandalone.ID, []domain.ResponseReplayArtifact{
+		{ResponseID: oldStandalone.ID, Sequence: 1, EventType: "response.completed", PayloadJSON: `{"type":"response.completed"}`},
+	}))
+	stats, err = store.CleanupExpiredState(ctx, now, storage.MaintenanceCleanupPolicy{
+		ResponseReplayArtifactsMaxResponses: 1,
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, stats.ResponseReplayArtifactsDeleted)
+	require.Equal(t, 1, stats.ResponseReplayArtifactResponsesPruned)
+
+	oldArtifacts, err = store.GetResponseReplayArtifacts(ctx, oldStandalone.ID)
+	require.NoError(t, err)
+	require.Empty(t, oldArtifacts)
+	recentArtifacts, err = store.GetResponseReplayArtifacts(ctx, recentStandalone.ID)
+	require.NoError(t, err)
+	require.Len(t, recentArtifacts, 2)
+	conversationArtifacts, err = store.GetResponseReplayArtifacts(ctx, oldConversation.ID)
+	require.NoError(t, err)
+	require.Len(t, conversationArtifacts, 2)
+}
+
 func TestStoreBackupRestoreOptimizeAndVacuum(t *testing.T) {
 	t.Parallel()
 
@@ -140,4 +201,21 @@ func TestStoreBackupRestoreOptimizeAndVacuum(t *testing.T) {
 
 func int64Ptr(v int64) *int64 {
 	return &v
+}
+
+func testStoredResponseWithReplay(id, createdAt, conversationID string) domain.StoredResponse {
+	return domain.StoredResponse{
+		ID:                   id,
+		Model:                "test-model",
+		RequestJSON:          `{"input":"hello"}`,
+		ResponseJSON:         `{"id":"` + id + `","object":"response","status":"completed","output":[]}`,
+		NormalizedInputItems: []domain.Item{domain.NewInputTextMessage("user", "hello")},
+		EffectiveInputItems:  []domain.Item{domain.NewInputTextMessage("user", "hello")},
+		Output:               []domain.Item{domain.NewOutputTextMessage("ok")},
+		OutputText:           "ok",
+		ConversationID:       conversationID,
+		Store:                true,
+		CreatedAt:            createdAt,
+		CompletedAt:          createdAt,
+	}
 }

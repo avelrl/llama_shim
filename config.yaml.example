@@ -70,6 +70,13 @@ shim:
 # OpenAI-facing route contract.
 storage:
   backend: sqlite
+  retention:
+    response_replay_artifacts:
+      # Disabled by default. When set, maintenance deletes only shim-local
+      # replay artifacts for standalone responses; stored response rows and
+      # conversation-attached responses are preserved.
+      max_age: 0s
+      max_responses: 0
 
 # Local SQLite state storage owned by the shim.
 sqlite:

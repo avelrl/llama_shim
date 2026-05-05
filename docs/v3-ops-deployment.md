@@ -134,7 +134,7 @@ Inventory summary:
 | Readiness | `/readyz` checks storage, upstream model backend, and optional retrieval, web-search, and image-generation backends. | backend-neutral API, component-specific probes |
 | Capability manifest | `/debug/capabilities` reports active storage, retrieval, tool, runtime, compaction, metrics, and probe state. | backend-neutral manifest with backend-specific values |
 | Metrics | `/metrics` exposes HTTP, auth, rate-limit, upstream admission/queue, in-flight/queued, retrieval, code-interpreter, and readiness-probe metrics. | backend-neutral, bounded labels |
-| Storage maintenance | `shimctl cleanup`, `optimize`, `vacuum`, `backup`, and `restore` operate on the active storage backend. | SQLite or Postgres beta tables |
+| Storage maintenance | `shimctl cleanup`, `optimize`, `vacuum`, `backup`, and `restore` operate on the active storage backend; optional replay-artifact retention is shim-local. | SQLite or Postgres beta tables |
 | Default persistence | SQLite owns responses, conversations, chat completions, files, vector stores, code-interpreter state, and maintenance. | SQLite |
 | Postgres beta persistence | Postgres owns responses, response replay artifacts, conversations, stored Chat Completions, files, vector stores, vector-store files, and vector-store chunks; SQLite remains sidecar for code-interpreter state. | Postgres beta plus SQLite sidecar |
 | Multi-instance devstack | Optional Compose `multi-instance` profile starts a secondary shim on the same Postgres store with a separate SQLite sidecar and log file. | Postgres state/retrieval objects shared; code-interpreter sidecar state instance-local |
@@ -184,14 +184,13 @@ Maintenance boundary:
 - Postgres object-storage migrations still run at process startup and are
   idempotent for the current beta schema.
 - There is still no shared leader election for automatic cleanup loops,
-  SQLite-to-Postgres migration tool, cluster-native backup policy, or
+  cluster-native backup policy, or
   code-interpreter state migration. Those belong to later Postgres
   beta/hardening slices, not the multi-instance deployment smoke.
 - The detailed Postgres follow-up backlog is tracked in
   [V3 Storage And Retrieval Backends](v3-storage-retrieval-backends.md#6-broader-storage-expansion):
-  SQLite-to-Postgres migration tooling, code-interpreter state ownership,
-  replay/artifact retention policy, cluster-native backup guidance,
-  hard-delete/governance hooks, and ANN indexing.
+  cluster-native backup guidance, hard-delete/governance hooks, and ANN
+  indexing.
 
 ### Phase 3: Governance/Tenanting
 

@@ -12,30 +12,32 @@ import (
 )
 
 type ShimctlConfig struct {
-	SQLitePath                     string
-	StorageBackend                 string
-	PostgresDSN                    string
-	LlamaBaseURL                   string
-	LlamaTimeout                   time.Duration
-	LlamaMaxConcurrentRequests     int
-	LlamaMaxQueueWait              time.Duration
-	ProbeCount                     int
-	ProbeRequestTimeout            time.Duration
-	ProbeBearerToken               string
-	ProbeModel                     string
-	LlamaHTTPMaxIdleConns          int
-	LlamaHTTPMaxIdleConnsPerHost   int
-	LlamaHTTPMaxConnsPerHost       int
-	LlamaHTTPIdleConnTimeout       time.Duration
-	LlamaHTTPDialTimeout           time.Duration
-	LlamaHTTPKeepAlive             time.Duration
-	LlamaHTTPTLSHandshakeTimeout   time.Duration
-	LlamaHTTPExpectContinueTimeout time.Duration
-	RetrievalIndexBackend          string
-	RetrievalEmbedderBackend       string
-	RetrievalEmbedderBaseURL       string
-	RetrievalEmbedderModel         string
-	ConfigFile                     string
+	SQLitePath                                 string
+	StorageBackend                             string
+	PostgresDSN                                string
+	StorageResponseReplayArtifactsMaxAge       time.Duration
+	StorageResponseReplayArtifactsMaxResponses int
+	LlamaBaseURL                               string
+	LlamaTimeout                               time.Duration
+	LlamaMaxConcurrentRequests                 int
+	LlamaMaxQueueWait                          time.Duration
+	ProbeCount                                 int
+	ProbeRequestTimeout                        time.Duration
+	ProbeBearerToken                           string
+	ProbeModel                                 string
+	LlamaHTTPMaxIdleConns                      int
+	LlamaHTTPMaxIdleConnsPerHost               int
+	LlamaHTTPMaxConnsPerHost                   int
+	LlamaHTTPIdleConnTimeout                   time.Duration
+	LlamaHTTPDialTimeout                       time.Duration
+	LlamaHTTPKeepAlive                         time.Duration
+	LlamaHTTPTLSHandshakeTimeout               time.Duration
+	LlamaHTTPExpectContinueTimeout             time.Duration
+	RetrievalIndexBackend                      string
+	RetrievalEmbedderBackend                   string
+	RetrievalEmbedderBaseURL                   string
+	RetrievalEmbedderModel                     string
+	ConfigFile                                 string
 }
 
 func LoadShimctl(configPath string) (ShimctlConfig, error) {
@@ -79,6 +81,14 @@ func LoadShimctl(configPath string) (ShimctlConfig, error) {
 	if cfg.StorageBackend == StorageBackendPostgres && strings.TrimSpace(cfg.PostgresDSN) == "" {
 		return ShimctlConfig{}, fmt.Errorf("parse postgres.dsn: postgres dsn is required")
 	}
+	if err := parseDuration(v.GetString("storage.retention.response_replay_artifacts.max_age"), &cfg.StorageResponseReplayArtifactsMaxAge); err != nil {
+		return ShimctlConfig{}, fmt.Errorf("parse storage.retention.response_replay_artifacts.max_age: %w", err)
+	}
+	responseReplayArtifactsMaxResponses, err := parseNonNegativeInt(v.GetString("storage.retention.response_replay_artifacts.max_responses"))
+	if err != nil {
+		return ShimctlConfig{}, fmt.Errorf("parse storage.retention.response_replay_artifacts.max_responses: %w", err)
+	}
+	cfg.StorageResponseReplayArtifactsMaxResponses = responseReplayArtifactsMaxResponses
 
 	if err := parseDuration(v.GetString("llama.timeout"), &cfg.LlamaTimeout); err != nil {
 		return ShimctlConfig{}, fmt.Errorf("parse llama.timeout: %w", err)
@@ -149,10 +159,19 @@ func LoadShimctl(configPath string) (ShimctlConfig, error) {
 	return cfg, nil
 }
 
+func (c ShimctlConfig) MaintenanceCleanupPolicy() storage.MaintenanceCleanupPolicy {
+	return storage.MaintenanceCleanupPolicy{
+		ResponseReplayArtifactsMaxAge:       c.StorageResponseReplayArtifactsMaxAge,
+		ResponseReplayArtifactsMaxResponses: c.StorageResponseReplayArtifactsMaxResponses,
+	}
+}
+
 func setShimctlDefaults(v *viper.Viper) {
 	v.SetDefault("storage.backend", storage.BackendSQLite)
 	v.SetDefault("sqlite.path", "./data/shim.db")
 	v.SetDefault("postgres.dsn", "")
+	v.SetDefault("storage.retention.response_replay_artifacts.max_age", "0s")
+	v.SetDefault("storage.retention.response_replay_artifacts.max_responses", "0")
 	v.SetDefault("llama.base_url", "http://127.0.0.1:8081")
 	v.SetDefault("llama.timeout", "60s")
 	v.SetDefault("llama.max_concurrent_requests", "4")

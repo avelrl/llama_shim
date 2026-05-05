@@ -219,6 +219,7 @@ sequenceDiagram
   L-->>H: assistant output
   H->>S: save response when store=true or conversation used
   S->>DB: persist request, effective input, output, replay artifacts
+  Note over S,DB: Optional maintenance may later prune standalone replay artifacts only
   H-->>C: response JSON
 ```
 
@@ -282,6 +283,7 @@ sequenceDiagram
   L-->>S: response.output_text.done or tool-family done
   L-->>S: response.output_item.done
   H->>DB: persist final response and replay artifacts
+  Note over H,DB: Retention cleanup can remove replay artifacts later, not response rows
   H->>S: response.completed
   S-->>C: text/event-stream frames
 ```
@@ -310,6 +312,7 @@ sequenceDiagram
   alt exact local artifacts exist
     H->>S: replay stored artifacts in order
   else synthetic replay required
+    Note over H,DB: This also covers artifacts pruned by shim-local retention
     H->>S: response.created / in_progress
     H->>S: output item events
     H->>S: text or tool-family events when supported
@@ -324,6 +327,9 @@ Current boundary:
   replay.
 - `shell_call` retrieve-stream remains generic because upstream background
   shell replay is still blocked by upstream `server_error` captures.
+- Optional replay-artifact retention prunes only standalone response artifacts.
+  It does not delete stored response rows and does not apply to
+  conversation-attached responses.
 
 ## 6. Responses WebSocket Mode
 
@@ -511,8 +517,9 @@ Shim reality:
 - The Postgres storage path serializes app-owned schema migration and
   cleans chunk rows when a vector-store file is deleted from a vector store;
   these are internal store invariants, not OpenAI wire-contract changes.
-- Backend-aware maintenance now covers cleanup, optimize/vacuum, shim-owned
-  logical backup/restore, and SQLite-to-Postgres migration for the current
+- Backend-aware maintenance now covers cleanup, optional standalone
+  response-replay artifact retention, optimize/vacuum, shim-owned logical
+  backup/restore, and SQLite-to-Postgres migration for the current
   Postgres-owned beta tables. These are operator surfaces, not OpenAI hosted
   retention or storage contracts.
 - Local `file_search` injects bounded grounding context before final answer

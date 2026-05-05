@@ -74,15 +74,17 @@ func runCleanup(cfg config.ShimctlConfig, stdout io.Writer) error {
 	}
 	defer store.Close()
 
-	stats, err := store.CleanupExpiredState(context.Background(), retrievalNowUnix())
+	stats, err := store.CleanupExpiredState(context.Background(), retrievalNowUnix(), cfg.MaintenanceCleanupPolicy())
 	if err != nil {
 		return err
 	}
 	_, err = fmt.Fprintf(
 		stdout,
-		"cleanup completed: expired_vector_stores_deleted=%d expired_files_deleted=%d\n",
+		"cleanup completed: expired_vector_stores_deleted=%d expired_files_deleted=%d response_replay_artifact_responses_pruned=%d response_replay_artifacts_deleted=%d\n",
 		stats.ExpiredVectorStoresDeleted,
 		stats.ExpiredFilesDeleted,
+		stats.ResponseReplayArtifactResponsesPruned,
+		stats.ResponseReplayArtifactsDeleted,
 	)
 	return err
 }
