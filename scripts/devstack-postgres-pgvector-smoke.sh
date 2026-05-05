@@ -123,8 +123,10 @@ printf '%s\n' "${capabilities_json}" | jq -e --arg expected_responses_mode "${ex
   .runtime.persistence.backend == "postgres" and
   .runtime.persistence.file_store == "postgres" and
   .runtime.persistence.vector_store == "postgres" and
-  .runtime.persistence.response_store == "sqlite_sidecar" and
-  .runtime.persistence.conversation_store == "sqlite_sidecar" and
+  .runtime.persistence.response_store == "postgres" and
+  .runtime.persistence.conversation_store == "postgres" and
+  .runtime.persistence.chat_completion_store == "postgres" and
+  .runtime.persistence.code_interpreter_store == "sqlite_sidecar" and
   .runtime.retrieval.storage_backend == "postgres" and
   .runtime.retrieval.index_backend == "pgvector" and
   .runtime.retrieval.embedder_backend == "openai_compatible" and

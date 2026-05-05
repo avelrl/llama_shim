@@ -495,18 +495,20 @@ Shim reality:
 
 - `/v1/files`, `/v1/vector_stores`, vector-store files, and vector-store search
   are local-first.
-- Durable retrieval object storage is `storage.backend=sqlite` by default.
-  `storage.backend=postgres` is an alpha hybrid path for files, vector stores,
-  vector-store files, and chunks; responses, conversations, stored Chat
-  Completions, and code-interpreter state remain SQLite sidecar stores there.
+- Durable local object/state storage is `storage.backend=sqlite` by default.
+  `storage.backend=postgres` is a beta hybrid path for responses, response
+  replay artifacts, conversations, stored Chat Completions, files, vector
+  stores, vector-store files, and chunks; code-interpreter state remains a
+  SQLite sidecar store there.
 - Lexical scan is the default local substrate; `sqlite_fts5` adds an indexed
   lexical backend, `sqlite_vec` adds exact local semantic/rerank support with
   an embedder, and `pgvector` adds exact Postgres-backed semantic/hybrid
-  retrieval for the Postgres alpha path.
-- The devstack `multi-instance` profile verifies only this Postgres retrieval
-  object boundary across two shim processes. The SQLite sidecar stores remain
-  instance-local in that smoke and are not a shared-state claim.
-- The Postgres retrieval-object path serializes app-owned schema migration and
+  retrieval for the Postgres path.
+- The devstack `multi-instance` profile verifies this Postgres shared-state
+  boundary across two shim processes for responses, conversations, stored Chat
+  Completions, files, and vector stores. SQLite sidecar code-interpreter state
+  remains instance-local in that smoke and is not a shared-state claim.
+- The Postgres storage path serializes app-owned schema migration and
   cleans chunk rows when a vector-store file is deleted from a vector store;
   these are internal store invariants, not OpenAI wire-contract changes.
 - Local `file_search` injects bounded grounding context before final answer

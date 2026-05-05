@@ -307,14 +307,236 @@ func TestOpenWithOptionsConcurrentMigration(t *testing.T) {
 		require.NoError(t, store.Close())
 	}
 
-	var migrationRows int
-	err := adminDB.QueryRowContext(
-		ctx,
-		`SELECT COUNT(*) FROM `+quotePostgresIdent(schema)+`.schema_migrations WHERE version = $1`,
-		postgresSchemaMigrationVersion,
-	).Scan(&migrationRows)
+	for _, version := range []string{postgresSchemaMigrationVersion, postgresStateMigrationVersion} {
+		var migrationRows int
+		err := adminDB.QueryRowContext(
+			ctx,
+			`SELECT COUNT(*) FROM `+quotePostgresIdent(schema)+`.schema_migrations WHERE version = $1`,
+			version,
+		).Scan(&migrationRows)
+		require.NoError(t, err)
+		require.Equal(t, 1, migrationRows)
+	}
+}
+
+func TestStoreDurableResponsesConversationsAndChatCompletions(t *testing.T) {
+	store, ctx, prefix := openPostgresTestStore(t, retrieval.IndexBackendLexical, nil)
+
+	createdAt := "2026-05-05T10:00:00Z"
+	completedAt := "2026-05-05T10:00:01Z"
+	firstResponse := domain.StoredResponse{
+		ID:                   prefix + "resp_first",
+		Model:                "test-model",
+		RequestJSON:          `{"input":"first"}`,
+		NormalizedInputItems: []domain.Item{domain.NewInputTextMessage("user", "first")},
+		EffectiveInputItems:  []domain.Item{domain.NewInputTextMessage("user", "first")},
+		Output:               []domain.Item{domain.NewOutputTextMessage("one")},
+		OutputText:           "one",
+		Store:                true,
+		CreatedAt:            createdAt,
+		CompletedAt:          completedAt,
+		ResponseJSON:         `{"id":"` + prefix + `resp_first","object":"response","status":"completed","output":[]}`,
+	}
+	require.NoError(t, store.SaveResponse(ctx, firstResponse))
+	require.NoError(t, store.SaveResponseReplayArtifacts(ctx, firstResponse.ID, []domain.ResponseReplayArtifact{
+		{ResponseID: firstResponse.ID, Sequence: 2, EventType: "response.completed", PayloadJSON: `{"type":"response.completed"}`},
+		{ResponseID: firstResponse.ID, Sequence: 1, EventType: "response.created", PayloadJSON: `{"type":"response.created"}`},
+	}))
+
+	secondResponse := firstResponse
+	secondResponse.ID = prefix + "resp_second"
+	secondResponse.RequestJSON = `{"input":"second","previous_response_id":"` + firstResponse.ID + `"}`
+	secondResponse.NormalizedInputItems = []domain.Item{domain.NewInputTextMessage("user", "second")}
+	secondResponse.EffectiveInputItems = []domain.Item{domain.NewInputTextMessage("user", "first"), domain.NewOutputTextMessage("one"), domain.NewInputTextMessage("user", "second")}
+	secondResponse.Output = []domain.Item{domain.NewOutputTextMessage("two")}
+	secondResponse.OutputText = "two"
+	secondResponse.PreviousResponseID = firstResponse.ID
+	secondResponse.ResponseJSON = `{"id":"` + prefix + `resp_second","object":"response","status":"completed","output":[]}`
+	require.NoError(t, store.SaveResponse(ctx, secondResponse))
+
+	gotSecond, err := store.GetResponse(ctx, secondResponse.ID)
 	require.NoError(t, err)
-	require.Equal(t, 1, migrationRows)
+	require.Equal(t, secondResponse.ID, gotSecond.ID)
+	require.Equal(t, firstResponse.ID, gotSecond.PreviousResponseID)
+	require.Equal(t, "two", gotSecond.OutputText)
+
+	lineage, err := store.GetResponseLineage(ctx, secondResponse.ID, 0)
+	require.NoError(t, err)
+	require.Len(t, lineage, 2)
+	require.Equal(t, []string{firstResponse.ID, secondResponse.ID}, []string{lineage[0].ID, lineage[1].ID})
+
+	artifacts, err := store.GetResponseReplayArtifacts(ctx, firstResponse.ID)
+	require.NoError(t, err)
+	require.Len(t, artifacts, 2)
+	require.Equal(t, []int{1, 2}, []int{artifacts[0].Sequence, artifacts[1].Sequence})
+
+	conversation := domain.Conversation{
+		ID:        prefix + "conv",
+		Object:    "conversation",
+		Metadata:  map[string]string{"topic": "postgres"},
+		Version:   1,
+		CreatedAt: createdAt,
+		UpdatedAt: createdAt,
+		Items: []domain.Item{
+			domain.NewInputTextMessage("system", "You are a test assistant."),
+			domain.NewInputTextMessage("user", "Remember 777."),
+		},
+	}
+	require.NoError(t, store.CreateConversation(ctx, conversation))
+
+	conversationResponse := secondResponse
+	conversationResponse.ID = prefix + "resp_conversation"
+	conversationResponse.ConversationID = conversation.ID
+	conversationResponse.PreviousResponseID = ""
+	require.NoError(t, store.SaveResponseAndAppendConversation(
+		ctx,
+		conversation,
+		conversationResponse,
+		[]domain.Item{domain.NewInputTextMessage("user", "What is the code?")},
+		[]domain.Item{domain.NewOutputTextMessage("777")},
+	))
+
+	gotConversation, gotItems, err := store.GetConversation(ctx, conversation.ID)
+	require.NoError(t, err)
+	require.Equal(t, 2, gotConversation.Version)
+	require.Equal(t, map[string]string{"topic": "postgres"}, gotConversation.Metadata)
+	require.Len(t, gotItems, 4)
+	require.Equal(t, []string{"seed", "seed", "response_input", "response_output"}, []string{
+		gotItems[0].Source,
+		gotItems[1].Source,
+		gotItems[2].Source,
+		gotItems[3].Source,
+	})
+
+	page, err := store.ListConversationItems(ctx, domain.ListConversationItemsQuery{
+		ConversationID: conversation.ID,
+		After:          gotItems[1].ID,
+		Limit:          2,
+		Order:          domain.ConversationItemOrderAsc,
+	})
+	require.NoError(t, err)
+	require.False(t, page.HasMore)
+	require.Len(t, page.Items, 2)
+	require.Equal(t, "response_input", page.Items[0].Source)
+
+	appended, err := store.AppendConversationItems(ctx, gotConversation, []domain.Item{
+		domain.NewInputTextMessage("user", "append"),
+	}, completedAt)
+	require.NoError(t, err)
+	require.Len(t, appended, 1)
+	require.Equal(t, 4, appended[0].Seq)
+
+	chat := domain.StoredChatCompletion{
+		ID:           prefix + "chatcmpl",
+		Model:        "test-chat-model",
+		Metadata:     map[string]string{"suite": "postgres", "kind": "durable"},
+		RequestJSON:  `{"model":"test-chat-model","messages":[{"role":"system","content":"Be terse."},{"role":"user","content":"hi"}]}`,
+		ResponseJSON: `{"id":"` + prefix + `chatcmpl","object":"chat.completion","created":1714910000,"model":"test-chat-model","choices":[]}`,
+		CreatedAt:    1714910000,
+	}
+	require.NoError(t, store.SaveChatCompletion(ctx, chat))
+
+	gotChat, err := store.GetChatCompletion(ctx, chat.ID)
+	require.NoError(t, err)
+	require.Equal(t, chat.ID, gotChat.ID)
+	require.Equal(t, map[string]string{"suite": "postgres", "kind": "durable"}, gotChat.Metadata)
+	require.Contains(t, gotChat.ResponseJSON, `"metadata"`)
+
+	messagePage, err := store.ListChatCompletionMessages(ctx, chat.ID, domain.ListStoredChatCompletionMessagesQuery{
+		Limit: 1,
+		Order: domain.ChatCompletionOrderAsc,
+	})
+	require.NoError(t, err)
+	require.True(t, messagePage.HasMore)
+	require.Len(t, messagePage.Messages, 1)
+	require.Equal(t, chat.ID+"-0", messagePage.Messages[0].ID)
+
+	listPage, err := store.ListChatCompletions(ctx, domain.ListStoredChatCompletionsQuery{
+		Model:    "test-chat-model",
+		Metadata: map[string]string{"suite": "postgres"},
+		Limit:    1,
+		Order:    domain.ChatCompletionOrderAsc,
+	})
+	require.NoError(t, err)
+	require.Len(t, listPage.Completions, 1)
+	require.Equal(t, chat.ID, listPage.Completions[0].ID)
+
+	updatedChat, err := store.UpdateChatCompletionMetadata(ctx, chat.ID, map[string]string{"suite": "updated"})
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{"suite": "updated"}, updatedChat.Metadata)
+	require.Contains(t, updatedChat.ResponseJSON, `"updated"`)
+
+	require.NoError(t, store.DeleteChatCompletion(ctx, chat.ID))
+	_, err = store.GetChatCompletion(ctx, chat.ID)
+	require.ErrorIs(t, err, storage.ErrNotFound)
+}
+
+func TestStoreStateSharedAcrossPostgresInstances(t *testing.T) {
+	primary, secondary, ctx, prefix := openPostgresTestStorePair(t, retrieval.IndexBackendLexical)
+
+	createdAt := "2026-05-05T11:00:00Z"
+	completedAt := "2026-05-05T11:00:01Z"
+	response := domain.StoredResponse{
+		ID:                   prefix + "resp_shared",
+		Model:                "test-model",
+		RequestJSON:          `{"input":"shared"}`,
+		NormalizedInputItems: []domain.Item{domain.NewInputTextMessage("user", "shared")},
+		EffectiveInputItems:  []domain.Item{domain.NewInputTextMessage("user", "shared")},
+		Output:               []domain.Item{domain.NewOutputTextMessage("shared-output")},
+		OutputText:           "shared-output",
+		Store:                true,
+		CreatedAt:            createdAt,
+		CompletedAt:          completedAt,
+	}
+	require.NoError(t, primary.SaveResponse(ctx, response))
+	require.NoError(t, primary.SaveResponseReplayArtifacts(ctx, response.ID, []domain.ResponseReplayArtifact{
+		{ResponseID: response.ID, Sequence: 1, EventType: "response.completed", PayloadJSON: `{"type":"response.completed"}`},
+	}))
+
+	gotResponse, err := secondary.GetResponse(ctx, response.ID)
+	require.NoError(t, err)
+	require.Equal(t, response.OutputText, gotResponse.OutputText)
+	artifacts, err := secondary.GetResponseReplayArtifacts(ctx, response.ID)
+	require.NoError(t, err)
+	require.Len(t, artifacts, 1)
+
+	conversation := domain.Conversation{
+		ID:        prefix + "conv_shared",
+		Version:   1,
+		CreatedAt: createdAt,
+		UpdatedAt: createdAt,
+		Items:     []domain.Item{domain.NewInputTextMessage("user", "seed")},
+	}
+	require.NoError(t, primary.CreateConversation(ctx, conversation))
+	gotConversation, gotItems, err := secondary.GetConversation(ctx, conversation.ID)
+	require.NoError(t, err)
+	require.Equal(t, conversation.ID, gotConversation.ID)
+	require.Len(t, gotItems, 1)
+	_, err = secondary.AppendConversationItems(ctx, gotConversation, []domain.Item{domain.NewInputTextMessage("user", "from secondary")}, completedAt)
+	require.NoError(t, err)
+	updatedConversation, updatedItems, err := primary.GetConversation(ctx, conversation.ID)
+	require.NoError(t, err)
+	require.Equal(t, 2, updatedConversation.Version)
+	require.Len(t, updatedItems, 2)
+
+	chat := domain.StoredChatCompletion{
+		ID:           prefix + "chat_shared",
+		Model:        "test-chat-model",
+		Metadata:     map[string]string{"shared": "true"},
+		RequestJSON:  `{"model":"test-chat-model","messages":[{"role":"user","content":"hello"}]}`,
+		ResponseJSON: `{"id":"` + prefix + `chat_shared","object":"chat.completion","created":1714910100,"model":"test-chat-model","choices":[]}`,
+		CreatedAt:    1714910100,
+	}
+	require.NoError(t, primary.SaveChatCompletion(ctx, chat))
+	gotChat, err := secondary.GetChatCompletion(ctx, chat.ID)
+	require.NoError(t, err)
+	require.Equal(t, chat.ID, gotChat.ID)
+	messages, err := secondary.ListChatCompletionMessages(ctx, chat.ID, domain.ListStoredChatCompletionMessagesQuery{
+		Limit: 10,
+		Order: domain.ChatCompletionOrderAsc,
+	})
+	require.NoError(t, err)
+	require.Len(t, messages.Messages, 1)
 }
 
 func TestStorePGVectorSemanticAndHybridSearch(t *testing.T) {
@@ -397,6 +619,41 @@ func openPostgresTestStore(t *testing.T, indexBackend string, embedder retrieval
 		require.NoError(t, adminDB.Close())
 	})
 	return store, ctx, prefix
+}
+
+func openPostgresTestStorePair(t *testing.T, indexBackend string) (*Store, *Store, context.Context, string) {
+	t.Helper()
+
+	dsn := strings.TrimSpace(os.Getenv("POSTGRES_TEST_DSN"))
+	if dsn == "" {
+		t.Skip("set POSTGRES_TEST_DSN to run Postgres storage tests")
+	}
+
+	ctx := context.Background()
+	adminDB, schema, scopedDSN := createPostgresTestSchema(t, ctx, dsn)
+	sidecarRoot := t.TempDir()
+	openOptions := func(name string) OpenOptions {
+		return OpenOptions{
+			SQLitePath: filepath.Join(sidecarRoot, name+".db"),
+			Retrieval:  retrieval.Config{IndexBackend: indexBackend},
+		}
+	}
+	primary, err := OpenWithOptions(ctx, scopedDSN, openOptions("primary"))
+	require.NoError(t, err)
+	secondary, err := OpenWithOptions(ctx, scopedDSN, openOptions("secondary"))
+	require.NoError(t, err)
+	require.NoError(t, primary.PingContext(ctx))
+	require.NoError(t, secondary.PingContext(ctx))
+
+	prefix := postgresTestPrefix(t)
+	t.Cleanup(func() {
+		require.NoError(t, primary.Close())
+		require.NoError(t, secondary.Close())
+		_, err := adminDB.ExecContext(ctx, `DROP SCHEMA IF EXISTS `+quotePostgresIdent(schema)+` CASCADE`)
+		require.NoError(t, err)
+		require.NoError(t, adminDB.Close())
+	})
+	return primary, secondary, ctx, prefix
 }
 
 func createPostgresTestSchema(t *testing.T, ctx context.Context, dsn string) (*sql.DB, string, string) {

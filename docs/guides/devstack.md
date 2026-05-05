@@ -24,10 +24,10 @@ The dev stack consists of three Compose services:
   - fixed HTML pages linked from deterministic search results for targeted
     debugging and explicit tests
 - `postgres`: a pgvector-enabled Postgres service used by the optional
-  Postgres/pgvector retrieval smoke path
+  Postgres/pgvector storage and retrieval smoke path
 - `shim_secondary`: an optional second shim service in the Compose
   `multi-instance` profile, exposed at `http://127.0.0.1:18082`, used to prove
-  Postgres retrieval-object sharing across shim instances
+  Postgres shared-state behavior across shim instances
 
 ## Quick Start
 
@@ -120,9 +120,10 @@ make devstack-postgres-pgvector-multi-instance-smoke
 This starts a secondary shim instance with a separate SQLite sidecar and log
 file. The smoke writes files and vector stores through the primary shim and
 then reads, searches, and runs local Responses `file_search` through the
-secondary shim. It proves the current shared-state boundary only for Postgres
-retrieval objects; responses, conversations, stored Chat Completions, and
-code-interpreter state are still SQLite sidecar owned. Override primary
+secondary shim. It also verifies shared response retrieval/input-items,
+conversation read/append, and stored Chat Completion retrieval/messages across
+the two instances. Code-interpreter state is still SQLite sidecar owned.
+Override primary
 sidecar/log paths with `SHIM_SQLITE_PATH` and `SHIM_LOG_FILE_PATH`; override
 secondary paths with `SHIM_SECONDARY_SQLITE_PATH` and
 `SHIM_SECONDARY_LOG_FILE_PATH`.
@@ -289,19 +290,21 @@ files, creates a vector store, verifies direct vector-store search, and then
 verifies local Responses `file_search` over the same store.
 
 `scripts/devstack-postgres-pgvector-smoke.sh` is the focused Postgres/pgvector
-retrieval smoke. Run the stack with `STORAGE_BACKEND=postgres`,
+storage and retrieval smoke. Run the stack with `STORAGE_BACKEND=postgres`,
 `RETRIEVAL_INDEX_BACKEND=pgvector`, and the fixture OpenAI-compatible embedder
 environment first, then run `make devstack-postgres-pgvector-smoke`. It checks
-that `/debug/capabilities` reports Postgres for files/vector stores,
-`sqlite_sidecar` for response/conversation/chat/code-interpreter stores,
-pgvector semantic/hybrid retrieval, direct vector-store search, local
-Responses `file_search`, and cleanup.
+that `/debug/capabilities` reports Postgres for responses, conversations,
+stored Chat Completions, files, and vector stores, `sqlite_sidecar` for
+code-interpreter state, pgvector semantic/hybrid retrieval, direct vector-store
+search, local Responses `file_search`, and cleanup.
 
-`make postgres-storage-test` is the focused package-level Postgres alpha test.
+`make postgres-storage-test` is the focused package-level Postgres beta test.
 It uses `POSTGRES_TEST_DSN`, defaulting to the devstack Postgres port, creates
-an isolated schema per test, and checks file/vector-store persistence,
-pagination, SQLite sidecar mirroring, binary attachment failure, lexical
-retrieval, and pgvector semantic/hybrid retrieval. Run it after `make
+an isolated schema per test, and checks response/conversation/stored-chat
+persistence, replay artifacts, multi-instance shared reads/appends,
+file/vector-store persistence, pagination, SQLite sidecar mirroring, binary
+attachment failure, lexical retrieval, and pgvector semantic/hybrid retrieval.
+Run it after `make
 devstack-up`; it complements the HTTP smoke above instead of replacing it.
 
 `cmd/responses-websocket-smoke` checks the focused V3 Responses WebSocket

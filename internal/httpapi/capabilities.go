@@ -476,7 +476,7 @@ func persistenceStoreBackend(backend, surface string) string {
 		return backend
 	}
 	switch surface {
-	case "file", "vector":
+	case "response", "conversation", "chat_completion", "file", "vector":
 		return storage.BackendPostgres
 	default:
 		return storage.BackendSQLite + "_sidecar"

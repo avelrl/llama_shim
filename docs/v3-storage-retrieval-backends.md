@@ -1,6 +1,6 @@
 # V3 Storage And Retrieval Backends
 
-Last updated: May 4, 2026.
+Last updated: May 5, 2026.
 
 This is the V3 plan for expanding durable storage and retrieval backends
 without changing the public OpenAI-shaped HTTP surface.
@@ -14,6 +14,16 @@ Official docs checked for this pass:
   <https://developers.openai.com/api/docs/guides/retrieval>
 - OpenAI API endpoint list via the OpenAI docs MCP, including `/files`,
   `/vector_stores`, vector-store files, and vector-store search endpoints
+- OpenAI Conversation state guide:
+  <https://developers.openai.com/api/docs/guides/conversation-state>
+- OpenAI Migrate to Responses guide:
+  <https://developers.openai.com/api/docs/guides/migrate-to-responses>
+- OpenAI OpenAPI spec via the OpenAI docs MCP for
+  `/responses/{response_id}/input_items`,
+  `/conversations/{conversation_id}/items`, and
+  `/chat/completions/{completion_id}/messages`; the MCP endpoint list also
+  confirms `/responses`, `/conversations`, `/chat/completions`, and
+  `/chat/completions/{completion_id}`.
 
 ## Current State
 
@@ -28,15 +38,15 @@ The shim already exposes a practical local subset for:
 Current runtime ownership:
 
 - default durable object state is SQLite
-- optional alpha object storage uses Postgres for files, vector stores,
-  vector-store files, and vector-store chunks while keeping SQLite as a
-  sidecar for responses, conversations, stored chat completions, and
-  code-interpreter state
+- optional Postgres beta object storage uses Postgres for responses, response
+  replay artifacts, conversations, stored chat completions, files, vector
+  stores, vector-store files, and vector-store chunks while keeping SQLite as a
+  sidecar for code-interpreter state and SQLite-specific maintenance commands
 - default retrieval index is local lexical search
 - optional indexed lexical retrieval uses `retrieval.index.backend=sqlite_fts5`
 - optional semantic retrieval uses `retrieval.index.backend=sqlite_vec` plus a
   configured embedder
-- optional alpha pgvector retrieval uses `storage.backend=postgres`,
+- optional pgvector retrieval uses `storage.backend=postgres`,
   `retrieval.index.backend=pgvector`, and a configured retrieval embedder
 - local `file_search` uses the same vector-store substrate and injects bounded
   grounding context before final model generation
@@ -51,7 +61,7 @@ flowchart LR
   client["Client"]
   http["OpenAI-shaped HTTP routes"]
   sqlite["SQLite store"]
-  postgres["Postgres file/vector store alpha"]
+  postgres["Postgres durable store beta"]
   lexical["Lexical scan"]
   fts5["sqlite_fts5 index"]
   sqlitevec["sqlite_vec index"]
@@ -105,7 +115,7 @@ flowchart TB
   services["Services"]
   storageContracts["internal/storage contracts"]
   sqliteStore["sqlite.Store"]
-  pgStore["postgres.Store alpha"]
+  pgStore["postgres.Store beta"]
   retrievalIndex["retrieval index contract"]
   lexical["lexical scan"]
   fts5["sqlite_fts5"]
@@ -134,9 +144,13 @@ handler wiring that depends on storage interfaces for router health,
 chat-completion shadow storage, retrieval routes, vector-store search, and
 code-interpreter file/session stores. The retrieval index is now a separate
 generic internal contract with SQLite implementations for lexical scan,
-`sqlite_fts5`, and `sqlite_vec` indexing. The Postgres alpha adds a second
-durable backend for retrieval objects only. It intentionally keeps SQLite as a
-sidecar for the non-retrieval stores until a later migration slice exists.
+`sqlite_fts5`, and `sqlite_vec` indexing. The Postgres beta adds a second
+durable backend for the stateful local stores that are safe to share across
+instances: responses, replay artifacts, conversations, stored Chat
+Completions, files, vector stores, vector-store files, and vector-store
+chunks. It intentionally keeps SQLite as a sidecar for code-interpreter runtime
+state and SQLite-specific maintenance commands until those have their own
+bounded migration slice.
 
 ## Configuration
 
@@ -157,9 +171,9 @@ STORAGE_BACKEND=sqlite
 POSTGRES_DSN=postgres://llama_shim:llama_shim@127.0.0.1:15432/llama_shim?sslmode=disable
 ```
 
-`sqlite` remains the default. `postgres` is accepted for the alpha retrieval
-object-storage slice and requires `postgres.dsn`. Unsupported values fail
-during config loading, before any HTTP route starts.
+`sqlite` remains the default. `postgres` is accepted for the beta durable
+state/object-storage slice and requires `postgres.dsn`. Unsupported values
+fail during config loading, before any HTTP route starts.
 
 Retrieval indexing remains configured separately:
 
@@ -219,18 +233,18 @@ store. It is an indexed lexical backend, not a semantic backend. When
 `local_rerank`, and `lazy_repair` can become `true`. That is a local
 capability claim, not a hosted OpenAI ranking claim.
 
-When Postgres/pgvector alpha is active, the manifest reports Postgres for the
-retrieval object stores and SQLite sidecar ownership for the stores that have
-not moved yet:
+When Postgres/pgvector beta is active, the manifest reports Postgres for the
+stateful stores that are shared across instances and SQLite sidecar ownership
+for the stores that have not moved yet:
 
 ```json
 {
   "runtime": {
     "persistence": {
       "backend": "postgres",
-      "response_store": "sqlite_sidecar",
-      "conversation_store": "sqlite_sidecar",
-      "chat_completion_store": "sqlite_sidecar",
+      "response_store": "postgres",
+      "conversation_store": "postgres",
+      "chat_completion_store": "postgres",
       "file_store": "postgres",
       "vector_store": "postgres",
       "code_interpreter_store": "sqlite_sidecar",
@@ -331,15 +345,19 @@ SQLite database.
 This keeps `sqlite_fts5`, `sqlite_vec`, and `pgvector` behind the
 storage/retrieval boundary. Higher-level handlers still see the same
 OpenAI-shaped vector-store and `file_search` surface. The current
-Postgres/pgvector alpha validates that boundary for retrieval objects without
-changing HTTP handlers.
+Postgres/pgvector beta validates that boundary for durable state and retrieval
+objects without changing HTTP handlers.
 
-### 3. Postgres Object Storage Alpha
+### 3. Postgres Durable Storage Beta
 
-Status: implemented as an alpha hybrid store.
+Status: implemented as a beta hybrid store.
 
-The `postgres` durable backend owns the retrieval object-storage surfaces:
+The `postgres` durable backend owns the shareable local state surfaces:
 
+- responses
+- response replay artifacts used by retrieve-stream replay
+- conversations and conversation items
+- stored Chat Completions and normalized stored messages
 - files metadata and content
 - vector stores
 - vector-store files
@@ -350,21 +368,21 @@ Implementation boundary:
 
 - `internal/storage/postgres.Store` satisfies the shared `storage.Store`
   contract.
-- Postgres stores file/vector-store data; SQLite remains a sidecar for
-  responses, conversations, stored Chat Completions, code-interpreter sessions,
-  and maintenance operations that still require SQLite internals.
-- The alpha schema creates the pgvector extension because this slice is paired
-  with pgvector retrieval in devstack.
+- Postgres stores responses, conversations, stored Chat Completions,
+  file/vector-store data, and replay artifacts.
+- SQLite remains a sidecar for code-interpreter sessions/generated files and
+  maintenance operations that still require SQLite internals.
+- The schema creates the pgvector extension because this slice is paired with
+  pgvector retrieval in devstack.
 - List endpoints use SQL-side pagination and do not fetch file content just to
   build pages.
 
-Out of first alpha scope:
+Out of current beta scope:
 
-- responses and conversations migration
-- stored chat completions migration
 - code-interpreter artifact storage migration
 - mixed SQLite/Postgres cross-store transactions
 - SQLite-to-Postgres migration tooling
+- Postgres-native cleanup/backup/restore commands for all stores
 
 ### 4. pgvector Retrieval Alpha
 
@@ -386,7 +404,7 @@ equivalence.
 
 ### 5. Devstack And Smokes
 
-Status: implemented for the Postgres/pgvector alpha path.
+Status: implemented for the Postgres/pgvector beta path.
 
 Repo-owned smoke coverage:
 
@@ -401,6 +419,11 @@ Repo-owned smoke coverage:
 - verify `/debug/capabilities`
 - verify primary-created Postgres retrieval objects can be read, searched, and
   used by secondary through local Responses `file_search`
+- verify secondary-created response state is readable through primary
+- verify primary-created conversations are readable and appendable through
+  secondary
+- verify primary-created stored Chat Completions and normalized messages are
+  readable through secondary
 
 Run:
 
@@ -423,16 +446,15 @@ make devstack-postgres-pgvector-multi-instance-up
 make devstack-postgres-pgvector-multi-instance-smoke
 ```
 
-The multi-instance smoke intentionally covers the current alpha boundary only:
-files, vector stores, vector-store files, and vector-store chunks are shared
-through Postgres. Responses, conversations, stored Chat Completions, and
-code-interpreter state remain SQLite sidecar owned and are not a shared-state
+The multi-instance smoke covers the current beta boundary: responses, response
+input-items, conversations, stored Chat Completions, files, vector stores,
+vector-store files, and vector-store chunks are shared through Postgres.
+Code-interpreter state remains SQLite sidecar owned and is not a shared-state
 claim.
 
 The smoke checks `prefer_local`, because it exercises the shim-owned local
 Responses `file_search` path. `local_only` and `prefer_upstream` remain covered
-by the existing Responses mode tests and should be expanded only when the
-Postgres store starts owning non-retrieval response state.
+by the existing Responses mode tests.
 
 Focused Postgres storage hardening coverage:
 
@@ -444,6 +466,11 @@ make postgres-storage-test
 `postgres-storage-test` uses `POSTGRES_TEST_DSN`, defaulting to the devstack
 Postgres port. It opens each test case in an isolated schema and checks:
 
+- Postgres response CRUD, lineage, replay artifacts, and multi-instance reads
+- Postgres conversation create/read/list/append/delete-item behavior and
+  multi-instance reads/appends
+- Postgres stored Chat Completion CRUD, metadata filtering, normalized message
+  pagination, and multi-instance reads
 - Postgres file CRUD, keyset pagination, and SQLite sidecar mirroring
 - vector-store CRUD, file pagination, delete behavior, and lexical search
 - binary/unsupported file attachment failure state
@@ -460,13 +487,13 @@ Postgres beta hardening now also covers:
 
 ### 6. Broader Storage Expansion
 
-Only after vector-store storage and retrieval are proven:
+Remaining work after the current Postgres beta slice:
 
-- responses/conversations
-- stored chat completions
 - code-interpreter sessions and generated files
 - backup/restore and maintenance operations
 - optional migration tools
+- Postgres-native cleanup/retention policies for local replay artifacts
+- hard-delete and governance hooks, if V4 scope pulls them in
 
 ## Test Requirements
 
@@ -483,6 +510,6 @@ Minimum for each implementation slice:
 
 For Postgres/pgvector slices, add devstack smoke tests before changing any
 status label beyond the current broad-subset wording. Keep
-`make postgres-storage-test` green when changing the Postgres alpha store
+`make postgres-storage-test` green when changing the Postgres beta store
 itself; it is package-level coverage, while
 `make devstack-postgres-pgvector-smoke` is the HTTP/service smoke.

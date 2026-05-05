@@ -14,17 +14,17 @@ Usage:
   make devstack-postgres-pgvector-multi-instance-up
   make devstack-postgres-pgvector-multi-instance-smoke
 
-This smoke path checks the current Postgres/pgvector alpha multi-instance
+This smoke path checks the current Postgres/pgvector beta multi-instance
 deployment boundary:
   1. primary and secondary shim instances become ready
   2. both advertise Postgres retrieval object storage and pgvector retrieval
   3. primary writes file/vector-store objects into Postgres
   4. secondary reads and searches those objects through the shared Postgres store
   5. secondary can run local Responses file_search over the primary-created store
+  6. stateful Responses, conversations, and stored Chat Completions are shared
+     across instances through Postgres
 
-The smoke intentionally covers retrieval object storage only. Responses,
-conversations, stored Chat Completions, and code-interpreter state remain
-SQLite sidecar owned in the current alpha.
+Code-interpreter runtime state remains SQLite sidecar owned in this profile.
 EOF
 }
 
@@ -45,6 +45,7 @@ tmp_dir="$(mktemp -d)"
 file_ids=()
 vector_store_id=""
 response_ids=()
+chat_completion_id=""
 
 cleanup() {
   for response_id in "${response_ids[@]:-}"; do
@@ -54,6 +55,9 @@ cleanup() {
   done
   if [[ -n "${vector_store_id}" ]]; then
     curl -fsS -X DELETE "${primary_base_url}/v1/vector_stores/${vector_store_id}" >/dev/null || true
+  fi
+  if [[ -n "${chat_completion_id}" ]]; then
+    curl -fsS -X DELETE "${secondary_base_url}/v1/chat/completions/${chat_completion_id}" >/dev/null || true
   fi
   for file_id in "${file_ids[@]:-}"; do
     if [[ -n "${file_id}" ]]; then
@@ -103,9 +107,9 @@ assert_postgres_capabilities() {
     .runtime.persistence.backend == "postgres" and
     .runtime.persistence.file_store == "postgres" and
     .runtime.persistence.vector_store == "postgres" and
-    .runtime.persistence.response_store == "sqlite_sidecar" and
-    .runtime.persistence.conversation_store == "sqlite_sidecar" and
-    .runtime.persistence.chat_completion_store == "sqlite_sidecar" and
+    .runtime.persistence.response_store == "postgres" and
+    .runtime.persistence.conversation_store == "postgres" and
+    .runtime.persistence.chat_completion_store == "postgres" and
     .runtime.persistence.code_interpreter_store == "sqlite_sidecar" and
     .runtime.retrieval.storage_backend == "postgres" and
     .runtime.retrieval.index_backend == "pgvector" and
@@ -221,6 +225,75 @@ printf '%s\n' "${file_search_json}" | jq -e '
   .status == "completed" and
   .output_text == "777" and
   ([.output[] | select(.type == "file_search_call")] | length) >= 1
+' >/dev/null
+
+echo "==> reading secondary-created response state through primary"
+curl -fsS "${primary_base_url}/v1/responses/${file_search_response_id}" | jq -e --arg response_id "${file_search_response_id}" '
+  .id == $response_id and .status == "completed" and .output_text == "777"
+' >/dev/null
+curl -fsS "${primary_base_url}/v1/responses/${file_search_response_id}/input_items?limit=10&order=asc" | jq -e '
+  .object == "list" and (.data | length) >= 1
+' >/dev/null
+
+echo "==> sharing conversation state across primary and secondary"
+conversation_json="$(curl -fsS "${primary_base_url}/v1/conversations" \
+  -H 'Content-Type: application/json' \
+  -d "$(jq -nc '{
+    metadata: {smoke: "postgres-multi-instance"},
+    items: [
+      {
+        type: "message",
+        role: "user",
+        content: [{type: "input_text", text: "shared conversation seed"}]
+      }
+    ]
+  }')")"
+conversation_id="$(printf '%s' "${conversation_json}" | jq -r '.id')"
+if [[ -z "${conversation_id}" || "${conversation_id}" == "null" ]]; then
+  echo "failed to parse conversation id" >&2
+  printf '%s\n' "${conversation_json}" >&2
+  exit 1
+fi
+printf '%s\n' "${conversation_json}" | jq '{id, metadata}'
+curl -fsS "${secondary_base_url}/v1/conversations/${conversation_id}" | jq -e --arg conversation_id "${conversation_id}" '
+  .id == $conversation_id and .metadata.smoke == "postgres-multi-instance"
+' >/dev/null
+curl -fsS "${secondary_base_url}/v1/conversations/${conversation_id}/items" \
+  -H 'Content-Type: application/json' \
+  -d "$(jq -nc '{
+    item: {
+      type: "message",
+      role: "user",
+      content: [{type: "input_text", text: "secondary append"}]
+    }
+  }')" | jq -e '(.data | length) == 1' >/dev/null
+curl -fsS "${primary_base_url}/v1/conversations/${conversation_id}/items?limit=10&order=asc" | jq -e '
+  .object == "list" and (.data | length) >= 2 and .data[1].role == "user"
+' >/dev/null
+
+echo "==> sharing stored chat completion state across primary and secondary"
+chat_json="$(curl -fsS "${primary_base_url}/v1/chat/completions" \
+  -H 'Content-Type: application/json' \
+  -d "$(jq -nc '{
+    model: "devstack-model",
+    store: true,
+    metadata: {smoke: "postgres-multi-instance"},
+    messages: [
+      {role: "user", content: "Say CHAT_POSTGRES_OK exactly."}
+    ]
+  }')")"
+chat_completion_id="$(printf '%s' "${chat_json}" | jq -r '.id')"
+if [[ -z "${chat_completion_id}" || "${chat_completion_id}" == "null" ]]; then
+  echo "failed to parse chat completion id" >&2
+  printf '%s\n' "${chat_json}" >&2
+  exit 1
+fi
+printf '%s\n' "${chat_json}" | jq '{id, object, model, metadata}'
+curl -fsS "${secondary_base_url}/v1/chat/completions/${chat_completion_id}" | jq -e --arg chat_completion_id "${chat_completion_id}" '
+  .id == $chat_completion_id and .metadata.smoke == "postgres-multi-instance"
+' >/dev/null
+curl -fsS "${secondary_base_url}/v1/chat/completions/${chat_completion_id}/messages?limit=10&order=asc" | jq -e '
+  .object == "list" and (.data | length) == 1 and .data[0].role == "user"
 ' >/dev/null
 
 echo "devstack postgres pgvector multi-instance smoke passed"

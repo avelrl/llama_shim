@@ -1,7 +1,7 @@
 # V3 Ops And Deployment Expansion
 
 Status: partial; Phase 0 inventory, the first bounded observability slice, and
-the Postgres/pgvector alpha multi-instance devstack profile are implemented.
+the Postgres/pgvector beta multi-instance devstack profile are implemented.
 
 Last updated: May 5, 2026.
 
@@ -23,18 +23,18 @@ The shim already exposes basic operational surfaces:
 - `/debug/capabilities`
 - local devstack and smoke targets
 - SQLite-backed local persistence for the default durable subset
-- Postgres/pgvector alpha persistence for files, vector stores, vector-store
-  files, and vector-store chunks, with SQLite sidecar ownership for responses,
-  conversations, stored Chat Completions, code-interpreter sessions, and
-  maintenance commands
+- Postgres/pgvector beta persistence for responses, response replay artifacts,
+  conversations, stored Chat Completions, files, vector stores, vector-store
+  files, and vector-store chunks, with SQLite sidecar ownership for
+  code-interpreter sessions and maintenance commands
 - package-level `make postgres-storage-test` and HTTP-level
-  `make devstack-postgres-pgvector-smoke` coverage for the Postgres alpha path
+  `make devstack-postgres-pgvector-smoke` coverage for the Postgres beta path
 - a focused Postgres/pgvector multi-instance devstack smoke path that runs two
   shim instances with separate SQLite sidecars against one shared Postgres
-  retrieval-object store
+  durable-state store
 
 The current default durable storage backend remains SQLite. Postgres is an
-alpha retrieval-object storage backend only for the surfaces named in
+beta durable storage backend for the surfaces named in
 [V3 Storage And Retrieval Backends](v3-storage-retrieval-backends.md).
 
 ## Goals
@@ -133,8 +133,8 @@ Inventory summary:
 | Metrics | `/metrics` exposes HTTP, auth, rate-limit, upstream admission/queue, in-flight/queued, retrieval, code-interpreter, and readiness-probe metrics. | backend-neutral, bounded labels |
 | Storage maintenance | `shimctl cleanup`, `optimize`, `vacuum`, and `backup` currently operate on the SQLite store. | SQLite-specific |
 | Default persistence | SQLite owns responses, conversations, chat completions, files, vector stores, code-interpreter state, and maintenance. | SQLite |
-| Postgres alpha persistence | Postgres owns files, vector stores, vector-store files, and vector-store chunks; SQLite remains sidecar for other stores. | Postgres alpha plus SQLite sidecar |
-| Multi-instance devstack | Optional Compose `multi-instance` profile starts a secondary shim on the same Postgres store with a separate SQLite sidecar and log file. | Postgres retrieval objects shared; sidecar state instance-local |
+| Postgres beta persistence | Postgres owns responses, response replay artifacts, conversations, stored Chat Completions, files, vector stores, vector-store files, and vector-store chunks; SQLite remains sidecar for code-interpreter state and maintenance. | Postgres beta plus SQLite sidecar |
+| Multi-instance devstack | Optional Compose `multi-instance` profile starts a secondary shim on the same Postgres store with a separate SQLite sidecar and log file. | Postgres state/retrieval objects shared; code-interpreter sidecar state instance-local |
 | Devstack smokes | Default, sqlite_fts5, Postgres/pgvector, Postgres/pgvector multi-instance, WebSocket, constrained decoding, coding-tools, Codex, and external tester smokes. | mixed, documented per smoke |
 
 ### Phase 1: Observability First Slice
@@ -149,7 +149,7 @@ Status: implemented for readiness-probe metrics on May 5, 2026.
 
 ### Phase 2: Shared Storage Deployment
 
-Status: implemented for the current Postgres/pgvector alpha boundary on May 5,
+Status: implemented for the current Postgres/pgvector beta boundary on May 5,
 2026.
 
 Implemented boundary:
@@ -157,22 +157,25 @@ Implemented boundary:
 - `docker-compose.devstack.yml` has an optional `multi-instance` profile with
   `shim_secondary` on `http://127.0.0.1:18082`.
 - `make devstack-postgres-pgvector-multi-instance-up` starts the fixture,
-  Postgres, primary shim, and secondary shim with the Postgres/pgvector alpha
+  Postgres, primary shim, and secondary shim with the Postgres/pgvector beta
   profile enabled.
 - `make devstack-postgres-pgvector-multi-instance-smoke` verifies that primary
   writes file/vector-store objects into Postgres and secondary reads, searches,
-  and uses them through local Responses `file_search`.
+  and uses them through local Responses `file_search`; it also verifies shared
+  response retrieval/input-items, conversation read/append, and stored Chat
+  Completion retrieval/messages across the two instances.
 - Primary and secondary use separate SQLite sidecar paths and log files. This
-  keeps the test honest: retrieval object sharing must come from Postgres, not
-  a shared SQLite sidecar.
+  keeps the test honest: shared state for the covered surfaces must come from
+  Postgres, not a shared SQLite sidecar.
 - Readiness and `/debug/capabilities` are checked on both instances and must
   report `storage`, `postgres`, and `retrieval_embedder` ready.
 
 Maintenance boundary:
 
-- SQLite sidecar cleanup remains per instance.
+- SQLite sidecar cleanup remains per instance for code-interpreter state and
+  other SQLite-owned maintenance.
 - Postgres object-storage migrations still run at process startup and are
-  idempotent for the current alpha schema.
+  idempotent for the current beta schema.
 - There is still no shared leader election, advisory lock, Postgres cleanup
   loop, backup/restore command, or SQLite-to-Postgres migration tool. Those
   belong to the Postgres beta/hardening track, not this Phase 2 deployment

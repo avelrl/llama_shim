@@ -40,7 +40,10 @@ type Store struct {
 
 var _ storage.Store = (*Store)(nil)
 
-var ErrNotFound = storage.ErrNotFound
+var (
+	ErrNotFound = storage.ErrNotFound
+	ErrConflict = storage.ErrConflict
+)
 
 const (
 	retrievalEmbedBatchSize        = 128
@@ -49,6 +52,7 @@ const (
 	minSemanticCandidateChunks     = 50
 	maxSemanticCandidateChunks     = 1000
 	postgresSchemaMigrationVersion = "0001_postgres_object_storage_alpha"
+	postgresStateMigrationVersion  = "0002_postgres_state_storage_beta"
 	postgresMigrationAdvisoryLock  = int64(317140633791)
 )
 
@@ -200,12 +204,14 @@ func (s *Store) migrate(ctx context.Context) (err error) {
 	if _, err := conn.ExecContext(ctx, postgresObjectStorageSchema); err != nil {
 		return fmt.Errorf("apply postgres object storage schema: %w", err)
 	}
-	if _, err := conn.ExecContext(ctx, `
-		INSERT INTO schema_migrations(version, applied_at)
-		VALUES ($1, now())
-		ON CONFLICT(version) DO NOTHING
-	`, postgresSchemaMigrationVersion); err != nil {
-		return fmt.Errorf("record postgres migration: %w", err)
+	for _, version := range []string{postgresSchemaMigrationVersion, postgresStateMigrationVersion} {
+		if _, err := conn.ExecContext(ctx, `
+			INSERT INTO schema_migrations(version, applied_at)
+			VALUES ($1, now())
+			ON CONFLICT(version) DO NOTHING
+		`, version); err != nil {
+			return fmt.Errorf("record postgres migration %s: %w", version, err)
+		}
 	}
 	if _, err := conn.ExecContext(ctx, `SELECT pg_advisory_unlock($1)`, postgresMigrationAdvisoryLock); err != nil {
 		return fmt.Errorf("unlock postgres migration: %w", err)
@@ -1455,4 +1461,83 @@ CREATE INDEX IF NOT EXISTS idx_pg_vector_store_chunks_store_file
 	ON vector_store_chunks(vector_store_id, file_id, chunk_index);
 CREATE INDEX IF NOT EXISTS idx_pg_vector_store_chunks_store_id
 	ON vector_store_chunks(vector_store_id, id);
+
+CREATE TABLE IF NOT EXISTS responses (
+	id TEXT PRIMARY KEY,
+	model TEXT NOT NULL,
+	request_json TEXT NOT NULL,
+	normalized_input_items_json TEXT NOT NULL,
+	effective_input_items_json TEXT NOT NULL,
+	output_json TEXT NOT NULL,
+	output_text TEXT NOT NULL,
+	previous_response_id TEXT NULL,
+	conversation_id TEXT NULL,
+	store BOOLEAN NOT NULL,
+	created_at TEXT NOT NULL,
+	completed_at TEXT NOT NULL,
+	response_json TEXT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_pg_responses_previous_response_id
+	ON responses(previous_response_id);
+CREATE INDEX IF NOT EXISTS idx_pg_responses_conversation_id
+	ON responses(conversation_id);
+
+CREATE TABLE IF NOT EXISTS response_replay_artifacts (
+	response_id TEXT NOT NULL REFERENCES responses(id) ON DELETE CASCADE,
+	sequence_number INTEGER NOT NULL,
+	event_type TEXT NOT NULL,
+	payload_json TEXT NOT NULL,
+	PRIMARY KEY (response_id, sequence_number)
+);
+
+CREATE TABLE IF NOT EXISTS conversations (
+	id TEXT PRIMARY KEY,
+	version INTEGER NOT NULL,
+	metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS conversation_items (
+	id TEXT PRIMARY KEY,
+	conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+	seq INTEGER NOT NULL,
+	source TEXT NOT NULL,
+	role TEXT NULL,
+	item_type TEXT NOT NULL,
+	item_json TEXT NOT NULL,
+	created_at TEXT NOT NULL,
+	UNIQUE(conversation_id, seq)
+);
+
+CREATE INDEX IF NOT EXISTS idx_pg_conversation_items_conversation_seq
+	ON conversation_items(conversation_id, seq);
+
+CREATE TABLE IF NOT EXISTS chat_completions (
+	id TEXT PRIMARY KEY,
+	model TEXT NOT NULL,
+	metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+	request_json TEXT NOT NULL,
+	response_json TEXT NOT NULL,
+	created_at BIGINT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_pg_chat_completions_created_at
+	ON chat_completions(created_at, id);
+CREATE INDEX IF NOT EXISTS idx_pg_chat_completions_model_created_at
+	ON chat_completions(model, created_at, id);
+CREATE INDEX IF NOT EXISTS idx_pg_chat_completions_metadata
+	ON chat_completions USING GIN(metadata_json);
+
+CREATE TABLE IF NOT EXISTS chat_completion_messages (
+	completion_id TEXT NOT NULL REFERENCES chat_completions(id) ON DELETE CASCADE,
+	sequence_number INTEGER NOT NULL,
+	message_id TEXT NOT NULL,
+	message_json TEXT NOT NULL,
+	PRIMARY KEY (completion_id, sequence_number)
+);
+
+CREATE INDEX IF NOT EXISTS idx_pg_chat_completion_messages_completion_message
+	ON chat_completion_messages(completion_id, message_id);
 `
