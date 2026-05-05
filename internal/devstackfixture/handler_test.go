@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -894,6 +895,54 @@ func TestHandlerSearchAndImageResponses(t *testing.T) {
 	require.Equal(t, "image_generation_call", item["type"])
 	require.Equal(t, "completed", item["status"])
 	require.Equal(t, fixtureImageBase64, item["result"])
+}
+
+func TestHandlerComfyUIRoutes(t *testing.T) {
+	server := httptest.NewServer(NewHandler())
+	defer server.Close()
+
+	resp, err := server.Client().Get(server.URL + "/system_stats")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	body, err := json.Marshal(map[string]any{
+		"client_id": "test-client",
+		"prompt": map[string]any{
+			"9": map[string]any{
+				"class_type": "SaveImage",
+			},
+		},
+	})
+	require.NoError(t, err)
+	resp, err = server.Client().Post(server.URL+"/prompt", "application/json", bytes.NewReader(body))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var prompt map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&prompt))
+	require.Equal(t, "comfyui_devstack_1", prompt["prompt_id"])
+
+	resp, err = server.Client().Get(server.URL + "/history/comfyui_devstack_1")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var history map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&history))
+	entry := history["comfyui_devstack_1"].(map[string]any)
+	outputs := entry["outputs"].(map[string]any)
+	image := outputs["9"].(map[string]any)["images"].([]any)[0].(map[string]any)
+	require.Equal(t, "devstack-comfyui.png", image["filename"])
+
+	resp, err = server.Client().Get(server.URL + "/view?filename=devstack-comfyui.png&type=output")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	raw, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equal(t, []byte("fake-image"), raw)
 }
 
 func TestHandlerSupportsStreamableAndLegacyMCP(t *testing.T) {

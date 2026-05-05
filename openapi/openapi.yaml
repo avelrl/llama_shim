@@ -63,9 +63,9 @@ paths:
         readiness-aware embedder backend, the local retrieval embedder is also
         reachable. When `responses.web_search.backend=searxng` is
         enabled, `/readyz` also checks that the configured web-search backend
-        is reachable. When `responses.image_generation.backend=responses` is
-        enabled, `/readyz` also checks that the configured image-generation
-        `/v1/responses` backend is reachable. The shim-owned
+        is reachable. When `responses.image_generation.backend=responses` or
+        `comfyui` is enabled, `/readyz` also checks that the configured
+        image-generation backend is reachable. The shim-owned
         `responses.image_generation.backend=fixture` backend is deterministic
         and readiness-local.
       responses:
@@ -326,11 +326,15 @@ paths:
 
         Notes for the local `image_generation` subset:
         - the shim can execute one `image_generation` tool locally when
-          `responses.image_generation.backend=responses` or `fixture` is
-          configured
+          `responses.image_generation.backend=responses`, `comfyui`, or
+          `fixture` is configured
         - `responses` local execution delegates the tool call to a separate
           OpenAI-compatible `/v1/responses` image backend instead of proxying
           through the main upstream text-generation backend
+        - `comfyui` local execution queues a configured ComfyUI workflow,
+          polls history, downloads the selected image, and rejects generic
+          edit/image-input requests until a workflow-specific input adapter is
+          implemented
         - `fixture` local execution returns deterministic placeholder image
           artifacts for devstack and regression tests; it is not a production
           image-generation backend

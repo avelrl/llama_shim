@@ -40,6 +40,10 @@ func NewHandler() http.Handler {
 	mux.HandleFunc("/v1/embeddings", handleEmbeddings)
 	mux.HandleFunc("/v1/chat/completions", handleChatCompletions)
 	mux.HandleFunc("/v1/responses", handleResponses)
+	mux.HandleFunc("/system_stats", handleComfyUISystemStats)
+	mux.HandleFunc("/prompt", handleComfyUIPrompt)
+	mux.HandleFunc("/history/", handleComfyUIHistory)
+	mux.HandleFunc("/view", handleComfyUIView)
 	mux.HandleFunc("/mcp", server.handleMCP)
 	mux.HandleFunc("/sse", server.handleLegacyMCPSSE)
 	mux.HandleFunc("/message", server.handleLegacyMCPMessage)
@@ -336,6 +340,92 @@ func handleResponses(w http.ResponseWriter, r *http.Request) {
 		"metadata":    map[string]any{},
 		"output_text": "",
 	})
+}
+
+func handleComfyUISystemStats(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeMethodNotAllowed(w)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"system": map[string]any{
+			"os": "llama-shim-devstack",
+		},
+	})
+}
+
+func handleComfyUIPrompt(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeMethodNotAllowed(w)
+		return
+	}
+
+	var request map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"error": "malformed JSON body",
+		})
+		return
+	}
+	if _, ok := request["prompt"].(map[string]any); !ok {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"error": "devstack ComfyUI fixture expects prompt object",
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"prompt_id":   "comfyui_devstack_1",
+		"number":      1,
+		"node_errors": map[string]any{},
+	})
+}
+
+func handleComfyUIHistory(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeMethodNotAllowed(w)
+		return
+	}
+	promptID := strings.TrimPrefix(r.URL.Path, "/history/")
+	if strings.TrimSpace(promptID) == "" {
+		http.NotFound(w, r)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		promptID: map[string]any{
+			"status": map[string]any{
+				"completed":  true,
+				"status_str": "success",
+			},
+			"outputs": map[string]any{
+				"9": map[string]any{
+					"images": []map[string]any{
+						{
+							"filename":  "devstack-comfyui.png",
+							"subfolder": "",
+							"type":      "output",
+						},
+					},
+				},
+			},
+		},
+	})
+}
+
+func handleComfyUIView(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeMethodNotAllowed(w)
+		return
+	}
+	if strings.TrimSpace(r.URL.Query().Get("filename")) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"error": "missing filename",
+		})
+		return
+	}
+	w.Header().Set("Content-Type", "image/png")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("fake-image"))
 }
 
 func handleSearch(w http.ResponseWriter, r *http.Request) {

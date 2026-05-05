@@ -17,8 +17,8 @@ The dev stack consists of three Compose services:
   - deterministic chat-completions planning for hosted/server `tool_search`
     follow-up
   - a `searxng`-compatible search backend for local `web_search`
-  - a deterministic OpenAI-compatible `/v1/responses` image backend for local
-    `image_generation`
+  - deterministic OpenAI-compatible `/v1/responses` and ComfyUI-compatible
+    image routes for local `image_generation`
   - a deterministic remote MCP server on `/mcp` and legacy `/sse` for
     shim-local `mcp.server_url`
   - fixed HTML pages linked from deterministic search results for targeted
@@ -282,7 +282,8 @@ CI-compatible gate plus real Codex CLI checks:
 - server-side `context_management` compaction over a stored state chain
 - local `file_search` over shim-owned `files` and `vector_stores`
 - local `web_search` over the deterministic fixture backend
-- local `image_generation` through the deterministic fixture backend
+- local `image_generation` through the deterministic ComfyUI-compatible
+  fixture backend
 - local remote `mcp` via `server_url`
 - cached remote `mcp` follow-up without repeating tools
 - streamed generic replay for remote `mcp`

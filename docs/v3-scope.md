@@ -73,15 +73,17 @@ Status labels in this section are intentionally coarse:
 
 ### 1. Alternative image backends
 
-Status: `Partial`. See [v3-image-backends.md](v3-image-backends.md).
+Status: `Implemented`. See [v3-image-backends.md](v3-image-backends.md).
 
-- Stable Diffusion / ComfyUI / other image-generation backends
+- ComfyUI / Stable Diffusion / other image-generation backends
 - provider-specific image pipelines that are useful locally but are not part of
   the core OpenAI compatibility promise
 - capability, config, and replay boundaries for additional shim-local
   `image_generation` providers without claiming hosted image-generation parity
 - deterministic `fixture` backend is implemented for devstack, stream partial
   image replay, and regression coverage
+- generic `comfyui` text-to-image workflow backend is implemented as the first
+  operator-owned production adapter
 
 ### 2. More retrieval and storage backends
 
@@ -331,10 +333,10 @@ the public compatibility story less truthful.
 
 The next practical implementation work should be selected from this queue:
 
-1. Continue [V3 Alternative Image Backends](v3-image-backends.md) with the
-   first production adapter only after selecting a reproducible provider path,
-   such as ComfyUI or Stable Diffusion HTTP, with a fixture server and bounded
-   artifact contract. The deterministic fixture backend is already in place.
+1. Extend [V3 Alternative Image Backends](v3-image-backends.md) only when a
+   specific next backend is selected with its own config namespace, bounded
+   artifact contract, tests, and smoke path. The fixture and generic ComfyUI
+   slices are already in place.
 2. Turn [V3 Richer Local-Only Runtimes](v3-local-runtimes.md) into one focused
    runtime slice with deterministic fixtures and capability gates. The likely
    first candidates are browser/computer runtime hardening or PTY/session

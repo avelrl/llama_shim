@@ -65,7 +65,7 @@ func (p *fixtureProvider) buildPayload(requestBody []byte) (fixturePayload, erro
 		return fixturePayload{}, fmt.Errorf("decode image_generation fixture request: %w", err)
 	}
 
-	tool, err := fixtureImageTool(request["tools"])
+	tool, err := singleImageGenerationTool(request["tools"])
 	if err != nil {
 		return fixturePayload{}, err
 	}
@@ -131,17 +131,17 @@ func (p *fixtureProvider) buildPayload(requestBody []byte) (fixturePayload, erro
 	return fixturePayload{Response: response, Item: item}, nil
 }
 
-func fixtureImageTool(value any) (map[string]any, error) {
+func singleImageGenerationTool(value any) (map[string]any, error) {
 	tools, ok := value.([]any)
 	if !ok || len(tools) != 1 {
-		return nil, errors.New("image_generation fixture backend requires exactly one image_generation tool")
+		return nil, errors.New("image_generation backend requires exactly one image_generation tool")
 	}
 	tool, ok := tools[0].(map[string]any)
 	if !ok {
-		return nil, errors.New("image_generation fixture backend requires an object tool")
+		return nil, errors.New("image_generation backend requires an object tool")
 	}
 	if strings.TrimSpace(strings.ToLower(asString(tool["type"]))) != "image_generation" {
-		return nil, errors.New("image_generation fixture backend supports only image_generation tools")
+		return nil, errors.New("image_generation backend supports only image_generation tools")
 	}
 	copied := make(map[string]any, len(tool))
 	for key, value := range tool {

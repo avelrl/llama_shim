@@ -1,6 +1,7 @@
 # V3 Alternative Image Backends
 
-Status: partial; deterministic fixture backend implemented.
+Status: implemented for fixture, Responses-compatible proxy, and generic
+ComfyUI text-to-image workflow backend.
 
 Last updated: May 5, 2026.
 
@@ -18,17 +19,16 @@ The current shim-local image path is a practical subset:
 
 - `image_generation` can run through a configured Responses-compatible image
   backend
-- `image_generation` can also run through a deterministic `fixture` backend
-  for devstack and regression coverage
+- `image_generation` can also run through a generic ComfyUI workflow backend
+  or a deterministic `fixture` backend for devstack and regression coverage
 - the shim owns the outer `/v1/responses` state, storage, and replay behavior
 - current-turn image inputs and edit lineage are projected into the image
   backend request
 - partial-image artifacts are stored for replay when the backend emits them
 
-There is no separate Stable Diffusion, ComfyUI, or provider-specific production
-pipeline selected yet. The first V3 expansion slice intentionally uses the
-fixture backend so the adapter/replay contract is testable before a production
-backend is added.
+The first production backend slice is ComfyUI. It is intentionally a generic
+text-to-image workflow adapter, not a hosted-image parity layer and not a
+universal ComfyUI graph compiler.
 
 ## Goals
 
@@ -55,13 +55,18 @@ backend is added.
 
 Useful when an operator already runs a ComfyUI graph service.
 
-Required before implementation:
+Status: implemented.
 
-- fixed request template and output artifact contract
-- startup/readiness probe
-- bounded artifact download/storage behavior
-- deterministic fixture or mock server for CI
-- capability reporting for backend name, readiness, and supported modes
+- configuration supports inline workflow maps or `workflow_path`
+- workflow templates support `{{prompt}}`, `{{negative_prompt}}`, `{{width}}`,
+  `{{height}}`, `{{seed}}`, and `{{filename_prefix}}`
+- readiness probes `GET /system_stats`
+- generation submits `POST /prompt`, polls `GET /history/{prompt_id}`, and
+  downloads the selected `GET /view` image
+- artifact download is bounded by `comfyui.max_image_bytes`
+- devstack exposes a ComfyUI-compatible mock route set for CI smoke coverage
+- generic edit/image-input support is explicitly rejected because ComfyUI image
+  inputs are workflow-specific
 
 ### 2. Stable Diffusion HTTP API
 
@@ -90,41 +95,46 @@ Status: implemented.
 
 ### Phase 0: Backend Selection
 
-Status: implemented for the fixture backend.
+Status: implemented for fixture and ComfyUI-backed devstack.
 
-- The selected first backend is `responses.image_generation.backend=fixture`.
-- It has no native external API; it returns deterministic
-  `image_generation_call` items and deterministic partial-image SSE events.
+- Devstack now uses `responses.image_generation.backend=comfyui` against the
+  fixture service's ComfyUI-compatible mock endpoints.
+- The fixture backend remains available for deterministic partial-image SSE
+  event simulation.
 - Config examples keep image generation disabled by default, while devstack
-  enables `fixture`.
+  enables `comfyui`.
 
 ### Phase 1: Adapter Boundary
 
-Status: implemented for the fixture backend.
+Status: implemented.
 
 - The existing small image backend interface behind the local
-  `image_generation` path now supports `responses` and `fixture`.
+  `image_generation` path now supports `responses`, `comfyui`, and `fixture`.
 - Keep the outer Responses item and replay shape shim-owned.
-- Fixture adapter request-shaping and streaming tests cover the deterministic
-  first slice.
+- ComfyUI adapter tests cover workflow rendering, queue/poll/download flow, and
+  final `image_generation_call` shape.
 
 ### Phase 2: Deterministic Smoke
 
 Status: implemented.
 
-- `make v3-image-backends-smoke` verifies fixture capabilities, non-stream
-  create, stream partial images, and retrieve-stream replay.
+- `make v3-image-backends-smoke` verifies active backend capabilities,
+  non-stream create, stream create, and retrieve-stream replay.
+- When the active backend is `fixture`, the smoke also verifies deterministic
+  partial-image events. ComfyUI does not synthesize partial-image events.
 - Verify `/debug/capabilities` reports backend readiness and supported modes.
 - Verify stored artifacts and retrieve-stream replay do not depend on live
   backend availability.
 
 ### Phase 3: First Production Backend
 
-Status: not started.
+Status: implemented for generic ComfyUI text-to-image.
 
-- Add the first real backend adapter only after Phase 2 is stable.
-- Add timeout, artifact-size, and storage behavior tests.
-- Keep unsupported edit/input combinations explicit and local-only.
+- `comfyui` is configured with `responses.image_generation.base_url` plus
+  `responses.image_generation.comfyui.*`.
+- It supports text prompt, size placeholders, bounded image fetch, readiness,
+  unit coverage, and devstack smoke coverage.
+- Unsupported edit/input combinations remain explicit local errors.
 
 ## Done Criteria
 
@@ -136,7 +146,22 @@ This track should only move out of planned status when:
 - generated artifacts are bounded and replayable
 - docs avoid hosted parity claims beyond the implemented subset
 
-The fixture slice satisfies those criteria for deterministic regression
-coverage. The remaining open work is the first production backend adapter,
-which should stay blocked until its native request/response shape, artifact
-limits, and fixture server are documented.
+The fixture and ComfyUI slices satisfy those criteria for deterministic
+regression coverage and the first operator-owned production adapter. Additional
+backends can be added through the same image provider interface, but each new
+backend still needs its own config namespace, bounded artifact handling, tests,
+and smoke path before it should be documented as supported.
+
+## Possible Future Extensions
+
+These are intentionally not committed roadmap items. They are useful extension
+points to revisit when there is a concrete operator workflow to support:
+
+- ComfyUI workflow profiles with explicit node-input mapping for prompt,
+  negative prompt, size, seed, sampler, steps, CFG, and checkpoint override.
+- Workflow-specific image input adapters for image-to-image, edit, upscale,
+  ControlNet, reference-image, or inpainting graphs.
+- Additional provider adapters behind the same `imagegen.Provider` boundary,
+  such as A1111/Forge, local Diffusers, Replicate, fal, or Stability.
+- Backend-specific smoke profiles that run only when the corresponding real
+  service is configured, while devstack keeps using deterministic fixtures.

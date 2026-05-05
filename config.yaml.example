@@ -250,15 +250,29 @@ responses:
   image_generation:
     # disabled: no shim-local image_generation runtime
     # fixture: deterministic built-in placeholder backend for devstack and tests
+    # comfyui: queue a configured ComfyUI workflow through /prompt, poll
+    # /history/{prompt_id}, and download the selected image through /view
     # responses: delegate one image_generation tool to a separate
     # OpenAI-compatible /v1/responses image backend
     backend: disabled
-    # Base URL of the responses image backend, for example http://127.0.0.1:8085.
+    # Base URL of the responses or ComfyUI image backend.
     # Ignored by disabled and fixture backends.
     base_url: ""
-    # Timeout per local image generation request to the responses image backend.
+    # Timeout per local image generation backend request.
     # Ignored by disabled and fixture backends.
     timeout: 60s
+    comfyui:
+      # Inline ComfyUI workflow template. Use {{prompt}}, {{negative_prompt}},
+      # {{width}}, {{height}}, {{seed}}, and {{filename_prefix}} placeholders.
+      workflow: {}
+      # Alternative to inline workflow for large exported ComfyUI workflows.
+      workflow_path: ""
+      # Optional output node id. If empty, the first image output is used.
+      output_node_id: ""
+      poll_interval: 500ms
+      max_wait: 120s
+      # Internal artifact download bound for the ComfyUI /view response.
+      max_image_bytes: 16MiB
   compaction:
     # heuristic: deterministic fallback compactor
     # model_assisted_text: call a fast OpenAI-compatible /v1/chat/completions

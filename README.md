@@ -196,6 +196,13 @@ responses:
     backend: disabled
     base_url: ""
     timeout: 60s
+    comfyui:
+      workflow: {}
+      workflow_path: ""
+      output_node_id: ""
+      poll_interval: 500ms
+      max_wait: 120s
+      max_image_bytes: 16MiB
   computer:
     backend: disabled
   custom_tools:
@@ -279,9 +286,10 @@ Supported environment overrides:
 - `RESPONSES_WEB_SEARCH_BASE_URL` overrides `responses.web_search.base_url`
 - `RESPONSES_WEB_SEARCH_TIMEOUT` overrides `responses.web_search.timeout`
 - `RESPONSES_WEB_SEARCH_MAX_RESULTS` overrides `responses.web_search.max_results`
-- `RESPONSES_IMAGE_GENERATION_BACKEND` overrides `responses.image_generation.backend`; supported values: `disabled`, `fixture`, `responses`
-- `RESPONSES_IMAGE_GENERATION_BASE_URL` overrides `responses.image_generation.base_url`; used by the `responses` backend only
-- `RESPONSES_IMAGE_GENERATION_TIMEOUT` overrides `responses.image_generation.timeout`; used by the `responses` backend only
+- `RESPONSES_IMAGE_GENERATION_BACKEND` overrides `responses.image_generation.backend`; supported values: `disabled`, `fixture`, `comfyui`, `responses`
+- `RESPONSES_IMAGE_GENERATION_BASE_URL` overrides `responses.image_generation.base_url`; used by the `responses` and `comfyui` backends
+- `RESPONSES_IMAGE_GENERATION_TIMEOUT` overrides `responses.image_generation.timeout`; used by external image backends
+- ComfyUI-specific settings live under `responses.image_generation.comfyui.*`; configure either an inline `workflow` map or `workflow_path`
 - `RESPONSES_COMPACTION_BACKEND` overrides `responses.compaction.backend`; supported values: `heuristic`, `model_assisted_text`
 - `RESPONSES_COMPACTION_BASE_URL` overrides `responses.compaction.base_url`; when omitted with `model_assisted_text`, the shim reuses `llama.base_url`
 - `RESPONSES_COMPACTION_MODEL` overrides `responses.compaction.model`
@@ -503,7 +511,7 @@ The token is used only for the server-side `/readyz` upstream probe.
 
 When `responses.web_search.backend=searxng` is enabled, `/readyz` also checks that the configured web search backend answers before returning `ready`.
 
-When `responses.image_generation.backend=responses` is enabled, `/readyz` also checks that the configured image-generation `/v1/responses` backend answers before returning `ready`. The deterministic `fixture` image backend is readiness-local.
+When `responses.image_generation.backend=responses` or `comfyui` is enabled, `/readyz` also checks that the configured image-generation backend answers before returning `ready`. The deterministic `fixture` image backend is readiness-local.
 
 For a step-by-step local setup and a smoke test script, see [docs/semantic-retrieval-embedanything.md](docs/semantic-retrieval-embedanything.md).
 
@@ -527,7 +535,8 @@ The shim now has a pragmatic local `image_generation` subset inside
 
 - one `image_generation` tool in `responses.mode=prefer_local|local_only`
 - either a deterministic fixture backend selected via
-  `responses.image_generation.backend=fixture`, or a separate
+  `responses.image_generation.backend=fixture`, a ComfyUI workflow backend
+  selected via `responses.image_generation.backend=comfyui`, or a separate
   OpenAI-compatible `/v1/responses` image backend selected via
   `responses.image_generation.backend=responses`
 - non-stream and stream create paths, with stored shadow-state and retrieve
@@ -539,6 +548,9 @@ The shim now has a pragmatic local `image_generation` subset inside
   `response.image_generation_call.partial_image`, the shim persists those
   irrecoverable artifacts and replays them on stored
   `GET /v1/responses/{id}?stream=true`
+- the generic ComfyUI adapter supports text-to-image generation with workflow
+  placeholders; edit/image-input support requires a workflow-specific input
+  adapter and is rejected explicitly
 
 This is intentionally not a claim of exact hosted live-stream timing or full
 hosted planner/failure choreography. The current local subset delegates image

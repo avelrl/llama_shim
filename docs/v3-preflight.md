@@ -101,7 +101,7 @@ Examples:
 
 - deterministic MCP fixture server
 - deterministic web-search fixture backend
-- deterministic image-generation fixture backend
+- deterministic image-generation fixture and ComfyUI-compatible backend
 - deterministic computer-loop fixture inputs where useful
 - deterministic retrieval seed assets
 
@@ -118,8 +118,8 @@ The current fixture bundle covers the deterministic preflight path for:
 - shim-local hosted/server `tool_search` planning and stored
   `function_call_output` follow-up through deterministic chat-completions rules
 - shim-local `web_search` through a `searxng`-compatible surface
-- shim-local `image_generation` through an OpenAI-compatible
-  `/v1/responses` surface
+- shim-local `image_generation` through ComfyUI-compatible fixture routes and
+  an OpenAI-compatible `/v1/responses` surface
 - shim-local remote `mcp` through deterministic `server_url` fixture transports
 - fixed HTML pages linked from deterministic search results for targeted tests
   and debugging

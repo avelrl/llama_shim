@@ -52,6 +52,7 @@ services:
       - "18080:8080"
     volumes:
       - ./config.devstack.yaml:/app/config.yaml:ro
+      - ./internal/devstackfixture/testdata/comfyui-workflow.json:/app/comfyui-workflow.json:ro
       - ./.data:/app/.data
 
   shim_secondary:
@@ -85,6 +86,7 @@ services:
       - "18082:8080"
     volumes:
       - ./config.devstack.yaml:/app/config.yaml:ro
+      - ./internal/devstackfixture/testdata/comfyui-workflow.json:/app/comfyui-workflow.json:ro
       - ./.data:/app/.data
 
 volumes:

@@ -974,6 +974,69 @@ responses:
 	require.Zero(t, cfg.ResponsesImageGenerationTimeout)
 }
 
+func TestLoadAcceptsImageGenerationComfyUIBackend(t *testing.T) {
+	disableDotEnv(t)
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	writeFile(t, configPath, `
+responses:
+  image_generation:
+    backend: comfyui
+    base_url: http://127.0.0.1:8188
+    timeout: 45s
+    comfyui:
+      output_node_id: "9"
+      poll_interval: 25ms
+      max_wait: 3s
+      max_image_bytes: 1MiB
+      workflow:
+        "6":
+          class_type: CLIPTextEncode
+          inputs:
+            text: "{{prompt}}"
+        "9":
+          class_type: SaveImage
+          inputs:
+            filename_prefix: "{{filename_prefix}}"
+`)
+
+	cfg, err := config.Load(configPath)
+	require.NoError(t, err)
+	require.Equal(t, "comfyui", cfg.ResponsesImageGenerationBackend)
+	require.Equal(t, "http://127.0.0.1:8188", cfg.ResponsesImageGenerationBaseURL)
+	require.Equal(t, 45*time.Second, cfg.ResponsesImageGenerationTimeout)
+	require.Equal(t, "9", cfg.ResponsesImageGenerationComfyUIOutputNodeID)
+	require.Equal(t, 25*time.Millisecond, cfg.ResponsesImageGenerationComfyUIPollInterval)
+	require.Equal(t, 3*time.Second, cfg.ResponsesImageGenerationComfyUIMaxWait)
+	require.EqualValues(t, 1<<20, cfg.ResponsesImageGenerationComfyUIMaxImageBytes)
+	require.Contains(t, cfg.ResponsesImageGenerationComfyUIWorkflow, "6")
+}
+
+func TestLoadDevstackConfigUsesComfyUIImageBackend(t *testing.T) {
+	disableDotEnv(t)
+	cfg, err := config.Load(filepath.Join("..", "..", "config.devstack.yaml"))
+	require.NoError(t, err)
+	require.Equal(t, "comfyui", cfg.ResponsesImageGenerationBackend)
+	require.Equal(t, "http://fixture:8081", cfg.ResponsesImageGenerationBaseURL)
+	require.Equal(t, "9", cfg.ResponsesImageGenerationComfyUIOutputNodeID)
+	require.Equal(t, "./comfyui-workflow.json", cfg.ResponsesImageGenerationComfyUIWorkflowPath)
+	require.Empty(t, cfg.ResponsesImageGenerationComfyUIWorkflow)
+}
+
+func TestLoadRejectsImageGenerationComfyUIWithoutWorkflow(t *testing.T) {
+	disableDotEnv(t)
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	writeFile(t, configPath, `
+responses:
+  image_generation:
+    backend: comfyui
+    base_url: http://127.0.0.1:8188
+`)
+
+	_, err := config.Load(configPath)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "responses.image_generation.comfyui.workflow or workflow_path")
+}
+
 func TestLoadDefaultsCompactionBaseURLToLlamaBaseURL(t *testing.T) {
 	disableDotEnv(t)
 	configPath := filepath.Join(t.TempDir(), "config.yaml")

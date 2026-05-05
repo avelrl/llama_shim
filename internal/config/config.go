@@ -86,6 +86,12 @@ type Config struct {
 	ResponsesImageGenerationBackend                     string
 	ResponsesImageGenerationBaseURL                     string
 	ResponsesImageGenerationTimeout                     time.Duration
+	ResponsesImageGenerationComfyUIWorkflow             map[string]any
+	ResponsesImageGenerationComfyUIWorkflowPath         string
+	ResponsesImageGenerationComfyUIOutputNodeID         string
+	ResponsesImageGenerationComfyUIPollInterval         time.Duration
+	ResponsesImageGenerationComfyUIMaxWait              time.Duration
+	ResponsesImageGenerationComfyUIMaxImageBytes        int64
 	ResponsesCompactionBackend                          string
 	ResponsesCompactionBaseURL                          string
 	ResponsesCompactionModel                            string
@@ -217,45 +223,55 @@ func Load(configPath string) (Config, error) {
 		return Config{}, err
 	}
 
+	imageGenerationSection := normalizeConfigMap(v.Get("responses.image_generation"))
+	comfyUISection := normalizeConfigMap(imageGenerationSection["comfyui"])
+	comfyUIWorkflow := normalizeConfigMap(v.Get("responses.image_generation.comfyui.workflow"))
+	if len(comfyUIWorkflow) == 0 {
+		comfyUIWorkflow = normalizeConfigMap(comfyUISection["workflow"])
+	}
+
 	cfg := Config{
-		Addr:                                  strings.TrimSpace(v.GetString("shim.addr")),
-		StorageBackend:                        strings.ToLower(strings.TrimSpace(v.GetString("storage.backend"))),
-		SQLitePath:                            strings.TrimSpace(v.GetString("sqlite.path")),
-		PostgresDSN:                           strings.TrimSpace(v.GetString("postgres.dsn")),
-		SQLiteMaintenanceCleanupInterval:      0,
-		LlamaBaseURL:                          strings.TrimRight(strings.TrimSpace(v.GetString("llama.base_url")), "/"),
-		LlamaReadinessBearerToken:             strings.TrimSpace(v.GetString("llama.readiness_bearer_token")),
-		ConfigFile:                            v.ConfigFileUsed(),
-		ShimAuthMode:                          strings.ToLower(strings.TrimSpace(v.GetString("shim.auth.mode"))),
-		ShimAuthBearerTokens:                  parseStringList(v, "shim.auth.bearer_tokens"),
-		ShimRateLimitEnabled:                  v.GetBool("shim.rate_limit.enabled"),
-		ShimMetricsEnabled:                    v.GetBool("shim.metrics.enabled"),
-		ShimMetricsPath:                       strings.TrimSpace(v.GetString("shim.metrics.path")),
-		LogLevel:                              slog.LevelInfo,
-		LogFilePath:                           strings.TrimSpace(v.GetString("log.file_path")),
-		RetrievalIndexBackend:                 strings.TrimSpace(v.GetString("retrieval.index.backend")),
-		RetrievalEmbedderBackend:              strings.TrimSpace(v.GetString("retrieval.embedder.backend")),
-		RetrievalEmbedderBaseURL:              strings.TrimSpace(v.GetString("retrieval.embedder.base_url")),
-		RetrievalEmbedderModel:                strings.TrimSpace(v.GetString("retrieval.embedder.model")),
-		RetrievalPGVectorANNEnabled:           v.GetBool("retrieval.index.pgvector.ann.enabled"),
-		RetrievalPGVectorANNMethod:            strings.TrimSpace(v.GetString("retrieval.index.pgvector.ann.method")),
-		RetrievalPGVectorANNMetric:            strings.TrimSpace(v.GetString("retrieval.index.pgvector.ann.metric")),
-		ResponsesWebSearchBackend:             strings.ToLower(strings.TrimSpace(v.GetString("responses.web_search.backend"))),
-		ResponsesWebSearchBaseURL:             strings.TrimSpace(v.GetString("responses.web_search.base_url")),
-		ResponsesImageGenerationBackend:       strings.ToLower(strings.TrimSpace(v.GetString("responses.image_generation.backend"))),
-		ResponsesImageGenerationBaseURL:       strings.TrimSpace(v.GetString("responses.image_generation.base_url")),
-		ResponsesCompactionBackend:            strings.ToLower(strings.TrimSpace(v.GetString("responses.compaction.backend"))),
-		ResponsesCompactionBaseURL:            strings.TrimSpace(v.GetString("responses.compaction.base_url")),
-		ResponsesCompactionModel:              strings.TrimSpace(v.GetString("responses.compaction.model")),
-		ResponsesComputerBackend:              strings.ToLower(strings.TrimSpace(v.GetString("responses.computer.backend"))),
-		ChatCompletionsStoreWhenOmitted:       v.GetBool("chat_completions.default_store_when_omitted"),
-		ResponsesMode:                         strings.ToLower(strings.TrimSpace(v.GetString("responses.mode"))),
-		ResponsesUpstreamTransport:            strings.ToLower(strings.TrimSpace(v.GetString("responses.upstream_transport"))),
-		ResponsesWebSocketEnabled:             v.GetBool("responses.websocket.enabled"),
-		ResponsesCustomToolsMode:              strings.ToLower(strings.TrimSpace(v.GetString("responses.custom_tools.mode"))),
-		ResponsesConstrainedDecodingBackend:   strings.ToLower(strings.TrimSpace(v.GetString("responses.constrained_decoding.backend"))),
-		ResponsesCodexEnableCompatibility:     v.GetBool("responses.codex.enable_compatibility"),
-		ResponsesCodexForceToolChoiceRequired: v.GetBool("responses.codex.force_tool_choice_required"),
+		Addr:                                                strings.TrimSpace(v.GetString("shim.addr")),
+		StorageBackend:                                      strings.ToLower(strings.TrimSpace(v.GetString("storage.backend"))),
+		SQLitePath:                                          strings.TrimSpace(v.GetString("sqlite.path")),
+		PostgresDSN:                                         strings.TrimSpace(v.GetString("postgres.dsn")),
+		SQLiteMaintenanceCleanupInterval:                    0,
+		LlamaBaseURL:                                        strings.TrimRight(strings.TrimSpace(v.GetString("llama.base_url")), "/"),
+		LlamaReadinessBearerToken:                           strings.TrimSpace(v.GetString("llama.readiness_bearer_token")),
+		ConfigFile:                                          v.ConfigFileUsed(),
+		ShimAuthMode:                                        strings.ToLower(strings.TrimSpace(v.GetString("shim.auth.mode"))),
+		ShimAuthBearerTokens:                                parseStringList(v, "shim.auth.bearer_tokens"),
+		ShimRateLimitEnabled:                                v.GetBool("shim.rate_limit.enabled"),
+		ShimMetricsEnabled:                                  v.GetBool("shim.metrics.enabled"),
+		ShimMetricsPath:                                     strings.TrimSpace(v.GetString("shim.metrics.path")),
+		LogLevel:                                            slog.LevelInfo,
+		LogFilePath:                                         strings.TrimSpace(v.GetString("log.file_path")),
+		RetrievalIndexBackend:                               strings.TrimSpace(v.GetString("retrieval.index.backend")),
+		RetrievalEmbedderBackend:                            strings.TrimSpace(v.GetString("retrieval.embedder.backend")),
+		RetrievalEmbedderBaseURL:                            strings.TrimSpace(v.GetString("retrieval.embedder.base_url")),
+		RetrievalEmbedderModel:                              strings.TrimSpace(v.GetString("retrieval.embedder.model")),
+		RetrievalPGVectorANNEnabled:                         v.GetBool("retrieval.index.pgvector.ann.enabled"),
+		RetrievalPGVectorANNMethod:                          strings.TrimSpace(v.GetString("retrieval.index.pgvector.ann.method")),
+		RetrievalPGVectorANNMetric:                          strings.TrimSpace(v.GetString("retrieval.index.pgvector.ann.metric")),
+		ResponsesWebSearchBackend:                           strings.ToLower(strings.TrimSpace(v.GetString("responses.web_search.backend"))),
+		ResponsesWebSearchBaseURL:                           strings.TrimSpace(v.GetString("responses.web_search.base_url")),
+		ResponsesImageGenerationBackend:                     strings.ToLower(strings.TrimSpace(v.GetString("responses.image_generation.backend"))),
+		ResponsesImageGenerationBaseURL:                     strings.TrimSpace(v.GetString("responses.image_generation.base_url")),
+		ResponsesImageGenerationComfyUIWorkflow:             comfyUIWorkflow,
+		ResponsesImageGenerationComfyUIWorkflowPath:         firstNonEmptyConfigString(v.GetString("responses.image_generation.comfyui.workflow_path"), configString(comfyUISection["workflow_path"])),
+		ResponsesImageGenerationComfyUIOutputNodeID:         firstNonEmptyConfigString(v.GetString("responses.image_generation.comfyui.output_node_id"), configString(comfyUISection["output_node_id"])),
+		ResponsesCompactionBackend:                          strings.ToLower(strings.TrimSpace(v.GetString("responses.compaction.backend"))),
+		ResponsesCompactionBaseURL:                          strings.TrimSpace(v.GetString("responses.compaction.base_url")),
+		ResponsesCompactionModel:                            strings.TrimSpace(v.GetString("responses.compaction.model")),
+		ResponsesComputerBackend:                            strings.ToLower(strings.TrimSpace(v.GetString("responses.computer.backend"))),
+		ChatCompletionsStoreWhenOmitted:                     v.GetBool("chat_completions.default_store_when_omitted"),
+		ResponsesMode:                                       strings.ToLower(strings.TrimSpace(v.GetString("responses.mode"))),
+		ResponsesUpstreamTransport:                          strings.ToLower(strings.TrimSpace(v.GetString("responses.upstream_transport"))),
+		ResponsesWebSocketEnabled:                           v.GetBool("responses.websocket.enabled"),
+		ResponsesCustomToolsMode:                            strings.ToLower(strings.TrimSpace(v.GetString("responses.custom_tools.mode"))),
+		ResponsesConstrainedDecodingBackend:                 strings.ToLower(strings.TrimSpace(v.GetString("responses.constrained_decoding.backend"))),
+		ResponsesCodexEnableCompatibility:                   v.GetBool("responses.codex.enable_compatibility"),
+		ResponsesCodexForceToolChoiceRequired:               v.GetBool("responses.codex.force_tool_choice_required"),
 		ResponsesCodexForceToolChoiceRequiredDisabledModels: parseStringList(v, "responses.codex.force_tool_choice_required_disabled_models"),
 		ResponsesCodeInterpreterBackend:                     strings.ToLower(strings.TrimSpace(v.GetString("responses.code_interpreter.backend"))),
 		ResponsesCodeInterpreterPythonBinary:                strings.TrimSpace(v.GetString("responses.code_interpreter.python_binary")),
@@ -532,10 +548,32 @@ func Load(configPath string) (Config, error) {
 	if err := parseDuration(v.GetString("responses.image_generation.timeout"), &cfg.ResponsesImageGenerationTimeout); err != nil {
 		return Config{}, fmt.Errorf("parse responses.image_generation.timeout: %w", err)
 	}
+	comfyUIPollInterval := firstNonEmptyConfigString(v.GetString("responses.image_generation.comfyui.poll_interval"), configString(comfyUISection["poll_interval"]))
+	if err := parseDuration(comfyUIPollInterval, &cfg.ResponsesImageGenerationComfyUIPollInterval); err != nil {
+		return Config{}, fmt.Errorf("parse responses.image_generation.comfyui.poll_interval: %w", err)
+	}
+	comfyUIMaxWait := firstNonEmptyConfigString(v.GetString("responses.image_generation.comfyui.max_wait"), configString(comfyUISection["max_wait"]))
+	if err := parseDuration(comfyUIMaxWait, &cfg.ResponsesImageGenerationComfyUIMaxWait); err != nil {
+		return Config{}, fmt.Errorf("parse responses.image_generation.comfyui.max_wait: %w", err)
+	}
+	comfyUIMaxImageBytesConfig := firstNonEmptyConfigString(v.GetString("responses.image_generation.comfyui.max_image_bytes"), configString(comfyUISection["max_image_bytes"]))
+	comfyUIMaxImageBytes, err := parseByteSize(comfyUIMaxImageBytesConfig)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse responses.image_generation.comfyui.max_image_bytes: %w", err)
+	}
+	cfg.ResponsesImageGenerationComfyUIMaxImageBytes = comfyUIMaxImageBytes
 	normalizedImageGeneration, err := imagegen.NormalizeConfig(imagegen.Config{
 		Backend: cfg.ResponsesImageGenerationBackend,
 		BaseURL: cfg.ResponsesImageGenerationBaseURL,
 		Timeout: cfg.ResponsesImageGenerationTimeout,
+		ComfyUI: imagegen.ComfyUIConfig{
+			Workflow:      cfg.ResponsesImageGenerationComfyUIWorkflow,
+			WorkflowPath:  cfg.ResponsesImageGenerationComfyUIWorkflowPath,
+			OutputNodeID:  cfg.ResponsesImageGenerationComfyUIOutputNodeID,
+			PollInterval:  cfg.ResponsesImageGenerationComfyUIPollInterval,
+			MaxWait:       cfg.ResponsesImageGenerationComfyUIMaxWait,
+			MaxImageBytes: cfg.ResponsesImageGenerationComfyUIMaxImageBytes,
+		},
 	})
 	if err != nil {
 		return Config{}, fmt.Errorf("parse responses.image_generation config: %w", err)
@@ -543,6 +581,12 @@ func Load(configPath string) (Config, error) {
 	cfg.ResponsesImageGenerationBackend = normalizedImageGeneration.Backend
 	cfg.ResponsesImageGenerationBaseURL = normalizedImageGeneration.BaseURL
 	cfg.ResponsesImageGenerationTimeout = normalizedImageGeneration.Timeout
+	cfg.ResponsesImageGenerationComfyUIWorkflow = normalizedImageGeneration.ComfyUI.Workflow
+	cfg.ResponsesImageGenerationComfyUIWorkflowPath = normalizedImageGeneration.ComfyUI.WorkflowPath
+	cfg.ResponsesImageGenerationComfyUIOutputNodeID = normalizedImageGeneration.ComfyUI.OutputNodeID
+	cfg.ResponsesImageGenerationComfyUIPollInterval = normalizedImageGeneration.ComfyUI.PollInterval
+	cfg.ResponsesImageGenerationComfyUIMaxWait = normalizedImageGeneration.ComfyUI.MaxWait
+	cfg.ResponsesImageGenerationComfyUIMaxImageBytes = normalizedImageGeneration.ComfyUI.MaxImageBytes
 	if err := parseDuration(v.GetString("responses.compaction.timeout"), &cfg.ResponsesCompactionTimeout); err != nil {
 		return Config{}, fmt.Errorf("parse responses.compaction.timeout: %w", err)
 	}
@@ -718,6 +762,12 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("responses.image_generation.backend", imagegen.BackendDisabled)
 	v.SetDefault("responses.image_generation.base_url", "")
 	v.SetDefault("responses.image_generation.timeout", "60s")
+	v.SetDefault("responses.image_generation.comfyui.workflow", map[string]any{})
+	v.SetDefault("responses.image_generation.comfyui.workflow_path", "")
+	v.SetDefault("responses.image_generation.comfyui.output_node_id", "")
+	v.SetDefault("responses.image_generation.comfyui.poll_interval", "500ms")
+	v.SetDefault("responses.image_generation.comfyui.max_wait", "120s")
+	v.SetDefault("responses.image_generation.comfyui.max_image_bytes", "16MiB")
 	v.SetDefault("responses.compaction.backend", compactor.BackendHeuristic)
 	v.SetDefault("responses.compaction.base_url", "")
 	v.SetDefault("responses.compaction.model", "")
@@ -1239,4 +1289,60 @@ func parseStringList(v *viper.Viper, key string) []string {
 		out = append(out, trimmed)
 	}
 	return out
+}
+
+func normalizeConfigMap(value any) map[string]any {
+	normalized, ok := normalizeConfigValue(value).(map[string]any)
+	if !ok {
+		return map[string]any{}
+	}
+	return normalized
+}
+
+func firstNonEmptyConfigString(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func configString(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return typed
+	case fmt.Stringer:
+		return typed.String()
+	default:
+		if value == nil {
+			return ""
+		}
+		return fmt.Sprint(value)
+	}
+}
+
+func normalizeConfigValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(typed))
+		for key, item := range typed {
+			out[key] = normalizeConfigValue(item)
+		}
+		return out
+	case map[any]any:
+		out := make(map[string]any, len(typed))
+		for key, item := range typed {
+			out[fmt.Sprint(key)] = normalizeConfigValue(item)
+		}
+		return out
+	case []any:
+		out := make([]any, len(typed))
+		for i, item := range typed {
+			out[i] = normalizeConfigValue(item)
+		}
+		return out
+	default:
+		return value
+	}
 }

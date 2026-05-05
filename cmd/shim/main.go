@@ -129,6 +129,14 @@ func main() {
 		Backend: cfg.ResponsesImageGenerationBackend,
 		BaseURL: cfg.ResponsesImageGenerationBaseURL,
 		Timeout: cfg.ResponsesImageGenerationTimeout,
+		ComfyUI: imagegen.ComfyUIConfig{
+			Workflow:      cfg.ResponsesImageGenerationComfyUIWorkflow,
+			WorkflowPath:  cfg.ResponsesImageGenerationComfyUIWorkflowPath,
+			OutputNodeID:  cfg.ResponsesImageGenerationComfyUIOutputNodeID,
+			PollInterval:  cfg.ResponsesImageGenerationComfyUIPollInterval,
+			MaxWait:       cfg.ResponsesImageGenerationComfyUIMaxWait,
+			MaxImageBytes: cfg.ResponsesImageGenerationComfyUIMaxImageBytes,
+		},
 	})
 	if err != nil {
 		logger.Error("build image generation provider", "err", err)

@@ -15,16 +15,30 @@ import (
 
 const (
 	BackendDisabled  = "disabled"
+	BackendComfyUI   = "comfyui"
 	BackendFixture   = "fixture"
 	BackendResponses = "responses"
 
-	defaultTimeout = 60 * time.Second
+	defaultTimeout              = 60 * time.Second
+	defaultComfyUIPoll          = 500 * time.Millisecond
+	defaultComfyUIMaxWait       = 120 * time.Second
+	defaultComfyUIMaxImageBytes = 16 << 20
 )
 
 type Config struct {
 	Backend string
 	BaseURL string
 	Timeout time.Duration
+	ComfyUI ComfyUIConfig
+}
+
+type ComfyUIConfig struct {
+	Workflow      map[string]any
+	WorkflowPath  string
+	OutputNodeID  string
+	PollInterval  time.Duration
+	MaxWait       time.Duration
+	MaxImageBytes int64
 }
 
 type StreamResponse struct {
@@ -48,22 +62,42 @@ func NormalizeConfig(cfg Config) (Config, error) {
 	case BackendDisabled:
 		cfg.BaseURL = ""
 		cfg.Timeout = 0
+		cfg.ComfyUI = ComfyUIConfig{}
 		return cfg, nil
 	case BackendFixture:
 		cfg.BaseURL = ""
 		cfg.Timeout = 0
+		cfg.ComfyUI = ComfyUIConfig{}
 		return cfg, nil
+	case BackendComfyUI:
 	case BackendResponses:
+		cfg.ComfyUI = ComfyUIConfig{}
 	default:
 		return Config{}, fmt.Errorf("unsupported image_generation backend %q", cfg.Backend)
 	}
 
 	cfg.BaseURL = strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/")
 	if cfg.BaseURL == "" {
-		return Config{}, errors.New("responses.image_generation.base_url must not be empty when responses.image_generation.backend is enabled")
+		return Config{}, errors.New("responses.image_generation.base_url must not be empty when responses.image_generation.backend requires an external service")
 	}
 	if cfg.Timeout <= 0 {
 		cfg.Timeout = defaultTimeout
+	}
+	if cfg.Backend == BackendComfyUI {
+		cfg.ComfyUI.WorkflowPath = strings.TrimSpace(cfg.ComfyUI.WorkflowPath)
+		cfg.ComfyUI.OutputNodeID = strings.TrimSpace(cfg.ComfyUI.OutputNodeID)
+		if cfg.ComfyUI.WorkflowPath == "" && len(cfg.ComfyUI.Workflow) == 0 {
+			return Config{}, errors.New("responses.image_generation.comfyui.workflow or workflow_path must be configured when responses.image_generation.backend=comfyui")
+		}
+		if cfg.ComfyUI.PollInterval <= 0 {
+			cfg.ComfyUI.PollInterval = defaultComfyUIPoll
+		}
+		if cfg.ComfyUI.MaxWait <= 0 {
+			cfg.ComfyUI.MaxWait = defaultComfyUIMaxWait
+		}
+		if cfg.ComfyUI.MaxImageBytes <= 0 {
+			cfg.ComfyUI.MaxImageBytes = defaultComfyUIMaxImageBytes
+		}
 	}
 	return cfg, nil
 }
@@ -76,6 +110,8 @@ func NewProvider(cfg Config) (Provider, error) {
 	switch normalized.Backend {
 	case BackendDisabled:
 		return nil, nil
+	case BackendComfyUI:
+		return newComfyUIProvider(normalized)
 	case BackendFixture:
 		return &fixtureProvider{}, nil
 	case BackendResponses:
