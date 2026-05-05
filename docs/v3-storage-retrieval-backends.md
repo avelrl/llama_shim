@@ -450,6 +450,14 @@ Postgres port. It opens each test case in an isolated schema and checks:
 - pgvector semantic search, hybrid ranking, and capability reporting
 - rejection of SQLite-only retrieval indexes when `storage.backend=postgres`
 
+Postgres beta hardening now also covers:
+
+- app-owned DDL serialization with a Postgres advisory lock, so concurrent
+  shim startup does not race schema creation or migration recording
+- physical cleanup of `vector_store_chunks` when a vector-store file is deleted
+  from a vector store, not only hiding those chunks from search joins
+- focused tests for concurrent `OpenWithOptions` migration and chunk cleanup
+
 ### 6. Broader Storage Expansion
 
 Only after vector-store storage and retrieval are proven:

@@ -49,6 +49,7 @@ const (
 	minSemanticCandidateChunks     = 50
 	maxSemanticCandidateChunks     = 1000
 	postgresSchemaMigrationVersion = "0001_postgres_object_storage_alpha"
+	postgresMigrationAdvisoryLock  = int64(317140633791)
 )
 
 type scanner interface {
@@ -172,17 +173,44 @@ func (s *Store) PingContext(ctx context.Context) error {
 	return nil
 }
 
-func (s *Store) migrate(ctx context.Context) error {
-	if _, err := s.db.ExecContext(ctx, postgresObjectStorageSchema); err != nil {
+func (s *Store) migrate(ctx context.Context) (err error) {
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("open postgres migration connection: %w", err)
+	}
+	defer func() {
+		if closeErr := conn.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("close postgres migration connection: %w", closeErr))
+		}
+	}()
+
+	if _, err := conn.ExecContext(ctx, `SELECT pg_advisory_lock($1)`, postgresMigrationAdvisoryLock); err != nil {
+		return fmt.Errorf("lock postgres migration: %w", err)
+	}
+	locked := true
+	defer func() {
+		if !locked {
+			return
+		}
+		if _, unlockErr := conn.ExecContext(context.Background(), `SELECT pg_advisory_unlock($1)`, postgresMigrationAdvisoryLock); unlockErr != nil {
+			err = errors.Join(err, fmt.Errorf("unlock postgres migration: %w", unlockErr))
+		}
+	}()
+
+	if _, err := conn.ExecContext(ctx, postgresObjectStorageSchema); err != nil {
 		return fmt.Errorf("apply postgres object storage schema: %w", err)
 	}
-	if _, err := s.db.ExecContext(ctx, `
+	if _, err := conn.ExecContext(ctx, `
 		INSERT INTO schema_migrations(version, applied_at)
 		VALUES ($1, now())
 		ON CONFLICT(version) DO NOTHING
 	`, postgresSchemaMigrationVersion); err != nil {
 		return fmt.Errorf("record postgres migration: %w", err)
 	}
+	if _, err := conn.ExecContext(ctx, `SELECT pg_advisory_unlock($1)`, postgresMigrationAdvisoryLock); err != nil {
+		return fmt.Errorf("unlock postgres migration: %w", err)
+	}
+	locked = false
 	return nil
 }
 
@@ -623,7 +651,15 @@ func (s *Store) ListVectorStoreFiles(ctx context.Context, query domain.ListVecto
 }
 
 func (s *Store) DeleteVectorStoreFile(ctx context.Context, vectorStoreID, fileID string) error {
-	result, err := s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin postgres vector store file delete tx: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	result, err := tx.ExecContext(ctx, `
 		DELETE FROM vector_store_files
 		WHERE vector_store_id = $1 AND file_id = $2
 	`, vectorStoreID, fileID)
@@ -636,6 +672,15 @@ func (s *Store) DeleteVectorStoreFile(ctx context.Context, vectorStoreID, fileID
 	}
 	if rowsAffected == 0 {
 		return ErrNotFound
+	}
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM vector_store_chunks
+		WHERE vector_store_id = $1 AND file_id = $2
+	`, vectorStoreID, fileID); err != nil {
+		return fmt.Errorf("delete postgres vector store file chunks: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit postgres vector store file delete tx: %w", err)
 	}
 	return nil
 }

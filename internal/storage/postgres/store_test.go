@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -150,6 +151,7 @@ func TestStoreVectorStoreLexicalLifecycleAndPagination(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.Equal(t, "completed", attachedNeedle.Status)
+	require.Positive(t, countPostgresVectorStoreChunks(t, store, ctx, vectorStoreA.ID, fileNeedle.ID))
 
 	attachedDecoy, err := store.AttachFileToVectorStore(
 		ctx,
@@ -204,6 +206,7 @@ func TestStoreVectorStoreLexicalLifecycleAndPagination(t *testing.T) {
 	require.Contains(t, searchPage.Results[0].Content[0].Text, "orionpepper")
 
 	require.NoError(t, store.DeleteVectorStoreFile(ctx, vectorStoreA.ID, fileNeedle.ID))
+	require.Zero(t, countPostgresVectorStoreChunks(t, store, ctx, vectorStoreA.ID, fileNeedle.ID))
 	afterDelete, err := store.SearchVectorStore(ctx, domain.VectorStoreSearchQuery{
 		VectorStoreID:  vectorStoreA.ID,
 		Queries:        []string{"orionpepper"},
@@ -257,6 +260,61 @@ func TestStoreAttachBinaryFileToVectorStoreFailsIndexing(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Empty(t, searchPage.Results)
+}
+
+func TestOpenWithOptionsConcurrentMigration(t *testing.T) {
+	dsn := strings.TrimSpace(os.Getenv("POSTGRES_TEST_DSN"))
+	if dsn == "" {
+		t.Skip("set POSTGRES_TEST_DSN to run Postgres storage tests")
+	}
+
+	ctx := context.Background()
+	adminDB, schema, scopedDSN := createPostgresTestSchema(t, ctx, dsn)
+	t.Cleanup(func() {
+		_, err := adminDB.ExecContext(ctx, `DROP SCHEMA IF EXISTS `+quotePostgresIdent(schema)+` CASCADE`)
+		require.NoError(t, err)
+		require.NoError(t, adminDB.Close())
+	})
+
+	const workers = 4
+	sidecarRoot := t.TempDir()
+	errs := make(chan error, workers)
+	stores := make(chan *Store, workers)
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func(worker int) {
+			defer wg.Done()
+			store, err := OpenWithOptions(ctx, scopedDSN, OpenOptions{
+				SQLitePath: filepath.Join(sidecarRoot, fmt.Sprintf("sidecar-%d.db", worker)),
+				Retrieval:  retrieval.Config{IndexBackend: retrieval.IndexBackendLexical},
+			})
+			if err != nil {
+				errs <- err
+				return
+			}
+			stores <- store
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+	close(stores)
+
+	for err := range errs {
+		require.NoError(t, err)
+	}
+	for store := range stores {
+		require.NoError(t, store.Close())
+	}
+
+	var migrationRows int
+	err := adminDB.QueryRowContext(
+		ctx,
+		`SELECT COUNT(*) FROM `+quotePostgresIdent(schema)+`.schema_migrations WHERE version = $1`,
+		postgresSchemaMigrationVersion,
+	).Scan(&migrationRows)
+	require.NoError(t, err)
+	require.Equal(t, 1, migrationRows)
 }
 
 func TestStorePGVectorSemanticAndHybridSearch(t *testing.T) {
@@ -367,6 +425,18 @@ func postgresDSNWithSearchPath(dsn, schema string) string {
 
 func quotePostgresIdent(value string) string {
 	return `"` + strings.ReplaceAll(value, `"`, `""`) + `"`
+}
+
+func countPostgresVectorStoreChunks(t *testing.T, store *Store, ctx context.Context, vectorStoreID, fileID string) int {
+	t.Helper()
+	var count int
+	err := store.db.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM vector_store_chunks
+		WHERE vector_store_id = $1 AND file_id = $2
+	`, vectorStoreID, fileID).Scan(&count)
+	require.NoError(t, err)
+	return count
 }
 
 func postgresTestPrefix(t *testing.T) string {

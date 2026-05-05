@@ -85,8 +85,9 @@ Status: `Planned`. See [v3-image-backends.md](v3-image-backends.md).
 
 Status: `Partial`; SQLite storage contracts, the retrieval-index contract,
 `sqlite_fts5`, `sqlite_vec`, the Postgres/pgvector alpha path for retrieval
-objects, and Postgres alpha hardening coverage are implemented, while broader
-durable-store migration is still planned. See
+objects, Postgres alpha hardening coverage, and the first Postgres beta
+hardening slice are implemented, while broader durable-store migration is
+still planned. See
 [v3-storage-retrieval-backends.md](v3-storage-retrieval-backends.md).
 
 - ANN indexing beyond the current exact local subset
@@ -313,9 +314,9 @@ the public compatibility story less truthful.
 The next practical implementation work should be selected from this queue:
 
 1. Continue [V3 Storage And Retrieval Backends](v3-storage-retrieval-backends.md)
-   for Postgres beta/hardening: broader durable-store migration, migration
-   tooling, shared maintenance/backup behavior, ANN indexing, or additional
-   embedders/rerankers.
+   for the remaining Postgres beta work: broader durable-store migration,
+   migration tooling, shared maintenance/backup behavior, ANN indexing, or
+   additional embedders/rerankers.
 2. Continue [V3 Ops And Deployment Expansion](v3-ops-deployment.md) only for
    governance/tenanting after the shared storage beta boundary is stable.
 3. Turn [V3 Alternative Image Backends](v3-image-backends.md) into a first

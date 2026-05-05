@@ -506,6 +506,9 @@ Shim reality:
 - The devstack `multi-instance` profile verifies only this Postgres retrieval
   object boundary across two shim processes. The SQLite sidecar stores remain
   instance-local in that smoke and are not a shared-state claim.
+- The Postgres retrieval-object path serializes app-owned schema migration and
+  cleans chunk rows when a vector-store file is deleted from a vector store;
+  these are internal store invariants, not OpenAI wire-contract changes.
 - Local `file_search` injects bounded grounding context before final answer
   generation.
 - Hosted ranking quality, billing semantics, and exact citation placement are
