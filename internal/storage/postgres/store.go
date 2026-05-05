@@ -30,6 +30,9 @@ type OpenOptions struct {
 }
 
 type Store struct {
+	// SQLite sidecar owns instance-local runtime state that is unsafe to
+	// make cluster-shared by metadata alone, including code-interpreter
+	// sessions and container files.
 	*sqlite.Store
 
 	db             *sql.DB

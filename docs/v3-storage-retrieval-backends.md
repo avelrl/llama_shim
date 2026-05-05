@@ -18,12 +18,18 @@ Official docs checked for this pass:
   <https://developers.openai.com/api/docs/guides/conversation-state>
 - OpenAI Migrate to Responses guide:
   <https://developers.openai.com/api/docs/guides/migrate-to-responses>
+- OpenAI Code Interpreter guide:
+  <https://developers.openai.com/api/docs/guides/tools-code-interpreter>
+- OpenAI Data controls guide:
+  <https://developers.openai.com/api/docs/guides/your-data>
 - OpenAI OpenAPI spec via the OpenAI docs MCP for
   `/responses/{response_id}/input_items`,
   `/conversations/{conversation_id}/items`, and
   `/chat/completions/{completion_id}/messages`; the MCP endpoint list also
-  confirms `/responses`, `/conversations`, `/chat/completions`, and
-  `/chat/completions/{completion_id}`.
+  confirms `/responses`, `/conversations`, `/chat/completions`,
+  `/chat/completions/{completion_id}`, `/containers`,
+  `/containers/{container_id}/files`, and
+  `/containers/{container_id}/files/{file_id}/content`.
 
 ## Current State
 
@@ -151,8 +157,10 @@ generic internal contract with SQLite implementations for lexical scan,
 durable backend for the stateful local stores that are safe to share across
 instances: responses, replay artifacts, conversations, stored Chat
 Completions, files, vector stores, vector-store files, and vector-store
-chunks. It intentionally keeps SQLite as a sidecar for code-interpreter runtime
-state until that runtime state has its own bounded migration slice. The
+chunks. It intentionally keeps SQLite as a sidecar for code-interpreter
+runtime state because shim-local Docker sessions and container files are
+instance-local runtime state, not safe multi-instance state that can be shared
+by moving metadata alone. The
 maintenance contract is now backend-aware: SQLite uses native SQLite
 maintenance, while Postgres uses shim-owned cleanup and logical COPY
 backup/restore for the Postgres-owned tables.
@@ -387,7 +395,7 @@ Implementation boundary:
 
 Out of current beta scope:
 
-- code-interpreter artifact storage migration
+- Postgres-backed code-interpreter runtime/session ownership
 - mixed SQLite/Postgres cross-store transactions
 - external `pg_dump`/`pg_restore` orchestration or cluster-level backup policy
 
@@ -545,18 +553,44 @@ go run ./cmd/shimctl -config ./config.yaml migrate sqlite-to-postgres \
 
 #### 6.2 Code-interpreter state ownership
 
-Status: planned.
+Status: implemented as an explicit sidecar-local ownership boundary.
 
-Decide whether code-interpreter sessions and generated files should remain
-instance-local forever or become Postgres-backed for multi-instance
-deployments. This needs a separate design because the runtime/container
-boundary is security-sensitive and generated artifacts can be large. Do not
-claim shared code-interpreter state until:
+Code-interpreter sessions and container-file membership remain owned by the
+per-instance SQLite sidecar in Postgres mode. This is an intentional runtime
+ownership decision, not a missing migration table.
 
-- session metadata and generated-file metadata/content have storage contracts
-- cleanup works for both metadata and content
-- multi-instance behavior is smoke-tested
-- docs make the runtime isolation and side effects explicit
+Rationale:
+
+- Official Code Interpreter is container-scoped: files are uploaded to or
+  downloaded from a container, generated files appear as container-file
+  citations, and hosted container state is temporary.
+- The shim's local execution boundary is a Docker container managed by one
+  shim instance. Its workdir, process lifetime, cleanup, and generated
+  artifacts are not cluster-shared just because object metadata moves to
+  Postgres.
+- Postgres mode shares responses, conversations, stored Chat Completions,
+  files, vector stores, and vector-store chunks. It does not share active
+  code-interpreter session reuse or `/v1/containers` membership across shim
+  instances.
+- Generated artifacts that are mirrored into shim `/v1/files` follow the
+  normal active file store and can be Postgres-owned, but the
+  code-interpreter container relationship that produced them stays sidecar
+  local.
+- SQLite-to-Postgres migration and Postgres logical backup/restore
+  intentionally exclude code-interpreter session/container-file tables and
+  report `code_interpreter_migrated=false`.
+
+Focused Postgres storage tests cover the boundary in both directions:
+
+- primary-created code-interpreter sessions/container files are not visible
+  through a secondary Postgres-backed shim instance
+- SQLite migration copies the Postgres-owned beta tables while leaving
+  source code-interpreter state out of the target sidecar
+
+Future Postgres-backed code-interpreter state would need a separate shared
+runtime design covering scheduler ownership, container placement, generated
+artifact cleanup, and failure semantics. It should not be treated as a storage
+table extension.
 
 #### 6.3 Replay/artifact retention policy
 

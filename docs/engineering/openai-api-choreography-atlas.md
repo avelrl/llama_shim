@@ -643,10 +643,12 @@ sequenceDiagram
   participant R as Responses
   participant CI as Local Docker runtime
   participant CF as Container files
+  participant S as SQLite sidecar
   participant M as Model backend
 
   C->>R: POST /v1/responses tools=[code_interpreter]
   R->>CI: create or reuse auto container
+  R->>S: persist local session/container-file state
   R->>M: ask model to use python tool
   M-->>R: code_interpreter_call
   R->>CI: execute Python code
@@ -667,6 +669,9 @@ Official contract:
 Shim reality:
 
 - The current local execution boundary is Docker.
+- In Postgres mode, code-interpreter session and container-file membership
+  state remains in the per-instance SQLite sidecar. Postgres-backed state does
+  not imply shared active container reuse across shim instances.
 - Shim-local Responses accepts `container: {"type":"auto"}` for execution;
   explicit hosted-style container ids are not part of the local execution
   subset.

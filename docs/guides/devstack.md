@@ -305,7 +305,9 @@ an isolated schema per test, and checks response/conversation/stored-chat
 persistence, replay artifacts, multi-instance shared reads/appends,
 file/vector-store persistence, pagination, SQLite sidecar mirroring, binary
 attachment failure, lexical retrieval, pgvector semantic/hybrid retrieval, and
-Postgres logical backup/restore round-trip coverage.
+Postgres logical backup/restore round-trip coverage. It also verifies that
+code-interpreter session/container-file membership remains SQLite-sidecar
+local in Postgres mode and is not copied by SQLite-to-Postgres migration.
 Run it after `make
 devstack-up`; it complements the HTTP smoke above instead of replacing it.
 

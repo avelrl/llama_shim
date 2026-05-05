@@ -540,6 +540,51 @@ func TestStoreStateSharedAcrossPostgresInstances(t *testing.T) {
 	require.Len(t, messages.Messages, 1)
 }
 
+func TestStoreCodeInterpreterStateStaysSQLiteSidecarLocal(t *testing.T) {
+	primary, secondary, ctx, prefix := openPostgresTestStorePair(t, retrieval.IndexBackendLexical)
+
+	file := testStoredFile(prefix+"file_ci_sidecar", "sidecar.txt", "assistants", "sidecar content", 1712060400)
+	require.NoError(t, primary.SaveFile(ctx, file))
+	_, err := secondary.GetFile(ctx, file.ID)
+	require.NoError(t, err)
+
+	session := domain.CodeInterpreterSession{
+		ID:                  prefix + "cntr_sidecar",
+		Owner:               "owner-a",
+		Backend:             "docker",
+		Status:              "running",
+		Name:                "Sidecar",
+		MemoryLimit:         "1g",
+		ExpiresAfterMinutes: 20,
+		CreatedAt:           "2026-05-05T12:20:00Z",
+		LastActiveAt:        "2026-05-05T12:20:00Z",
+	}
+	require.NoError(t, primary.SaveCodeInterpreterSession(ctx, session))
+	containerFile, err := primary.SaveCodeInterpreterContainerFile(ctx, domain.CodeInterpreterContainerFile{
+		ID:                prefix + "cfile_sidecar",
+		ContainerID:       session.ID,
+		BackingFileID:     file.ID,
+		DeleteBackingFile: true,
+		Path:              "/workspace/sidecar.txt",
+		Source:            "generated",
+		Bytes:             file.Bytes,
+		CreatedAt:         file.CreatedAt,
+	})
+	require.NoError(t, err)
+
+	gotSession, err := primary.GetCodeInterpreterSession(ctx, session.ID)
+	require.NoError(t, err)
+	require.Equal(t, session.ID, gotSession.ID)
+	gotContainerFile, err := primary.GetCodeInterpreterContainerFile(ctx, session.ID, containerFile.ID)
+	require.NoError(t, err)
+	require.Equal(t, containerFile.ID, gotContainerFile.ID)
+
+	_, err = secondary.GetCodeInterpreterSession(ctx, session.ID)
+	require.ErrorIs(t, err, storage.ErrNotFound)
+	_, err = secondary.GetCodeInterpreterContainerFile(ctx, session.ID, containerFile.ID)
+	require.ErrorIs(t, err, storage.ErrNotFound)
+}
+
 func TestStorePostgresMaintenanceCleanup(t *testing.T) {
 	store, ctx, prefix := openPostgresTestStore(t, retrieval.IndexBackendLexical, nil)
 
@@ -750,6 +795,11 @@ func TestStoreMigrateSQLiteToPostgres(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Len(t, messages.Messages, 1)
+
+	_, err = target.GetCodeInterpreterSession(ctx, fixture.codeInterpreterSessionID)
+	require.ErrorIs(t, err, storage.ErrNotFound)
+	_, err = target.GetCodeInterpreterContainerFile(ctx, fixture.codeInterpreterSessionID, fixture.codeInterpreterContainerFileID)
+	require.ErrorIs(t, err, storage.ErrNotFound)
 }
 
 func migrationReportTable(report SQLiteMigrationReport, name string) (SQLiteMigrationTableReport, error) {
@@ -808,11 +858,13 @@ func TestStorePGVectorSemanticAndHybridSearch(t *testing.T) {
 }
 
 type sqliteMigrationFixture struct {
-	fileID           string
-	vectorStoreID    string
-	responseID       string
-	conversationID   string
-	chatCompletionID string
+	fileID                         string
+	vectorStoreID                  string
+	responseID                     string
+	conversationID                 string
+	chatCompletionID               string
+	codeInterpreterSessionID       string
+	codeInterpreterContainerFileID string
 }
 
 func seedSQLiteMigrationFixture(t *testing.T, ctx context.Context, source *sqlite.Store, prefix string) sqliteMigrationFixture {
@@ -820,9 +872,32 @@ func seedSQLiteMigrationFixture(t *testing.T, ctx context.Context, source *sqlit
 
 	file := testStoredFile(prefix+"file_sqlite_migrate", "migrate.txt", "assistants", "sqlite migration keyword content", 1712060200)
 	require.NoError(t, source.SaveFile(ctx, file))
+	session := domain.CodeInterpreterSession{
+		ID:                  prefix + "cntr_sqlite_migrate",
+		Owner:               "owner-a",
+		Backend:             "docker",
+		Status:              "running",
+		Name:                "SQLite Migration Sidecar",
+		MemoryLimit:         "1g",
+		ExpiresAfterMinutes: 20,
+		CreatedAt:           "2026-05-05T12:10:00Z",
+		LastActiveAt:        "2026-05-05T12:10:00Z",
+	}
+	require.NoError(t, source.SaveCodeInterpreterSession(ctx, session))
+	containerFile, err := source.SaveCodeInterpreterContainerFile(ctx, domain.CodeInterpreterContainerFile{
+		ID:                prefix + "cfile_sqlite_migrate",
+		ContainerID:       session.ID,
+		BackingFileID:     file.ID,
+		DeleteBackingFile: true,
+		Path:              "/workspace/migrate.txt",
+		Source:            "generated",
+		Bytes:             file.Bytes,
+		CreatedAt:         file.CreatedAt,
+	})
+	require.NoError(t, err)
 	vectorStore := testVectorStore(prefix+"vs_sqlite_migrate", "SQLite Migration", 1712060201)
 	require.NoError(t, source.SaveVectorStore(ctx, vectorStore))
-	_, err := source.AttachFileToVectorStore(ctx, vectorStore.ID, file.ID, map[string]any{"suite": "sqlite-migration"}, domain.DefaultFileChunkingStrategy(), 1712060202)
+	_, err = source.AttachFileToVectorStore(ctx, vectorStore.ID, file.ID, map[string]any{"suite": "sqlite-migration"}, domain.DefaultFileChunkingStrategy(), 1712060202)
 	require.NoError(t, err)
 
 	response := domain.StoredResponse{
@@ -865,11 +940,13 @@ func seedSQLiteMigrationFixture(t *testing.T, ctx context.Context, source *sqlit
 	require.NoError(t, source.SaveChatCompletion(ctx, chat))
 
 	return sqliteMigrationFixture{
-		fileID:           file.ID,
-		vectorStoreID:    vectorStore.ID,
-		responseID:       response.ID,
-		conversationID:   conversation.ID,
-		chatCompletionID: chat.ID,
+		fileID:                         file.ID,
+		vectorStoreID:                  vectorStore.ID,
+		responseID:                     response.ID,
+		conversationID:                 conversation.ID,
+		chatCompletionID:               chat.ID,
+		codeInterpreterSessionID:       session.ID,
+		codeInterpreterContainerFileID: containerFile.ID,
 	}
 }
 

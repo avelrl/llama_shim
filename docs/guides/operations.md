@@ -97,6 +97,10 @@ Background cleanup:
   Postgres-owned files and vector stores with explicit `expires_at`.
 - `responses.code_interpreter.cleanup_interval` handles expired local code
   interpreter containers separately
+- In Postgres mode, code-interpreter sessions and container-file membership
+  remain in the per-instance SQLite sidecar. Back up the sidecar only if you
+  need that local ephemeral metadata; active Docker containers are not
+  cluster-shared by Postgres backup/restore.
 
 One-shot maintenance for the configured backend:
 

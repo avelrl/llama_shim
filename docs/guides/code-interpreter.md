@@ -49,6 +49,10 @@ curl http://127.0.0.1:8080/v1/responses \
   inside that container.
 - The shim reuses `container_id` across local `previous_response_id` lineage
   when possible.
+- In `storage.backend=postgres` mode, code-interpreter sessions and
+  container-file membership remain per-instance SQLite sidecar state. The
+  Postgres store can share mirrored `/v1/files` objects, but it does not make
+  active local Docker containers reusable across shim instances.
 - Shim-local `/v1/responses` accepts only `container: {"type":"auto"}`.
   Explicit `code_interpreter.container="cntr_*"` ids are rejected in local
   mode even though the upstream API supports explicit container mode.
@@ -64,6 +68,8 @@ curl http://127.0.0.1:8080/v1/responses \
 - Local `/v1/containers` resources exist for shim-managed container state and
   files, but the shim-local `code_interpreter` execution path itself stays on
   auto-managed containers only.
+- SQLite-to-Postgres migration and Postgres logical backup/restore do not move
+  active code-interpreter session/container-file membership.
 - Exact hosted artifact placement and richer hosted failure/status fidelity are
   out of scope for V2.
 

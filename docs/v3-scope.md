@@ -88,15 +88,16 @@ Status: `Partial`; SQLite storage contracts, the retrieval-index contract,
 responses, conversations, stored Chat Completions, Postgres hardening coverage,
 backend-aware Postgres maintenance, and the first multi-instance shared-state
 smoke are implemented. SQLite-to-Postgres migration tooling is implemented for
-the current Postgres-owned beta tables, while code-interpreter state ownership
-is still planned.
+the current Postgres-owned beta tables, and code-interpreter state ownership is
+implemented as an explicit per-instance SQLite sidecar boundary.
 See
 [v3-storage-retrieval-backends.md](v3-storage-retrieval-backends.md).
 
 - ANN indexing beyond the current exact local subset
 - broader Postgres / multi-instance storage modes beyond the current
   responses/conversations/stored-chat/file/vector boundary
-- code-interpreter store ownership
+- code-interpreter store ownership stays sidecar-local unless a future shared
+  runtime design exists
 - replay/artifact retention policy, cluster-native Postgres backup runbook,
   hard-delete/governance hooks, and ANN index management
 - more embedders and rerankers beyond the current compatibility-driven set
@@ -311,8 +312,8 @@ for the Postgres-owned beta tables is implemented in the storage track. See
 - richer exporters and dashboards
 - governance-heavy storage features such as encryption-at-rest options,
   redaction policy, and hard-delete controls
-- cluster-native Postgres backup policy, code-interpreter state migration, and
-  remaining shared-state deployment modes
+- cluster-native Postgres backup policy and remaining shared-state deployment
+  modes
 
 This track should stay behind storage-backend interface hardening. It must not
 add hidden OpenAI-surface limits or tenant-specific request behavior that makes
@@ -323,10 +324,9 @@ the public compatibility story less truthful.
 The next practical implementation work should be selected from this queue:
 
 1. Continue [V3 Storage And Retrieval Backends](v3-storage-retrieval-backends.md)
-   for the remaining Postgres beta work: code-interpreter state migration,
-   replay/artifact retention, cluster-native backup guidance,
-   hard-delete/governance hooks, ANN indexing, or additional
-   embedders/rerankers.
+   for the remaining Postgres beta work: replay/artifact retention,
+   cluster-native backup guidance, hard-delete/governance hooks, ANN indexing,
+   or additional embedders/rerankers.
 2. Continue [V3 Ops And Deployment Expansion](v3-ops-deployment.md) only for
    governance/tenanting after the shared storage beta boundary is stable.
 3. Turn [V3 Alternative Image Backends](v3-image-backends.md) into a first
