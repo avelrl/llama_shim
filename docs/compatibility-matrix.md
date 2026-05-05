@@ -196,7 +196,7 @@ proxy-first escape hatch for standalone hosted/native requests, while
 | --- | --- | --- | --- |
 | `/healthz`, `/readyz`, `/debug/capabilities`, `/metrics` | Shim-owned | Keep documented and stable | Useful operator surface, not OpenAI compatibility surface |
 | ingress auth, rate limiting, quotas, structured logs | Shim-owned | Keep minimum operator floor stable | |
-| retention cleanup, maintenance path, and local DX packaging | Implemented | Keep the operator workflow explicit | SQLite cleanup is limited to explicit `expires_at` resources; backup/restore/vacuum/optimize ship via `shimctl` |
+| retention cleanup, maintenance path, and local DX packaging | Implemented | Keep the operator workflow explicit | Cleanup is limited to explicit local `expires_at` resources. `shimctl` cleanup/backup/restore/vacuum/optimize is backend-aware for SQLite and the current Postgres beta tables. |
 | multi-tenant authz, shared rate limiting, richer exporters/admin tooling | V3 | Stage after V2 | Valuable, but not required for a broad compatibility facade |
 
 ## Known V2 Limitations
@@ -217,7 +217,9 @@ proxy-first escape hatch for standalone hosted/native requests, while
   regex grammars and the shim-supported Lark subset, behind the constrained
   backend adapter registry.
 - Operator cleanup currently targets only explicit local `expires_at`
-  resources.
+  resources. Postgres backup/restore is a shim-owned logical format for the
+  current beta tables, not a hosted OpenAI retention or managed database backup
+  parity claim.
 
 ## V2 Ship Status
 

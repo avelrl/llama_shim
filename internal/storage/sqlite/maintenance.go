@@ -7,16 +7,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"llama_shim/internal/storage"
 )
 
-type MaintenanceCleanupStats struct {
-	ExpiredFilesDeleted        int
-	ExpiredVectorStoresDeleted int
-}
-
-func (s MaintenanceCleanupStats) TotalDeleted() int {
-	return s.ExpiredFilesDeleted + s.ExpiredVectorStoresDeleted
-}
+type MaintenanceCleanupStats = storage.MaintenanceCleanupStats
 
 func (s *Store) CleanupExpiredState(ctx context.Context, now int64) (MaintenanceCleanupStats, error) {
 	vectorStoreIDs, err := s.listExpiredVectorStoreIDs(ctx, now)

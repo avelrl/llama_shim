@@ -135,7 +135,7 @@ func main() {
 		os.Exit(1)
 	}
 	httpapi.StartLocalCodeInterpreterCleanupLoop(processCtx, logger, localCodeInterpreter, store, store, cfg.ResponsesCodeInterpreterCleanupInterval)
-	startSQLiteMaintenanceCleanupLoop(processCtx, logger, sqliteMaintenanceStore(store), cfg.SQLiteMaintenanceCleanupInterval)
+	startStorageMaintenanceCleanupLoop(processCtx, logger, storageMaintenanceStore(store), cfg.SQLiteMaintenanceCleanupInterval)
 
 	server := &http.Server{
 		Addr: cfg.Addr,
@@ -290,19 +290,11 @@ func main() {
 	}
 }
 
-type sqliteSidecarProvider interface {
-	SQLiteSidecar() *sqlite.Store
-}
-
-func sqliteMaintenanceStore(store storage.Store) *sqlite.Store {
-	switch typed := store.(type) {
-	case *sqlite.Store:
+func storageMaintenanceStore(store storage.Store) storage.MaintenanceStore {
+	if typed, ok := store.(storage.MaintenanceStore); ok {
 		return typed
-	case sqliteSidecarProvider:
-		return typed.SQLiteSidecar()
-	default:
-		return nil
 	}
+	return nil
 }
 
 func openStore(ctx context.Context, cfg config.Config, retrievalEmbedder retrieval.Embedder) (storage.Store, error) {

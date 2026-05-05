@@ -29,7 +29,8 @@ This smoke path checks:
   4. /v1/vector_stores create and attach files
   5. /v1/vector_stores/{id}/search returns pgvector-ranked results
   6. local /v1/responses file_search uses the same pgvector-backed store
-  7. vector-store and file deletes complete
+  7. shimctl Postgres maintenance cleanup/optimize/vacuum/backup completes
+  8. vector-store and file deletes complete
 EOF
 }
 
@@ -39,11 +40,13 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
 fi
 
 require_cmd curl
+require_cmd go
 require_cmd jq
 require_cmd mktemp
 
 shim_base_url="${SHIM_BASE_URL:-http://127.0.0.1:18080}"
 expected_responses_mode="${RESPONSES_MODE:-prefer_local}"
+postgres_maintenance_dsn="${POSTGRES_MAINTENANCE_DSN:-${POSTGRES_TEST_DSN:-postgres://llama_shim:llama_shim@127.0.0.1:15432/llama_shim?sslmode=disable}}"
 
 tmp_dir="$(mktemp -d)"
 file_ids=()
@@ -81,6 +84,14 @@ wait_http_ok() {
 
   echo "${label} did not become ready: ${url}" >&2
   exit 1
+}
+
+run_shimctl_postgres() {
+  env \
+    STORAGE_BACKEND=postgres \
+    POSTGRES_DSN="${postgres_maintenance_dsn}" \
+    SQLITE_PATH="${tmp_dir}/shimctl-sidecar.db" \
+    go run ./cmd/shimctl -config config.devstack.yaml "$@"
 }
 
 upload_file() {
@@ -231,5 +242,15 @@ printf '%s\n' "${file_search_json}" | jq -e '
   .output_text == "777" and
   ([.output[] | select(.type == "file_search_call")] | length) >= 1
 ' >/dev/null
+
+echo "==> checking shimctl postgres maintenance commands"
+run_shimctl_postgres cleanup
+run_shimctl_postgres optimize
+run_shimctl_postgres vacuum
+maintenance_backup_path="${tmp_dir}/postgres-maintenance-backup.sql"
+run_shimctl_postgres backup -out "${maintenance_backup_path}"
+grep -q 'llama_shim postgres logical backup v1' "${maintenance_backup_path}"
+grep -q 'COPY files' "${maintenance_backup_path}"
+grep -q 'COPY vector_stores' "${maintenance_backup_path}"
 
 echo "devstack postgres pgvector retrieval smoke passed"

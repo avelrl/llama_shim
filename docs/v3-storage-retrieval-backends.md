@@ -41,7 +41,8 @@ Current runtime ownership:
 - optional Postgres beta object storage uses Postgres for responses, response
   replay artifacts, conversations, stored chat completions, files, vector
   stores, vector-store files, and vector-store chunks while keeping SQLite as a
-  sidecar for code-interpreter state and SQLite-specific maintenance commands
+  sidecar for code-interpreter state; backend-aware `shimctl` maintenance now
+  covers the Postgres-owned tables
 - default retrieval index is local lexical search
 - optional indexed lexical retrieval uses `retrieval.index.backend=sqlite_fts5`
 - optional semantic retrieval uses `retrieval.index.backend=sqlite_vec` plus a
@@ -149,8 +150,10 @@ durable backend for the stateful local stores that are safe to share across
 instances: responses, replay artifacts, conversations, stored Chat
 Completions, files, vector stores, vector-store files, and vector-store
 chunks. It intentionally keeps SQLite as a sidecar for code-interpreter runtime
-state and SQLite-specific maintenance commands until those have their own
-bounded migration slice.
+state until that runtime state has its own bounded migration slice. The
+maintenance contract is now backend-aware: SQLite uses native SQLite
+maintenance, while Postgres uses shim-owned cleanup and logical COPY
+backup/restore for the Postgres-owned tables.
 
 ## Configuration
 
@@ -370,8 +373,11 @@ Implementation boundary:
   contract.
 - Postgres stores responses, conversations, stored Chat Completions,
   file/vector-store data, and replay artifacts.
-- SQLite remains a sidecar for code-interpreter sessions/generated files and
-  maintenance operations that still require SQLite internals.
+- SQLite remains a sidecar for code-interpreter sessions/generated files.
+- `shimctl cleanup`, `optimize`, `vacuum`, `backup`, and `restore` operate on
+  the active storage backend. In Postgres mode, backup/restore use a
+  shim-owned logical COPY format for the Postgres-owned tables and keep file
+  content mirrored into the SQLite sidecar after restore.
 - The schema creates the pgvector extension because this slice is paired with
   pgvector retrieval in devstack.
 - List endpoints use SQL-side pagination and do not fetch file content just to
@@ -382,7 +388,7 @@ Out of current beta scope:
 - code-interpreter artifact storage migration
 - mixed SQLite/Postgres cross-store transactions
 - SQLite-to-Postgres migration tooling
-- Postgres-native cleanup/backup/restore commands for all stores
+- external `pg_dump`/`pg_restore` orchestration or cluster-level backup policy
 
 ### 4. pgvector Retrieval Alpha
 
@@ -424,6 +430,8 @@ Repo-owned smoke coverage:
   secondary
 - verify primary-created stored Chat Completions and normalized messages are
   readable through secondary
+- verify backend-aware `shimctl` maintenance for Postgres cleanup, optimize,
+  vacuum, and logical backup generation
 
 Run:
 
@@ -476,6 +484,8 @@ Postgres port. It opens each test case in an isolated schema and checks:
 - binary/unsupported file attachment failure state
 - pgvector semantic search, hybrid ranking, and capability reporting
 - rejection of SQLite-only retrieval indexes when `storage.backend=postgres`
+- Postgres maintenance cleanup, optimize/vacuum SQL, and logical backup/restore
+  round-trip for the current beta tables
 
 Postgres beta hardening now also covers:
 
@@ -490,9 +500,9 @@ Postgres beta hardening now also covers:
 Remaining work after the current Postgres beta slice:
 
 - code-interpreter sessions and generated files
-- backup/restore and maintenance operations
 - optional migration tools
 - Postgres-native cleanup/retention policies for local replay artifacts
+- richer operator guidance for cluster-native Postgres backup/restore policy
 - hard-delete and governance hooks, if V4 scope pulls them in
 
 ## Test Requirements

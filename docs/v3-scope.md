@@ -86,8 +86,9 @@ Status: `Planned`. See [v3-image-backends.md](v3-image-backends.md).
 Status: `Partial`; SQLite storage contracts, the retrieval-index contract,
 `sqlite_fts5`, `sqlite_vec`, the Postgres/pgvector path for retrieval objects,
 responses, conversations, stored Chat Completions, Postgres hardening coverage,
-and the first multi-instance shared-state smoke are implemented, while
-code-interpreter state, maintenance, and migration tooling are still planned.
+backend-aware Postgres maintenance, and the first multi-instance shared-state
+smoke are implemented, while code-interpreter state and migration tooling are
+still planned.
 See
 [v3-storage-retrieval-backends.md](v3-storage-retrieval-backends.md).
 
@@ -298,15 +299,16 @@ parity and should not promote flaky profile tasks into `codex-core` or
 ### 10. Ops and deployment expansion
 
 Status: `Partial`; Phase 0 inventory, the first bounded readiness-probe
-metrics slice, and the Postgres/pgvector beta multi-instance devstack profile
-are implemented. See [v3-ops-deployment.md](v3-ops-deployment.md).
+metrics slice, the Postgres/pgvector beta multi-instance devstack profile, and
+backend-aware storage maintenance are implemented. See
+[v3-ops-deployment.md](v3-ops-deployment.md).
 
 - multi-tenant authz / tenant isolation
 - richer exporters and dashboards
 - governance-heavy storage features such as encryption-at-rest options,
   redaction policy, and hard-delete controls
-- Postgres maintenance, backup/restore, migration, and remaining shared-state
-  deployment modes
+- SQLite-to-Postgres migration, cluster-native Postgres backup policy,
+  code-interpreter state migration, and remaining shared-state deployment modes
 
 This track should stay behind storage-backend interface hardening. It must not
 add hidden OpenAI-surface limits or tenant-specific request behavior that makes
@@ -318,7 +320,7 @@ The next practical implementation work should be selected from this queue:
 
 1. Continue [V3 Storage And Retrieval Backends](v3-storage-retrieval-backends.md)
    for the remaining Postgres beta work: broader durable-store migration,
-   migration tooling, shared maintenance/backup behavior, ANN indexing, or
+   migration tooling, code-interpreter state migration, ANN indexing, or
    additional embedders/rerankers.
 2. Continue [V3 Ops And Deployment Expansion](v3-ops-deployment.md) only for
    governance/tenanting after the shared storage beta boundary is stable.

@@ -33,6 +33,7 @@ type Store struct {
 	*sqlite.Store
 
 	db             *sql.DB
+	dsn            string
 	retrieval      retrieval.Config
 	embedder       retrieval.Embedder
 	embeddingModel string
@@ -130,6 +131,7 @@ func OpenWithOptions(ctx context.Context, dsn string, options OpenOptions) (*Sto
 	store := &Store{
 		Store:          sidecar,
 		db:             db,
+		dsn:            dsn,
 		retrieval:      cfg,
 		embedder:       embedder,
 		embeddingModel: cfg.Embedder.Model,

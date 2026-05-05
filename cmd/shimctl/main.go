@@ -13,6 +13,8 @@ import (
 	"llama_shim/internal/config"
 	"llama_shim/internal/llama"
 	"llama_shim/internal/retrieval"
+	"llama_shim/internal/storage"
+	"llama_shim/internal/storage/postgres"
 	"llama_shim/internal/storage/sqlite"
 )
 
@@ -62,7 +64,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 }
 
 func runCleanup(cfg config.ShimctlConfig, stdout io.Writer) error {
-	store, err := openStore(cfg)
+	store, err := openMaintenanceStore(cfg)
 	if err != nil {
 		return err
 	}
@@ -82,7 +84,7 @@ func runCleanup(cfg config.ShimctlConfig, stdout io.Writer) error {
 }
 
 func runOptimize(cfg config.ShimctlConfig, stdout io.Writer) error {
-	store, err := openStore(cfg)
+	store, err := openMaintenanceStore(cfg)
 	if err != nil {
 		return err
 	}
@@ -96,7 +98,7 @@ func runOptimize(cfg config.ShimctlConfig, stdout io.Writer) error {
 }
 
 func runVacuum(cfg config.ShimctlConfig, stdout io.Writer) error {
-	store, err := openStore(cfg)
+	store, err := openMaintenanceStore(cfg)
 	if err != nil {
 		return err
 	}
@@ -120,7 +122,7 @@ func runBackup(cfg config.ShimctlConfig, args []string, stdout, stderr io.Writer
 		return errors.New("backup requires -out")
 	}
 
-	store, err := openStore(cfg)
+	store, err := openMaintenanceStore(cfg)
 	if err != nil {
 		return err
 	}
@@ -136,7 +138,7 @@ func runBackup(cfg config.ShimctlConfig, args []string, stdout, stderr io.Writer
 func runRestore(cfg config.ShimctlConfig, args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("restore", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	fromPath := fs.String("from", "", "path to the backup SQLite file to restore from")
+	fromPath := fs.String("from", "", "path to the backup file to restore from")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -144,11 +146,27 @@ func runRestore(cfg config.ShimctlConfig, args []string, stdout, stderr io.Write
 		return errors.New("restore requires -from")
 	}
 
-	if err := sqlite.RestoreFromBackup(cfg.SQLitePath, *fromPath); err != nil {
+	switch cfg.StorageBackend {
+	case config.StorageBackendSQLite:
+		if err := sqlite.RestoreFromBackup(cfg.SQLitePath, *fromPath); err != nil {
+			return err
+		}
+		_, err := fmt.Fprintf(stdout, "restore completed: %s\n", cfg.SQLitePath)
 		return err
+	case config.StorageBackendPostgres:
+		store, err := openPostgresMaintenanceStore(cfg)
+		if err != nil {
+			return err
+		}
+		defer store.Close()
+		if err := store.RestoreFromBackup(context.Background(), *fromPath); err != nil {
+			return err
+		}
+		_, err = fmt.Fprintln(stdout, "restore completed: backend=postgres")
+		return err
+	default:
+		return fmt.Errorf("unsupported storage backend %q", cfg.StorageBackend)
 	}
-	_, err := fmt.Fprintf(stdout, "restore completed: %s\n", cfg.SQLitePath)
-	return err
 }
 
 func runProbe(cfg config.ShimctlConfig, args []string, stdout, stderr io.Writer) error {
@@ -196,7 +214,18 @@ func runProbe(cfg config.ShimctlConfig, args []string, stdout, stderr io.Writer)
 	return nil
 }
 
-func openStore(cfg config.ShimctlConfig) (*sqlite.Store, error) {
+func openMaintenanceStore(cfg config.ShimctlConfig) (storage.MaintenanceStore, error) {
+	switch cfg.StorageBackend {
+	case config.StorageBackendSQLite:
+		return openSQLiteMaintenanceStore(cfg)
+	case config.StorageBackendPostgres:
+		return openPostgresMaintenanceStore(cfg)
+	default:
+		return nil, fmt.Errorf("unsupported storage backend %q", cfg.StorageBackend)
+	}
+}
+
+func openSQLiteMaintenanceStore(cfg config.ShimctlConfig) (*sqlite.Store, error) {
 	ctx := context.Background()
 	embedder, err := retrieval.NewEmbedder(retrieval.EmbedderConfig{
 		Backend: cfg.RetrievalEmbedderBackend,
@@ -219,6 +248,18 @@ func openStore(cfg config.ShimctlConfig) (*sqlite.Store, error) {
 	})
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
+	}
+	return store, nil
+}
+
+func openPostgresMaintenanceStore(cfg config.ShimctlConfig) (*postgres.Store, error) {
+	ctx := context.Background()
+	store, err := postgres.OpenWithOptions(ctx, cfg.PostgresDSN, postgres.OpenOptions{
+		SQLitePath: cfg.SQLitePath,
+		Retrieval:  retrieval.Config{IndexBackend: retrieval.IndexBackendLexical},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("open postgres: %w", err)
 	}
 	return store, nil
 }

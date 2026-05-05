@@ -1,4 +1,4 @@
-.PHONY: run build lint test vet diff-check ci-check maint-cleanup maint-optimize maint-vacuum maint-backup docker-build compose-up compose-down postgres-storage-test devstack-up devstack-down devstack-smoke devstack-sqlite-fts5-smoke devstack-postgres-pgvector-smoke devstack-postgres-pgvector-multi-instance-up devstack-postgres-pgvector-multi-instance-smoke devstack-ci-smoke devstack-full-smoke responses-compat-external-smoke responses-compat-external-real-smoke responses-websocket-smoke v3-coding-tools-smoke v3-constrained-decoding-smoke v3-vllm-constrained-smoke codex-cli-devstack-smoke codex-cli-shell-tool-smoke codex-cli-coding-task-smoke codex-cli-task-matrix-smoke codex-cli-real-upstream-smoke codex-eval-smoke codex-eval-core codex-eval-core-shell codex-eval-core-websocket codex-eval-core-interactive codex-eval-core-profiles codex-eval-compat codex-eval-automated-profiles codex-eval-bench-lite codex-eval-loop-bench-lite codex-eval-shim-native codex-eval-shim-native-websocket codex-eval-shim-native-apply-patch-freeform codex-eval-shim-native-apply-patch-function codex-eval-shim-native-apply-patch-disabled codex-eval-shim-native-apply-patch-profiles codex-eval-shim-native-profiles codex-eval-real-upstream codex-eval-real-upstream-expanded codex-eval-matrix codex-eval-loop codex-eval-auto codex-eval-prune codex-eval-clean
+.PHONY: run build lint test vet diff-check ci-check maint-cleanup maint-optimize maint-vacuum maint-backup maint-restore docker-build compose-up compose-down postgres-storage-test devstack-up devstack-down devstack-smoke devstack-sqlite-fts5-smoke devstack-postgres-pgvector-smoke devstack-postgres-pgvector-multi-instance-up devstack-postgres-pgvector-multi-instance-smoke devstack-ci-smoke devstack-full-smoke responses-compat-external-smoke responses-compat-external-real-smoke responses-websocket-smoke v3-coding-tools-smoke v3-constrained-decoding-smoke v3-vllm-constrained-smoke codex-cli-devstack-smoke codex-cli-shell-tool-smoke codex-cli-coding-task-smoke codex-cli-task-matrix-smoke codex-cli-real-upstream-smoke codex-eval-smoke codex-eval-core codex-eval-core-shell codex-eval-core-websocket codex-eval-core-interactive codex-eval-core-profiles codex-eval-compat codex-eval-automated-profiles codex-eval-bench-lite codex-eval-loop-bench-lite codex-eval-shim-native codex-eval-shim-native-websocket codex-eval-shim-native-apply-patch-freeform codex-eval-shim-native-apply-patch-function codex-eval-shim-native-apply-patch-disabled codex-eval-shim-native-apply-patch-profiles codex-eval-shim-native-profiles codex-eval-real-upstream codex-eval-real-upstream-expanded codex-eval-matrix codex-eval-loop codex-eval-auto codex-eval-prune codex-eval-clean
 
 CONFIG ?= config.yaml
 BACKUP ?= ./.data/shim-backup.db
@@ -62,6 +62,10 @@ maint-vacuum:
 maint-backup:
 	$(TOOL_PREP)
 	$(TOOL_ENV) $(GO) run ./cmd/shimctl -config $(CONFIG) backup -out $(BACKUP)
+
+maint-restore:
+	$(TOOL_PREP)
+	$(TOOL_ENV) $(GO) run ./cmd/shimctl -config $(CONFIG) restore -from $(BACKUP)
 
 docker-build:
 	docker build -t $(IMAGE) .

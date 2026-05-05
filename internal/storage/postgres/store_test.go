@@ -539,6 +539,138 @@ func TestStoreStateSharedAcrossPostgresInstances(t *testing.T) {
 	require.Len(t, messages.Messages, 1)
 }
 
+func TestStorePostgresMaintenanceCleanup(t *testing.T) {
+	store, ctx, prefix := openPostgresTestStore(t, retrieval.IndexBackendLexical, nil)
+
+	expiredFile := testStoredFile(prefix+"file_expired", "expired.txt", "assistants", "expired content", 1712060000)
+	expiredFile.ExpiresAt = domain.Int64Ptr(1712060005)
+	activeFile := testStoredFile(prefix+"file_active", "active.txt", "assistants", "active content", 1712060001)
+	activeFile.ExpiresAt = domain.Int64Ptr(1712060999)
+	require.NoError(t, store.SaveFile(ctx, expiredFile))
+	require.NoError(t, store.SaveFile(ctx, activeFile))
+
+	expiredVectorStore := testVectorStore(prefix+"vs_expired", "Expired", 1712060002)
+	expiredVectorStore.ExpiresAt = domain.Int64Ptr(1712060005)
+	activeVectorStore := testVectorStore(prefix+"vs_active", "Active", 1712060003)
+	activeVectorStore.ExpiresAt = domain.Int64Ptr(1712060999)
+	require.NoError(t, store.SaveVectorStore(ctx, expiredVectorStore))
+	require.NoError(t, store.SaveVectorStore(ctx, activeVectorStore))
+	_, err := store.AttachFileToVectorStore(ctx, expiredVectorStore.ID, expiredFile.ID, map[string]any{}, domain.DefaultFileChunkingStrategy(), 1712060004)
+	require.NoError(t, err)
+
+	stats, err := store.CleanupExpiredState(ctx, 1712060010)
+	require.NoError(t, err)
+	require.Equal(t, 1, stats.ExpiredVectorStoresDeleted)
+	require.Equal(t, 1, stats.ExpiredFilesDeleted)
+	require.Equal(t, 2, stats.TotalDeleted())
+
+	_, err = store.GetVectorStore(ctx, expiredVectorStore.ID)
+	require.ErrorIs(t, err, storage.ErrNotFound)
+	_, err = store.GetFile(ctx, expiredFile.ID)
+	require.ErrorIs(t, err, storage.ErrNotFound)
+
+	_, err = store.GetVectorStore(ctx, activeVectorStore.ID)
+	require.NoError(t, err)
+	_, err = store.GetFile(ctx, activeFile.ID)
+	require.NoError(t, err)
+
+	require.NoError(t, store.Optimize(ctx))
+	require.NoError(t, store.Vacuum(ctx))
+}
+
+func TestStorePostgresBackupRestoreRoundTrip(t *testing.T) {
+	source, ctx, prefix := openPostgresTestStore(t, retrieval.IndexBackendLexical, nil)
+	target, _, _ := openPostgresTestStore(t, retrieval.IndexBackendLexical, nil)
+
+	file := testStoredFile(prefix+"file_backup", "backup.txt", "assistants", "backup content keyword", 1712060100)
+	require.NoError(t, source.SaveFile(ctx, file))
+	vectorStore := testVectorStore(prefix+"vs_backup", "Backup", 1712060101)
+	require.NoError(t, source.SaveVectorStore(ctx, vectorStore))
+	_, err := source.AttachFileToVectorStore(ctx, vectorStore.ID, file.ID, map[string]any{"suite": "backup"}, domain.DefaultFileChunkingStrategy(), 1712060102)
+	require.NoError(t, err)
+
+	response := domain.StoredResponse{
+		ID:                   prefix + "resp_backup",
+		Model:                "test-model",
+		RequestJSON:          `{"input":"backup"}`,
+		NormalizedInputItems: []domain.Item{domain.NewInputTextMessage("user", "backup")},
+		EffectiveInputItems:  []domain.Item{domain.NewInputTextMessage("user", "backup")},
+		Output:               []domain.Item{domain.NewOutputTextMessage("restored")},
+		OutputText:           "restored",
+		Store:                true,
+		CreatedAt:            "2026-05-05T12:00:00Z",
+		CompletedAt:          "2026-05-05T12:00:01Z",
+		ResponseJSON:         `{"id":"` + prefix + `resp_backup","object":"response","status":"completed","output":[]}`,
+	}
+	require.NoError(t, source.SaveResponse(ctx, response))
+	require.NoError(t, source.SaveResponseReplayArtifacts(ctx, response.ID, []domain.ResponseReplayArtifact{
+		{ResponseID: response.ID, Sequence: 1, EventType: "response.completed", PayloadJSON: `{"type":"response.completed"}`},
+	}))
+
+	conversation := domain.Conversation{
+		ID:        prefix + "conv_backup",
+		Object:    "conversation",
+		Version:   1,
+		Metadata:  map[string]string{"suite": "backup"},
+		CreatedAt: "2026-05-05T12:00:00Z",
+		UpdatedAt: "2026-05-05T12:00:00Z",
+		Items:     []domain.Item{domain.NewInputTextMessage("user", "seed")},
+	}
+	require.NoError(t, source.CreateConversation(ctx, conversation))
+
+	chat := domain.StoredChatCompletion{
+		ID:           prefix + "chat_backup",
+		Model:        "test-chat-model",
+		Metadata:     map[string]string{"suite": "backup"},
+		RequestJSON:  `{"model":"test-chat-model","messages":[{"role":"user","content":"hello"}]}`,
+		ResponseJSON: `{"id":"` + prefix + `chat_backup","object":"chat.completion","created":1714910200,"model":"test-chat-model","choices":[]}`,
+		CreatedAt:    1714910200,
+	}
+	require.NoError(t, source.SaveChatCompletion(ctx, chat))
+
+	backupPath := filepath.Join(t.TempDir(), "postgres-backup.sql")
+	require.NoError(t, source.BackupTo(ctx, backupPath))
+	require.FileExists(t, backupPath)
+
+	require.NoError(t, target.RestoreFromBackup(ctx, backupPath))
+
+	gotFile, err := target.GetFile(ctx, file.ID)
+	require.NoError(t, err)
+	require.Equal(t, file.Content, gotFile.Content)
+
+	searchPage, err := target.SearchVectorStore(ctx, domain.VectorStoreSearchQuery{
+		VectorStoreID:  vectorStore.ID,
+		Queries:        []string{"keyword"},
+		MaxNumResults:  3,
+		RawSearchQuery: "keyword",
+	})
+	require.NoError(t, err)
+	require.Len(t, searchPage.Results, 1)
+	require.Equal(t, file.ID, searchPage.Results[0].FileID)
+
+	gotResponse, err := target.GetResponse(ctx, response.ID)
+	require.NoError(t, err)
+	require.Equal(t, response.OutputText, gotResponse.OutputText)
+	artifacts, err := target.GetResponseReplayArtifacts(ctx, response.ID)
+	require.NoError(t, err)
+	require.Len(t, artifacts, 1)
+
+	gotConversation, items, err := target.GetConversation(ctx, conversation.ID)
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{"suite": "backup"}, gotConversation.Metadata)
+	require.Len(t, items, 1)
+
+	gotChat, err := target.GetChatCompletion(ctx, chat.ID)
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{"suite": "backup"}, gotChat.Metadata)
+	messages, err := target.ListChatCompletionMessages(ctx, chat.ID, domain.ListStoredChatCompletionMessagesQuery{
+		Limit: 10,
+		Order: domain.ChatCompletionOrderAsc,
+	})
+	require.NoError(t, err)
+	require.Len(t, messages.Messages, 1)
+}
+
 func TestStorePGVectorSemanticAndHybridSearch(t *testing.T) {
 	store, ctx, prefix := openPostgresTestStore(t, retrieval.IndexBackendPGVector, pgvectorTestEmbedder{})
 

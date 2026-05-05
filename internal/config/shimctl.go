@@ -6,12 +6,15 @@ import (
 	"time"
 
 	"llama_shim/internal/retrieval"
+	"llama_shim/internal/storage"
 
 	"github.com/spf13/viper"
 )
 
 type ShimctlConfig struct {
 	SQLitePath                     string
+	StorageBackend                 string
+	PostgresDSN                    string
 	LlamaBaseURL                   string
 	LlamaTimeout                   time.Duration
 	LlamaMaxConcurrentRequests     int
@@ -57,6 +60,8 @@ func LoadShimctl(configPath string) (ShimctlConfig, error) {
 
 	cfg := ShimctlConfig{
 		SQLitePath:               strings.TrimSpace(v.GetString("sqlite.path")),
+		StorageBackend:           strings.TrimSpace(v.GetString("storage.backend")),
+		PostgresDSN:              strings.TrimSpace(v.GetString("postgres.dsn")),
 		LlamaBaseURL:             strings.TrimRight(strings.TrimSpace(v.GetString("llama.base_url")), "/"),
 		ProbeBearerToken:         strings.TrimSpace(v.GetString("probe.bearer_token")),
 		ProbeModel:               strings.TrimSpace(v.GetString("probe.model")),
@@ -65,6 +70,14 @@ func LoadShimctl(configPath string) (ShimctlConfig, error) {
 		RetrievalEmbedderBaseURL: strings.TrimSpace(v.GetString("retrieval.embedder.base_url")),
 		RetrievalEmbedderModel:   strings.TrimSpace(v.GetString("retrieval.embedder.model")),
 		ConfigFile:               v.ConfigFileUsed(),
+	}
+	storageBackend, err := storage.NormalizeBackend(cfg.StorageBackend)
+	if err != nil {
+		return ShimctlConfig{}, fmt.Errorf("parse storage.backend: %w", err)
+	}
+	cfg.StorageBackend = storageBackend
+	if cfg.StorageBackend == StorageBackendPostgres && strings.TrimSpace(cfg.PostgresDSN) == "" {
+		return ShimctlConfig{}, fmt.Errorf("parse postgres.dsn: postgres dsn is required")
 	}
 
 	if err := parseDuration(v.GetString("llama.timeout"), &cfg.LlamaTimeout); err != nil {
@@ -137,7 +150,9 @@ func LoadShimctl(configPath string) (ShimctlConfig, error) {
 }
 
 func setShimctlDefaults(v *viper.Viper) {
+	v.SetDefault("storage.backend", storage.BackendSQLite)
 	v.SetDefault("sqlite.path", "./data/shim.db")
+	v.SetDefault("postgres.dsn", "")
 	v.SetDefault("llama.base_url", "http://127.0.0.1:8081")
 	v.SetDefault("llama.timeout", "60s")
 	v.SetDefault("llama.max_concurrent_requests", "4")

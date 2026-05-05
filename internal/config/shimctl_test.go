@@ -44,6 +44,10 @@ func TestLoadShimctlFromYAMLFile(t *testing.T) {
 	writeFile(t, configPath, `
 sqlite:
   path: ./tmp/shimctl.db
+storage:
+  backend: postgres
+postgres:
+  dsn: postgres://shimctl:shimctl@127.0.0.1:5432/shimctl?sslmode=disable
 llama:
   base_url: http://127.0.0.1:9191
   timeout: 22s
@@ -75,6 +79,8 @@ retrieval:
 	cfg, err := config.LoadShimctl(configPath)
 	require.NoError(t, err)
 	require.Equal(t, "./tmp/shimctl.db", cfg.SQLitePath)
+	require.Equal(t, config.StorageBackendPostgres, cfg.StorageBackend)
+	require.Equal(t, "postgres://shimctl:shimctl@127.0.0.1:5432/shimctl?sslmode=disable", cfg.PostgresDSN)
 	require.Equal(t, "http://127.0.0.1:9191", cfg.LlamaBaseURL)
 	require.Equal(t, 22*time.Second, cfg.LlamaTimeout)
 	require.Equal(t, 5, cfg.LlamaMaxConcurrentRequests)
@@ -179,6 +185,8 @@ func TestLoadShimctlUsesDefaults(t *testing.T) {
 	cfg, err := config.LoadShimctl("")
 	require.NoError(t, err)
 	require.Equal(t, "./data/shim.db", cfg.SQLitePath)
+	require.Equal(t, config.StorageBackendSQLite, cfg.StorageBackend)
+	require.Empty(t, cfg.PostgresDSN)
 	require.Equal(t, "http://127.0.0.1:8081", cfg.LlamaBaseURL)
 	require.Equal(t, 60*time.Second, cfg.LlamaTimeout)
 	require.Equal(t, 4, cfg.LlamaMaxConcurrentRequests)
@@ -187,4 +195,17 @@ func TestLoadShimctlUsesDefaults(t *testing.T) {
 	require.Equal(t, 8*time.Second, cfg.ProbeRequestTimeout)
 	require.Empty(t, cfg.ProbeBearerToken)
 	require.Empty(t, cfg.ProbeModel)
+}
+
+func TestLoadShimctlPostgresRequiresDSN(t *testing.T) {
+	disableSharedDotEnv(t)
+
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	writeFile(t, configPath, `
+storage:
+  backend: postgres
+`)
+
+	_, err := config.LoadShimctl(configPath)
+	require.ErrorContains(t, err, "parse postgres.dsn")
 }

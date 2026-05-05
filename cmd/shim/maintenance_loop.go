@@ -6,16 +6,16 @@ import (
 	"time"
 
 	"llama_shim/internal/domain"
-	"llama_shim/internal/storage/sqlite"
+	"llama_shim/internal/storage"
 )
 
-func startSQLiteMaintenanceCleanupLoop(ctx context.Context, logger *slog.Logger, store *sqlite.Store, interval time.Duration) {
+func startStorageMaintenanceCleanupLoop(ctx context.Context, logger *slog.Logger, store storage.MaintenanceStore, interval time.Duration) {
 	if interval <= 0 || store == nil {
 		return
 	}
 
 	go func() {
-		runSQLiteMaintenanceCleanupSweep(ctx, logger, store)
+		runStorageMaintenanceCleanupSweep(ctx, logger, store)
 
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
@@ -25,17 +25,17 @@ func startSQLiteMaintenanceCleanupLoop(ctx context.Context, logger *slog.Logger,
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				runSQLiteMaintenanceCleanupSweep(ctx, logger, store)
+				runStorageMaintenanceCleanupSweep(ctx, logger, store)
 			}
 		}
 	}()
 }
 
-func runSQLiteMaintenanceCleanupSweep(ctx context.Context, logger *slog.Logger, store *sqlite.Store) {
+func runStorageMaintenanceCleanupSweep(ctx context.Context, logger *slog.Logger, store storage.MaintenanceStore) {
 	stats, err := store.CleanupExpiredState(ctx, domain.NowUTC().Unix())
 	if err != nil {
 		if logger != nil {
-			logger.Warn("sqlite maintenance cleanup sweep failed", "err", err)
+			logger.Warn("storage maintenance cleanup sweep failed", "err", err)
 		}
 		return
 	}
@@ -43,7 +43,7 @@ func runSQLiteMaintenanceCleanupSweep(ctx context.Context, logger *slog.Logger, 
 		return
 	}
 	logger.Info(
-		"sqlite maintenance cleanup sweep completed",
+		"storage maintenance cleanup sweep completed",
 		"expired_vector_stores_deleted", stats.ExpiredVectorStoresDeleted,
 		"expired_files_deleted", stats.ExpiredFilesDeleted,
 	)

@@ -1,7 +1,8 @@
 # V3 Ops And Deployment Expansion
 
-Status: partial; Phase 0 inventory, the first bounded observability slice, and
-the Postgres/pgvector beta multi-instance devstack profile are implemented.
+Status: partial; Phase 0 inventory, the first bounded observability slice, the
+Postgres/pgvector beta multi-instance devstack profile, and backend-aware
+storage maintenance are implemented.
 
 Last updated: May 5, 2026.
 
@@ -26,7 +27,9 @@ The shim already exposes basic operational surfaces:
 - Postgres/pgvector beta persistence for responses, response replay artifacts,
   conversations, stored Chat Completions, files, vector stores, vector-store
   files, and vector-store chunks, with SQLite sidecar ownership for
-  code-interpreter sessions and maintenance commands
+  code-interpreter sessions
+- backend-aware `shimctl` cleanup, optimize, vacuum, backup, and restore for
+  SQLite and the Postgres-owned beta tables
 - package-level `make postgres-storage-test` and HTTP-level
   `make devstack-postgres-pgvector-smoke` coverage for the Postgres beta path
 - a focused Postgres/pgvector multi-instance devstack smoke path that runs two
@@ -131,9 +134,9 @@ Inventory summary:
 | Readiness | `/readyz` checks storage, upstream model backend, and optional retrieval, web-search, and image-generation backends. | backend-neutral API, component-specific probes |
 | Capability manifest | `/debug/capabilities` reports active storage, retrieval, tool, runtime, compaction, metrics, and probe state. | backend-neutral manifest with backend-specific values |
 | Metrics | `/metrics` exposes HTTP, auth, rate-limit, upstream admission/queue, in-flight/queued, retrieval, code-interpreter, and readiness-probe metrics. | backend-neutral, bounded labels |
-| Storage maintenance | `shimctl cleanup`, `optimize`, `vacuum`, and `backup` currently operate on the SQLite store. | SQLite-specific |
+| Storage maintenance | `shimctl cleanup`, `optimize`, `vacuum`, `backup`, and `restore` operate on the active storage backend. | SQLite or Postgres beta tables |
 | Default persistence | SQLite owns responses, conversations, chat completions, files, vector stores, code-interpreter state, and maintenance. | SQLite |
-| Postgres beta persistence | Postgres owns responses, response replay artifacts, conversations, stored Chat Completions, files, vector stores, vector-store files, and vector-store chunks; SQLite remains sidecar for code-interpreter state and maintenance. | Postgres beta plus SQLite sidecar |
+| Postgres beta persistence | Postgres owns responses, response replay artifacts, conversations, stored Chat Completions, files, vector stores, vector-store files, and vector-store chunks; SQLite remains sidecar for code-interpreter state. | Postgres beta plus SQLite sidecar |
 | Multi-instance devstack | Optional Compose `multi-instance` profile starts a secondary shim on the same Postgres store with a separate SQLite sidecar and log file. | Postgres state/retrieval objects shared; code-interpreter sidecar state instance-local |
 | Devstack smokes | Default, sqlite_fts5, Postgres/pgvector, Postgres/pgvector multi-instance, WebSocket, constrained decoding, coding-tools, Codex, and external tester smokes. | mixed, documented per smoke |
 
@@ -172,14 +175,18 @@ Implemented boundary:
 
 Maintenance boundary:
 
-- SQLite sidecar cleanup remains per instance for code-interpreter state and
-  other SQLite-owned maintenance.
+- Runtime storage cleanup now targets the active storage backend. In Postgres
+  mode it removes expired Postgres files and vector stores; code-interpreter
+  cleanup remains a separate per-instance SQLite sidecar/runtime sweep.
+- `shimctl cleanup`, `optimize`, `vacuum`, `backup`, and `restore` are
+  backend-aware. Postgres backup/restore use a shim-owned logical COPY file for
+  the current beta tables, not cluster-level `pg_dump`/`pg_restore`.
 - Postgres object-storage migrations still run at process startup and are
   idempotent for the current beta schema.
-- There is still no shared leader election, advisory lock, Postgres cleanup
-  loop, backup/restore command, or SQLite-to-Postgres migration tool. Those
-  belong to the Postgres beta/hardening track, not this Phase 2 deployment
-  smoke.
+- There is still no shared leader election for automatic cleanup loops,
+  SQLite-to-Postgres migration tool, cluster-native backup policy, or
+  code-interpreter state migration. Those belong to later Postgres
+  beta/hardening slices, not the multi-instance deployment smoke.
 
 ### Phase 3: Governance/Tenanting
 

@@ -91,12 +91,14 @@ Important distinction:
 
 Background cleanup:
 
-- `sqlite.maintenance.cleanup_interval` sweeps local resources with explicit
-  `expires_at`
+- `sqlite.maintenance.cleanup_interval` controls the storage-maintenance
+  sweep interval for the active storage backend. In SQLite mode it sweeps
+  SQLite resources with explicit `expires_at`; in Postgres mode it sweeps the
+  Postgres-owned files and vector stores with explicit `expires_at`.
 - `responses.code_interpreter.cleanup_interval` handles expired local code
   interpreter containers separately
 
-One-shot maintenance:
+One-shot maintenance for the configured backend:
 
 ```bash
 go run ./cmd/shimctl -config ./config.yaml cleanup
@@ -105,6 +107,21 @@ go run ./cmd/shimctl -config ./config.yaml vacuum
 go run ./cmd/shimctl -config ./config.yaml backup -out ./.data/shim-backup.db
 go run ./cmd/shimctl -config ./config.yaml restore -from ./.data/shim-backup.db
 ```
+
+For Postgres mode, configure `storage.backend=postgres` and `postgres.dsn` in
+`config.yaml`, or provide matching environment overrides:
+
+```bash
+STORAGE_BACKEND=postgres \
+POSTGRES_DSN=postgres://llama_shim:llama_shim@127.0.0.1:15432/llama_shim?sslmode=disable \
+SQLITE_PATH=./.data/shim-postgres-sidecar.db \
+go run ./cmd/shimctl -config ./config.yaml backup -out ./.data/shim-postgres-backup.sql
+```
+
+Postgres backup/restore is a shim-owned logical COPY format for the current
+Postgres-owned state and retrieval tables. It is useful for local/devstack
+operations and regression checks, but it is not a replacement for a
+cluster-level `pg_dump`/`pg_restore`, PITR, or managed-database backup policy.
 
 ## Auth, Limits, And Logging
 
@@ -118,7 +135,8 @@ The shim also supports:
 ## Gotchas
 
 - `restore` is intentionally an offline-oriented operation; stop the running
-  shim before replacing the SQLite file.
+  shim before replacing the SQLite file or truncating/restoring the
+  Postgres-owned shim tables.
 - Cleanup is intentionally conservative and currently targets only explicit
   local expiry-managed resources.
 

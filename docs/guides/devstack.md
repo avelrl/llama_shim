@@ -296,14 +296,16 @@ environment first, then run `make devstack-postgres-pgvector-smoke`. It checks
 that `/debug/capabilities` reports Postgres for responses, conversations,
 stored Chat Completions, files, and vector stores, `sqlite_sidecar` for
 code-interpreter state, pgvector semantic/hybrid retrieval, direct vector-store
-search, local Responses `file_search`, and cleanup.
+search, local Responses `file_search`, cleanup, optimize/vacuum, and logical
+Postgres backup generation.
 
 `make postgres-storage-test` is the focused package-level Postgres beta test.
 It uses `POSTGRES_TEST_DSN`, defaulting to the devstack Postgres port, creates
 an isolated schema per test, and checks response/conversation/stored-chat
 persistence, replay artifacts, multi-instance shared reads/appends,
 file/vector-store persistence, pagination, SQLite sidecar mirroring, binary
-attachment failure, lexical retrieval, and pgvector semantic/hybrid retrieval.
+attachment failure, lexical retrieval, pgvector semantic/hybrid retrieval, and
+Postgres logical backup/restore round-trip coverage.
 Run it after `make
 devstack-up`; it complements the HTTP smoke above instead of replacing it.
 
