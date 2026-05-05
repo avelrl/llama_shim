@@ -511,10 +511,10 @@ Shim reality:
 - The Postgres storage path serializes app-owned schema migration and
   cleans chunk rows when a vector-store file is deleted from a vector store;
   these are internal store invariants, not OpenAI wire-contract changes.
-- Backend-aware maintenance now covers cleanup, optimize/vacuum, and
-  shim-owned logical backup/restore for SQLite and the Postgres beta tables.
-  This is an operator surface, not an OpenAI hosted retention or storage
-  contract.
+- Backend-aware maintenance now covers cleanup, optimize/vacuum, shim-owned
+  logical backup/restore, and SQLite-to-Postgres migration for the current
+  Postgres-owned beta tables. These are operator surfaces, not OpenAI hosted
+  retention or storage contracts.
 - Local `file_search` injects bounded grounding context before final answer
   generation.
 - Hosted ranking quality, billing semantics, and exact citation placement are

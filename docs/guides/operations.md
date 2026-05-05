@@ -123,6 +123,43 @@ Postgres-owned state and retrieval tables. It is useful for local/devstack
 operations and regression checks, but it is not a replacement for a
 cluster-level `pg_dump`/`pg_restore`, PITR, or managed-database backup policy.
 
+Move current SQLite state into the Postgres beta store:
+
+```bash
+STORAGE_BACKEND=postgres \
+POSTGRES_DSN=postgres://llama_shim:llama_shim@127.0.0.1:15432/llama_shim?sslmode=disable \
+go run ./cmd/shimctl -config ./config.yaml migrate sqlite-to-postgres \
+  -sqlite ./.data/shim.db \
+  -dry-run
+
+STORAGE_BACKEND=postgres \
+POSTGRES_DSN=postgres://llama_shim:llama_shim@127.0.0.1:15432/llama_shim?sslmode=disable \
+go run ./cmd/shimctl -config ./config.yaml migrate sqlite-to-postgres \
+  -sqlite ./.data/shim.db \
+  -replace
+```
+
+The migration copies only the Postgres-owned beta tables: responses, response
+replay artifacts, conversations/items, stored Chat Completions/messages, files,
+vector stores, vector-store files, and vector-store chunks. It leaves
+code-interpreter sessions/generated files in SQLite sidecar ownership. Without
+`-replace`, writes fail when any target migration table is already populated.
+The command prints a JSON report with source counts, target counts, copied
+counts, and whether an explicit replace is required.
+
+Equivalent Make wrapper:
+
+```bash
+STORAGE_BACKEND=postgres \
+POSTGRES_DSN=postgres://llama_shim:llama_shim@127.0.0.1:15432/llama_shim?sslmode=disable \
+make maint-migrate-sqlite-to-postgres
+
+STORAGE_BACKEND=postgres \
+POSTGRES_DSN=postgres://llama_shim:llama_shim@127.0.0.1:15432/llama_shim?sslmode=disable \
+MIGRATE_FLAGS=-replace \
+make maint-migrate-sqlite-to-postgres
+```
+
 ## Auth, Limits, And Logging
 
 The shim also supports:
@@ -137,6 +174,9 @@ The shim also supports:
 - `restore` is intentionally an offline-oriented operation; stop the running
   shim before replacing the SQLite file or truncating/restoring the
   Postgres-owned shim tables.
+- `migrate sqlite-to-postgres` is also offline-oriented; stop the running shim
+  while copying into Postgres, and review `-dry-run` output before using
+  `-replace`.
 - Cleanup is intentionally conservative and currently targets only explicit
   local expiry-managed resources.
 

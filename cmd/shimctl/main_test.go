@@ -236,6 +236,11 @@ probe:
 	require.NotContains(t, stderr.String(), "preview=\"{\\\"id\\\":\\\"chatcmpl-test\\\"")
 }
 
+func TestDefaultMigrationTargetSidecarPath(t *testing.T) {
+	require.Equal(t, ".data/shim.postgres-sidecar.db", defaultMigrationTargetSidecarPath(".data/shim.db"))
+	require.Equal(t, "shim.postgres-sidecar.db", defaultMigrationTargetSidecarPath("shim"))
+}
+
 func writeShimctlConfig(t *testing.T, body string) string {
 	t.Helper()
 

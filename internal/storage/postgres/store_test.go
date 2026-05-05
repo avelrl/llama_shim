@@ -17,6 +17,7 @@ import (
 	"llama_shim/internal/domain"
 	"llama_shim/internal/retrieval"
 	"llama_shim/internal/storage"
+	"llama_shim/internal/storage/sqlite"
 )
 
 type pgvectorTestEmbedder struct{}
@@ -671,6 +672,95 @@ func TestStorePostgresBackupRestoreRoundTrip(t *testing.T) {
 	require.Len(t, messages.Messages, 1)
 }
 
+func TestStoreMigrateSQLiteToPostgres(t *testing.T) {
+	target, ctx, prefix := openPostgresTestStore(t, retrieval.IndexBackendLexical, nil)
+
+	sourcePath := filepath.Join(t.TempDir(), "source.db")
+	source, err := sqlite.Open(ctx, sourcePath)
+	require.NoError(t, err)
+	fixture := seedSQLiteMigrationFixture(t, ctx, source, prefix)
+	require.NoError(t, source.Close())
+
+	dryRun, err := target.MigrateSQLiteToPostgres(ctx, sourcePath, SQLiteMigrationOptions{DryRun: true})
+	require.NoError(t, err)
+	require.True(t, dryRun.DryRun)
+	require.False(t, dryRun.RequiresReplace)
+	require.False(t, dryRun.CodeInterpreterMigrated)
+	filesTable, err := migrationReportTable(dryRun, "files")
+	require.NoError(t, err)
+	require.Equal(t, int64(1), filesTable.SourceRows)
+	chunksTable, err := migrationReportTable(dryRun, "vector_store_chunks")
+	require.NoError(t, err)
+	require.Positive(t, chunksTable.SourceRows)
+	_, err = target.GetFile(ctx, fixture.fileID)
+	require.ErrorIs(t, err, storage.ErrNotFound)
+
+	existing := testStoredFile(prefix+"file_existing", "existing.txt", "assistants", "existing target", 1712060300)
+	require.NoError(t, target.SaveFile(ctx, existing))
+	nonEmpty, err := target.MigrateSQLiteToPostgres(ctx, sourcePath, SQLiteMigrationOptions{})
+	require.ErrorContains(t, err, "target postgres migration tables are not empty")
+	require.True(t, nonEmpty.RequiresReplace)
+	_, err = target.GetFile(ctx, existing.ID)
+	require.NoError(t, err)
+
+	report, err := target.MigrateSQLiteToPostgres(ctx, sourcePath, SQLiteMigrationOptions{Replace: true})
+	require.NoError(t, err)
+	require.False(t, report.DryRun)
+	require.True(t, report.Replace)
+	require.Equal(t, report.TotalSourceRows, report.TotalCopiedRows)
+	require.False(t, report.CodeInterpreterMigrated)
+	_, err = target.GetFile(ctx, existing.ID)
+	require.ErrorIs(t, err, storage.ErrNotFound)
+
+	gotFile, err := target.GetFile(ctx, fixture.fileID)
+	require.NoError(t, err)
+	require.Equal(t, []byte("sqlite migration keyword content"), gotFile.Content)
+	sidecarFile, err := target.SQLiteSidecar().GetFile(ctx, fixture.fileID)
+	require.NoError(t, err)
+	require.Equal(t, gotFile.Content, sidecarFile.Content)
+
+	searchPage, err := target.SearchVectorStore(ctx, domain.VectorStoreSearchQuery{
+		VectorStoreID:  fixture.vectorStoreID,
+		Queries:        []string{"keyword"},
+		MaxNumResults:  3,
+		RawSearchQuery: "keyword",
+	})
+	require.NoError(t, err)
+	require.Len(t, searchPage.Results, 1)
+	require.Equal(t, fixture.fileID, searchPage.Results[0].FileID)
+
+	gotResponse, err := target.GetResponse(ctx, fixture.responseID)
+	require.NoError(t, err)
+	require.Equal(t, "migrated response", gotResponse.OutputText)
+	artifacts, err := target.GetResponseReplayArtifacts(ctx, fixture.responseID)
+	require.NoError(t, err)
+	require.Len(t, artifacts, 1)
+
+	gotConversation, items, err := target.GetConversation(ctx, fixture.conversationID)
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{"suite": "sqlite-migration"}, gotConversation.Metadata)
+	require.Len(t, items, 1)
+
+	gotChat, err := target.GetChatCompletion(ctx, fixture.chatCompletionID)
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{"suite": "sqlite-migration"}, gotChat.Metadata)
+	messages, err := target.ListChatCompletionMessages(ctx, fixture.chatCompletionID, domain.ListStoredChatCompletionMessagesQuery{
+		Limit: 10,
+		Order: domain.ChatCompletionOrderAsc,
+	})
+	require.NoError(t, err)
+	require.Len(t, messages.Messages, 1)
+}
+
+func migrationReportTable(report SQLiteMigrationReport, name string) (SQLiteMigrationTableReport, error) {
+	for _, table := range report.Tables {
+		if table.Name == name {
+			return table, nil
+		}
+	}
+	return SQLiteMigrationTableReport{}, fmt.Errorf("migration report table %q not found", name)
+}
+
 func TestStorePGVectorSemanticAndHybridSearch(t *testing.T) {
 	store, ctx, prefix := openPostgresTestStore(t, retrieval.IndexBackendPGVector, pgvectorTestEmbedder{})
 
@@ -715,6 +805,72 @@ func TestStorePGVectorSemanticAndHybridSearch(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, page.Results)
 	require.Equal(t, fileLexical.ID, page.Results[0].FileID)
+}
+
+type sqliteMigrationFixture struct {
+	fileID           string
+	vectorStoreID    string
+	responseID       string
+	conversationID   string
+	chatCompletionID string
+}
+
+func seedSQLiteMigrationFixture(t *testing.T, ctx context.Context, source *sqlite.Store, prefix string) sqliteMigrationFixture {
+	t.Helper()
+
+	file := testStoredFile(prefix+"file_sqlite_migrate", "migrate.txt", "assistants", "sqlite migration keyword content", 1712060200)
+	require.NoError(t, source.SaveFile(ctx, file))
+	vectorStore := testVectorStore(prefix+"vs_sqlite_migrate", "SQLite Migration", 1712060201)
+	require.NoError(t, source.SaveVectorStore(ctx, vectorStore))
+	_, err := source.AttachFileToVectorStore(ctx, vectorStore.ID, file.ID, map[string]any{"suite": "sqlite-migration"}, domain.DefaultFileChunkingStrategy(), 1712060202)
+	require.NoError(t, err)
+
+	response := domain.StoredResponse{
+		ID:                   prefix + "resp_sqlite_migrate",
+		Model:                "test-model",
+		RequestJSON:          `{"input":"migrate"}`,
+		NormalizedInputItems: []domain.Item{domain.NewInputTextMessage("user", "migrate")},
+		EffectiveInputItems:  []domain.Item{domain.NewInputTextMessage("user", "migrate")},
+		Output:               []domain.Item{domain.NewOutputTextMessage("migrated response")},
+		OutputText:           "migrated response",
+		Store:                true,
+		CreatedAt:            "2026-05-05T12:10:00Z",
+		CompletedAt:          "2026-05-05T12:10:01Z",
+		ResponseJSON:         `{"id":"` + prefix + `resp_sqlite_migrate","object":"response","status":"completed","output":[]}`,
+	}
+	require.NoError(t, source.SaveResponse(ctx, response))
+	require.NoError(t, source.SaveResponseReplayArtifacts(ctx, response.ID, []domain.ResponseReplayArtifact{
+		{ResponseID: response.ID, Sequence: 1, EventType: "response.completed", PayloadJSON: `{"type":"response.completed"}`},
+	}))
+
+	conversation := domain.Conversation{
+		ID:        prefix + "conv_sqlite_migrate",
+		Object:    "conversation",
+		Version:   1,
+		Metadata:  map[string]string{"suite": "sqlite-migration"},
+		CreatedAt: "2026-05-05T12:10:00Z",
+		UpdatedAt: "2026-05-05T12:10:00Z",
+		Items:     []domain.Item{domain.NewInputTextMessage("user", "seed")},
+	}
+	require.NoError(t, source.CreateConversation(ctx, conversation))
+
+	chat := domain.StoredChatCompletion{
+		ID:           prefix + "chat_sqlite_migrate",
+		Model:        "test-chat-model",
+		Metadata:     map[string]string{"suite": "sqlite-migration"},
+		RequestJSON:  `{"model":"test-chat-model","messages":[{"role":"user","content":"hello"}]}`,
+		ResponseJSON: `{"id":"` + prefix + `chat_sqlite_migrate","object":"chat.completion","created":1714910300,"model":"test-chat-model","choices":[]}`,
+		CreatedAt:    1714910300,
+	}
+	require.NoError(t, source.SaveChatCompletion(ctx, chat))
+
+	return sqliteMigrationFixture{
+		fileID:           file.ID,
+		vectorStoreID:    vectorStore.ID,
+		responseID:       response.ID,
+		conversationID:   conversation.ID,
+		chatCompletionID: chat.ID,
+	}
 }
 
 func openPostgresTestStore(t *testing.T, indexBackend string, embedder retrieval.Embedder) (*Store, context.Context, string) {

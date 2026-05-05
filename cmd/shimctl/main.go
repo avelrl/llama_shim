@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"llama_shim/internal/config"
@@ -57,6 +59,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return runBackup(cfg, rest[1:], stdout, stderr)
 	case "restore":
 		return runRestore(cfg, rest[1:], stdout, stderr)
+	case "migrate":
+		return runMigrate(cfg, rest[1:], stdout, stderr)
 	default:
 		printUsage(stderr)
 		return fmt.Errorf("unknown maintenance command %q", rest[0])
@@ -169,6 +173,63 @@ func runRestore(cfg config.ShimctlConfig, args []string, stdout, stderr io.Write
 	}
 }
 
+func runMigrate(cfg config.ShimctlConfig, args []string, stdout, stderr io.Writer) error {
+	if len(args) == 0 {
+		return errors.New("migrate requires a migration name")
+	}
+	switch args[0] {
+	case "sqlite-to-postgres":
+		return runMigrateSQLiteToPostgres(cfg, args[1:], stdout, stderr)
+	default:
+		return fmt.Errorf("unknown migration %q", args[0])
+	}
+}
+
+func runMigrateSQLiteToPostgres(cfg config.ShimctlConfig, args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("migrate sqlite-to-postgres", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	sourcePath := fs.String("sqlite", cfg.SQLitePath, "source SQLite database path")
+	targetSidecarPath := fs.String("target-sidecar", "", "SQLite sidecar path to use while opening the target Postgres store")
+	dryRun := fs.Bool("dry-run", false, "count source and target rows without writing")
+	replace := fs.Bool("replace", false, "truncate Postgres-owned migration tables before copying")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if strings.TrimSpace(cfg.PostgresDSN) == "" {
+		return errors.New("migrate sqlite-to-postgres requires postgres.dsn")
+	}
+	source := strings.TrimSpace(*sourcePath)
+	if source == "" {
+		return errors.New("migrate sqlite-to-postgres requires -sqlite")
+	}
+	targetSidecar := strings.TrimSpace(*targetSidecarPath)
+	if targetSidecar == "" {
+		targetSidecar = defaultMigrationTargetSidecarPath(source)
+	}
+	if filepath.Clean(targetSidecar) == filepath.Clean(source) {
+		return errors.New("target sidecar path must differ from the source SQLite path")
+	}
+
+	store, err := openPostgresMigrationStore(cfg, targetSidecar)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+
+	report, err := store.MigrateSQLiteToPostgres(context.Background(), source, postgres.SQLiteMigrationOptions{
+		DryRun:  *dryRun,
+		Replace: *replace,
+	})
+	if err == nil || len(report.Tables) != 0 {
+		encoder := json.NewEncoder(stdout)
+		encoder.SetIndent("", "  ")
+		if encodeErr := encoder.Encode(report); encodeErr != nil {
+			return fmt.Errorf("encode migration report: %w", encodeErr)
+		}
+	}
+	return err
+}
+
 func runProbe(cfg config.ShimctlConfig, args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("probe", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -264,12 +325,57 @@ func openPostgresMaintenanceStore(cfg config.ShimctlConfig) (*postgres.Store, er
 	return store, nil
 }
 
+func openPostgresMigrationStore(cfg config.ShimctlConfig, targetSidecarPath string) (*postgres.Store, error) {
+	ctx := context.Background()
+	indexBackend := cfg.RetrievalIndexBackend
+	if indexBackend != retrieval.IndexBackendPGVector {
+		indexBackend = retrieval.IndexBackendLexical
+	}
+	options := postgres.OpenOptions{
+		SQLitePath: targetSidecarPath,
+		Retrieval: retrieval.Config{
+			IndexBackend: indexBackend,
+			Embedder: retrieval.EmbedderConfig{
+				Backend: cfg.RetrievalEmbedderBackend,
+				BaseURL: cfg.RetrievalEmbedderBaseURL,
+				Model:   cfg.RetrievalEmbedderModel,
+			},
+		},
+	}
+	if indexBackend == retrieval.IndexBackendPGVector {
+		embedder, err := retrieval.NewEmbedder(options.Retrieval.Embedder)
+		if err != nil {
+			return nil, fmt.Errorf("build retrieval embedder: %w", err)
+		}
+		options.Embedder = embedder
+	}
+	store, err := postgres.OpenWithOptions(ctx, cfg.PostgresDSN, options)
+	if err != nil {
+		return nil, fmt.Errorf("open postgres: %w", err)
+	}
+	return store, nil
+}
+
+func defaultMigrationTargetSidecarPath(sourcePath string) string {
+	dir := filepath.Dir(sourcePath)
+	base := filepath.Base(sourcePath)
+	ext := filepath.Ext(base)
+	stem := strings.TrimSuffix(base, ext)
+	if stem == "" {
+		stem = base
+	}
+	if ext == "" {
+		ext = ".db"
+	}
+	return filepath.Join(dir, stem+".postgres-sidecar"+ext)
+}
+
 func retrievalNowUnix() int64 {
 	return time.Now().UTC().Unix()
 }
 
 func printUsage(w io.Writer) {
-	_, _ = fmt.Fprintln(w, "usage: shimctl [-config path-to-config.yaml] <cleanup|optimize|vacuum|probe|backup|restore> [flags]")
+	_, _ = fmt.Fprintln(w, "usage: shimctl [-config path-to-config.yaml] <cleanup|optimize|vacuum|probe|backup|restore|migrate> [flags]")
 }
 
 func printProbeProgress(w io.Writer, event llama.StartupCalibrationProgressEvent) {

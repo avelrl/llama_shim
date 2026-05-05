@@ -87,15 +87,16 @@ Status: `Partial`; SQLite storage contracts, the retrieval-index contract,
 `sqlite_fts5`, `sqlite_vec`, the Postgres/pgvector path for retrieval objects,
 responses, conversations, stored Chat Completions, Postgres hardening coverage,
 backend-aware Postgres maintenance, and the first multi-instance shared-state
-smoke are implemented, while code-interpreter state and migration tooling are
-still planned.
+smoke are implemented. SQLite-to-Postgres migration tooling is implemented for
+the current Postgres-owned beta tables, while code-interpreter state ownership
+is still planned.
 See
 [v3-storage-retrieval-backends.md](v3-storage-retrieval-backends.md).
 
 - ANN indexing beyond the current exact local subset
 - broader Postgres / multi-instance storage modes beyond the current
   responses/conversations/stored-chat/file/vector boundary
-- SQLite-to-Postgres migration and code-interpreter store ownership
+- code-interpreter store ownership
 - replay/artifact retention policy, cluster-native Postgres backup runbook,
   hard-delete/governance hooks, and ANN index management
 - more embedders and rerankers beyond the current compatibility-driven set
@@ -302,15 +303,16 @@ parity and should not promote flaky profile tasks into `codex-core` or
 
 Status: `Partial`; Phase 0 inventory, the first bounded readiness-probe
 metrics slice, the Postgres/pgvector beta multi-instance devstack profile, and
-backend-aware storage maintenance are implemented. See
+backend-aware storage maintenance are implemented. SQLite-to-Postgres migration
+for the Postgres-owned beta tables is implemented in the storage track. See
 [v3-ops-deployment.md](v3-ops-deployment.md).
 
 - multi-tenant authz / tenant isolation
 - richer exporters and dashboards
 - governance-heavy storage features such as encryption-at-rest options,
   redaction policy, and hard-delete controls
-- SQLite-to-Postgres migration, cluster-native Postgres backup policy,
-  code-interpreter state migration, and remaining shared-state deployment modes
+- cluster-native Postgres backup policy, code-interpreter state migration, and
+  remaining shared-state deployment modes
 
 This track should stay behind storage-backend interface hardening. It must not
 add hidden OpenAI-surface limits or tenant-specific request behavior that makes
@@ -321,10 +323,10 @@ the public compatibility story less truthful.
 The next practical implementation work should be selected from this queue:
 
 1. Continue [V3 Storage And Retrieval Backends](v3-storage-retrieval-backends.md)
-   for the remaining Postgres beta work: broader durable-store migration,
-   migration tooling, code-interpreter state migration, replay/artifact
-   retention, cluster-native backup guidance, hard-delete/governance hooks,
-   ANN indexing, or additional embedders/rerankers.
+   for the remaining Postgres beta work: code-interpreter state migration,
+   replay/artifact retention, cluster-native backup guidance,
+   hard-delete/governance hooks, ANN indexing, or additional
+   embedders/rerankers.
 2. Continue [V3 Ops And Deployment Expansion](v3-ops-deployment.md) only for
    governance/tenanting after the shared storage beta boundary is stable.
 3. Turn [V3 Alternative Image Backends](v3-image-backends.md) into a first

@@ -51,6 +51,9 @@ Current runtime ownership:
   `retrieval.index.backend=pgvector`, and a configured retrieval embedder
 - local `file_search` uses the same vector-store substrate and injects bounded
   grounding context before final model generation
+- `shimctl migrate sqlite-to-postgres` can move the current Postgres-owned
+  beta tables from an existing SQLite database into an explicitly configured
+  Postgres target
 
 The OpenAI docs frame File Search as a hosted Responses tool over vector stores
 and frame Retrieval as semantic search over uploaded data. The shim should keep
@@ -100,7 +103,6 @@ This V3 track does not claim:
 - exact hosted OpenAI File Search or Retrieval ranking parity
 - hosted storage retention, quota, billing, or cache semantics
 - multi-tenant authorization, governance, or encryption-at-rest policy
-- first-pass migration from existing SQLite state into another backend
 - a new public OpenAI request field for backend selection
 
 Multi-tenant governance remains V4. Exact hosted choreography and parity claims
@@ -387,7 +389,6 @@ Out of current beta scope:
 
 - code-interpreter artifact storage migration
 - mixed SQLite/Postgres cross-store transactions
-- SQLite-to-Postgres migration tooling
 - external `pg_dump`/`pg_restore` orchestration or cluster-level backup policy
 
 ### 4. pgvector Retrieval Alpha
@@ -497,25 +498,50 @@ Postgres beta hardening now also covers:
 
 ### 6. Broader Storage Expansion
 
-Remaining work after the current Postgres beta slice:
+Broader storage expansion slices:
 
 #### 6.1 SQLite-to-Postgres migration tooling
 
-Status: planned.
+Status: implemented for the current Postgres-owned beta tables.
 
-Add an explicit operator workflow for moving existing SQLite state into the
-Postgres beta store. The first implementation should be conservative:
+The operator workflow is intentionally conservative:
 
-- copy only the Postgres-owned beta tables: responses, replay artifacts,
+- `shimctl migrate sqlite-to-postgres` copies only the Postgres-owned beta
+  tables: responses, replay artifacts,
   conversations/items, stored Chat Completions/messages, files, vector stores,
   vector-store files, and vector-store chunks
-- leave code-interpreter sessions/generated files in the SQLite sidecar
-- support dry-run/count reporting before writes
-- fail by default when target Postgres tables are not empty, unless the
-  operator asks for an explicit replace/merge mode
-- test SQLite fixture to isolated Postgres schema migration, including file
-  content, searchability, replay artifacts, conversations, and stored chat
-  messages
+- code-interpreter sessions/generated files stay in the SQLite sidecar and are
+  not part of this migration claim
+- `-dry-run` reports source and target row counts without writes
+- writes fail by default when target Postgres migration tables are not empty;
+  `-replace` is the only supported overwrite mode and truncates the
+  Postgres-owned beta tables before copying
+- the tool uses a separate target SQLite sidecar while opening the Postgres
+  store, so it does not write through to the source SQLite database
+- when the target is opened with `retrieval.index.backend=pgvector`, copied
+  completed chunks with missing pgvector embeddings are re-indexed with the
+  configured retrieval embedder during migration; otherwise copied chunks remain
+  searchable through the Postgres lexical path
+- focused Postgres storage tests cover SQLite fixture migration into an
+  isolated Postgres schema, including file content, searchability, response
+  replay artifacts, conversations, stored chat messages, dry-run reporting,
+  non-empty-target refusal, explicit replace, and sidecar file mirroring
+
+Run:
+
+```bash
+STORAGE_BACKEND=postgres \
+POSTGRES_DSN=postgres://llama_shim:llama_shim@127.0.0.1:15432/llama_shim?sslmode=disable \
+go run ./cmd/shimctl -config ./config.yaml migrate sqlite-to-postgres \
+  -sqlite ./.data/shim.db \
+  -dry-run
+
+STORAGE_BACKEND=postgres \
+POSTGRES_DSN=postgres://llama_shim:llama_shim@127.0.0.1:15432/llama_shim?sslmode=disable \
+go run ./cmd/shimctl -config ./config.yaml migrate sqlite-to-postgres \
+  -sqlite ./.data/shim.db \
+  -replace
+```
 
 #### 6.2 Code-interpreter state ownership
 
