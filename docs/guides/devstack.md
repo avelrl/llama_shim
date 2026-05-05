@@ -25,6 +25,9 @@ The dev stack consists of three Compose services:
     debugging and explicit tests
 - `postgres`: a pgvector-enabled Postgres service used by the optional
   Postgres/pgvector retrieval smoke path
+- `shim_secondary`: an optional second shim service in the Compose
+  `multi-instance` profile, exposed at `http://127.0.0.1:18082`, used to prove
+  Postgres retrieval-object sharing across shim instances
 
 ## Quick Start
 
@@ -107,6 +110,23 @@ make devstack-up
 RESPONSES_MODE=prefer_local make devstack-postgres-pgvector-smoke
 ```
 
+Run the focused Postgres/pgvector multi-instance smoke path:
+
+```bash
+make devstack-postgres-pgvector-multi-instance-up
+make devstack-postgres-pgvector-multi-instance-smoke
+```
+
+This starts a secondary shim instance with a separate SQLite sidecar and log
+file. The smoke writes files and vector stores through the primary shim and
+then reads, searches, and runs local Responses `file_search` through the
+secondary shim. It proves the current shared-state boundary only for Postgres
+retrieval objects; responses, conversations, stored Chat Completions, and
+code-interpreter state are still SQLite sidecar owned. Override primary
+sidecar/log paths with `SHIM_SQLITE_PATH` and `SHIM_LOG_FILE_PATH`; override
+secondary paths with `SHIM_SECONDARY_SQLITE_PATH` and
+`SHIM_SECONDARY_LOG_FILE_PATH`.
+
 Run the real Codex CLI smoke path:
 
 ```bash
@@ -155,6 +175,8 @@ bash ./scripts/responses-compat-external-smoke.sh
 RESPONSES_COMPAT_RUN_MODE=real-upstream RESPONSES_COMPAT_EXPECTED_UPSTREAM=<upstream-base-url> bash ./scripts/responses-compat-external-smoke.sh
 STORAGE_BACKEND=postgres RETRIEVAL_INDEX_BACKEND=pgvector RETRIEVAL_EMBEDDER_BACKEND=openai_compatible RETRIEVAL_EMBEDDER_BASE_URL=http://fixture:8081 RETRIEVAL_EMBEDDER_MODEL=devstack-embedding docker compose -f docker-compose.devstack.yml up -d --build
 bash ./scripts/devstack-postgres-pgvector-smoke.sh
+COMPOSE_PROFILES=multi-instance STORAGE_BACKEND=postgres RETRIEVAL_INDEX_BACKEND=pgvector RETRIEVAL_EMBEDDER_BACKEND=openai_compatible RETRIEVAL_EMBEDDER_BASE_URL=http://fixture:8081 RETRIEVAL_EMBEDDER_MODEL=devstack-embedding RESPONSES_MODE=prefer_local docker compose -f docker-compose.devstack.yml up -d --build
+bash ./scripts/devstack-postgres-pgvector-multi-instance-smoke.sh
 bash ./scripts/v3-coding-tools-smoke.sh
 bash ./scripts/v3-constrained-decoding-smoke.sh
 bash ./scripts/codex-cli-devstack-smoke.sh
@@ -167,6 +189,7 @@ docker compose -f docker-compose.devstack.yml down --remove-orphans
 ## Ports
 
 - shim: `http://127.0.0.1:18080`
+- secondary shim in the `multi-instance` profile: `http://127.0.0.1:18082`
 - fixture backend: `http://127.0.0.1:18081`
 - postgres: `127.0.0.1:15432`
 

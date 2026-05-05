@@ -1,4 +1,4 @@
-.PHONY: run build lint test vet diff-check ci-check maint-cleanup maint-optimize maint-vacuum maint-backup docker-build compose-up compose-down postgres-storage-test devstack-up devstack-down devstack-smoke devstack-sqlite-fts5-smoke devstack-postgres-pgvector-smoke devstack-ci-smoke devstack-full-smoke responses-compat-external-smoke responses-compat-external-real-smoke responses-websocket-smoke v3-coding-tools-smoke v3-constrained-decoding-smoke v3-vllm-constrained-smoke codex-cli-devstack-smoke codex-cli-shell-tool-smoke codex-cli-coding-task-smoke codex-cli-task-matrix-smoke codex-cli-real-upstream-smoke codex-eval-smoke codex-eval-core codex-eval-core-shell codex-eval-core-websocket codex-eval-core-interactive codex-eval-core-profiles codex-eval-compat codex-eval-automated-profiles codex-eval-bench-lite codex-eval-loop-bench-lite codex-eval-shim-native codex-eval-shim-native-websocket codex-eval-shim-native-apply-patch-freeform codex-eval-shim-native-apply-patch-function codex-eval-shim-native-apply-patch-disabled codex-eval-shim-native-apply-patch-profiles codex-eval-shim-native-profiles codex-eval-real-upstream codex-eval-real-upstream-expanded codex-eval-matrix codex-eval-loop codex-eval-auto codex-eval-prune codex-eval-clean
+.PHONY: run build lint test vet diff-check ci-check maint-cleanup maint-optimize maint-vacuum maint-backup docker-build compose-up compose-down postgres-storage-test devstack-up devstack-down devstack-smoke devstack-sqlite-fts5-smoke devstack-postgres-pgvector-smoke devstack-postgres-pgvector-multi-instance-up devstack-postgres-pgvector-multi-instance-smoke devstack-ci-smoke devstack-full-smoke responses-compat-external-smoke responses-compat-external-real-smoke responses-websocket-smoke v3-coding-tools-smoke v3-constrained-decoding-smoke v3-vllm-constrained-smoke codex-cli-devstack-smoke codex-cli-shell-tool-smoke codex-cli-coding-task-smoke codex-cli-task-matrix-smoke codex-cli-real-upstream-smoke codex-eval-smoke codex-eval-core codex-eval-core-shell codex-eval-core-websocket codex-eval-core-interactive codex-eval-core-profiles codex-eval-compat codex-eval-automated-profiles codex-eval-bench-lite codex-eval-loop-bench-lite codex-eval-shim-native codex-eval-shim-native-websocket codex-eval-shim-native-apply-patch-freeform codex-eval-shim-native-apply-patch-function codex-eval-shim-native-apply-patch-disabled codex-eval-shim-native-apply-patch-profiles codex-eval-shim-native-profiles codex-eval-real-upstream codex-eval-real-upstream-expanded codex-eval-matrix codex-eval-loop codex-eval-auto codex-eval-prune codex-eval-clean
 
 CONFIG ?= config.yaml
 BACKUP ?= ./.data/shim-backup.db
@@ -90,6 +90,12 @@ devstack-sqlite-fts5-smoke:
 
 devstack-postgres-pgvector-smoke:
 	bash ./scripts/devstack-postgres-pgvector-smoke.sh
+
+devstack-postgres-pgvector-multi-instance-up:
+	COMPOSE_PROFILES=multi-instance STORAGE_BACKEND=postgres RETRIEVAL_INDEX_BACKEND=pgvector RETRIEVAL_EMBEDDER_BACKEND=openai_compatible RETRIEVAL_EMBEDDER_BASE_URL=http://fixture:8081 RETRIEVAL_EMBEDDER_MODEL=devstack-embedding RESPONSES_MODE=prefer_local docker compose -f $(DEVSTACK_COMPOSE) up -d --build
+
+devstack-postgres-pgvector-multi-instance-smoke:
+	bash ./scripts/devstack-postgres-pgvector-multi-instance-smoke.sh
 
 devstack-ci-smoke: devstack-smoke responses-websocket-smoke v3-coding-tools-smoke v3-constrained-decoding-smoke
 

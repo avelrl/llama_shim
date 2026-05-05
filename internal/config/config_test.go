@@ -758,6 +758,29 @@ postgres:
 	require.Equal(t, "postgres://llama_shim:llama_shim@127.0.0.1:15432/llama_shim?sslmode=disable", cfg.PostgresDSN)
 }
 
+func TestLoadAcceptsInstanceLocalEnvOverrides(t *testing.T) {
+	disableDotEnv(t)
+	t.Setenv("SQLITE_PATH", "./tmp/shim-secondary.db")
+	t.Setenv("LOG_FILE_PATH", "./tmp/shim-secondary.log")
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	writeFile(t, configPath, `
+storage:
+  backend: postgres
+postgres:
+  dsn: postgres://llama_shim:llama_shim@127.0.0.1:15432/llama_shim?sslmode=disable
+sqlite:
+  path: ./tmp/shim-primary.db
+log:
+  file_path: ./tmp/shim-primary.log
+`)
+
+	cfg, err := config.Load(configPath)
+	require.NoError(t, err)
+	require.Equal(t, "postgres", cfg.StorageBackend)
+	require.Equal(t, "./tmp/shim-secondary.db", cfg.SQLitePath)
+	require.Equal(t, "./tmp/shim-secondary.log", cfg.LogFilePath)
+}
+
 func TestLoadRejectsPGVectorWithoutPostgresStorage(t *testing.T) {
 	disableDotEnv(t)
 	configPath := filepath.Join(t.TempDir(), "config.yaml")

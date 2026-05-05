@@ -503,6 +503,9 @@ Shim reality:
   lexical backend, `sqlite_vec` adds exact local semantic/rerank support with
   an embedder, and `pgvector` adds exact Postgres-backed semantic/hybrid
   retrieval for the Postgres alpha path.
+- The devstack `multi-instance` profile verifies only this Postgres retrieval
+  object boundary across two shim processes. The SQLite sidecar stores remain
+  instance-local in that smoke and are not a shared-state claim.
 - Local `file_search` injects bounded grounding context before final answer
   generation.
 - Hosted ranking quality, billing semantics, and exact citation placement are

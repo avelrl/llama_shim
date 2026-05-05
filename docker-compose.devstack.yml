@@ -39,8 +39,36 @@ services:
       RETRIEVAL_EMBEDDER_BASE_URL: ${RETRIEVAL_EMBEDDER_BASE_URL:-}
       RETRIEVAL_EMBEDDER_MODEL: ${RETRIEVAL_EMBEDDER_MODEL:-}
       RESPONSES_MODE: ${RESPONSES_MODE:-prefer_local}
+      SQLITE_PATH: ${SHIM_SQLITE_PATH:-./.data/devstack/shim.db}
+      LOG_FILE_PATH: ${SHIM_LOG_FILE_PATH:-./.data/devstack/shim.log}
     ports:
       - "18080:8080"
+    volumes:
+      - ./config.devstack.yaml:/app/config.yaml:ro
+      - ./.data:/app/.data
+
+  shim_secondary:
+    profiles: ["multi-instance"]
+    build:
+      context: .
+    command: ["/usr/local/bin/shim", "-config", "/app/config.yaml"]
+    depends_on:
+      fixture:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+    environment:
+      STORAGE_BACKEND: ${STORAGE_BACKEND:-sqlite}
+      POSTGRES_DSN: ${POSTGRES_DSN:-postgres://llama_shim:llama_shim@postgres:5432/llama_shim?sslmode=disable}
+      RETRIEVAL_INDEX_BACKEND: ${RETRIEVAL_INDEX_BACKEND:-lexical}
+      RETRIEVAL_EMBEDDER_BACKEND: ${RETRIEVAL_EMBEDDER_BACKEND:-disabled}
+      RETRIEVAL_EMBEDDER_BASE_URL: ${RETRIEVAL_EMBEDDER_BASE_URL:-}
+      RETRIEVAL_EMBEDDER_MODEL: ${RETRIEVAL_EMBEDDER_MODEL:-}
+      RESPONSES_MODE: ${RESPONSES_MODE:-prefer_local}
+      SQLITE_PATH: ${SHIM_SECONDARY_SQLITE_PATH:-./.data/devstack/shim-secondary.db}
+      LOG_FILE_PATH: ${SHIM_SECONDARY_LOG_FILE_PATH:-./.data/devstack/shim-secondary.log}
+    ports:
+      - "18082:8080"
     volumes:
       - ./config.devstack.yaml:/app/config.yaml:ro
       - ./.data:/app/.data

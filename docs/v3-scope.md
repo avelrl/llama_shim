@@ -294,9 +294,9 @@ parity and should not promote flaky profile tasks into `codex-core` or
 
 ### 10. Ops and deployment expansion
 
-Status: `Partial`; Phase 0 inventory and the first bounded readiness-probe
-metrics slice are implemented. See
-[v3-ops-deployment.md](v3-ops-deployment.md).
+Status: `Partial`; Phase 0 inventory, the first bounded readiness-probe
+metrics slice, and the Postgres/pgvector alpha multi-instance devstack profile
+are implemented. See [v3-ops-deployment.md](v3-ops-deployment.md).
 
 - multi-tenant authz / tenant isolation
 - richer exporters and dashboards
@@ -312,12 +312,12 @@ the public compatibility story less truthful.
 
 The next practical implementation work should be selected from this queue:
 
-1. Continue [V3 Ops And Deployment Expansion](v3-ops-deployment.md) with
-   Postgres/multi-instance readiness and maintenance behavior only after the
-   current Postgres alpha boundaries remain green.
-2. Continue [V3 Storage And Retrieval Backends](v3-storage-retrieval-backends.md)
-   only for broader durable-store migration, ANN indexing, migration tooling,
-   or additional embedders/rerankers.
+1. Continue [V3 Storage And Retrieval Backends](v3-storage-retrieval-backends.md)
+   for Postgres beta/hardening: broader durable-store migration, migration
+   tooling, shared maintenance/backup behavior, ANN indexing, or additional
+   embedders/rerankers.
+2. Continue [V3 Ops And Deployment Expansion](v3-ops-deployment.md) only for
+   governance/tenanting after the shared storage beta boundary is stable.
 3. Turn [V3 Alternative Image Backends](v3-image-backends.md) into a first
    concrete backend slice only after selecting one reproducible provider path.
 4. Turn [V3 Richer Local-Only Runtimes](v3-local-runtimes.md) into one focused

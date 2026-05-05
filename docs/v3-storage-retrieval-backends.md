@@ -391,6 +391,7 @@ Status: implemented for the Postgres/pgvector alpha path.
 Repo-owned smoke coverage:
 
 - Docker Compose service for Postgres with pgvector
+- optional Docker Compose `multi-instance` profile with a secondary shim
 - upload file
 - create vector store
 - attach file
@@ -398,6 +399,8 @@ Repo-owned smoke coverage:
 - run `/v1/responses` with `file_search`
 - delete file/vector-store state
 - verify `/debug/capabilities`
+- verify primary-created Postgres retrieval objects can be read, searched, and
+  used by secondary through local Responses `file_search`
 
 Run:
 
@@ -412,6 +415,19 @@ make devstack-up
 
 RESPONSES_MODE=prefer_local make devstack-postgres-pgvector-smoke
 ```
+
+Run the focused multi-instance deployment smoke:
+
+```bash
+make devstack-postgres-pgvector-multi-instance-up
+make devstack-postgres-pgvector-multi-instance-smoke
+```
+
+The multi-instance smoke intentionally covers the current alpha boundary only:
+files, vector stores, vector-store files, and vector-store chunks are shared
+through Postgres. Responses, conversations, stored Chat Completions, and
+code-interpreter state remain SQLite sidecar owned and are not a shared-state
+claim.
 
 The smoke checks `prefer_local`, because it exercises the shim-owned local
 Responses `file_search` path. `local_only` and `prefer_upstream` remain covered
