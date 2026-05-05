@@ -83,7 +83,7 @@ responses:
     retained_items: 2
     max_input_chars: 32000
   computer:
-    backend: disabled
+    backend: chat_completions
   custom_tools:
     mode: auto
   codex:

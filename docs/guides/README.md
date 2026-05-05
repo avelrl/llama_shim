@@ -56,6 +56,7 @@ Assumptions:
 - [V3 Alternative Image Backends](../v3-image-backends.md)
 - [V3 Storage and Retrieval Backends](../v3-storage-retrieval-backends.md)
 - [V3 Richer Local-Only Runtimes](../v3-local-runtimes.md)
+- [V3 Computer Browser Harness](../v3-computer-browser-harness.md)
 - [V3 Ops and Deployment Expansion](../v3-ops-deployment.md)
 - [V4 Extensions and Plugin Model](../v4-scope.md)
 - [V5 Hosted Parity and Advanced Transports](../v5-scope.md)

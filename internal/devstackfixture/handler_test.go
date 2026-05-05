@@ -40,6 +40,23 @@ func TestHandlerExposesHealthAndModels(t *testing.T) {
 	require.Equal(t, DefaultModel, data[0].(map[string]any)["id"])
 }
 
+func TestHandlerExposesComputerHarnessPage(t *testing.T) {
+	server := httptest.NewServer(NewHandler())
+	defer server.Close()
+
+	resp, err := server.Client().Get(server.URL + "/pages/computer-harness")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	text := string(body)
+	require.Contains(t, text, "Computer Harness Fixture")
+	require.Contains(t, text, `id="harness-input"`)
+	require.Contains(t, text, "coordinate 636,343")
+}
+
 func TestHandlerChatCompletionsUsesDeterministicRules(t *testing.T) {
 	server := httptest.NewServer(NewHandler())
 	defer server.Close()
@@ -85,6 +102,98 @@ func TestHandlerChatCompletionsUsesDeterministicRules(t *testing.T) {
 	require.NotEmpty(t, choices)
 	message = choices[0].(map[string]any)["message"].(map[string]any)
 	require.Equal(t, "777", message["content"])
+}
+
+func TestHandlerChatCompletionsAcceptsMultimodalContentParts(t *testing.T) {
+	server := httptest.NewServer(NewHandler())
+	defer server.Close()
+
+	payload := map[string]any{
+		"model": DefaultModel,
+		"messages": []map[string]any{
+			{
+				"role": "user",
+				"content": []map[string]any{
+					{"type": "text", "text": "Say OK and nothing else."},
+					{
+						"type": "image_url",
+						"image_url": map[string]any{
+							"url":    "data:image/png;base64,ZmFrZQ==",
+							"detail": "original",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	body, err := json.Marshal(payload)
+	require.NoError(t, err)
+
+	resp, err := server.Client().Post(server.URL+"/v1/chat/completions", "application/json", bytes.NewReader(body))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var response map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&response))
+	choices, ok := response["choices"].([]any)
+	require.True(t, ok)
+	require.NotEmpty(t, choices)
+	message := choices[0].(map[string]any)["message"].(map[string]any)
+	require.Equal(t, "OK", message["content"])
+}
+
+func TestHandlerChatCompletionsPlansLocalComputerLoop(t *testing.T) {
+	server := httptest.NewServer(NewHandler())
+	defer server.Close()
+
+	payload := map[string]any{
+		"model": DefaultModel,
+		"messages": []map[string]any{
+			{"role": "system", "content": "You are the shim-local computer planner."},
+			{"role": "user", "content": "Use the computer tool. First request a screenshot."},
+		},
+	}
+	body, err := json.Marshal(payload)
+	require.NoError(t, err)
+
+	resp, err := server.Client().Post(server.URL+"/v1/chat/completions", "application/json", bytes.NewReader(body))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var response map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&response))
+	choices, ok := response["choices"].([]any)
+	require.True(t, ok)
+	message := choices[0].(map[string]any)["message"].(map[string]any)
+	require.JSONEq(t, `{"decision":"computer_call","actions":[{"type":"screenshot"}]}`, asString(message["content"]))
+
+	payload["messages"] = []map[string]any{
+		{"role": "system", "content": "You are the shim-local computer planner."},
+		{"role": "user", "content": "After you receive the screenshot, click it and type penguin."},
+		{
+			"role": "user",
+			"content": []map[string]any{
+				{"type": "text", "text": "computer_call_output screenshot received for call_id call_test. Use this as the latest UI state."},
+				{"type": "image_url", "image_url": map[string]any{"url": "data:image/png;base64,ZmFrZQ==", "detail": "original"}},
+			},
+		},
+	}
+	body, err = json.Marshal(payload)
+	require.NoError(t, err)
+
+	resp, err = server.Client().Post(server.URL+"/v1/chat/completions", "application/json", bytes.NewReader(body))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&response))
+	choices, ok = response["choices"].([]any)
+	require.True(t, ok)
+	message = choices[0].(map[string]any)["message"].(map[string]any)
+	require.JSONEq(t, `{"decision":"computer_call","actions":[{"type":"click","button":"left","keys":null,"x":636,"y":343},{"type":"type","text":"penguin"}]}`, asString(message["content"]))
 }
 
 func TestHandlerChatCompletionsPlansAndCompletesMCPToolCalls(t *testing.T) {

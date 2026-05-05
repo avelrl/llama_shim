@@ -112,13 +112,18 @@ See
 
 ### 3. Richer local-only runtimes
 
-Status: `Planned`. See [v3-local-runtimes.md](v3-local-runtimes.md).
+Status: `Partial`. The first browser/computer runtime hardening slice and
+optional real-browser harness are implemented; see
+[v3-local-runtimes.md](v3-local-runtimes.md) and
+[v3-computer-browser-harness.md](v3-computer-browser-harness.md).
 
 - additional local tools that do not map cleanly to current OpenAI surface area
 - more ambitious local shell / browser / multimodal runtime loops after the V2
   contract is stable
 - deterministic fixture and capability-gated runtime slices before any
-  production-grade runtime claims
+  production-grade runtime claims; the current implemented slice covers the
+  screenshot-first local `computer` loop, planner action normalization, and
+  devstack smoke coverage plus an optional Playwright browser harness
 
 ### 4. Native coding tools for local execution
 
@@ -337,10 +342,10 @@ The next practical implementation work should be selected from this queue:
    specific next backend is selected with its own config namespace, bounded
    artifact contract, tests, and smoke path. The fixture and generic ComfyUI
    slices are already in place.
-2. Turn [V3 Richer Local-Only Runtimes](v3-local-runtimes.md) into one focused
-   runtime slice with deterministic fixtures and capability gates. The likely
-   first candidates are browser/computer runtime hardening or PTY/session
-   lifecycle coverage beyond the Codex profile.
+2. Continue [V3 Richer Local-Only Runtimes](v3-local-runtimes.md) only when a
+   concrete next runtime slice is selected. Browser/computer runtime hardening
+   is in place; good next candidates are richer multimodal local loops or
+   PTY/session lifecycle coverage beyond the Codex profile.
 3. Continue [V3 Constrained Decoding](v3-constrained-decoding.md) only when a
    concrete backend adapter is selected. Good next adapters are SGLang,
    llama.cpp, or a proven `json_schema_native` path; avoid claiming native

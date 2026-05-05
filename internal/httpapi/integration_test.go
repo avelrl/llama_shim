@@ -696,6 +696,11 @@ func TestCapabilitiesEndpointReportsConfiguredRuntime(t *testing.T) {
 	require.Equal(t, true, imageGenerationProbe["enabled"])
 	require.Equal(t, true, imageGenerationProbe["checked"])
 	require.Equal(t, true, imageGenerationProbe["ready"])
+
+	computerProbe := probes["computer_runtime"].(map[string]any)
+	require.Equal(t, true, computerProbe["enabled"])
+	require.Equal(t, true, computerProbe["checked"])
+	require.Equal(t, true, computerProbe["ready"])
 }
 
 func TestCapabilitiesEndpointReportsSQLiteFTS5RetrievalBackend(t *testing.T) {

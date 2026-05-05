@@ -568,13 +568,25 @@ The shim now has a pragmatic local `computer` subset inside `/v1/responses`:
   follow-up `computer_call_output` items
 - multimodal planner turns: current-turn `computer_call_output` screenshot
   inputs are projected into the shim-owned planner request as text plus image
-  context, and `previous_response_id` lineage keeps the latest loop state
+  context; `detail: "original"` is preserved on the Responses item and mapped
+  to `high` for the Chat-backed planner projection, while
+  `previous_response_id` lineage keeps the latest loop state
+- planner action objects are constrained to the current documented local
+  action family: `screenshot`, `click`, `double_click`, `scroll`, `type`,
+  `wait`, `keypress`, `drag`, and `move`
 - non-stream create, stream create, stored retrieve, and stored
   `/v1/responses/{id}/input_items` preserve the typed
   `computer_call` / `computer_call_output` subset
 - create-stream and retrieve-stream stay generic through
   `response.output_item.*`; the shim does not invent a
   `response.computer_call.*` SSE family
+- deterministic devstack coverage is available with
+  `make v3-local-runtimes-smoke`; the default devstack config enables the
+  `chat_completions` computer planner against the fixture backend
+- optional real-browser executor coverage is available with
+  `make v3-computer-browser-harness-smoke`; it uses Playwright against the
+  deterministic devstack fixture page and is intentionally not part of the
+  CI-compatible smoke gate
 
 This is intentionally not a claim of exact hosted planner behavior or full
 hosted computer-use choreography. The current local subset is a docs-aligned

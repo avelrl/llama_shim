@@ -207,6 +207,9 @@ func (c *Client) listModelsDetailedWithBearerToken(ctx context.Context, bearerTo
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
+		if mappedErr := mapTimeoutError(err); mappedErr != nil {
+			return listModelsResult{}, mappedErr
+		}
 		return listModelsResult{}, fmt.Errorf("read llama response: %w", err)
 	}
 	result := listModelsResult{
@@ -272,6 +275,9 @@ func (c *Client) GenerateStream(ctx context.Context, model string, items []domai
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		if readErr != nil {
+			if mappedErr := mapTimeoutError(readErr); mappedErr != nil {
+				return mappedErr
+			}
 			return fmt.Errorf("read llama error response: %w", readErr)
 		}
 		c.logUpstreamHTTPError(ctx, http.MethodPost, "/v1/chat/completions", "upstream_chat_completions_stream", resp, body, len(body) >= 1<<20)
@@ -284,6 +290,9 @@ func (c *Client) GenerateStream(ctx context.Context, model string, items []domai
 	if !strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "text/event-stream") {
 		body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		if err != nil {
+			if mappedErr := mapTimeoutError(err); mappedErr != nil {
+				return mappedErr
+			}
 			return fmt.Errorf("read llama response: %w", err)
 		}
 		text, err := extractAssistantText(body)
@@ -381,6 +390,10 @@ func (c *Client) doJSONRequestDetailedWithBearerToken(ctx context.Context, metho
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes))
 	if err != nil {
+		if mappedErr := mapTimeoutError(err); mappedErr != nil {
+			c.logUpstreamRequestError(ctx, method, path, scope, mappedErr)
+			return jsonRequestResult{}, mappedErr
+		}
 		return jsonRequestResult{}, fmt.Errorf("read llama response: %w", err)
 	}
 	result := jsonRequestResult{

@@ -182,6 +182,9 @@ This now ships as:
 - `scripts/v3-coding-tools-smoke.sh`
 - `scripts/v3-constrained-decoding-smoke.sh`
 - `scripts/v3-image-backends-smoke.sh`
+- `scripts/v3-local-runtimes-smoke.sh`
+- optional `scripts/v3-computer-browser-harness-smoke.sh` for a real
+  Playwright browser executor over the deterministic computer fixture
 - optional `scripts/v3-vllm-constrained-smoke.sh` for a local vLLM
   `structured_outputs.regex` / `structured_outputs.grammar` backend
 
@@ -219,9 +222,14 @@ ledger live in
 
 `make devstack-ci-smoke` is the CI-compatible gate on top of the stack. It
 combines the general devstack smoke, direct Responses WebSocket smoke, V3
-native coding-tools smoke, V3 constrained-runtime smoke, and the deterministic
-V3 image-backend smoke. It deliberately avoids real Codex CLI checks because
+native coding-tools smoke, V3 constrained-runtime smoke, deterministic V3
+image-backend smoke, and deterministic V3 local-runtime smoke for the
+shim-local computer loop. It deliberately avoids real Codex CLI checks because
 CI runners should not need a locally installed `codex` binary.
+
+`make v3-computer-browser-harness-smoke` is the optional browser-backed check
+for the same local-computer loop. It is kept outside `devstack-ci-smoke`
+because it launches a real Playwright browser.
 
 `make devstack-full-smoke` is the local heavy gate. It includes
 `make devstack-ci-smoke` plus real Codex CLI smoke paths that verify the

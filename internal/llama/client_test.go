@@ -166,6 +166,26 @@ func TestCreateChatCompletionTextExtractsAssistantContent(t *testing.T) {
 	require.Equal(t, `{"input":"hello 42"}`, text)
 }
 
+func TestCreateChatCompletionTextMapsBodyReadTimeout(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, http.MethodPost, r.Method)
+		require.Equal(t, "/v1/chat/completions", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		time.Sleep(120 * time.Millisecond)
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"OK"}}]}`)
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, 20*time.Millisecond)
+	_, err := client.CreateChatCompletionText(context.Background(), []byte(`{"model":"test-model","messages":[{"role":"user","content":"ping"}]}`))
+	var timeoutErr *TimeoutError
+	require.ErrorAs(t, err, &timeoutErr)
+}
+
 func TestCreateChatCompletionNormalizesDeepSeekRequestForUpstream(t *testing.T) {
 	var captured map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

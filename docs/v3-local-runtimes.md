@@ -1,8 +1,9 @@
 # V3 Richer Local-Only Runtimes
 
-Status: planned design stub.
+Status: partial. Browser/computer runtime hardening and the optional external
+browser harness are implemented as the first focused runtime slice.
 
-Last updated: May 4, 2026.
+Last updated: May 5, 2026.
 
 This document tracks V3 runtime-expansion work that is useful locally but does
 not cleanly map to a complete hosted OpenAI surface.
@@ -49,12 +50,32 @@ config, capability reporting, and tests.
 
 Build on the current screenshot-first `computer` subset.
 
-Potential work:
+Implemented first slice:
 
-- deterministic browser fixture pages
-- action normalization and replay tests
-- bounded screenshot/image artifact handling
-- clearer runtime readiness and missing-dependency errors
+- deterministic devstack coverage through `make v3-local-runtimes-smoke`
+- optional real-browser executor coverage through
+  `make v3-computer-browser-harness-smoke`; see
+  [v3-computer-browser-harness.md](v3-computer-browser-harness.md)
+- `/debug/capabilities.tools.computer` and
+  `/debug/capabilities.probes.computer_runtime` coverage for the configured
+  `chat_completions` runtime
+- planner action allow-list and type normalization for the current documented
+  action family: `screenshot`, `click`, `double_click`, `scroll`, `type`,
+  `wait`, `keypress`, `drag`, and `move`
+- current-turn `computer_call_output` screenshots are projected to the planner
+  as multimodal context. Explicit `detail` is preserved on the Responses item;
+  `original` is mapped to `high` for the Chat-backed planner projection.
+- non-stream create, stream create, stored retrieve, retrieve-stream, and
+  `/v1/responses/{id}/input_items` coverage for the screenshot-first loop
+
+Still out of scope:
+
+- an in-process browser or VM runtime
+- hosted-equivalent planner behavior
+- hosted action execution, coordinate remapping, or screenshot downscaling
+  ownership; the optional browser harness executes one deterministic fixture
+  flow only
+- exact hosted `response.computer_call.*` SSE choreography
 
 ### 2. Multimodal Local Loop
 
@@ -82,7 +103,7 @@ Potential work:
 
 ### Phase 0: Runtime Inventory
 
-Status: not started.
+Status: done for the first browser/computer slice.
 
 - Inventory all current local runtime config keys and capability fields.
 - Identify duplicated readiness and missing-dependency behavior.
@@ -90,7 +111,7 @@ Status: not started.
 
 ### Phase 1: Fixture And Capability Gate
 
-Status: not started.
+Status: done for the first browser/computer slice.
 
 - Add or extend deterministic fixtures for the chosen runtime.
 - Add `/debug/capabilities` tests for enabled, disabled, and unavailable
@@ -100,7 +121,7 @@ Status: not started.
 
 ### Phase 2: Runtime Slice
 
-Status: not started.
+Status: done for the first browser/computer slice.
 
 - Implement the chosen runtime incrementally.
 - Keep unsupported local-only behavior explicit.
@@ -119,8 +140,12 @@ Status: not started.
 
 The first richer local runtime slice is done when:
 
-- it has deterministic fixture or devstack coverage
-- capability reporting distinguishes disabled, configured, unavailable, and
-  ready states
+- it has deterministic fixture or devstack coverage: `make
+  v3-local-runtimes-smoke`
+- it has optional real-executor coverage: `make
+  v3-computer-browser-harness-smoke`
+- capability reporting exposes the configured computer runtime through
+  `/debug/capabilities.tools.computer` and the readiness state through
+  `/debug/capabilities.probes.computer_runtime`
 - tests cover the relevant state and replay surfaces
 - docs state the local-only boundary without hosted parity overclaim

@@ -224,6 +224,7 @@ type capabilityProbeSet struct {
 	RetrievalEmbedder      capabilityProbe `json:"retrieval_embedder"`
 	WebSearchBackend       capabilityProbe `json:"web_search_backend"`
 	ImageGenerationBackend capabilityProbe `json:"image_generation_backend"`
+	ComputerRuntime        capabilityProbe `json:"computer_runtime"`
 }
 
 type capabilityProbe struct {
@@ -663,6 +664,23 @@ func collectCapabilityProbes(ctx context.Context, deps RouterDeps) capabilityPro
 		observeReadinessProbeOutcome(deps.Metrics, "capabilities", "llama", "unready")
 	}
 
+	probes.ComputerRuntime = capabilityProbe{
+		Enabled: deps.LocalComputer.Enabled(),
+		Checked: deps.LocalComputer.Enabled(),
+		Ready:   !deps.LocalComputer.Enabled() || probes.Llama.Ready,
+	}
+	if probes.ComputerRuntime.Enabled {
+		switch {
+		case deps.LlamaClient == nil:
+			probes.ComputerRuntime.Ready = false
+			probes.ComputerRuntime.Error = "computer planner backend is not configured"
+		case !probes.Llama.Ready:
+			probes.ComputerRuntime.Error = "computer planner backend is not ready"
+		default:
+			probes.ComputerRuntime.Error = ""
+		}
+	}
+
 	probes.RetrievalEmbedder = capabilityProbe{
 		Enabled: deps.RetrievalIndexBackend == retrieval.IndexBackendSQLiteVec || deps.RetrievalIndexBackend == retrieval.IndexBackendPGVector,
 	}
@@ -720,7 +738,8 @@ func (p capabilityProbeSet) ready() bool {
 		probeReady(p.Llama) &&
 		probeReady(p.RetrievalEmbedder) &&
 		probeReady(p.WebSearchBackend) &&
-		probeReady(p.ImageGenerationBackend)
+		probeReady(p.ImageGenerationBackend) &&
+		probeReady(p.ComputerRuntime)
 }
 
 func probeReady(probe capabilityProbe) bool {

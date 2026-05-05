@@ -1,6 +1,6 @@
 # OpenAI API Choreography Atlas
 
-Last updated: April 25, 2026.
+Last updated: May 5, 2026.
 
 This document is a diagram-first map of how the current OpenAI API surfaces
 work, how Codex uses them in practice, and where `llama_shim` intentionally
@@ -647,8 +647,17 @@ Official contract:
 Shim reality:
 
 - The local subset is screenshot-first and planner-backed.
+- Follow-up `computer_call_output` screenshots preserve the Responses item
+  `detail`. In the Chat-backed planner projection, `original` is mapped to
+  `high` because Chat-compatible image inputs commonly accept only `auto`,
+  `low`, or `high`.
+- Planner actions are normalized and allow-listed to the documented local
+  action family: `screenshot`, `click`, `double_click`, `scroll`, `type`,
+  `wait`, `keypress`, `drag`, and `move`.
 - The shim preserves typed `computer_call` and `computer_call_output` items in
   stored response and input item surfaces.
+- The optional V3 browser harness proves one real external-executor flow
+  against the deterministic devstack page; it is not a hosted browser runtime.
 - Exact hosted `response.computer_call.*` SSE choreography is not claimed.
 
 ## 12. Code Interpreter

@@ -50,6 +50,7 @@ func NewHandler() http.Handler {
 	mux.HandleFunc("/search", handleSearch)
 	mux.HandleFunc("/pages/web-search-guide", handleWebSearchGuidePage)
 	mux.HandleFunc("/pages/project-sunbeam", handleProjectSunbeamPage)
+	mux.HandleFunc("/pages/computer-harness", handleComputerHarnessPage)
 	return mux
 }
 
@@ -136,6 +137,47 @@ type chatMessage struct {
 	Role       string `json:"role"`
 	Content    string `json:"content"`
 	ToolCallID string `json:"tool_call_id,omitempty"`
+}
+
+func (m *chatMessage) UnmarshalJSON(data []byte) error {
+	var payload struct {
+		Role       string          `json:"role"`
+		Content    json.RawMessage `json:"content"`
+		ToolCallID string          `json:"tool_call_id"`
+	}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return err
+	}
+	content, err := decodeChatMessageContent(payload.Content)
+	if err != nil {
+		return err
+	}
+	m.Role = payload.Role
+	m.Content = content
+	m.ToolCallID = payload.ToolCallID
+	return nil
+}
+
+func decodeChatMessageContent(raw json.RawMessage) (string, error) {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" {
+		return "", nil
+	}
+	var text string
+	if err := json.Unmarshal(raw, &text); err == nil {
+		return text, nil
+	}
+	var parts []map[string]any
+	if err := json.Unmarshal(raw, &parts); err != nil {
+		return "", err
+	}
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if partText := strings.TrimSpace(asString(part["text"])); partText != "" {
+			out = append(out, partText)
+		}
+	}
+	return strings.Join(out, "\n"), nil
 }
 
 type chatTool struct {
@@ -502,11 +544,107 @@ func handleProjectSunbeamPage(w http.ResponseWriter, r *http.Request) {
 </html>`))
 }
 
+func handleComputerHarnessPage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeMethodNotAllowed(w)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(`<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Computer Harness Fixture</title>
+    <style>
+      html, body {
+        margin: 0;
+        width: 1024px;
+        height: 768px;
+        font-family: system-ui, sans-serif;
+        background: #f7f9fc;
+        color: #172033;
+      }
+      main {
+        position: relative;
+        width: 1024px;
+        height: 768px;
+      }
+      h1 {
+        position: absolute;
+        left: 64px;
+        top: 72px;
+        margin: 0;
+        font-size: 36px;
+      }
+      p {
+        position: absolute;
+        left: 64px;
+        top: 130px;
+        width: 420px;
+        margin: 0;
+        font-size: 18px;
+        line-height: 1.45;
+      }
+      label {
+        position: absolute;
+        left: 560px;
+        top: 288px;
+        font-size: 16px;
+        font-weight: 700;
+      }
+      #harness-input {
+        position: absolute;
+        left: 560px;
+        top: 320px;
+        width: 280px;
+        height: 48px;
+        padding: 0 14px;
+        font-size: 22px;
+        border: 2px solid #2563eb;
+        border-radius: 6px;
+        background: #fff;
+      }
+      #status {
+        position: absolute;
+        left: 560px;
+        top: 390px;
+        font-size: 16px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Computer Harness Fixture</h1>
+      <p>This deterministic page exists for the V3 computer browser harness.
+      The target input is intentionally placed around coordinate 636,343.</p>
+      <label for="harness-input">Search term</label>
+      <input id="harness-input" autocomplete="off" autofocus>
+      <div id="status">Waiting for input</div>
+    </main>
+    <script>
+      const input = document.getElementById("harness-input");
+      const status = document.getElementById("status");
+      input.addEventListener("input", () => {
+        status.textContent = input.value === "penguin" ? "Harness input complete" : "Input: " + input.value;
+      });
+    </script>
+  </body>
+</html>`))
+}
+
 func assistantTextForMessages(messages []chatMessage) string {
 	lastUser := strings.ToLower(strings.TrimSpace(lastUserContent(messages)))
 	joined := strings.ToLower(strings.TrimSpace(joinMessageContent(messages)))
 
 	switch {
+	case strings.Contains(joined, "shim-local computer planner") && !strings.Contains(joined, "computer_call_output screenshot received"):
+		return `{"decision":"computer_call","actions":[{"type":"screenshot"}]}`
+	case strings.Contains(joined, "shim-local computer planner") && strings.Contains(joined, "ui is not suitable for a typing action"):
+		return `{"decision":"assistant","message":"The UI is not suitable for a typing action."}`
+	case strings.Contains(joined, "shim-local computer planner") && strings.Contains(joined, "type penguin"):
+		return `{"decision":"computer_call","actions":[{"type":"click","button":"left","keys":null,"x":636,"y":343},{"type":"type","text":"penguin"}]}`
 	case strings.Contains(joined, "shim-local constrained custom tool generator") && strings.Contains(joined, "`math_exp`"):
 		return `{"input":"4 + 4"}`
 	case strings.Contains(joined, "shim-local constrained custom tool generator") && strings.Contains(joined, "`exact_text`"):

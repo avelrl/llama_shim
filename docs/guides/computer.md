@@ -49,7 +49,8 @@ curl http://127.0.0.1:8080/v1/responses \
         "call_id": "call_...",
         "output": {
           "type": "computer_screenshot",
-          "image_url": "data:image/png;base64,<base64>"
+          "image_url": "data:image/png;base64,<base64>",
+          "detail": "original"
         }
       }
     ],
@@ -62,17 +63,34 @@ curl http://127.0.0.1:8080/v1/responses \
 - Enable the local runtime with `responses.computer.backend=chat_completions`.
 - The planner runs over the existing `/v1/chat/completions` backend.
 - Current-turn screenshots are projected into the local planner context as
-  multimodal text-plus-image input.
+  multimodal text-plus-image input. `computer_call_output.output.detail:
+  "original"` is accepted and stored on the Responses item, then mapped to
+  `high` for the Chat-backed planner projection because Chat-compatible image
+  inputs commonly accept only `auto`, `low`, or `high`.
+- Planner actions are allow-listed to the current local action family:
+  `screenshot`, `click`, `double_click`, `scroll`, `type`, `wait`,
+  `keypress`, `drag`, and `move`.
+- Planner output is accepted as strict `decision/actions` JSON or a
+  single-action `action`/`args` JSON object for known actions. The shim
+  normalizes these forms, including `action_type` as a `type` alias; it does
+  not infer missing coordinates, text, or actions.
 - Stored retrieve and `/v1/responses/{id}/input_items` keep the typed
   `computer_call` / `computer_call_output` items.
 - Stream replay stays generic through `response.output_item.*`.
+- Run `make v3-local-runtimes-smoke` against devstack to exercise the
+  deterministic screenshot-first loop.
+- Run `make v3-computer-browser-harness-smoke` when you want the optional
+  Playwright-backed check that executes returned actions against a real local
+  browser fixture.
 
 ## Gotchas
 
 - The shim does not claim exact hosted `response.computer_call.*` SSE behavior.
 - This is a practical external loop, not a hosted browser runtime.
+- The browser harness is a developer/release smoke, not a portable CI gate.
 
 ## Related Docs
 
 - [Tools Overview](tools.md)
+- [V3 Computer Browser Harness](../v3-computer-browser-harness.md)
 - [Official computer-use guide](https://developers.openai.com/api/docs/guides/tools-computer-use)

@@ -23,6 +23,18 @@ var shimLocalComputerFields = map[string]struct{}{
 	"include":             {},
 }
 
+var localComputerActionTypes = map[string]struct{}{
+	"click":        {},
+	"double_click": {},
+	"scroll":       {},
+	"type":         {},
+	"wait":         {},
+	"keypress":     {},
+	"drag":         {},
+	"move":         {},
+	"screenshot":   {},
+}
+
 type LocalComputerRuntimeConfig struct {
 	Backend string
 }
@@ -107,7 +119,8 @@ func (h *responseHandler) createLocalComputerResponse(ctx context.Context, reque
 	}
 	plan, err := parseLocalComputerPlan(planText)
 	if err != nil {
-		return domain.Response{}, err
+		h.logLocalComputerPlannerParseError(ctx, input.Model, planText, err)
+		return domain.Response{}, domain.NewValidationError("input", "shim-local computer planner did not return a supported computer action plan")
 	}
 
 	responseID, err := domain.NewPrefixedID("resp")
@@ -149,6 +162,18 @@ func (h *responseHandler) createLocalComputerResponse(ctx context.Context, reque
 		return domain.Response{}, err
 	}
 	return h.service.SaveExternalResponse(ctx, prepared, input, response)
+}
+
+func (h *responseHandler) logLocalComputerPlannerParseError(ctx context.Context, model string, raw string, err error) {
+	if h == nil || h.logger == nil {
+		return
+	}
+	h.logger.WarnContext(ctx, "shim-local computer planner output rejected",
+		"model", model,
+		"err", err,
+		"output_bytes", len(raw),
+		"output_preview", bodyPreviewForLog([]byte(raw), 4096),
+	)
 }
 
 func parseLocalComputerConfig(rawFields map[string]json.RawMessage) (localComputerConfig, error) {
@@ -273,10 +298,15 @@ func buildLocalComputerPlannerBody(model string, options map[string]json.RawMess
 	messages = append(messages, currentMessages...)
 
 	body := map[string]any{
-		"model":    model,
-		"messages": messages,
+		"model":           model,
+		"messages":        messages,
+		"temperature":     0,
+		"response_format": map[string]any{"type": "json_object"},
 	}
 	for key, raw := range options {
+		if key == "response_format" {
+			continue
+		}
 		targetKey := key
 		if key == "max_output_tokens" {
 			targetKey = "max_tokens"
@@ -429,20 +459,14 @@ func projectLocalComputerCallOutputItem(item domain.Item) (map[string]any, error
 	outputType := strings.TrimSpace(asString(output["type"]))
 	switch outputType {
 	case "computer_screenshot":
-		imageURL := strings.TrimSpace(asString(output["image_url"]))
 		parts := []map[string]any{
 			{
 				"type": "text",
 				"text": "computer_call_output screenshot received for call_id " + callID + ". Use this as the latest UI state.",
 			},
 		}
-		if imageURL != "" {
-			parts = append(parts, map[string]any{
-				"type": "image_url",
-				"image_url": map[string]any{
-					"url": imageURL,
-				},
-			})
+		if imagePart, ok := localComputerScreenshotImageURLPart(output); ok {
+			parts = append(parts, imagePart)
 		}
 		return map[string]any{
 			"role":    "user",
@@ -491,19 +515,73 @@ func localComputerImageURLPart(part map[string]any) (map[string]any, bool) {
 	}, true
 }
 
+func localComputerScreenshotImageURLPart(output map[string]any) (map[string]any, bool) {
+	var (
+		url    string
+		detail string
+	)
+	switch value := output["image_url"].(type) {
+	case string:
+		url = strings.TrimSpace(value)
+	case map[string]any:
+		url = strings.TrimSpace(asString(value["url"]))
+		detail = strings.TrimSpace(asString(value["detail"]))
+	}
+	if detail == "" {
+		detail = strings.TrimSpace(asString(output["detail"]))
+	}
+	if url == "" {
+		return nil, false
+	}
+	detail = normalizeLocalComputerChatImageDetail(detail)
+	return map[string]any{
+		"type": "image_url",
+		"image_url": map[string]any{
+			"url":    url,
+			"detail": detail,
+		},
+	}, true
+}
+
+func normalizeLocalComputerChatImageDetail(detail string) string {
+	switch strings.ToLower(strings.TrimSpace(detail)) {
+	case "low":
+		return "low"
+	case "auto", "":
+		return "auto"
+	case "high", "original":
+		return "high"
+	default:
+		return "auto"
+	}
+}
+
 func parseLocalComputerPlan(raw string) (localComputerPlan, error) {
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
+	candidate, ok := extractLocalComputerPlanJSON(raw)
+	if !ok {
 		return localComputerPlan{}, domain.ErrUnsupportedShape
 	}
 
 	var payload map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(trimmed), &payload); err != nil {
+	if err := json.Unmarshal([]byte(candidate), &payload); err != nil {
 		return localComputerPlan{}, domain.ErrUnsupportedShape
 	}
 
 	var plan localComputerPlan
 	plan.Raw = payload
+	if _, ok := payload["decision"]; !ok {
+		var action map[string]any
+		if err := json.Unmarshal([]byte(candidate), &action); err != nil {
+			return localComputerPlan{}, domain.ErrUnsupportedShape
+		}
+		if err := normalizeLocalComputerAction(action); err != nil {
+			return localComputerPlan{}, domain.ErrUnsupportedShape
+		}
+		plan.Decision = "computer_call"
+		plan.Actions = []map[string]any{action}
+		return plan, nil
+	}
+
 	if err := json.Unmarshal(payload["decision"], &plan.Decision); err != nil {
 		return localComputerPlan{}, domain.ErrUnsupportedShape
 	}
@@ -518,7 +596,7 @@ func parseLocalComputerPlan(raw string) (localComputerPlan, error) {
 			return localComputerPlan{}, domain.ErrUnsupportedShape
 		}
 		for _, action := range plan.Actions {
-			if strings.TrimSpace(asString(action["type"])) == "" {
+			if err := normalizeLocalComputerAction(action); err != nil {
 				return localComputerPlan{}, domain.ErrUnsupportedShape
 			}
 		}
@@ -535,6 +613,198 @@ func parseLocalComputerPlan(raw string) (localComputerPlan, error) {
 	}
 
 	return plan, nil
+}
+
+func extractLocalComputerPlanJSON(raw string) (string, bool) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", false
+	}
+	if localComputerPlanObjectLooksValid(trimmed) {
+		return trimmed, true
+	}
+
+	for start := 0; start < len(trimmed); start++ {
+		if trimmed[start] != '{' {
+			continue
+		}
+		if candidate, ok := balancedJSONObjectAt(trimmed, start); ok && localComputerPlanObjectLooksValid(candidate) {
+			return candidate, true
+		}
+	}
+	return "", false
+}
+
+func localComputerPlanObjectLooksValid(candidate string) bool {
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(candidate), &payload); err != nil {
+		return false
+	}
+	if _, ok := payload["decision"]; ok {
+		return true
+	}
+	return localComputerRawActionTypeKnown(payload["action"]) ||
+		localComputerRawActionTypeKnown(payload["action_type"]) ||
+		localComputerRawActionTypeKnown(payload["type"])
+}
+
+func localComputerRawActionTypeKnown(raw json.RawMessage) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	var actionType string
+	if err := json.Unmarshal(raw, &actionType); err != nil {
+		return false
+	}
+	_, ok := localComputerActionTypes[strings.ToLower(strings.TrimSpace(actionType))]
+	return ok
+}
+
+func balancedJSONObjectAt(value string, start int) (string, bool) {
+	depth := 0
+	inString := false
+	escaped := false
+	for i := start; i < len(value); i++ {
+		ch := value[i]
+		if inString {
+			if escaped {
+				escaped = false
+				continue
+			}
+			switch ch {
+			case '\\':
+				escaped = true
+			case '"':
+				inString = false
+			}
+			continue
+		}
+
+		switch ch {
+		case '"':
+			inString = true
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return value[start : i+1], true
+			}
+		}
+	}
+	return "", false
+}
+
+func normalizeLocalComputerAction(action map[string]any) error {
+	actionType := strings.ToLower(strings.TrimSpace(asString(action["type"])))
+	if actionType == "" {
+		actionType = strings.ToLower(strings.TrimSpace(asString(action["action"])))
+	}
+	if actionType == "" {
+		actionType = strings.ToLower(strings.TrimSpace(asString(action["action_type"])))
+	}
+	if actionType == "" {
+		return domain.ErrUnsupportedShape
+	}
+	if _, ok := localComputerActionTypes[actionType]; !ok {
+		return domain.ErrUnsupportedShape
+	}
+
+	mergeLocalComputerActionInput(action, actionType, action["action_input"])
+	mergeLocalComputerActionInput(action, actionType, action["args"])
+	normalizeLocalComputerCoordinate(action)
+	normalizeLocalComputerText(action, actionType)
+
+	action["type"] = actionType
+	delete(action, "action")
+	delete(action, "action_type")
+	delete(action, "action_input")
+	delete(action, "args")
+	delete(action, "coordinate")
+	delete(action, "coordinates")
+	delete(action, "position")
+	delete(action, "element")
+	delete(action, "value")
+	delete(action, "input")
+	delete(action, "content")
+	return nil
+}
+
+func mergeLocalComputerActionInput(action map[string]any, actionType string, input any) {
+	switch value := input.(type) {
+	case map[string]any:
+		for key, field := range value {
+			if _, exists := action[key]; !exists {
+				action[key] = field
+			}
+		}
+	case string:
+		if actionType == "type" && strings.TrimSpace(asString(action["text"])) == "" {
+			action["text"] = value
+		}
+	}
+}
+
+func normalizeLocalComputerCoordinate(action map[string]any) {
+	if _, hasX := action["x"]; hasX {
+		if _, hasY := action["y"]; hasY {
+			return
+		}
+	}
+	for _, key := range []string{"coordinate", "coordinates", "position"} {
+		x, y, ok := localComputerCoordinatePair(action[key])
+		if !ok {
+			continue
+		}
+		if _, exists := action["x"]; !exists {
+			action["x"] = x
+		}
+		if _, exists := action["y"]; !exists {
+			action["y"] = y
+		}
+		return
+	}
+}
+
+func localComputerCoordinatePair(value any) (any, any, bool) {
+	switch typed := value.(type) {
+	case []any:
+		if len(typed) < 2 {
+			return nil, nil, false
+		}
+		x, okX := localComputerCoordinateNumber(typed[0])
+		y, okY := localComputerCoordinateNumber(typed[1])
+		return x, y, okX && okY
+	case map[string]any:
+		x, okX := localComputerCoordinateNumber(typed["x"])
+		y, okY := localComputerCoordinateNumber(typed["y"])
+		return x, y, okX && okY
+	default:
+		return nil, nil, false
+	}
+}
+
+func localComputerCoordinateNumber(value any) (any, bool) {
+	switch typed := value.(type) {
+	case float64, float32, int, int64, int32, uint, uint64, uint32, json.Number:
+		return typed, true
+	default:
+		return nil, false
+	}
+}
+
+func normalizeLocalComputerText(action map[string]any, actionType string) {
+	if actionType != "type" || strings.TrimSpace(asString(action["text"])) != "" {
+		return
+	}
+	for _, key := range []string{"value", "input", "content"} {
+		text := asString(action[key])
+		if strings.TrimSpace(text) == "" {
+			continue
+		}
+		action["text"] = text
+		return
+	}
 }
 
 func buildLocalComputerCallItem(actions []map[string]any) (domain.Item, error) {

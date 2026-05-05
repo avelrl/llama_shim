@@ -363,9 +363,13 @@ paths:
           `computer_call_output` screenshot input, and either another
           `computer_call` or a final assistant `message`
         - current-turn `computer_call_output` screenshots are projected into
-          the shim-owned planner request as multimodal image context, and
-          stored `previous_response_id` lineage preserves the latest loop
-          state across follow-up turns
+          the shim-owned planner request as multimodal image context with
+          `detail="original"` by default, and stored
+          `previous_response_id` lineage preserves the latest loop state
+          across follow-up turns
+        - planner actions are allow-listed to the current local action family:
+          `screenshot`, `click`, `double_click`, `scroll`, `type`, `wait`,
+          `keypress`, `drag`, and `move`
         - create-stream and stored retrieve-stream stay generic through
           `response.output_item.*`; current upstream captures do not document
           a dedicated `response.computer_call.*` SSE family, so the shim does
@@ -2774,7 +2778,7 @@ components:
           type: string
     ShimCapabilityProbeSet:
       type: object
-      required: [storage, sqlite, postgres, llama, retrieval_embedder, web_search_backend, image_generation_backend]
+      required: [storage, sqlite, postgres, llama, retrieval_embedder, web_search_backend, image_generation_backend, computer_runtime]
       properties:
         storage:
           $ref: "#/components/schemas/ShimCapabilityProbe"
@@ -2789,6 +2793,8 @@ components:
         web_search_backend:
           $ref: "#/components/schemas/ShimCapabilityProbe"
         image_generation_backend:
+          $ref: "#/components/schemas/ShimCapabilityProbe"
+        computer_runtime:
           $ref: "#/components/schemas/ShimCapabilityProbe"
     ShimCapabilityProbe:
       type: object
@@ -2982,8 +2988,11 @@ components:
         `computer_call_output` with a screenshot payload, and the planner can
         then return another `computer_call` or a final assistant `message`.
         Current-turn `computer_call_output` screenshots are projected into the
-        planner request as multimodal image context, while stored
-        `previous_response_id` lineage keeps the latest local loop state.
+        planner request as multimodal image context with `detail="original"`
+        by default, while stored `previous_response_id` lineage keeps the
+        latest local loop state. Planner actions are allow-listed to the
+        current local action family: `screenshot`, `click`, `double_click`,
+        `scroll`, `type`, `wait`, `keypress`, `drag`, and `move`.
         Streamed create and stored retrieve stay generic through
         `response.output_item.*`; the shim does not invent a dedicated
         `response.computer_call.*` family because the public guide confirms

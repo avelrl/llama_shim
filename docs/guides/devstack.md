@@ -220,8 +220,8 @@ Useful readiness metrics:
 
 `source` is `readyz` or `capabilities`. `component` is a fixed runtime
 component such as `storage`, `llama`, `retrieval_embedder`,
-`web_search_backend`, or `image_generation_backend`. `outcome` is `ready` or
-`unready`.
+`web_search_backend`, `image_generation_backend`, or `computer_runtime`.
+`outcome` is `ready` or `unready`.
 
 ## What The Smoke Path Verifies
 
@@ -232,8 +232,16 @@ component such as `storage`, `llama`, `retrieval_embedder`,
 - `make v3-coding-tools-smoke`
 - `make v3-constrained-decoding-smoke`
 - `make v3-image-backends-smoke`
+- `make v3-local-runtimes-smoke`
 
 It intentionally does not require the real `codex` binary.
+
+`make v3-computer-browser-harness-smoke` is an optional local smoke for the
+shim-local `computer` loop. It opens the deterministic fixture page in a real
+Playwright browser, executes returned `computer_call.actions`, sends
+`computer_call_output` screenshots back to `/v1/responses`, and verifies the
+DOM changed. It is intentionally excluded from `make devstack-ci-smoke`
+because it depends on local browser availability and sandbox permissions.
 
 `make responses-compat-external-smoke` is the repo-owned bridge for external
 Responses API compatibility testers in `devstack-fixture` mode. With no tester

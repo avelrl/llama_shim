@@ -25,7 +25,10 @@ not practical user guides and are not release scope documents.
   planned local image-generation backend expansion without hosted parity
   overclaims.
 - [V3 Richer Local-Only Runtimes](../v3-local-runtimes.md):
-  planned local runtime expansion slices and capability-gating requirements.
+  local runtime expansion slices and capability-gating requirements; the first
+  implemented slice covers the shim-local computer loop.
+- [V3 Computer Browser Harness](../v3-computer-browser-harness.md): optional
+  real Playwright executor smoke for the shim-local `computer` loop.
 - [V3 Ops and Deployment Expansion](../v3-ops-deployment.md):
   deployment, readiness observability, tenanting, and governance staging.
 - [V3 Coding Tools Test Runbook](v3-coding-tools-test-runbook.md): manual and
