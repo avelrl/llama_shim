@@ -499,11 +499,81 @@ Postgres beta hardening now also covers:
 
 Remaining work after the current Postgres beta slice:
 
-- code-interpreter sessions and generated files
-- optional migration tools
-- Postgres-native cleanup/retention policies for local replay artifacts
-- richer operator guidance for cluster-native Postgres backup/restore policy
-- hard-delete and governance hooks, if V4 scope pulls them in
+#### 6.1 SQLite-to-Postgres migration tooling
+
+Status: planned.
+
+Add an explicit operator workflow for moving existing SQLite state into the
+Postgres beta store. The first implementation should be conservative:
+
+- copy only the Postgres-owned beta tables: responses, replay artifacts,
+  conversations/items, stored Chat Completions/messages, files, vector stores,
+  vector-store files, and vector-store chunks
+- leave code-interpreter sessions/generated files in the SQLite sidecar
+- support dry-run/count reporting before writes
+- fail by default when target Postgres tables are not empty, unless the
+  operator asks for an explicit replace/merge mode
+- test SQLite fixture to isolated Postgres schema migration, including file
+  content, searchability, replay artifacts, conversations, and stored chat
+  messages
+
+#### 6.2 Code-interpreter state ownership
+
+Status: planned.
+
+Decide whether code-interpreter sessions and generated files should remain
+instance-local forever or become Postgres-backed for multi-instance
+deployments. This needs a separate design because the runtime/container
+boundary is security-sensitive and generated artifacts can be large. Do not
+claim shared code-interpreter state until:
+
+- session metadata and generated-file metadata/content have storage contracts
+- cleanup works for both metadata and content
+- multi-instance behavior is smoke-tested
+- docs make the runtime isolation and side effects explicit
+
+#### 6.3 Replay/artifact retention policy
+
+Status: planned.
+
+Current cleanup is intentionally narrow and targets explicit `expires_at`
+resources. Add a shim-owned retention policy for local response replay
+artifacts only after the operator semantics are explicit:
+
+- configurable retention by age and/or count
+- non-fatal cleanup path that never changes the main Responses create result
+- tests for create-stream, retrieve-stream, and replay after retention cleanup
+- compatibility-matrix wording that this is shim-local retention behavior, not
+  hosted OpenAI retention parity
+
+#### 6.4 Cluster-native Postgres backup guidance
+
+Status: planned docs/runbook.
+
+Document when to use the shim-owned logical COPY backup versus Postgres-native
+backup/restore. The current logical backup is useful for devstack, regression
+tests, and small operator exports. Production deployments still need a
+cluster-level policy such as `pg_dump`, PITR, or a managed database backup.
+
+#### 6.5 Hard-delete and governance hooks
+
+Status: planned, likely V4-owned.
+
+Add hard-delete/governance hooks only after the storage contracts and migration
+paths are stable. This work is shim-owned policy, not OpenAI API parity.
+
+#### 6.6 ANN indexing
+
+Status: planned.
+
+The current pgvector implementation is exact search plus the shim's existing
+lexical/hybrid behavior. Add ANN index support only with explicit operator
+knobs and tests:
+
+- HNSW/IVFFlat index creation and migration strategy
+- index parameter configuration
+- rebuild/repair path
+- quality/latency docs that do not claim hosted OpenAI reranker equivalence
 
 ## Test Requirements
 

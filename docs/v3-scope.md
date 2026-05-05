@@ -96,6 +96,8 @@ See
 - broader Postgres / multi-instance storage modes beyond the current
   responses/conversations/stored-chat/file/vector boundary
 - SQLite-to-Postgres migration and code-interpreter store ownership
+- replay/artifact retention policy, cluster-native Postgres backup runbook,
+  hard-delete/governance hooks, and ANN index management
 - more embedders and rerankers beyond the current compatibility-driven set
 
 ### 3. Richer local-only runtimes
@@ -320,8 +322,9 @@ The next practical implementation work should be selected from this queue:
 
 1. Continue [V3 Storage And Retrieval Backends](v3-storage-retrieval-backends.md)
    for the remaining Postgres beta work: broader durable-store migration,
-   migration tooling, code-interpreter state migration, ANN indexing, or
-   additional embedders/rerankers.
+   migration tooling, code-interpreter state migration, replay/artifact
+   retention, cluster-native backup guidance, hard-delete/governance hooks,
+   ANN indexing, or additional embedders/rerankers.
 2. Continue [V3 Ops And Deployment Expansion](v3-ops-deployment.md) only for
    governance/tenanting after the shared storage beta boundary is stable.
 3. Turn [V3 Alternative Image Backends](v3-image-backends.md) into a first

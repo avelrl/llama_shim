@@ -187,6 +187,11 @@ Maintenance boundary:
   SQLite-to-Postgres migration tool, cluster-native backup policy, or
   code-interpreter state migration. Those belong to later Postgres
   beta/hardening slices, not the multi-instance deployment smoke.
+- The detailed Postgres follow-up backlog is tracked in
+  [V3 Storage And Retrieval Backends](v3-storage-retrieval-backends.md#6-broader-storage-expansion):
+  SQLite-to-Postgres migration tooling, code-interpreter state ownership,
+  replay/artifact retention policy, cluster-native backup guidance,
+  hard-delete/governance hooks, and ANN indexing.
 
 ### Phase 3: Governance/Tenanting
 
