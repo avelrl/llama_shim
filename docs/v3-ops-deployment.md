@@ -115,6 +115,13 @@ Potential work:
 
 Candidate only after storage contracts are backend-neutral.
 
+The current boundary is documented in
+[V3 Hard Delete And Governance Boundary](v3-hard-delete-governance.md).
+OpenAI-shaped delete routes remain resource-scoped compatibility routes.
+Tenant/project purge, redaction policy, legal hold, encryption policy, audit
+workflows, upstream-provider deletion, and backup/PITR deletion guarantees need
+a dedicated shim-owned operator surface before implementation.
+
 Potential work:
 
 - encryption-at-rest configuration notes

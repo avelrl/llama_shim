@@ -22,6 +22,9 @@ Official docs checked for this pass:
   <https://developers.openai.com/api/docs/guides/tools-code-interpreter>
 - OpenAI Data controls guide:
   <https://developers.openai.com/api/docs/guides/your-data>
+- OpenAI API reference delete pages for responses, conversations/items, files,
+  vector stores, and vector-store files; these confirm resource-scoped delete
+  response shapes but do not define shim-local governance purge.
 - OpenAI OpenAPI spec via the OpenAI docs MCP for
   `/responses/{response_id}/input_items`,
   `/conversations/{conversation_id}/items`, and
@@ -635,10 +638,19 @@ schedule or retain those backups.
 
 #### 6.5 Hard-delete and governance hooks
 
-Status: planned, likely V4-owned.
+Status: documented boundary; implementation deferred.
 
-Add hard-delete/governance hooks only after the storage contracts and migration
-paths are stable. This work is shim-owned policy, not OpenAI API parity.
+Resource-scoped OpenAI-shaped delete routes already exist for responses,
+conversation items, stored Chat Completions, files, vector stores,
+vector-store files, containers, and container files. They remain compatibility
+routes for the addressed resource only.
+
+[V3 Hard Delete And Governance Boundary](v3-hard-delete-governance.md)
+documents why tenant/project purge, legal hold, redaction policy, encryption
+policy, audit workflows, upstream delete propagation, and backup/PITR deletion
+guarantees are not part of the Postgres storage beta. Those features need a
+dedicated shim-owned operator/admin surface with authz, dry-run, audit, bounded
+batching, sidecar semantics, and sibling-path tests before implementation.
 
 #### 6.6 ANN indexing
 

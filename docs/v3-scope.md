@@ -313,7 +313,9 @@ for the Postgres-owned beta tables is implemented in the storage track. See
 - multi-tenant authz / tenant isolation
 - richer exporters and dashboards
 - governance-heavy storage features such as encryption-at-rest options,
-  redaction policy, and hard-delete controls
+  redaction policy, and hard-delete controls; the V3 storage beta now keeps
+  this as a documented boundary in
+  [v3-hard-delete-governance.md](v3-hard-delete-governance.md)
 - cluster-native Postgres backup scheduling/retention and remaining
   shared-state deployment modes
 
@@ -326,8 +328,9 @@ the public compatibility story less truthful.
 The next practical implementation work should be selected from this queue:
 
 1. Continue [V3 Storage And Retrieval Backends](v3-storage-retrieval-backends.md)
-   for the remaining Postgres beta work: hard-delete/governance hooks, ANN
-   indexing, or additional embedders/rerankers.
+   for the remaining Postgres beta work: ANN indexing or additional
+   embedders/rerankers. Hard-delete/governance is documented as a boundary and
+   should move through the ops/governance track before code is added.
 2. Continue [V3 Ops And Deployment Expansion](v3-ops-deployment.md) only for
    governance/tenanting after the shared storage beta boundary is stable.
 3. Turn [V3 Alternative Image Backends](v3-image-backends.md) into a first

@@ -147,7 +147,7 @@ make responses-compat-external-real-smoke
 | --- | --- | --- | --- |
 | `/v1/files` CRUD | Implemented | Keep retrieval/file-input contract explicit | Shim owns local storage |
 | `/v1/vector_stores` CRUD | Implemented | Keep local retrieval subset explicit | |
-| `/v1/vector_stores/{id}/files*` | Implemented | Keep failed-binary indexing behavior explicit | |
+| `/v1/vector_stores/{id}/files*` | Implemented | Keep failed-binary indexing behavior explicit | Deleting a vector-store file removes it from that vector store only; deleting the underlying file is a separate `/v1/files/{id}` delete. |
 | `/v1/vector_stores/{id}/search` lexical + semantic + hybrid local subsets | Broad subset | Keep ranking semantics and filters explicit | Local substrate is already usable |
 | retrieval ranking contract (`ranker`, `score_threshold`, `hybrid_search`) | Broad subset | Keep the docs-backed ranking knobs explicit | Local search supports the documented ranker names plus shim-local `none`; exact hosted reranker quality is not claimed |
 
@@ -197,6 +197,7 @@ proxy-first escape hatch for standalone hosted/native requests, while
 | `/healthz`, `/readyz`, `/debug/capabilities`, `/metrics` | Shim-owned | Keep documented and stable | Useful operator surface, not OpenAI compatibility surface |
 | ingress auth, rate limiting, quotas, structured logs | Shim-owned | Keep minimum operator floor stable | |
 | retention cleanup, maintenance path, and local DX packaging | Implemented | Keep the operator workflow explicit | Cleanup covers explicit local `expires_at` resources plus optional shim-owned replay-artifact retention for standalone responses. `shimctl` cleanup/backup/restore/vacuum/optimize is backend-aware for SQLite and the current Postgres beta tables, and cluster-native Postgres backup guidance is documented separately. This is not hosted OpenAI retention parity. |
+| hard-delete/governance purge | Deferred shim-owned operator surface | Do not expose as hidden behavior inside OpenAI-shaped routes | Current resource deletes are scoped to the addressed resource. Tenant/project purge, redaction policy, legal hold, audit workflows, upstream delete propagation, and backup/PITR deletion guarantees are documented in [v3-hard-delete-governance.md](v3-hard-delete-governance.md) and are not implemented. |
 | multi-tenant authz, shared rate limiting, richer exporters/admin tooling | V3 | Stage after V2 | Valuable, but not required for a broad compatibility facade |
 
 ## Known V2 Limitations

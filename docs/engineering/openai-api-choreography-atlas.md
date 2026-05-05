@@ -517,6 +517,10 @@ Shim reality:
 - The Postgres storage path serializes app-owned schema migration and
   cleans chunk rows when a vector-store file is deleted from a vector store;
   these are internal store invariants, not OpenAI wire-contract changes.
+- OpenAI-shaped delete routes are resource-scoped. Tenant/project purge,
+  redaction policy, legal hold, audit workflows, upstream delete propagation,
+  and backup/PITR deletion guarantees are not part of the storage beta; see
+  [V3 Hard Delete And Governance Boundary](../v3-hard-delete-governance.md).
 - Backend-aware maintenance now covers cleanup, optional standalone
   response-replay artifact retention, optimize/vacuum, shim-owned logical
   backup/restore, SQLite-to-Postgres migration for the current Postgres-owned
