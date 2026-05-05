@@ -125,6 +125,9 @@ func (s *Store) CleanupExpiredState(ctx context.Context, now int64, policies ...
 }
 
 func (s *Store) Optimize(ctx context.Context) error {
+	if err := s.ensurePGVectorANNIndex(ctx); err != nil {
+		return err
+	}
 	if _, err := s.db.ExecContext(ctx, `ANALYZE `+postgresMaintenanceTableList()); err != nil {
 		return fmt.Errorf("postgres analyze: %w", err)
 	}

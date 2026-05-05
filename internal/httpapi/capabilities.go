@@ -153,13 +153,21 @@ type capabilityPersistenceInfo struct {
 }
 
 type capabilityRetrievalConfig struct {
-	StorageBackend  string `json:"storage_backend"`
-	IndexBackend    string `json:"index_backend"`
-	EmbedderBackend string `json:"embedder_backend"`
-	SemanticSearch  bool   `json:"semantic_search"`
-	HybridSearch    bool   `json:"hybrid_search"`
-	LocalRerank     bool   `json:"local_rerank"`
-	LazyRepair      bool   `json:"lazy_repair"`
+	StorageBackend  string                       `json:"storage_backend"`
+	IndexBackend    string                       `json:"index_backend"`
+	EmbedderBackend string                       `json:"embedder_backend"`
+	SemanticSearch  bool                         `json:"semantic_search"`
+	HybridSearch    bool                         `json:"hybrid_search"`
+	LocalRerank     bool                         `json:"local_rerank"`
+	LazyRepair      bool                         `json:"lazy_repair"`
+	ANNIndex        *capabilityRetrievalANNIndex `json:"ann_index,omitempty"`
+}
+
+type capabilityRetrievalANNIndex struct {
+	Enabled    bool   `json:"enabled"`
+	Method     string `json:"method"`
+	Metric     string `json:"metric"`
+	Dimensions int    `json:"dimensions"`
 }
 
 type capabilityOpsConfig struct {
@@ -507,7 +515,7 @@ func capabilityRetrieval(deps RouterDeps) capabilityRetrievalConfig {
 			indexCapabilities = reported
 		}
 	}
-	return capabilityRetrievalConfig{
+	out := capabilityRetrievalConfig{
 		StorageBackend:  storageBackend,
 		IndexBackend:    indexCapabilities.Backend,
 		EmbedderBackend: embedderBackend,
@@ -516,6 +524,15 @@ func capabilityRetrieval(deps RouterDeps) capabilityRetrievalConfig {
 		LocalRerank:     indexCapabilities.LocalRerank,
 		LazyRepair:      indexCapabilities.LazyRepair,
 	}
+	if indexCapabilities.ANNIndex != nil && indexCapabilities.ANNIndex.Enabled {
+		out.ANNIndex = &capabilityRetrievalANNIndex{
+			Enabled:    true,
+			Method:     indexCapabilities.ANNIndex.Method,
+			Metric:     indexCapabilities.ANNIndex.Metric,
+			Dimensions: indexCapabilities.ANNIndex.Dimensions,
+		}
+	}
+	return out
 }
 
 func constrainedDecodingCapability(deps RouterDeps) capabilityConstrainedDecodingConfig {

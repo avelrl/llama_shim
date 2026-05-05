@@ -38,6 +38,15 @@ log:
 retrieval:
   index:
     backend: lexical
+    pgvector:
+      ann:
+        enabled: false
+        method: hnsw
+        metric: cosine
+        dimensions: 0
+        hnsw_m: 16
+        hnsw_ef_construction: 64
+        ivfflat_lists: 100
   embedder:
     backend: disabled
     base_url: ""

@@ -78,7 +78,7 @@ flowchart LR
   lexical["Lexical scan"]
   fts5["sqlite_fts5 index"]
   sqlitevec["sqlite_vec index"]
-  pgvector["pgvector exact dense index"]
+  pgvector["pgvector dense index"]
   embedder["Optional embedder backend"]
   model["Upstream text model"]
 
@@ -203,13 +203,25 @@ Retrieval indexing remains configured separately:
 retrieval:
   index:
     backend: lexical   # lexical, sqlite_fts5, sqlite_vec, or pgvector
+    pgvector:
+      ann:
+        enabled: false
+        method: hnsw        # hnsw or ivfflat
+        metric: cosine      # currently cosine only
+        dimensions: 0       # required when enabled
+        hnsw_m: 16
+        hnsw_ef_construction: 64
+        ivfflat_lists: 100
   embedder:
     backend: disabled
 ```
 
 `retrieval.index.backend=pgvector` requires `storage.backend=postgres` and a
-configured retrieval embedder. It is an exact pgvector search path plus the
-shim's existing lexical fallback/hybrid fusion, not hosted OpenAI ranking
+configured retrieval embedder. By default it uses exact pgvector distance
+ordering plus the shim's existing lexical fallback/hybrid fusion. Optional
+ANN indexing is enabled only when `retrieval.index.pgvector.ann.enabled=true`
+and `retrieval.index.pgvector.ann.dimensions` matches the configured embedder.
+This is a shim-owned local index acceleration path, not hosted OpenAI ranking
 parity.
 
 When `storage.backend=postgres` is active, `retrieval.index.backend` must be
@@ -279,11 +291,19 @@ for the stores that have not moved yet:
       "semantic_search": true,
       "hybrid_search": true,
       "local_rerank": false,
-      "lazy_repair": false
+      "lazy_repair": false,
+      "ann_index": {
+        "enabled": true,
+        "method": "hnsw",
+        "metric": "cosine",
+        "dimensions": 4
+      }
     }
   }
 }
 ```
+
+`ann_index` is omitted when pgvector ANN is disabled.
 
 ## Implementation Phases
 
@@ -413,11 +433,14 @@ Out of current beta scope:
 
 ### 4. pgvector Retrieval Alpha
 
-Status: implemented as an alpha exact pgvector backend.
+Status: implemented as an alpha pgvector backend with exact search by default
+and optional explicit ANN indexing.
 
 Implemented behavior:
 
 - semantic search through pgvector exact vector distance ordering
+- optional HNSW/IVFFlat ANN indexes over a fixed embedding dimension when
+  explicitly configured
 - lexical fallback when semantic search returns no usable results
 - weighted hybrid dense+text ranking when `ranking_options.hybrid_search` is
   configured
@@ -466,6 +489,13 @@ RESPONSES_MODE=prefer_local \
 make devstack-up
 
 RESPONSES_MODE=prefer_local make devstack-postgres-pgvector-smoke
+```
+
+Run the focused ANN variant after starting the ANN-enabled devstack:
+
+```bash
+make devstack-postgres-pgvector-ann-up
+make devstack-postgres-pgvector-ann-smoke
 ```
 
 Run the focused multi-instance deployment smoke:
@@ -654,16 +684,41 @@ batching, sidecar semantics, and sibling-path tests before implementation.
 
 #### 6.6 ANN indexing
 
-Status: planned.
+Status: implemented for explicit pgvector HNSW/IVFFlat indexes.
 
-The current pgvector implementation is exact search plus the shim's existing
-lexical/hybrid behavior. Add ANN index support only with explicit operator
-knobs and tests:
+The pgvector implementation remains exact search by default. ANN is an
+operator opt-in because pgvector ANN indexes require a fixed embedding
+dimension and can trade recall for latency. The shim does not infer dimensions
+from the first document or silently change retrieval behavior.
 
-- HNSW/IVFFlat index creation and migration strategy
-- index parameter configuration
-- rebuild/repair path
-- quality/latency docs that do not claim hosted OpenAI reranker equivalence
+Implemented boundary:
+
+- `retrieval.index.pgvector.ann.enabled=true` enables shim-managed ANN index
+  creation.
+- `retrieval.index.pgvector.ann.method` supports `hnsw` and `ivfflat`.
+- `retrieval.index.pgvector.ann.metric` supports `cosine`, matching the
+  existing pgvector `<=>` distance query.
+- `retrieval.index.pgvector.ann.dimensions` is required when enabled and must
+  match the retrieval embedder output dimension.
+- HNSW creation parameters are `hnsw_m` and `hnsw_ef_construction`.
+- IVFFlat creation parameter is `ivfflat_lists`.
+- Startup and `shimctl optimize` create the desired managed index and drop
+  stale shim-managed ANN indexes with the `idx_vsc_ann_` prefix after the new
+  index exists.
+- Search casts `embedding` and query vectors to `vector(<dimensions>)` only in
+  ANN mode, and filters chunks by `embedding_dimensions`.
+- Attach/migration/search fail fast on dimension mismatch instead of mixing
+  incompatible embedding spaces.
+- `/debug/capabilities.runtime.retrieval.ann_index` reports method, metric,
+  and dimensions when the ANN path is active.
+
+Non-goals:
+
+- hosted OpenAI reranker equivalence
+- automatic dimension inference
+- automatic ANN enablement for existing pgvector deployments
+- per-query ANN search knobs such as `hnsw.ef_search` or `ivfflat.probes`
+  exposed as public API fields
 
 ## Test Requirements
 

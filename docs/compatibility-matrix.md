@@ -148,7 +148,7 @@ make responses-compat-external-real-smoke
 | `/v1/files` CRUD | Implemented | Keep retrieval/file-input contract explicit | Shim owns local storage |
 | `/v1/vector_stores` CRUD | Implemented | Keep local retrieval subset explicit | |
 | `/v1/vector_stores/{id}/files*` | Implemented | Keep failed-binary indexing behavior explicit | Deleting a vector-store file removes it from that vector store only; deleting the underlying file is a separate `/v1/files/{id}` delete. |
-| `/v1/vector_stores/{id}/search` lexical + semantic + hybrid local subsets | Broad subset | Keep ranking semantics and filters explicit | Local substrate is already usable |
+| `/v1/vector_stores/{id}/search` lexical + semantic + hybrid local subsets | Broad subset | Keep ranking semantics and filters explicit | Local substrate is already usable; pgvector ANN is an optional shim-owned backend acceleration path, not hosted reranker parity |
 | retrieval ranking contract (`ranker`, `score_threshold`, `hybrid_search`) | Broad subset | Keep the docs-backed ranking knobs explicit | Local search supports the documented ranker names plus shim-local `none`; exact hosted reranker quality is not claimed |
 
 ## Tools In Responses

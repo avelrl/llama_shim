@@ -508,8 +508,8 @@ Shim reality:
   SQLite sidecar store there.
 - Lexical scan is the default local substrate; `sqlite_fts5` adds an indexed
   lexical backend, `sqlite_vec` adds exact local semantic/rerank support with
-  an embedder, and `pgvector` adds exact Postgres-backed semantic/hybrid
-  retrieval for the Postgres path.
+  an embedder, and `pgvector` adds Postgres-backed semantic/hybrid retrieval
+  for the Postgres path, with optional explicit HNSW/IVFFlat ANN indexes.
 - The devstack `multi-instance` profile verifies this Postgres shared-state
   boundary across two shim processes for responses, conversations, stored Chat
   Completions, files, and vector stores. SQLite sidecar code-interpreter state

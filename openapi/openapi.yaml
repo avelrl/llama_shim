@@ -2652,7 +2652,7 @@ components:
           description: Durable object storage backend used by files, vector stores, and local file_search state.
         index_backend:
           type: string
-          description: Retrieval index backend. `lexical` is the default scan backend; `sqlite_fts5` enables an indexed local lexical backend; `sqlite_vec` enables local semantic retrieval when an embedder is configured; `pgvector` enables alpha Postgres-backed exact dense retrieval when Postgres storage and an embedder are configured. With `storage.backend=postgres`, only `lexical` and `pgvector` are valid.
+          description: Retrieval index backend. `lexical` is the default scan backend; `sqlite_fts5` enables an indexed local lexical backend; `sqlite_vec` enables local semantic retrieval when an embedder is configured; `pgvector` enables Postgres-backed dense retrieval when Postgres storage and an embedder are configured. With `storage.backend=postgres`, only `lexical` and `pgvector` are valid.
         embedder_backend:
           type: string
         semantic_search:
@@ -2664,6 +2664,24 @@ components:
         lazy_repair:
           type: boolean
           description: Whether the active local retrieval index can lazily repair or reindex stale chunks before search.
+        ann_index:
+          $ref: "#/components/schemas/ShimCapabilityRetrievalANNIndex"
+    ShimCapabilityRetrievalANNIndex:
+      type: object
+      required: [enabled, method, metric, dimensions]
+      properties:
+        enabled:
+          type: boolean
+          description: Whether the shim-owned pgvector ANN index is enabled for local retrieval.
+        method:
+          type: string
+          enum: [hnsw, ivfflat]
+        metric:
+          type: string
+          enum: [cosine]
+        dimensions:
+          type: integer
+          minimum: 1
     ShimCapabilityOpsConfig:
       type: object
       required: [auth_mode, rate_limit, metrics, health_public, readyz_public]

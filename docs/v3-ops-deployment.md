@@ -34,6 +34,9 @@ The shim already exposes basic operational surfaces:
   style deployments
 - package-level `make postgres-storage-test` and HTTP-level
   `make devstack-postgres-pgvector-smoke` coverage for the Postgres beta path
+- focused `make devstack-postgres-pgvector-ann-up` and
+  `make devstack-postgres-pgvector-ann-smoke` coverage for explicit pgvector
+  ANN indexing
 - a focused Postgres/pgvector multi-instance devstack smoke path that runs two
   shim instances with separate SQLite sidecars against one shared Postgres
   durable-state store
@@ -147,7 +150,7 @@ Inventory summary:
 | Default persistence | SQLite owns responses, conversations, chat completions, files, vector stores, code-interpreter state, and maintenance. | SQLite |
 | Postgres beta persistence | Postgres owns responses, response replay artifacts, conversations, stored Chat Completions, files, vector stores, vector-store files, and vector-store chunks; SQLite remains sidecar for code-interpreter state. | Postgres beta plus SQLite sidecar |
 | Multi-instance devstack | Optional Compose `multi-instance` profile starts a secondary shim on the same Postgres store with a separate SQLite sidecar and log file. | Postgres state/retrieval objects shared; code-interpreter sidecar state instance-local |
-| Devstack smokes | Default, sqlite_fts5, Postgres/pgvector, Postgres/pgvector multi-instance, WebSocket, constrained decoding, coding-tools, Codex, and external tester smokes. | mixed, documented per smoke |
+| Devstack smokes | Default, sqlite_fts5, Postgres/pgvector, Postgres/pgvector ANN, Postgres/pgvector multi-instance, WebSocket, constrained decoding, coding-tools, Codex, and external tester smokes. | mixed, documented per smoke |
 
 ### Phase 1: Observability First Slice
 
@@ -200,7 +203,7 @@ Maintenance boundary:
   multi-instance deployment smoke.
 - The detailed Postgres follow-up backlog is tracked in
   [V3 Storage And Retrieval Backends](v3-storage-retrieval-backends.md#6-broader-storage-expansion):
-  hard-delete/governance hooks and ANN indexing.
+  hard-delete/governance hooks and future ANN search-tuning knobs.
 
 ### Phase 3: Governance/Tenanting
 

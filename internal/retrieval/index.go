@@ -13,6 +13,14 @@ type IndexCapabilities struct {
 	HybridSearch   bool
 	LocalRerank    bool
 	LazyRepair     bool
+	ANNIndex       *ANNIndexCapabilities
+}
+
+type ANNIndexCapabilities struct {
+	Enabled    bool
+	Method     string
+	Metric     string
+	Dimensions int
 }
 
 type IndexFileParams struct {
@@ -47,11 +55,20 @@ func IndexCapabilitiesForConfig(cfg Config, embedderConfigured bool) IndexCapabi
 	semantic := (backend == IndexBackendSQLiteVec || backend == IndexBackendPGVector) && embedderConfigured
 	localRerank := backend == IndexBackendSQLiteVec && embedderConfigured
 	lazyRepair := backend == IndexBackendSQLiteVec && embedderConfigured
-	return IndexCapabilities{
+	capabilities := IndexCapabilities{
 		Backend:        backend,
 		SemanticSearch: semantic,
 		HybridSearch:   semantic,
 		LocalRerank:    localRerank,
 		LazyRepair:     lazyRepair,
 	}
+	if backend == IndexBackendPGVector && embedderConfigured && cfg.PGVector.ANN.Enabled {
+		capabilities.ANNIndex = &ANNIndexCapabilities{
+			Enabled:    true,
+			Method:     strings.ToLower(strings.TrimSpace(cfg.PGVector.ANN.Method)),
+			Metric:     strings.ToLower(strings.TrimSpace(cfg.PGVector.ANN.Metric)),
+			Dimensions: cfg.PGVector.ANN.Dimensions,
+		}
+	}
+	return capabilities
 }

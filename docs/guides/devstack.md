@@ -110,6 +110,13 @@ make devstack-up
 RESPONSES_MODE=prefer_local make devstack-postgres-pgvector-smoke
 ```
 
+Run the focused Postgres/pgvector ANN retrieval smoke path:
+
+```bash
+make devstack-postgres-pgvector-ann-up
+make devstack-postgres-pgvector-ann-smoke
+```
+
 Run the focused Postgres/pgvector multi-instance smoke path:
 
 ```bash
@@ -176,6 +183,8 @@ bash ./scripts/responses-compat-external-smoke.sh
 RESPONSES_COMPAT_RUN_MODE=real-upstream RESPONSES_COMPAT_EXPECTED_UPSTREAM=<upstream-base-url> bash ./scripts/responses-compat-external-smoke.sh
 STORAGE_BACKEND=postgres RETRIEVAL_INDEX_BACKEND=pgvector RETRIEVAL_EMBEDDER_BACKEND=openai_compatible RETRIEVAL_EMBEDDER_BASE_URL=http://fixture:8081 RETRIEVAL_EMBEDDER_MODEL=devstack-embedding docker compose -f docker-compose.devstack.yml up -d --build
 bash ./scripts/devstack-postgres-pgvector-smoke.sh
+STORAGE_BACKEND=postgres RETRIEVAL_INDEX_BACKEND=pgvector RETRIEVAL_EMBEDDER_BACKEND=openai_compatible RETRIEVAL_EMBEDDER_BASE_URL=http://fixture:8081 RETRIEVAL_EMBEDDER_MODEL=devstack-embedding RETRIEVAL_INDEX_PGVECTOR_ANN_ENABLED=true RETRIEVAL_INDEX_PGVECTOR_ANN_DIMENSIONS=4 docker compose -f docker-compose.devstack.yml up -d --build
+RETRIEVAL_INDEX_PGVECTOR_ANN_ENABLED=true RETRIEVAL_INDEX_PGVECTOR_ANN_DIMENSIONS=4 bash ./scripts/devstack-postgres-pgvector-smoke.sh
 COMPOSE_PROFILES=multi-instance STORAGE_BACKEND=postgres RETRIEVAL_INDEX_BACKEND=pgvector RETRIEVAL_EMBEDDER_BACKEND=openai_compatible RETRIEVAL_EMBEDDER_BASE_URL=http://fixture:8081 RETRIEVAL_EMBEDDER_MODEL=devstack-embedding RESPONSES_MODE=prefer_local docker compose -f docker-compose.devstack.yml up -d --build
 bash ./scripts/devstack-postgres-pgvector-multi-instance-smoke.sh
 bash ./scripts/v3-coding-tools-smoke.sh
@@ -298,6 +307,11 @@ stored Chat Completions, files, and vector stores, `sqlite_sidecar` for
 code-interpreter state, pgvector semantic/hybrid retrieval, direct vector-store
 search, local Responses `file_search`, cleanup, optimize/vacuum, and logical
 Postgres backup generation.
+
+`make devstack-postgres-pgvector-ann-up` starts the same stack with explicit
+pgvector HNSW ANN indexing enabled for the devstack fixture's 4-dimensional
+embeddings. `make devstack-postgres-pgvector-ann-smoke` reuses the same smoke
+script and additionally verifies the `ann_index` capability manifest block.
 
 `make postgres-storage-test` is the focused package-level Postgres beta test.
 It uses `POSTGRES_TEST_DSN`, defaulting to the devstack Postgres port, creates

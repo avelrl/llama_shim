@@ -91,17 +91,19 @@ smoke are implemented. SQLite-to-Postgres migration tooling is implemented for
 the current Postgres-owned beta tables, and code-interpreter state ownership is
 implemented as an explicit per-instance SQLite sidecar boundary. Shim-owned
 response replay-artifact retention is implemented for standalone responses.
+Explicit pgvector HNSW/IVFFlat ANN indexing is implemented as an operator
+opt-in with fixed dimensions.
 Cluster-native Postgres backup guidance is documented as a runbook; backup
 scheduling and retention remain operator-owned.
 See
 [v3-storage-retrieval-backends.md](v3-storage-retrieval-backends.md).
 
-- ANN indexing beyond the current exact local subset
+- ANN search-tuning knobs beyond managed index creation
 - broader Postgres / multi-instance storage modes beyond the current
   responses/conversations/stored-chat/file/vector boundary
 - code-interpreter store ownership stays sidecar-local unless a future shared
   runtime design exists
-- hard-delete/governance hooks and ANN index management
+- hard-delete/governance hooks
 - more embedders and rerankers beyond the current compatibility-driven set
 
 ### 3. Richer local-only runtimes
@@ -328,9 +330,9 @@ the public compatibility story less truthful.
 The next practical implementation work should be selected from this queue:
 
 1. Continue [V3 Storage And Retrieval Backends](v3-storage-retrieval-backends.md)
-   for the remaining Postgres beta work: ANN indexing or additional
-   embedders/rerankers. Hard-delete/governance is documented as a boundary and
-   should move through the ops/governance track before code is added.
+   for additional embedders/rerankers or ANN search-tuning knobs.
+   Hard-delete/governance is documented as a boundary and should move through
+   the ops/governance track before code is added.
 2. Continue [V3 Ops And Deployment Expansion](v3-ops-deployment.md) only for
    governance/tenanting after the shared storage beta boundary is stable.
 3. Turn [V3 Alternative Image Backends](v3-image-backends.md) into a first

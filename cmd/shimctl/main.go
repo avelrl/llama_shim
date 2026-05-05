@@ -299,15 +299,8 @@ func openSQLiteMaintenanceStore(cfg config.ShimctlConfig) (*sqlite.Store, error)
 		return nil, fmt.Errorf("build retrieval embedder: %w", err)
 	}
 	store, err := sqlite.OpenWithOptions(ctx, cfg.SQLitePath, sqlite.OpenOptions{
-		Retrieval: retrieval.Config{
-			IndexBackend: cfg.RetrievalIndexBackend,
-			Embedder: retrieval.EmbedderConfig{
-				Backend: cfg.RetrievalEmbedderBackend,
-				BaseURL: cfg.RetrievalEmbedderBaseURL,
-				Model:   cfg.RetrievalEmbedderModel,
-			},
-		},
-		Embedder: embedder,
+		Retrieval: cfg.RetrievalConfig(),
+		Embedder:  embedder,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
@@ -317,9 +310,16 @@ func openSQLiteMaintenanceStore(cfg config.ShimctlConfig) (*sqlite.Store, error)
 
 func openPostgresMaintenanceStore(cfg config.ShimctlConfig) (*postgres.Store, error) {
 	ctx := context.Background()
+	retrievalCfg := retrieval.Config{IndexBackend: retrieval.IndexBackendLexical}
+	var embedder retrieval.Embedder
+	if cfg.RetrievalIndexBackend == retrieval.IndexBackendPGVector && cfg.RetrievalPGVectorANNEnabled {
+		retrievalCfg = cfg.RetrievalConfig()
+		embedder = maintenanceOnlyEmbedder{}
+	}
 	store, err := postgres.OpenWithOptions(ctx, cfg.PostgresDSN, postgres.OpenOptions{
 		SQLitePath: cfg.SQLitePath,
-		Retrieval:  retrieval.Config{IndexBackend: retrieval.IndexBackendLexical},
+		Retrieval:  retrievalCfg,
+		Embedder:   embedder,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("open postgres: %w", err)
@@ -329,22 +329,15 @@ func openPostgresMaintenanceStore(cfg config.ShimctlConfig) (*postgres.Store, er
 
 func openPostgresMigrationStore(cfg config.ShimctlConfig, targetSidecarPath string) (*postgres.Store, error) {
 	ctx := context.Background()
-	indexBackend := cfg.RetrievalIndexBackend
-	if indexBackend != retrieval.IndexBackendPGVector {
-		indexBackend = retrieval.IndexBackendLexical
+	retrievalCfg := cfg.RetrievalConfig()
+	if retrievalCfg.IndexBackend != retrieval.IndexBackendPGVector {
+		retrievalCfg = retrieval.Config{IndexBackend: retrieval.IndexBackendLexical}
 	}
 	options := postgres.OpenOptions{
 		SQLitePath: targetSidecarPath,
-		Retrieval: retrieval.Config{
-			IndexBackend: indexBackend,
-			Embedder: retrieval.EmbedderConfig{
-				Backend: cfg.RetrievalEmbedderBackend,
-				BaseURL: cfg.RetrievalEmbedderBaseURL,
-				Model:   cfg.RetrievalEmbedderModel,
-			},
-		},
+		Retrieval:  retrievalCfg,
 	}
-	if indexBackend == retrieval.IndexBackendPGVector {
+	if retrievalCfg.IndexBackend == retrieval.IndexBackendPGVector {
 		embedder, err := retrieval.NewEmbedder(options.Retrieval.Embedder)
 		if err != nil {
 			return nil, fmt.Errorf("build retrieval embedder: %w", err)
@@ -356,6 +349,12 @@ func openPostgresMigrationStore(cfg config.ShimctlConfig, targetSidecarPath stri
 		return nil, fmt.Errorf("open postgres: %w", err)
 	}
 	return store, nil
+}
+
+type maintenanceOnlyEmbedder struct{}
+
+func (maintenanceOnlyEmbedder) EmbedTexts(context.Context, []string) ([][]float32, error) {
+	return nil, fmt.Errorf("maintenance-only retrieval embedder cannot embed text")
 }
 
 func defaultMigrationTargetSidecarPath(sourcePath string) string {

@@ -913,6 +913,61 @@ func TestStorePGVectorSemanticAndHybridSearch(t *testing.T) {
 	require.Equal(t, fileLexical.ID, page.Results[0].FileID)
 }
 
+func TestStorePGVectorANNIndexCreationAndSemanticSearch(t *testing.T) {
+	store, ctx, prefix := openPostgresTestStoreWithRetrieval(t, retrieval.Config{
+		IndexBackend: retrieval.IndexBackendPGVector,
+		Embedder: retrieval.EmbedderConfig{
+			Backend: retrieval.EmbedderBackendOpenAICompatible,
+			Model:   "pgtest-embedding",
+		},
+		PGVector: retrieval.PGVectorConfig{
+			ANN: retrieval.PGVectorANNConfig{
+				Enabled:            true,
+				Method:             retrieval.PGVectorANNMethodHNSW,
+				Metric:             retrieval.PGVectorANNMetricCosine,
+				Dimensions:         2,
+				HNSWM:              16,
+				HNSWEFConstruction: 64,
+			},
+		},
+	}, pgvectorTestEmbedder{})
+
+	caps := store.RetrievalIndexCapabilities()
+	require.True(t, caps.SemanticSearch)
+	require.NotNil(t, caps.ANNIndex)
+	require.True(t, caps.ANNIndex.Enabled)
+	require.Equal(t, retrieval.PGVectorANNMethodHNSW, caps.ANNIndex.Method)
+	require.Equal(t, retrieval.PGVectorANNMetricCosine, caps.ANNIndex.Metric)
+	require.Equal(t, 2, caps.ANNIndex.Dimensions)
+
+	var annIndexExists bool
+	err := store.db.QueryRowContext(ctx, `SELECT to_regclass($1) IS NOT NULL`, pgVectorANNIndexName(store.retrieval.PGVector.ANN)).Scan(&annIndexExists)
+	require.NoError(t, err)
+	require.True(t, annIndexExists)
+
+	fileSemantic := testStoredFile(prefix+"file_ann_semantic", "ann-semantic.txt", "assistants", "semanticwinner banana orchard notes", 1712059600)
+	fileLexical := testStoredFile(prefix+"file_ann_lexical", "ann-lexical.txt", "assistants", "banana nutrition facts nutrition calories", 1712059601)
+	require.NoError(t, store.SaveFile(ctx, fileSemantic))
+	require.NoError(t, store.SaveFile(ctx, fileLexical))
+
+	vectorStore := testVectorStore(prefix+"vs_pgvector_ann", "PGVector ANN", 1712059602)
+	require.NoError(t, store.SaveVectorStore(ctx, vectorStore))
+	_, err = store.AttachFileToVectorStore(ctx, vectorStore.ID, fileSemantic.ID, nil, domain.DefaultFileChunkingStrategy(), 1712059603)
+	require.NoError(t, err)
+	_, err = store.AttachFileToVectorStore(ctx, vectorStore.ID, fileLexical.ID, nil, domain.DefaultFileChunkingStrategy(), 1712059604)
+	require.NoError(t, err)
+
+	page, err := store.SearchVectorStore(ctx, domain.VectorStoreSearchQuery{
+		VectorStoreID:  vectorStore.ID,
+		Queries:        []string{"banana nutrition"},
+		MaxNumResults:  5,
+		RawSearchQuery: "banana nutrition",
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, page.Results)
+	require.Equal(t, fileSemantic.ID, page.Results[0].FileID)
+}
+
 type sqliteMigrationFixture struct {
 	fileID                         string
 	vectorStoreID                  string
@@ -1008,6 +1063,18 @@ func seedSQLiteMigrationFixture(t *testing.T, ctx context.Context, source *sqlit
 
 func openPostgresTestStore(t *testing.T, indexBackend string, embedder retrieval.Embedder) (*Store, context.Context, string) {
 	t.Helper()
+	cfg := retrieval.Config{IndexBackend: indexBackend}
+	if indexBackend == retrieval.IndexBackendPGVector {
+		cfg.Embedder = retrieval.EmbedderConfig{
+			Backend: retrieval.EmbedderBackendOpenAICompatible,
+			Model:   "pgtest-embedding",
+		}
+	}
+	return openPostgresTestStoreWithRetrieval(t, cfg, embedder)
+}
+
+func openPostgresTestStoreWithRetrieval(t *testing.T, retrievalCfg retrieval.Config, embedder retrieval.Embedder) (*Store, context.Context, string) {
+	t.Helper()
 
 	dsn := strings.TrimSpace(os.Getenv("POSTGRES_TEST_DSN"))
 	if dsn == "" {
@@ -1018,14 +1085,8 @@ func openPostgresTestStore(t *testing.T, indexBackend string, embedder retrieval
 	adminDB, schema, scopedDSN := createPostgresTestSchema(t, ctx, dsn)
 	options := OpenOptions{
 		SQLitePath: filepath.Join(t.TempDir(), "sidecar.db"),
-		Retrieval:  retrieval.Config{IndexBackend: indexBackend},
+		Retrieval:  retrievalCfg,
 		Embedder:   embedder,
-	}
-	if indexBackend == retrieval.IndexBackendPGVector {
-		options.Retrieval.Embedder = retrieval.EmbedderConfig{
-			Backend: retrieval.EmbedderBackendOpenAICompatible,
-			Model:   "pgtest-embedding",
-		}
 	}
 
 	store, err := OpenWithOptions(ctx, scopedDSN, options)

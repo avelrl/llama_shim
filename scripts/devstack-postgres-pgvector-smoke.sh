@@ -16,6 +16,7 @@ Usage:
   RETRIEVAL_EMBEDDER_BACKEND=openai_compatible \
   RETRIEVAL_EMBEDDER_BASE_URL=http://fixture:8081 \
   RETRIEVAL_EMBEDDER_MODEL=devstack-embedding \
+  RETRIEVAL_INDEX_PGVECTOR_ANN_ENABLED=false \
   make devstack-up
 
   SHIM_BASE_URL=http://127.0.0.1:18080 \
@@ -29,8 +30,9 @@ This smoke path checks:
   4. /v1/vector_stores create and attach files
   5. /v1/vector_stores/{id}/search returns pgvector-ranked results
   6. local /v1/responses file_search uses the same pgvector-backed store
-  7. shimctl Postgres maintenance cleanup/optimize/vacuum/backup completes
-  8. vector-store and file deletes complete
+  7. optional ANN capability manifest checks when RETRIEVAL_INDEX_PGVECTOR_ANN_ENABLED=true
+  8. shimctl Postgres maintenance cleanup/optimize/vacuum/backup completes
+  9. vector-store and file deletes complete
 EOF
 }
 
@@ -46,7 +48,15 @@ require_cmd mktemp
 
 shim_base_url="${SHIM_BASE_URL:-http://127.0.0.1:18080}"
 expected_responses_mode="${RESPONSES_MODE:-prefer_local}"
+expected_ann_enabled="${RETRIEVAL_INDEX_PGVECTOR_ANN_ENABLED:-false}"
+expected_ann_method="${RETRIEVAL_INDEX_PGVECTOR_ANN_METHOD:-hnsw}"
+expected_ann_metric="${RETRIEVAL_INDEX_PGVECTOR_ANN_METRIC:-cosine}"
+expected_ann_dimensions="${RETRIEVAL_INDEX_PGVECTOR_ANN_DIMENSIONS:-0}"
 postgres_maintenance_dsn="${POSTGRES_MAINTENANCE_DSN:-${POSTGRES_TEST_DSN:-postgres://llama_shim:llama_shim@127.0.0.1:15432/llama_shim?sslmode=disable}}"
+case "$(printf '%s' "${expected_ann_enabled}" | tr '[:upper:]' '[:lower:]')" in
+  1|true|yes|on) expected_ann_enabled_json=true ;;
+  *) expected_ann_enabled_json=false ;;
+esac
 
 tmp_dir="$(mktemp -d)"
 file_ids=()
@@ -91,6 +101,14 @@ run_shimctl_postgres() {
     STORAGE_BACKEND=postgres \
     POSTGRES_DSN="${postgres_maintenance_dsn}" \
     SQLITE_PATH="${tmp_dir}/shimctl-sidecar.db" \
+    RETRIEVAL_INDEX_BACKEND=pgvector \
+    RETRIEVAL_EMBEDDER_BACKEND=openai_compatible \
+    RETRIEVAL_EMBEDDER_BASE_URL="${RETRIEVAL_EMBEDDER_BASE_URL:-http://fixture:8081}" \
+    RETRIEVAL_EMBEDDER_MODEL="${RETRIEVAL_EMBEDDER_MODEL:-devstack-embedding}" \
+    RETRIEVAL_INDEX_PGVECTOR_ANN_ENABLED="${expected_ann_enabled}" \
+    RETRIEVAL_INDEX_PGVECTOR_ANN_METHOD="${expected_ann_method}" \
+    RETRIEVAL_INDEX_PGVECTOR_ANN_METRIC="${expected_ann_metric}" \
+    RETRIEVAL_INDEX_PGVECTOR_ANN_DIMENSIONS="${expected_ann_dimensions}" \
     go run ./cmd/shimctl -config config.devstack.yaml "$@"
 }
 
@@ -128,7 +146,12 @@ printf '%s\n' "${capabilities_json}" | jq '{
     retrieval_embedder: .probes.retrieval_embedder
   }
 }'
-printf '%s\n' "${capabilities_json}" | jq -e --arg expected_responses_mode "${expected_responses_mode}" '
+printf '%s\n' "${capabilities_json}" | jq -e \
+  --arg expected_responses_mode "${expected_responses_mode}" \
+  --argjson expected_ann_enabled "${expected_ann_enabled_json}" \
+  --arg expected_ann_method "${expected_ann_method}" \
+  --arg expected_ann_metric "${expected_ann_metric}" \
+  --argjson expected_ann_dimensions "${expected_ann_dimensions}" '
   .ready == true and
   .runtime.responses_mode == $expected_responses_mode and
   .runtime.persistence.backend == "postgres" and
@@ -145,6 +168,19 @@ printf '%s\n' "${capabilities_json}" | jq -e --arg expected_responses_mode "${ex
   .runtime.retrieval.hybrid_search == true and
   .runtime.retrieval.local_rerank == false and
   .runtime.retrieval.lazy_repair == false and
+  (
+    (
+      ($expected_ann_enabled | not) and
+      (.runtime.retrieval.ann_index == null)
+    ) or
+    (
+      $expected_ann_enabled and
+      .runtime.retrieval.ann_index.enabled == true and
+      .runtime.retrieval.ann_index.method == $expected_ann_method and
+      .runtime.retrieval.ann_index.metric == $expected_ann_metric and
+      .runtime.retrieval.ann_index.dimensions == $expected_ann_dimensions
+    )
+  ) and
   .probes.storage.ready == true and
   .probes.postgres.ready == true and
   .probes.retrieval_embedder.ready == true

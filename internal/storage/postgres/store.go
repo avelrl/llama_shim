@@ -144,6 +144,11 @@ func OpenWithOptions(ctx context.Context, dsn string, options OpenOptions) (*Sto
 		_ = sidecar.Close()
 		return nil, err
 	}
+	if err := store.ensurePGVectorANNIndex(ctx); err != nil {
+		_ = db.Close()
+		_ = sidecar.Close()
+		return nil, err
+	}
 	return store, nil
 }
 
@@ -507,9 +512,13 @@ func (s *Store) SaveVectorStoreFile(ctx context.Context, file domain.StoredVecto
 	}
 
 	var embeddings [][]float32
+	embeddingDimensions := 0
 	if s.retrieval.IndexBackend == retrieval.IndexBackendPGVector && file.Status == "completed" && len(content) != 0 {
-		embeddings, _, err = s.embedTexts(ctx, content)
+		embeddings, embeddingDimensions, err = s.embedTexts(ctx, content)
 		if err != nil {
+			return fmt.Errorf("embed vector store file chunks: %w", err)
+		}
+		if err := s.validatePGVectorANNDimensions(embeddingDimensions); err != nil {
 			return fmt.Errorf("embed vector store file chunks: %w", err)
 		}
 	}
@@ -740,32 +749,135 @@ func (s *Store) RetrievalIndexCapabilities() retrieval.IndexCapabilities {
 	return retrieval.IndexCapabilitiesForConfig(retrieval.Config{IndexBackend: retrieval.IndexBackendLexical}, false)
 }
 
+func (s *Store) ensurePGVectorANNIndex(ctx context.Context) error {
+	if s == nil || s.retrieval.IndexBackend != retrieval.IndexBackendPGVector || !s.retrieval.PGVector.ANN.Enabled {
+		return nil
+	}
+	ann := s.retrieval.PGVector.ANN
+	statement, desiredIndexName := pgVectorANNIndexStatement(ann)
+	if _, err := s.db.ExecContext(ctx, statement); err != nil {
+		return fmt.Errorf("create postgres pgvector ANN index: %w", err)
+	}
+	if err := s.dropStalePGVectorANNIndexes(ctx, desiredIndexName); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *Store) dropStalePGVectorANNIndexes(ctx context.Context, desiredIndexName string) error {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT indexname
+		FROM pg_indexes
+		WHERE schemaname = current_schema()
+		  AND tablename = 'vector_store_chunks'
+		  AND indexname LIKE 'idx\_vsc\_ann\_%' ESCAPE '\'
+	`)
+	if err != nil {
+		return fmt.Errorf("list postgres pgvector ANN indexes: %w", err)
+	}
+	defer rows.Close()
+	var stale []string
+	for rows.Next() {
+		var indexName string
+		if err := rows.Scan(&indexName); err != nil {
+			return fmt.Errorf("scan postgres pgvector ANN index: %w", err)
+		}
+		if indexName != desiredIndexName {
+			stale = append(stale, indexName)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate postgres pgvector ANN indexes: %w", err)
+	}
+	for _, indexName := range stale {
+		if _, err := s.db.ExecContext(ctx, `DROP INDEX IF EXISTS `+quotePostgresIdentifier(indexName)); err != nil {
+			return fmt.Errorf("drop stale postgres pgvector ANN index %q: %w", indexName, err)
+		}
+	}
+	return nil
+}
+
+func (s *Store) validatePGVectorANNDimensions(got int) error {
+	if s == nil || !s.retrieval.PGVector.ANN.Enabled {
+		return nil
+	}
+	want := s.retrieval.PGVector.ANN.Dimensions
+	if got != want {
+		return fmt.Errorf("pgvector ANN dimensions mismatch: got %d, configured %d", got, want)
+	}
+	return nil
+}
+
+func (s *Store) pgVectorSemanticSearchSQL(embedding []float32, vectorStoreID string, limit int) (string, string, []any) {
+	ann := s.retrieval.PGVector.ANN
+	if !ann.Enabled {
+		return "c.embedding <=> $2::vector", "", []any{vectorStoreID, pgVectorLiteral(embedding), limit}
+	}
+	castType := fmt.Sprintf("vector(%d)", ann.Dimensions)
+	distanceSQL := fmt.Sprintf("c.embedding::%s <=> $2::%s", castType, castType)
+	return distanceSQL, "AND c.embedding_dimensions = $4", []any{vectorStoreID, pgVectorLiteral(embedding), limit, ann.Dimensions}
+}
+
+func pgVectorANNIndexStatement(ann retrieval.PGVectorANNConfig) (string, string) {
+	indexName := pgVectorANNIndexName(ann)
+	castType := fmt.Sprintf("vector(%d)", ann.Dimensions)
+	base := fmt.Sprintf(
+		"CREATE INDEX IF NOT EXISTS %s ON vector_store_chunks USING %s ((embedding::%s) vector_cosine_ops)",
+		quotePostgresIdentifier(indexName),
+		ann.Method,
+		castType,
+	)
+	switch ann.Method {
+	case retrieval.PGVectorANNMethodIVFFlat:
+		base += fmt.Sprintf(" WITH (lists = %d)", ann.IVFFlatLists)
+	default:
+		base += fmt.Sprintf(" WITH (m = %d, ef_construction = %d)", ann.HNSWM, ann.HNSWEFConstruction)
+	}
+	base += fmt.Sprintf(" WHERE embedding IS NOT NULL AND embedding_dimensions = %d", ann.Dimensions)
+	return base, indexName
+}
+
+func pgVectorANNIndexName(ann retrieval.PGVectorANNConfig) string {
+	metric := "cos"
+	switch ann.Method {
+	case retrieval.PGVectorANNMethodIVFFlat:
+		return fmt.Sprintf("idx_vsc_ann_ivfflat_%s_d%d_lists%d", metric, ann.Dimensions, ann.IVFFlatLists)
+	default:
+		return fmt.Sprintf("idx_vsc_ann_hnsw_%s_d%d_m%d_ef%d", metric, ann.Dimensions, ann.HNSWM, ann.HNSWEFConstruction)
+	}
+}
+
 func (s *Store) searchVectorStoreSemanticResults(ctx context.Context, query domain.VectorStoreSearchQuery, scoreThreshold *float64) ([]domain.VectorStoreSearchResult, error) {
 	if _, err := s.getVectorStoreBase(ctx, query.VectorStoreID); err != nil {
 		return nil, err
 	}
-	queryEmbeddings, _, err := s.embedTexts(ctx, query.Queries)
+	queryEmbeddings, queryDimensions, err := s.embedTexts(ctx, query.Queries)
 	if err != nil {
 		return nil, fmt.Errorf("embed search query: %w", err)
 	}
 	if len(queryEmbeddings) == 0 {
 		return []domain.VectorStoreSearchResult{}, nil
 	}
+	if err := s.validatePGVectorANNDimensions(queryDimensions); err != nil {
+		return nil, fmt.Errorf("embed search query: %w", err)
+	}
 
 	bestByFile := map[string]aggregatedSearchResult{}
 	limit := semanticCandidateLimit(query.MaxNumResults)
 	for _, embedding := range queryEmbeddings {
-		rows, err := s.db.QueryContext(ctx, `
-			SELECT c.id, c.file_id, f.filename, v.attributes_json, c.content, (c.embedding <=> $2::vector)::float8 AS distance
+		distanceSQL, dimensionFilter, args := s.pgVectorSemanticSearchSQL(embedding, query.VectorStoreID, limit)
+		rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`
+			SELECT c.id, c.file_id, f.filename, v.attributes_json, c.content, (%s)::float8 AS distance
 			FROM vector_store_chunks c
 			JOIN files f ON f.id = c.file_id
 			JOIN vector_store_files v ON v.vector_store_id = c.vector_store_id AND v.file_id = c.file_id
 			WHERE c.vector_store_id = $1
 			  AND v.status = 'completed'
 			  AND c.embedding IS NOT NULL
-			ORDER BY c.embedding <=> $2::vector, c.id ASC
+			  %s
+			ORDER BY %s, c.id ASC
 			LIMIT $3
-		`, query.VectorStoreID, pgVectorLiteral(embedding), limit)
+		`, distanceSQL, dimensionFilter, distanceSQL), args...)
 		if err != nil {
 			return nil, fmt.Errorf("query pgvector search: %w", err)
 		}

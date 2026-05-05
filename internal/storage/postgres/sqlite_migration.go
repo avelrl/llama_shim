@@ -375,8 +375,11 @@ func (s *Store) reindexMigratedPGVectorChunks(ctx context.Context, tx pgx.Tx) (i
 			return total, nil
 		}
 
-		embeddings, _, err := s.embedTexts(ctx, texts)
+		embeddings, dimensions, err := s.embedTexts(ctx, texts)
 		if err != nil {
+			return total, fmt.Errorf("embed migrated pgvector chunks: %w", err)
+		}
+		if err := s.validatePGVectorANNDimensions(dimensions); err != nil {
 			return total, fmt.Errorf("embed migrated pgvector chunks: %w", err)
 		}
 		createdAt := domain.NowUTC().Unix()

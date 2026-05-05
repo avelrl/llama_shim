@@ -264,10 +264,14 @@ Supported environment overrides:
 - `SHIM_LIMITS_RETRIEVAL_MAX_SEARCH_QUERIES` overrides `shim.limits.retrieval_max_search_queries`
 - `SHIM_LIMITS_RETRIEVAL_MAX_GROUNDING_CHUNKS` overrides `shim.limits.retrieval_max_grounding_chunks`
 - `SHIM_LIMITS_CODE_INTERPRETER_MAX_CONCURRENT_RUNS` overrides `shim.limits.code_interpreter_max_concurrent_runs`
-- `RETRIEVAL_INDEX_BACKEND` overrides `retrieval.index.backend`; supported values: `lexical`, `sqlite_vec`
+- `RETRIEVAL_INDEX_BACKEND` overrides `retrieval.index.backend`; supported values: `lexical`, `sqlite_fts5`, `sqlite_vec`, `pgvector`
 - `RETRIEVAL_EMBEDDER_BACKEND` overrides `retrieval.embedder.backend`; supported values: `disabled`, `openai_compatible`, `embedanything`
 - `RETRIEVAL_EMBEDDER_BASE_URL` overrides `retrieval.embedder.base_url`
 - `RETRIEVAL_EMBEDDER_MODEL` overrides `retrieval.embedder.model`
+- `RETRIEVAL_INDEX_PGVECTOR_ANN_ENABLED` overrides `retrieval.index.pgvector.ann.enabled`
+- `RETRIEVAL_INDEX_PGVECTOR_ANN_METHOD` overrides `retrieval.index.pgvector.ann.method`; supported values: `hnsw`, `ivfflat`
+- `RETRIEVAL_INDEX_PGVECTOR_ANN_METRIC` overrides `retrieval.index.pgvector.ann.metric`; supported value: `cosine`
+- `RETRIEVAL_INDEX_PGVECTOR_ANN_DIMENSIONS` overrides `retrieval.index.pgvector.ann.dimensions`
 - `CHAT_COMPLETIONS_DEFAULT_STORE_WHEN_OMITTED` overrides `chat_completions.default_store_when_omitted`
 - `RESPONSES_MODE` overrides `responses.mode`; supported values: `prefer_local`, `prefer_upstream`, `local_only`
   `prefer_local` is the default: the shim owns `/v1/responses` whenever the request fits the locally-supported subset, and falls back to upstream `/v1/responses` only for unsupported features.
@@ -464,6 +468,34 @@ EMBEDANYTHING_DIR=../EmbedAnything ./scripts/embedanything-actix-local.sh
 ```
 
 When `retrieval.index.backend=sqlite_vec` is enabled, `/readyz` also checks the retrieval embedder. For `embedanything`, the shim probes the sidecar `GET /health_check` endpoint before returning `ready`.
+
+## Postgres pgvector retrieval
+
+With `storage.backend=postgres`, `retrieval.index.backend=pgvector` enables the
+Postgres-backed dense retrieval path. Exact pgvector distance ordering is the
+default. Optional ANN indexing is explicit:
+
+```yaml
+storage:
+  backend: postgres
+retrieval:
+  index:
+    backend: pgvector
+    pgvector:
+      ann:
+        enabled: true
+        method: hnsw
+        metric: cosine
+        dimensions: 1536
+  embedder:
+    backend: openai_compatible
+    base_url: http://127.0.0.1:8081
+    model: text-embedding-3-small
+```
+
+ANN mode requires `dimensions` to match the configured embedder output. Startup
+and `shimctl optimize` create the shim-managed pgvector index. This is a local
+storage/index acceleration path, not hosted OpenAI ranking parity.
 
 When the upstream `/v1/models` endpoint requires a bearer key even for health
 checks, set `llama.readiness_bearer_token` or `LLAMA_READINESS_BEARER_TOKEN`.

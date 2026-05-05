@@ -93,25 +93,34 @@ curl http://127.0.0.1:8080/v1/responses \
   store.
 - Semantic, hybrid, and local rerank subsets become available when
   `retrieval.index.backend=sqlite_vec` and a retrieval embedder are configured.
-- `retrieval.index.backend=pgvector` enables alpha exact pgvector semantic
-  search when `storage.backend=postgres` and a retrieval embedder are
-  configured. It supports the same direct search and local `file_search`
+- `retrieval.index.backend=pgvector` enables alpha pgvector semantic search
+  when `storage.backend=postgres` and a retrieval embedder are configured.
+  Exact pgvector distance ordering remains the default. Optional HNSW/IVFFlat
+  ANN indexing is available only when
+  `retrieval.index.pgvector.ann.enabled=true` and
+  `retrieval.index.pgvector.ann.dimensions` matches the embedder output. The
+  pgvector path supports the same direct search and local `file_search`
   response shapes, plus lexical fallback and weighted hybrid ranking, but it
   does not claim hosted OpenAI ranking parity.
 - With `storage.backend=postgres`, the retrieval index must be `lexical` or
   `pgvector`; `sqlite_fts5` and `sqlite_vec` remain SQLite-specific.
 - `/debug/capabilities.runtime.retrieval` reports the active storage backend,
   retrieval index backend, embedder backend, semantic/hybrid/rerank support,
-  and whether the active local index can lazily repair stale chunks.
+  whether the active local index can lazily repair stale chunks, and the
+  optional pgvector `ann_index` block when ANN is enabled.
 - Devstack has a focused `sqlite_fts5` smoke path:
   `RETRIEVAL_INDEX_BACKEND=sqlite_fts5 make devstack-up` followed by
   `make devstack-sqlite-fts5-smoke`.
-- Devstack has a focused Postgres/pgvector alpha smoke path:
+- Devstack has a focused Postgres/pgvector smoke path:
   `STORAGE_BACKEND=postgres RETRIEVAL_INDEX_BACKEND=pgvector
   RETRIEVAL_EMBEDDER_BACKEND=openai_compatible
   RETRIEVAL_EMBEDDER_BASE_URL=http://fixture:8081
   RETRIEVAL_EMBEDDER_MODEL=devstack-embedding make devstack-up` followed by
   `make devstack-postgres-pgvector-smoke`.
+- Devstack has a focused Postgres/pgvector ANN smoke path:
+  `make devstack-postgres-pgvector-ann-up` followed by
+  `make devstack-postgres-pgvector-ann-smoke`. The devstack fixture embedding
+  dimension is `4`.
 - `make postgres-storage-test` runs the package-level Postgres alpha hardening
   suite against `POSTGRES_TEST_DSN`, defaulting to the devstack Postgres port.
   It creates isolated schemas and verifies persistence, pagination, sidecar

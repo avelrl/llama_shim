@@ -72,6 +72,13 @@ type Config struct {
 	RetrievalEmbedderBackend                            string
 	RetrievalEmbedderBaseURL                            string
 	RetrievalEmbedderModel                              string
+	RetrievalPGVectorANNEnabled                         bool
+	RetrievalPGVectorANNMethod                          string
+	RetrievalPGVectorANNMetric                          string
+	RetrievalPGVectorANNDimensions                      int
+	RetrievalPGVectorANNHNSWM                           int
+	RetrievalPGVectorANNHNSWEFConstruction              int
+	RetrievalPGVectorANNIVFFlatLists                    int
 	ResponsesWebSearchBackend                           string
 	ResponsesWebSearchBaseURL                           string
 	ResponsesWebSearchTimeout                           time.Duration
@@ -230,6 +237,9 @@ func Load(configPath string) (Config, error) {
 		RetrievalEmbedderBackend:              strings.TrimSpace(v.GetString("retrieval.embedder.backend")),
 		RetrievalEmbedderBaseURL:              strings.TrimSpace(v.GetString("retrieval.embedder.base_url")),
 		RetrievalEmbedderModel:                strings.TrimSpace(v.GetString("retrieval.embedder.model")),
+		RetrievalPGVectorANNEnabled:           v.GetBool("retrieval.index.pgvector.ann.enabled"),
+		RetrievalPGVectorANNMethod:            strings.TrimSpace(v.GetString("retrieval.index.pgvector.ann.method")),
+		RetrievalPGVectorANNMetric:            strings.TrimSpace(v.GetString("retrieval.index.pgvector.ann.metric")),
 		ResponsesWebSearchBackend:             strings.ToLower(strings.TrimSpace(v.GetString("responses.web_search.backend"))),
 		ResponsesWebSearchBaseURL:             strings.TrimSpace(v.GetString("responses.web_search.base_url")),
 		ResponsesImageGenerationBackend:       strings.ToLower(strings.TrimSpace(v.GetString("responses.image_generation.backend"))),
@@ -356,17 +366,30 @@ func Load(configPath string) (Config, error) {
 	if err := parseLogLevel(v.GetString("log.level"), &cfg.LogLevel); err != nil {
 		return Config{}, fmt.Errorf("parse log.level: %w", err)
 	}
+	annDimensions, err := parseNonNegativeInt(v.GetString("retrieval.index.pgvector.ann.dimensions"))
+	if err != nil {
+		return Config{}, fmt.Errorf("parse retrieval.index.pgvector.ann.dimensions: %w", err)
+	}
+	cfg.RetrievalPGVectorANNDimensions = annDimensions
+	annHNSWM, err := parseNonNegativeInt(v.GetString("retrieval.index.pgvector.ann.hnsw_m"))
+	if err != nil {
+		return Config{}, fmt.Errorf("parse retrieval.index.pgvector.ann.hnsw_m: %w", err)
+	}
+	cfg.RetrievalPGVectorANNHNSWM = annHNSWM
+	annHNSWEFConstruction, err := parseNonNegativeInt(v.GetString("retrieval.index.pgvector.ann.hnsw_ef_construction"))
+	if err != nil {
+		return Config{}, fmt.Errorf("parse retrieval.index.pgvector.ann.hnsw_ef_construction: %w", err)
+	}
+	cfg.RetrievalPGVectorANNHNSWEFConstruction = annHNSWEFConstruction
+	annIVFFlatLists, err := parseNonNegativeInt(v.GetString("retrieval.index.pgvector.ann.ivfflat_lists"))
+	if err != nil {
+		return Config{}, fmt.Errorf("parse retrieval.index.pgvector.ann.ivfflat_lists: %w", err)
+	}
+	cfg.RetrievalPGVectorANNIVFFlatLists = annIVFFlatLists
 	if err := parseShimAuthMode(cfg.ShimAuthMode); err != nil {
 		return Config{}, fmt.Errorf("parse shim.auth.mode: %w", err)
 	}
-	normalizedRetrieval, err := retrieval.NormalizeConfig(retrieval.Config{
-		IndexBackend: cfg.RetrievalIndexBackend,
-		Embedder: retrieval.EmbedderConfig{
-			Backend: cfg.RetrievalEmbedderBackend,
-			BaseURL: cfg.RetrievalEmbedderBaseURL,
-			Model:   cfg.RetrievalEmbedderModel,
-		},
-	})
+	normalizedRetrieval, err := retrieval.NormalizeConfig(cfg.RetrievalConfig())
 	if err != nil {
 		return Config{}, fmt.Errorf("parse retrieval config: %w", err)
 	}
@@ -374,6 +397,13 @@ func Load(configPath string) (Config, error) {
 	cfg.RetrievalEmbedderBackend = normalizedRetrieval.Embedder.Backend
 	cfg.RetrievalEmbedderBaseURL = normalizedRetrieval.Embedder.BaseURL
 	cfg.RetrievalEmbedderModel = normalizedRetrieval.Embedder.Model
+	cfg.RetrievalPGVectorANNEnabled = normalizedRetrieval.PGVector.ANN.Enabled
+	cfg.RetrievalPGVectorANNMethod = normalizedRetrieval.PGVector.ANN.Method
+	cfg.RetrievalPGVectorANNMetric = normalizedRetrieval.PGVector.ANN.Metric
+	cfg.RetrievalPGVectorANNDimensions = normalizedRetrieval.PGVector.ANN.Dimensions
+	cfg.RetrievalPGVectorANNHNSWM = normalizedRetrieval.PGVector.ANN.HNSWM
+	cfg.RetrievalPGVectorANNHNSWEFConstruction = normalizedRetrieval.PGVector.ANN.HNSWEFConstruction
+	cfg.RetrievalPGVectorANNIVFFlatLists = normalizedRetrieval.PGVector.ANN.IVFFlatLists
 	if cfg.RetrievalIndexBackend == retrieval.IndexBackendPGVector {
 		if cfg.StorageBackend != StorageBackendPostgres {
 			return Config{}, fmt.Errorf("parse retrieval.index.backend: %q requires storage.backend=%q", retrieval.IndexBackendPGVector, StorageBackendPostgres)
@@ -661,6 +691,13 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("retrieval.embedder.backend", retrieval.EmbedderBackendDisabled)
 	v.SetDefault("retrieval.embedder.base_url", "")
 	v.SetDefault("retrieval.embedder.model", "")
+	v.SetDefault("retrieval.index.pgvector.ann.enabled", false)
+	v.SetDefault("retrieval.index.pgvector.ann.method", retrieval.PGVectorANNMethodHNSW)
+	v.SetDefault("retrieval.index.pgvector.ann.metric", retrieval.PGVectorANNMetricCosine)
+	v.SetDefault("retrieval.index.pgvector.ann.dimensions", "0")
+	v.SetDefault("retrieval.index.pgvector.ann.hnsw_m", "16")
+	v.SetDefault("retrieval.index.pgvector.ann.hnsw_ef_construction", "64")
+	v.SetDefault("retrieval.index.pgvector.ann.ivfflat_lists", "100")
 	v.SetDefault("chat_completions.default_store_when_omitted", true)
 	v.SetDefault("chat_completions.upstream_compatibility.models", []map[string]any{})
 	v.SetDefault("responses.mode", ResponsesModePreferLocal)

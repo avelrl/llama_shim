@@ -865,6 +865,85 @@ retrieval:
 	require.Equal(t, "openai_compatible", cfg.RetrievalEmbedderBackend)
 }
 
+func TestLoadAcceptsPGVectorANNConfig(t *testing.T) {
+	disableDotEnv(t)
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	writeFile(t, configPath, `
+storage:
+  backend: postgres
+postgres:
+  dsn: postgres://llama_shim:llama_shim@127.0.0.1:15432/llama_shim?sslmode=disable
+retrieval:
+  index:
+    backend: pgvector
+    pgvector:
+      ann:
+        enabled: true
+        method: hnsw
+        metric: cosine
+        dimensions: 4
+        hnsw_m: 24
+        hnsw_ef_construction: 96
+  embedder:
+    backend: openai_compatible
+    base_url: http://fixture:8081
+    model: devstack-embedding
+`)
+
+	cfg, err := config.Load(configPath)
+	require.NoError(t, err)
+	require.True(t, cfg.RetrievalPGVectorANNEnabled)
+	require.Equal(t, "hnsw", cfg.RetrievalPGVectorANNMethod)
+	require.Equal(t, "cosine", cfg.RetrievalPGVectorANNMetric)
+	require.Equal(t, 4, cfg.RetrievalPGVectorANNDimensions)
+	require.Equal(t, 24, cfg.RetrievalPGVectorANNHNSWM)
+	require.Equal(t, 96, cfg.RetrievalPGVectorANNHNSWEFConstruction)
+	require.Equal(t, 100, cfg.RetrievalPGVectorANNIVFFlatLists)
+}
+
+func TestLoadRejectsPGVectorANNWithoutDimensions(t *testing.T) {
+	disableDotEnv(t)
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	writeFile(t, configPath, `
+storage:
+  backend: postgres
+postgres:
+  dsn: postgres://llama_shim:llama_shim@127.0.0.1:15432/llama_shim?sslmode=disable
+retrieval:
+  index:
+    backend: pgvector
+    pgvector:
+      ann:
+        enabled: true
+  embedder:
+    backend: openai_compatible
+    base_url: http://fixture:8081
+    model: devstack-embedding
+`)
+
+	_, err := config.Load(configPath)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "pgvector ANN requires retrieval.index.pgvector.ann.dimensions > 0")
+}
+
+func TestLoadRejectsPGVectorANNForNonPGVectorBackend(t *testing.T) {
+	disableDotEnv(t)
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	writeFile(t, configPath, `
+retrieval:
+  index:
+    backend: lexical
+    pgvector:
+      ann:
+        enabled: true
+        dimensions: 4
+`)
+
+	_, err := config.Load(configPath)
+	require.Error(t, err)
+	require.ErrorContains(t, err, `pgvector ANN requires retrieval index backend "pgvector"`)
+}
+
 func TestLoadRejectsImageGenerationResponsesBackendWithoutBaseURL(t *testing.T) {
 	disableDotEnv(t)
 	configPath := filepath.Join(t.TempDir(), "config.yaml")

@@ -242,6 +242,10 @@ func main() {
 		"retrieval_embedder_backend", cfg.RetrievalEmbedderBackend,
 		"retrieval_embedder_base_url", cfg.RetrievalEmbedderBaseURL,
 		"retrieval_embedder_model", cfg.RetrievalEmbedderModel,
+		"retrieval_pgvector_ann_enabled", cfg.RetrievalPGVectorANNEnabled,
+		"retrieval_pgvector_ann_method", cfg.RetrievalPGVectorANNMethod,
+		"retrieval_pgvector_ann_metric", cfg.RetrievalPGVectorANNMetric,
+		"retrieval_pgvector_ann_dimensions", cfg.RetrievalPGVectorANNDimensions,
 		"chat_completions_default_store_when_omitted", cfg.ChatCompletionsStoreWhenOmitted,
 		"chat_completions_upstream_compatibility_rule_count", len(cfg.ChatCompletionsUpstreamCompatibility),
 		"responses_mode", cfg.ResponsesMode,
@@ -303,28 +307,14 @@ func openStore(ctx context.Context, cfg config.Config, retrievalEmbedder retriev
 	switch cfg.StorageBackend {
 	case config.StorageBackendSQLite:
 		return sqlite.OpenWithOptions(ctx, cfg.SQLitePath, sqlite.OpenOptions{
-			Retrieval: retrieval.Config{
-				IndexBackend: cfg.RetrievalIndexBackend,
-				Embedder: retrieval.EmbedderConfig{
-					Backend: cfg.RetrievalEmbedderBackend,
-					BaseURL: cfg.RetrievalEmbedderBaseURL,
-					Model:   cfg.RetrievalEmbedderModel,
-				},
-			},
-			Embedder: retrievalEmbedder,
+			Retrieval: cfg.RetrievalConfig(),
+			Embedder:  retrievalEmbedder,
 		})
 	case config.StorageBackendPostgres:
 		return postgres.OpenWithOptions(ctx, cfg.PostgresDSN, postgres.OpenOptions{
 			SQLitePath: cfg.SQLitePath,
-			Retrieval: retrieval.Config{
-				IndexBackend: cfg.RetrievalIndexBackend,
-				Embedder: retrieval.EmbedderConfig{
-					Backend: cfg.RetrievalEmbedderBackend,
-					BaseURL: cfg.RetrievalEmbedderBaseURL,
-					Model:   cfg.RetrievalEmbedderModel,
-				},
-			},
-			Embedder: retrievalEmbedder,
+			Retrieval:  cfg.RetrievalConfig(),
+			Embedder:   retrievalEmbedder,
 		})
 	default:
 		return nil, fmt.Errorf("unsupported storage backend %q", cfg.StorageBackend)
