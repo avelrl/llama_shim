@@ -1,8 +1,8 @@
 # V3 Ops And Deployment Expansion
 
 Status: partial; Phase 0 inventory, the first bounded observability slice, the
-Postgres/pgvector beta multi-instance devstack profile, and backend-aware
-storage maintenance are implemented.
+Postgres/pgvector beta multi-instance devstack profile, backend-aware storage
+maintenance, and the cluster-native Postgres backup runbook are implemented.
 
 Last updated: May 5, 2026.
 
@@ -30,6 +30,8 @@ The shim already exposes basic operational surfaces:
   code-interpreter sessions
 - backend-aware `shimctl` cleanup, optimize, vacuum, backup, and restore for
   SQLite and the Postgres-owned beta tables
+- documented cluster-native Postgres backup/restore guidance for production
+  style deployments
 - package-level `make postgres-storage-test` and HTTP-level
   `make devstack-postgres-pgvector-smoke` coverage for the Postgres beta path
 - a focused Postgres/pgvector multi-instance devstack smoke path that runs two
@@ -181,16 +183,17 @@ Maintenance boundary:
 - `shimctl cleanup`, `optimize`, `vacuum`, `backup`, and `restore` are
   backend-aware. Postgres backup/restore use a shim-owned logical COPY file for
   the current beta tables, not cluster-level `pg_dump`/`pg_restore`.
+- [Postgres Backup and Restore](guides/postgres-backup.md) documents the
+  cluster-native backup/restore runbook and restore checklist.
 - Postgres object-storage migrations still run at process startup and are
   idempotent for the current beta schema.
 - There is still no shared leader election for automatic cleanup loops,
-  cluster-native backup policy, or
-  code-interpreter state migration. Those belong to later Postgres
-  beta/hardening slices, not the multi-instance deployment smoke.
+  cluster-native backup scheduling/retention, or code-interpreter state
+  migration. Those belong to later Postgres beta/hardening slices, not the
+  multi-instance deployment smoke.
 - The detailed Postgres follow-up backlog is tracked in
   [V3 Storage And Retrieval Backends](v3-storage-retrieval-backends.md#6-broader-storage-expansion):
-  cluster-native backup guidance, hard-delete/governance hooks, and ANN
-  indexing.
+  hard-delete/governance hooks and ANN indexing.
 
 ### Phase 3: Governance/Tenanting
 

@@ -394,6 +394,8 @@ Implementation boundary:
   the active storage backend. In Postgres mode, backup/restore use a
   shim-owned logical COPY format for the Postgres-owned tables and keep file
   content mirrored into the SQLite sidecar after restore.
+- Cluster-native Postgres backup guidance is documented in
+  [Postgres Backup and Restore](guides/postgres-backup.md).
 - The schema creates the pgvector extension because this slice is paired with
   pgvector retrieval in devstack.
 - List endpoints use SQL-side pagination and do not fetch file content just to
@@ -403,7 +405,8 @@ Out of current beta scope:
 
 - Postgres-backed code-interpreter runtime/session ownership
 - mixed SQLite/Postgres cross-store transactions
-- external `pg_dump`/`pg_restore` orchestration or cluster-level backup policy
+- automatic external `pg_dump`/`pg_restore` orchestration or cluster-level
+  backup scheduling
 
 ### 4. pgvector Retrieval Alpha
 
@@ -621,12 +624,14 @@ tests cover replay behavior after artifacts are pruned.
 
 #### 6.4 Cluster-native Postgres backup guidance
 
-Status: planned docs/runbook.
+Status: implemented docs/runbook.
 
-Document when to use the shim-owned logical COPY backup versus Postgres-native
-backup/restore. The current logical backup is useful for devstack, regression
-tests, and small operator exports. Production deployments still need a
-cluster-level policy such as `pg_dump`, PITR, or a managed database backup.
+[Postgres Backup and Restore](guides/postgres-backup.md) documents when to use
+the shim-owned logical COPY backup versus Postgres-native backup/restore. The
+current logical backup is useful for devstack, regression tests, and small
+operator exports. Production deployments still need a cluster-level policy
+such as `pg_dump`, PITR, or a managed database backup; the shim does not
+schedule or retain those backups.
 
 #### 6.5 Hard-delete and governance hooks
 

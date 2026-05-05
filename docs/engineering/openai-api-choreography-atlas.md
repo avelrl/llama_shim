@@ -519,9 +519,9 @@ Shim reality:
   these are internal store invariants, not OpenAI wire-contract changes.
 - Backend-aware maintenance now covers cleanup, optional standalone
   response-replay artifact retention, optimize/vacuum, shim-owned logical
-  backup/restore, and SQLite-to-Postgres migration for the current
-  Postgres-owned beta tables. These are operator surfaces, not OpenAI hosted
-  retention or storage contracts.
+  backup/restore, SQLite-to-Postgres migration for the current Postgres-owned
+  beta tables, and a Postgres-native backup runbook. These are operator
+  surfaces, not OpenAI hosted retention or storage contracts.
 - Local `file_search` injects bounded grounding context before final answer
   generation.
 - Hosted ranking quality, billing semantics, and exact citation placement are

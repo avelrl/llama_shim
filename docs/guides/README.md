@@ -38,6 +38,8 @@ Assumptions:
 ## Operations
 
 - [Operations](operations.md): running, probing, backing up, and maintaining the shim
+- [Postgres Backup and Restore](postgres-backup.md): cluster-native backup
+  guidance for the Postgres beta backend
 - [Dev Stack](devstack.md): deterministic local stack and smoke path
 - [Responses Compatibility External Tester](../engineering/responses-compatibility-external-tester.md):
   Broad subset external tester profile and runner contract

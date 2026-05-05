@@ -135,6 +135,8 @@ Postgres backup/restore is a shim-owned logical COPY format for the current
 Postgres-owned state and retrieval tables. It is useful for local/devstack
 operations and regression checks, but it is not a replacement for a
 cluster-level `pg_dump`/`pg_restore`, PITR, or managed-database backup policy.
+Use [Postgres Backup and Restore](postgres-backup.md) for the cluster-native
+runbook and restore checklist.
 
 Move current SQLite state into the Postgres beta store:
 

@@ -196,7 +196,7 @@ proxy-first escape hatch for standalone hosted/native requests, while
 | --- | --- | --- | --- |
 | `/healthz`, `/readyz`, `/debug/capabilities`, `/metrics` | Shim-owned | Keep documented and stable | Useful operator surface, not OpenAI compatibility surface |
 | ingress auth, rate limiting, quotas, structured logs | Shim-owned | Keep minimum operator floor stable | |
-| retention cleanup, maintenance path, and local DX packaging | Implemented | Keep the operator workflow explicit | Cleanup covers explicit local `expires_at` resources plus optional shim-owned replay-artifact retention for standalone responses. `shimctl` cleanup/backup/restore/vacuum/optimize is backend-aware for SQLite and the current Postgres beta tables. This is not hosted OpenAI retention parity. |
+| retention cleanup, maintenance path, and local DX packaging | Implemented | Keep the operator workflow explicit | Cleanup covers explicit local `expires_at` resources plus optional shim-owned replay-artifact retention for standalone responses. `shimctl` cleanup/backup/restore/vacuum/optimize is backend-aware for SQLite and the current Postgres beta tables, and cluster-native Postgres backup guidance is documented separately. This is not hosted OpenAI retention parity. |
 | multi-tenant authz, shared rate limiting, richer exporters/admin tooling | V3 | Stage after V2 | Valuable, but not required for a broad compatibility facade |
 
 ## Known V2 Limitations
@@ -219,7 +219,8 @@ proxy-first escape hatch for standalone hosted/native requests, while
 - Operator cleanup currently targets only explicit local `expires_at`
   resources. Postgres backup/restore is a shim-owned logical format for the
   current beta tables, not a hosted OpenAI retention or managed database backup
-  parity claim.
+  parity claim. Production-style Postgres backup/restore remains
+  operator-owned and is covered by the Postgres backup runbook.
 
 ## V2 Ship Status
 
