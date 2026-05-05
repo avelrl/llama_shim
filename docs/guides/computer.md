@@ -18,6 +18,30 @@ It follows the docs-aligned external loop model:
 Use it when you want a model to work through a UI workflow and you already have
 code that can execute mouse, keyboard, or screenshot actions.
 
+Good fits:
+
+- automating a browser or desktop flow when the target has no useful API
+- testing a UI as a user would see it, including visual state after each step
+- driving a deterministic internal admin page, fixture, or QA workflow
+- letting a model decide the next UI action after each screenshot
+- bridging an external browser/VM executor to the Responses state loop
+
+Poor fits:
+
+- data retrieval from systems that have stable APIs; use a normal tool or MCP
+  connector instead
+- high-volume scraping or background jobs; use direct HTTP/data pipelines
+- flows that require strong security isolation unless the executor is already
+  sandboxed outside the shim
+- compatibility tests where you only need to prove JSON shape; use fixture
+  tests or `make v3-local-runtimes-smoke`
+- model visual-grounding evaluation; keep that as a separate eval profile
+  because it measures model quality, not only shim protocol behavior
+
+For this shim, `computer_call` is mainly useful as a protocol bridge: the shim
+keeps Responses state, typed `computer_call` / `computer_call_output` items,
+and replay surfaces, while your application owns the actual browser or VM.
+
 ## Minimal First Turn
 
 ```bash

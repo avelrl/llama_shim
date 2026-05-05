@@ -77,6 +77,21 @@ Still out of scope:
   flow only
 - exact hosted `response.computer_call.*` SSE choreography
 
+Useful next tracks:
+
+- visual-grounding eval profile: use the same fixture without giving the model
+  coordinates, record pass/fail in model-matrix style output, and do not make
+  it a required smoke
+- browser executor hardening: keep per-session artifacts, screenshots, and
+  action traces for failure triage without committing run output
+- optional coordinate remapping experiments for downscaled screenshots, guarded
+  by explicit docs because OpenAI recommends `detail: "original"` for computer
+  use
+- additional deterministic fixture pages for scroll, keypress, drag, and
+  multi-step form flows
+- model-specific compatibility notes only when failures reduce to stable
+  parser aliases or documented provider limitations
+
 ### 2. Multimodal Local Loop
 
 Support richer local image/file/media input loops where the shim owns state and
