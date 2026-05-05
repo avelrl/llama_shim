@@ -112,6 +112,11 @@ curl http://127.0.0.1:8080/v1/responses \
   RETRIEVAL_EMBEDDER_BASE_URL=http://fixture:8081
   RETRIEVAL_EMBEDDER_MODEL=devstack-embedding make devstack-up` followed by
   `make devstack-postgres-pgvector-smoke`.
+- `make postgres-storage-test` runs the package-level Postgres alpha hardening
+  suite against `POSTGRES_TEST_DSN`, defaulting to the devstack Postgres port.
+  It creates isolated schemas and verifies persistence, pagination, sidecar
+  mirroring, failure states, lexical search, and pgvector semantic/hybrid
+  search.
 - Canonical ranking values are `auto` and `default-2024-08-21`; shim-local
   `none` disables the local rerank stage.
 - `include=["file_search_call.results"]` returns the practical local result

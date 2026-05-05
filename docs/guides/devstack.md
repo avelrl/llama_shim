@@ -258,6 +258,13 @@ that `/debug/capabilities` reports Postgres for files/vector stores,
 pgvector semantic/hybrid retrieval, direct vector-store search, local
 Responses `file_search`, and cleanup.
 
+`make postgres-storage-test` is the focused package-level Postgres alpha test.
+It uses `POSTGRES_TEST_DSN`, defaulting to the devstack Postgres port, creates
+an isolated schema per test, and checks file/vector-store persistence,
+pagination, SQLite sidecar mirroring, binary attachment failure, lexical
+retrieval, and pgvector semantic/hybrid retrieval. Run it after `make
+devstack-up`; it complements the HTTP smoke above instead of replacing it.
+
 `cmd/responses-websocket-smoke` checks the focused V3 Responses WebSocket
 transport:
 

@@ -418,6 +418,22 @@ Responses `file_search` path. `local_only` and `prefer_upstream` remain covered
 by the existing Responses mode tests and should be expanded only when the
 Postgres store starts owning non-retrieval response state.
 
+Focused Postgres storage hardening coverage:
+
+```bash
+make devstack-up
+make postgres-storage-test
+```
+
+`postgres-storage-test` uses `POSTGRES_TEST_DSN`, defaulting to the devstack
+Postgres port. It opens each test case in an isolated schema and checks:
+
+- Postgres file CRUD, keyset pagination, and SQLite sidecar mirroring
+- vector-store CRUD, file pagination, delete behavior, and lexical search
+- binary/unsupported file attachment failure state
+- pgvector semantic search, hybrid ranking, and capability reporting
+- rejection of SQLite-only retrieval indexes when `storage.backend=postgres`
+
 ### 6. Broader Storage Expansion
 
 Only after vector-store storage and retrieval are proven:
@@ -442,4 +458,7 @@ Minimum for each implementation slice:
 - `git diff --check`
 
 For Postgres/pgvector slices, add devstack smoke tests before changing any
-status label beyond the current broad-subset wording.
+status label beyond the current broad-subset wording. Keep
+`make postgres-storage-test` green when changing the Postgres alpha store
+itself; it is package-level coverage, while
+`make devstack-postgres-pgvector-smoke` is the HTTP/service smoke.
