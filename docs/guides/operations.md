@@ -121,6 +121,33 @@ go run ./cmd/shimctl -config ./config.yaml restore -from ./.data/shim-backup.db
 background sweep and reports both expired-resource deletes and replay-artifact
 prunes.
 
+Governance purge is the operator-owned full local-state reset. It is not an
+OpenAI-compatible HTTP route and is intentionally explicit:
+
+```bash
+go run ./cmd/shimctl -config ./config.yaml governance purge -all
+
+go run ./cmd/shimctl -config ./config.yaml governance purge -all \
+  -apply \
+  -confirm purge-all-local-state \
+  -audit-out ./.data/governance-purge-apply.json
+```
+
+Dry-run is the default. Use `-apply -confirm purge-all-local-state` only after
+reviewing the dry-run counts. In Postgres mode this purges the current
+Postgres-owned beta tables plus the configured SQLite sidecar, because file
+mirrors and code-interpreter runtime state remain sidecar-owned there.
+
+Run the isolated SQLite governance smoke before changing this workflow:
+
+```bash
+make governance-purge-smoke
+```
+
+The smoke creates a temporary database, seeds representative local state, runs
+the real `shimctl governance purge` CLI in dry-run and apply modes, verifies the
+audit JSON, and verifies that the seeded state is gone after apply.
+
 For Postgres mode, configure `storage.backend=postgres` and `postgres.dsn` in
 `config.yaml`, or provide matching environment overrides:
 

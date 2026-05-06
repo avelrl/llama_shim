@@ -1,4 +1,4 @@
-.PHONY: run build lint test vet diff-check ci-check maint-cleanup maint-optimize maint-vacuum maint-backup maint-restore maint-migrate-sqlite-to-postgres docker-build compose-up compose-down postgres-storage-test devstack-up devstack-down devstack-smoke devstack-sqlite-fts5-smoke devstack-postgres-pgvector-smoke devstack-postgres-pgvector-ann-up devstack-postgres-pgvector-ann-smoke devstack-postgres-pgvector-multi-instance-up devstack-postgres-pgvector-multi-instance-smoke devstack-ci-smoke devstack-full-smoke responses-compat-external-smoke responses-compat-external-real-smoke responses-websocket-smoke v3-coding-tools-smoke v3-constrained-decoding-smoke v3-vllm-constrained-smoke v3-image-backends-smoke v3-local-runtimes-smoke v3-computer-browser-harness-smoke codex-cli-devstack-smoke codex-cli-shell-tool-smoke codex-cli-coding-task-smoke codex-cli-task-matrix-smoke codex-cli-real-upstream-smoke codex-eval-smoke codex-eval-core codex-eval-core-shell codex-eval-core-websocket codex-eval-core-interactive codex-eval-core-profiles codex-eval-compat codex-eval-automated-profiles codex-eval-bench-lite codex-eval-loop-bench-lite codex-eval-shim-native codex-eval-shim-native-websocket codex-eval-shim-native-apply-patch-freeform codex-eval-shim-native-apply-patch-function codex-eval-shim-native-apply-patch-disabled codex-eval-shim-native-apply-patch-profiles codex-eval-shim-native-profiles codex-eval-real-upstream codex-eval-real-upstream-expanded codex-eval-matrix codex-eval-loop codex-eval-auto codex-eval-prune codex-eval-clean
+.PHONY: run build lint test vet diff-check ci-check maint-cleanup maint-optimize maint-vacuum maint-backup maint-restore maint-migrate-sqlite-to-postgres governance-purge-smoke docker-build compose-up compose-down postgres-storage-test devstack-up devstack-down devstack-smoke devstack-sqlite-fts5-smoke devstack-postgres-pgvector-smoke devstack-postgres-pgvector-ann-up devstack-postgres-pgvector-ann-smoke devstack-postgres-pgvector-multi-instance-up devstack-postgres-pgvector-multi-instance-smoke devstack-ci-smoke devstack-full-smoke responses-compat-external-smoke responses-compat-external-real-smoke responses-websocket-smoke v3-coding-tools-smoke v3-constrained-decoding-smoke v3-vllm-constrained-smoke v3-image-backends-smoke v3-local-runtimes-smoke v3-computer-browser-harness-smoke codex-cli-devstack-smoke codex-cli-shell-tool-smoke codex-cli-coding-task-smoke codex-cli-task-matrix-smoke codex-cli-real-upstream-smoke codex-eval-smoke codex-eval-core codex-eval-core-shell codex-eval-core-websocket codex-eval-core-interactive codex-eval-core-profiles codex-eval-compat codex-eval-automated-profiles codex-eval-bench-lite codex-eval-loop-bench-lite codex-eval-shim-native codex-eval-shim-native-websocket codex-eval-shim-native-apply-patch-freeform codex-eval-shim-native-apply-patch-function codex-eval-shim-native-apply-patch-disabled codex-eval-shim-native-apply-patch-profiles codex-eval-shim-native-profiles codex-eval-real-upstream codex-eval-real-upstream-expanded codex-eval-matrix codex-eval-loop codex-eval-auto codex-eval-prune codex-eval-clean
 
 CONFIG ?= config.yaml
 BACKUP ?= ./.data/shim-backup.db
@@ -30,7 +30,7 @@ run:
 
 build:
 	$(TOOL_PREP)
-	$(TOOL_ENV) $(GO) build ./cmd/shim ./cmd/shimctl ./cmd/upstream-sse-capture ./cmd/devstack-fixture ./cmd/responses-websocket-smoke ./cmd/codex-eval-runner
+	$(TOOL_ENV) $(GO) build ./cmd/shim ./cmd/shimctl ./cmd/governance-purge-smoke ./cmd/upstream-sse-capture ./cmd/devstack-fixture ./cmd/responses-websocket-smoke ./cmd/codex-eval-runner
 
 lint:
 	$(TOOL_PREP)
@@ -72,6 +72,10 @@ maint-restore:
 maint-migrate-sqlite-to-postgres:
 	$(TOOL_PREP)
 	$(TOOL_ENV) $(GO) run ./cmd/shimctl -config $(CONFIG) migrate sqlite-to-postgres -sqlite $(MIGRATE_SQLITE) $(MIGRATE_FLAGS)
+
+governance-purge-smoke:
+	$(TOOL_PREP)
+	$(TOOL_ENV) bash ./scripts/governance-purge-smoke.sh
 
 docker-build:
 	docker build -t $(IMAGE) .

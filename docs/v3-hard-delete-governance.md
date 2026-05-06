@@ -80,6 +80,15 @@ The audit report is evidence of shim-local action only. It does not prove that
 external providers, backups, debug logs, eval artifacts, or operator-created
 exports were deleted.
 
+Smoke-test the workflow with:
+
+```bash
+make governance-purge-smoke
+```
+
+That smoke uses an isolated temporary SQLite database and exercises the real
+`shimctl governance purge` CLI in dry-run and apply modes.
+
 ## Use Scenarios
 
 Use `shimctl governance purge` only when the operator explicitly wants to erase
