@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -11,6 +12,10 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"llama_shim/internal/domain"
+	"llama_shim/internal/storage"
+	"llama_shim/internal/storage/sqlite"
 )
 
 func disableSharedDotEnv(t *testing.T) {
@@ -236,9 +241,114 @@ probe:
 	require.NotContains(t, stderr.String(), "preview=\"{\\\"id\\\":\\\"chatcmpl-test\\\"")
 }
 
+func TestRunGovernancePurgeDryRunAndApplyRequiresConfirmAndWritesAudit(t *testing.T) {
+	disableSharedDotEnv(t)
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "shim.db")
+	store, err := sqlite.Open(ctx, dbPath)
+	require.NoError(t, err)
+	seedShimctlGovernancePurgeState(t, ctx, store)
+	require.NoError(t, store.Close())
+
+	configPath := writeShimctlConfig(t, `
+sqlite:
+  path: `+dbPath+`
+storage:
+  backend: sqlite
+`)
+
+	dryRunAuditPath := filepath.Join(t.TempDir(), "dry-run-audit.json")
+	var dryRunStdout bytes.Buffer
+	var dryRunStderr bytes.Buffer
+	err = run([]string{
+		"-config", configPath,
+		"governance", "purge",
+		"-all",
+		"-batch-size", "1",
+		"-audit-out", dryRunAuditPath,
+	}, &dryRunStdout, &dryRunStderr)
+	require.NoError(t, err)
+	require.Empty(t, dryRunStderr.String())
+
+	var dryRunReport storage.GovernancePurgeReport
+	require.NoError(t, json.Unmarshal(dryRunStdout.Bytes(), &dryRunReport))
+	require.Equal(t, "governance.purge_report", dryRunReport.Object)
+	require.Equal(t, storage.BackendSQLite, dryRunReport.Backend)
+	require.True(t, dryRunReport.DryRun)
+	require.False(t, dryRunReport.Applied)
+	require.Greater(t, dryRunReport.Primary.MatchedTotal, int64(0))
+	require.Zero(t, dryRunReport.Primary.DeletedTotal)
+
+	auditBytes, err := os.ReadFile(dryRunAuditPath)
+	require.NoError(t, err)
+	var auditReport storage.GovernancePurgeReport
+	require.NoError(t, json.Unmarshal(auditBytes, &auditReport))
+	require.Equal(t, dryRunReport.Primary.MatchedTotal, auditReport.Primary.MatchedTotal)
+
+	var missingConfirmStdout bytes.Buffer
+	var missingConfirmStderr bytes.Buffer
+	err = run([]string{
+		"-config", configPath,
+		"governance", "purge",
+		"-all",
+		"-apply",
+	}, &missingConfirmStdout, &missingConfirmStderr)
+	require.ErrorContains(t, err, "requires -confirm purge-all-local-state")
+	require.Empty(t, missingConfirmStdout.String())
+
+	applyAuditPath := filepath.Join(t.TempDir(), "apply-audit.json")
+	var applyStdout bytes.Buffer
+	var applyStderr bytes.Buffer
+	err = run([]string{
+		"-config", configPath,
+		"governance", "purge",
+		"-all",
+		"-apply",
+		"-confirm", "purge-all-local-state",
+		"-batch-size", "1",
+		"-audit-out", applyAuditPath,
+	}, &applyStdout, &applyStderr)
+	require.NoError(t, err)
+	require.Empty(t, applyStderr.String())
+
+	var applyReport storage.GovernancePurgeReport
+	require.NoError(t, json.Unmarshal(applyStdout.Bytes(), &applyReport))
+	require.False(t, applyReport.DryRun)
+	require.True(t, applyReport.Applied)
+	require.Greater(t, applyReport.Primary.DeletedTotal, int64(0))
+	require.FileExists(t, applyAuditPath)
+
+	store, err = sqlite.Open(ctx, dbPath)
+	require.NoError(t, err)
+	defer store.Close()
+	_, err = store.GetResponse(ctx, "resp_shimctl_governance")
+	require.ErrorIs(t, err, storage.ErrNotFound)
+}
+
 func TestDefaultMigrationTargetSidecarPath(t *testing.T) {
 	require.Equal(t, ".data/shim.postgres-sidecar.db", defaultMigrationTargetSidecarPath(".data/shim.db"))
 	require.Equal(t, "shim.postgres-sidecar.db", defaultMigrationTargetSidecarPath("shim"))
+}
+
+func seedShimctlGovernancePurgeState(t *testing.T, ctx context.Context, store *sqlite.Store) {
+	t.Helper()
+	response := domain.StoredResponse{
+		ID:                   "resp_shimctl_governance",
+		Model:                "test-model",
+		RequestJSON:          `{"input":"governance"}`,
+		ResponseJSON:         `{"id":"resp_shimctl_governance","object":"response","status":"completed","output":[]}`,
+		NormalizedInputItems: []domain.Item{domain.NewInputTextMessage("user", "governance")},
+		EffectiveInputItems:  []domain.Item{domain.NewInputTextMessage("user", "governance")},
+		Output:               []domain.Item{domain.NewOutputTextMessage("ok")},
+		OutputText:           "ok",
+		Store:                true,
+		CreatedAt:            "2026-05-06T09:00:00Z",
+		CompletedAt:          "2026-05-06T09:00:01Z",
+	}
+	require.NoError(t, store.SaveResponse(ctx, response))
+	require.NoError(t, store.SaveResponseReplayArtifacts(ctx, response.ID, []domain.ResponseReplayArtifact{
+		{ResponseID: response.ID, Sequence: 1, EventType: "response.completed", PayloadJSON: `{"type":"response.completed"}`},
+	}))
 }
 
 func writeShimctlConfig(t *testing.T, body string) string {

@@ -61,6 +61,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return runRestore(cfg, rest[1:], stdout, stderr)
 	case "migrate":
 		return runMigrate(cfg, rest[1:], stdout, stderr)
+	case "governance":
+		return runGovernance(cfg, rest[1:], stdout, stderr)
 	default:
 		printUsage(stderr)
 		return fmt.Errorf("unknown maintenance command %q", rest[0])
@@ -185,6 +187,72 @@ func runMigrate(cfg config.ShimctlConfig, args []string, stdout, stderr io.Write
 	default:
 		return fmt.Errorf("unknown migration %q", args[0])
 	}
+}
+
+func runGovernance(cfg config.ShimctlConfig, args []string, stdout, stderr io.Writer) error {
+	if len(args) == 0 {
+		return errors.New("governance requires a command")
+	}
+	switch args[0] {
+	case "purge":
+		return runGovernancePurge(cfg, args[1:], stdout, stderr)
+	default:
+		return fmt.Errorf("unknown governance command %q", args[0])
+	}
+}
+
+func runGovernancePurge(cfg config.ShimctlConfig, args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("governance purge", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	all := fs.Bool("all", false, "purge all local shim-owned state for the active storage backend")
+	dryRun := fs.Bool("dry-run", false, "report affected rows without deleting; this is also the default unless -apply is set")
+	apply := fs.Bool("apply", false, "delete matching local state")
+	confirm := fs.String("confirm", "", `required with -apply; must be "purge-all-local-state"`)
+	batchSize := fs.Int("batch-size", 500, "maximum rows to delete per table batch")
+	auditOut := fs.String("audit-out", "", "optional path for a JSON audit report")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if !*all {
+		return errors.New(`governance purge requires -all`)
+	}
+	if *apply && *dryRun {
+		return errors.New("governance purge cannot combine -apply and -dry-run")
+	}
+	if *batchSize <= 0 {
+		return errors.New("governance purge requires -batch-size > 0")
+	}
+	effectiveDryRun := true
+	if *apply {
+		effectiveDryRun = false
+		if strings.TrimSpace(*confirm) != "purge-all-local-state" {
+			return errors.New(`governance purge -apply requires -confirm purge-all-local-state`)
+		}
+	}
+
+	store, err := openMaintenanceStore(cfg)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+
+	report, purgeErr := store.GovernancePurge(context.Background(), storage.GovernancePurgeOptions{
+		Scope:     storage.GovernancePurgeScopeAllLocalState,
+		DryRun:    effectiveDryRun,
+		BatchSize: *batchSize,
+		StartedAt: time.Now().UTC().Format(time.RFC3339Nano),
+	})
+	if report.Object != "" {
+		if err := writeGovernancePurgeReport(stdout, report); err != nil {
+			return err
+		}
+		if path := strings.TrimSpace(*auditOut); path != "" {
+			if err := writeGovernancePurgeReportFile(path, report); err != nil {
+				return err
+			}
+		}
+	}
+	return purgeErr
 }
 
 func runMigrateSQLiteToPostgres(cfg config.ShimctlConfig, args []string, stdout, stderr io.Writer) error {
@@ -376,7 +444,41 @@ func retrievalNowUnix() int64 {
 }
 
 func printUsage(w io.Writer) {
-	_, _ = fmt.Fprintln(w, "usage: shimctl [-config path-to-config.yaml] <cleanup|optimize|vacuum|probe|backup|restore|migrate> [flags]")
+	_, _ = fmt.Fprintln(w, "usage: shimctl [-config path-to-config.yaml] <cleanup|optimize|vacuum|probe|backup|restore|migrate|governance> [flags]")
+}
+
+func writeGovernancePurgeReport(w io.Writer, report storage.GovernancePurgeReport) error {
+	encoder := json.NewEncoder(w)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(report); err != nil {
+		return fmt.Errorf("encode governance purge report: %w", err)
+	}
+	return nil
+}
+
+func writeGovernancePurgeReportFile(path string, report storage.GovernancePurgeReport) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create governance audit dir: %w", err)
+	}
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return fmt.Errorf("create governance audit report: %w", err)
+	}
+	committed := false
+	defer func() {
+		_ = file.Close()
+		if !committed {
+			_ = os.Remove(path)
+		}
+	}()
+	if err := writeGovernancePurgeReport(file, report); err != nil {
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		return fmt.Errorf("sync governance audit report: %w", err)
+	}
+	committed = true
+	return nil
 }
 
 func printProbeProgress(w io.Writer, event llama.StartupCalibrationProgressEvent) {

@@ -668,7 +668,7 @@ schedule or retain those backups.
 
 #### 6.5 Hard-delete and governance hooks
 
-Status: documented boundary; implementation deferred.
+Status: implemented operator purge surface for local shim-owned state.
 
 Resource-scoped OpenAI-shaped delete routes already exist for responses,
 conversation items, stored Chat Completions, files, vector stores,
@@ -676,11 +676,29 @@ vector-store files, containers, and container files. They remain compatibility
 routes for the addressed resource only.
 
 [V3 Hard Delete And Governance Boundary](v3-hard-delete-governance.md)
-documents why tenant/project purge, legal hold, redaction policy, encryption
-policy, audit workflows, upstream delete propagation, and backup/PITR deletion
-guarantees are not part of the Postgres storage beta. Those features need a
-dedicated shim-owned operator/admin surface with authz, dry-run, audit, bounded
-batching, sidecar semantics, and sibling-path tests before implementation.
+documents the dedicated shim-owned `shimctl governance purge` surface. The
+current scope is `all_local_state` only and defaults to dry-run. Applying the
+purge requires `-apply -confirm purge-all-local-state`; it deletes in bounded
+table batches and emits a JSON audit report to stdout and optionally to
+`-audit-out`.
+
+Implemented boundary:
+
+- SQLite purges responses, replay artifacts, conversations/items, stored Chat
+  Completions, files, vector stores, vector-store files/chunks, and
+  code-interpreter sidecar state.
+- Postgres purges the current Postgres-owned beta tables and also purges the
+  configured SQLite sidecar, because file mirrors and code-interpreter runtime
+  state remain sidecar-owned in Postgres mode.
+- Dry-run reports counts without reading stored file/blob content.
+- The audit report includes explicit out-of-scope notes for debug logs,
+  request/response capture files, eval/smoke artifacts, operator-created
+  backups/PITR archives, and upstream-provider state already transmitted
+  outside the shim.
+
+Tenant/project purge, legal hold, redaction policy, encryption policy, approval
+workflow, upstream delete propagation, and backup/PITR deletion guarantees
+remain future governance work, not OpenAI API parity.
 
 #### 6.6 ANN indexing
 

@@ -54,6 +54,61 @@ func TestOpenWithOptionsPGVectorRequiresEmbedder(t *testing.T) {
 	require.ErrorContains(t, err, `retrieval index backend "pgvector" requires a configured embedder backend`)
 }
 
+func TestStoreGovernancePurgeDryRunAndApply(t *testing.T) {
+	store, ctx, prefix := openPostgresTestStore(t, retrieval.IndexBackendLexical, nil)
+	seedPostgresGovernancePurgeState(t, ctx, store, prefix)
+
+	dryRun, err := store.GovernancePurge(ctx, storage.GovernancePurgeOptions{
+		DryRun:    true,
+		BatchSize: 1,
+		StartedAt: "2026-05-06T09:00:00Z",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "governance.purge_report", dryRun.Object)
+	require.Equal(t, storage.BackendPostgres, dryRun.Backend)
+	require.Equal(t, storage.GovernancePurgeScopeAllLocalState, dryRun.Scope)
+	require.True(t, dryRun.DryRun)
+	require.False(t, dryRun.Applied)
+	require.Greater(t, dryRun.Primary.MatchedTotal, int64(0))
+	require.Zero(t, dryRun.Primary.DeletedTotal)
+	require.NotNil(t, dryRun.Sidecar)
+	require.True(t, dryRun.Sidecar.Included)
+	require.Greater(t, dryRun.Sidecar.Section.MatchedTotal, int64(0))
+	require.Zero(t, dryRun.Sidecar.Section.DeletedTotal)
+
+	_, err = store.GetResponse(ctx, prefix+"resp_governance")
+	require.NoError(t, err)
+	_, err = store.SQLiteSidecar().GetCodeInterpreterSession(ctx, prefix+"ci_governance")
+	require.NoError(t, err)
+
+	applied, err := store.GovernancePurge(ctx, storage.GovernancePurgeOptions{
+		DryRun:    false,
+		BatchSize: 1,
+		StartedAt: "2026-05-06T09:01:00Z",
+	})
+	require.NoError(t, err)
+	require.False(t, applied.DryRun)
+	require.True(t, applied.Applied)
+	require.Greater(t, applied.Primary.DeletedTotal, int64(0))
+	require.NotNil(t, applied.Sidecar)
+	require.Greater(t, applied.Sidecar.Section.DeletedTotal, int64(0))
+
+	_, err = store.GetResponse(ctx, prefix+"resp_governance")
+	require.ErrorIs(t, err, storage.ErrNotFound)
+	_, _, err = store.GetConversation(ctx, prefix+"conv_governance")
+	require.ErrorIs(t, err, storage.ErrNotFound)
+	_, err = store.GetChatCompletion(ctx, prefix+"chatcmpl_governance")
+	require.ErrorIs(t, err, storage.ErrNotFound)
+	_, err = store.GetFile(ctx, prefix+"file_governance")
+	require.ErrorIs(t, err, storage.ErrNotFound)
+	_, err = store.GetVectorStore(ctx, prefix+"vs_governance")
+	require.ErrorIs(t, err, storage.ErrNotFound)
+	_, err = store.SQLiteSidecar().GetCodeInterpreterSession(ctx, prefix+"ci_governance")
+	require.ErrorIs(t, err, storage.ErrNotFound)
+	_, err = store.SQLiteSidecar().GetFile(ctx, prefix+"file_governance")
+	require.ErrorIs(t, err, storage.ErrNotFound)
+}
+
 func TestStoreFilePaginationSkipsContentAndMirrorsSidecar(t *testing.T) {
 	store, ctx, prefix := openPostgresTestStore(t, retrieval.IndexBackendLexical, nil)
 
@@ -1196,6 +1251,68 @@ func postgresTestPrefix(t *testing.T) string {
 		name = name[:48]
 	}
 	return fmt.Sprintf("pgtest_%s_%d_", name, time.Now().UnixNano())
+}
+
+func seedPostgresGovernancePurgeState(t *testing.T, ctx context.Context, store *Store, prefix string) {
+	t.Helper()
+
+	response := testStoredResponseWithReplay(prefix+"resp_governance", "2026-05-06T09:00:00Z", "")
+	require.NoError(t, store.SaveResponse(ctx, response))
+	require.NoError(t, store.SaveResponseReplayArtifacts(ctx, response.ID, []domain.ResponseReplayArtifact{
+		{ResponseID: response.ID, Sequence: 1, EventType: "response.completed", PayloadJSON: `{"type":"response.completed"}`},
+	}))
+
+	conversation := domain.Conversation{
+		ID:        prefix + "conv_governance",
+		Object:    "conversation",
+		Version:   1,
+		Metadata:  map[string]string{"scope": "governance"},
+		CreatedAt: "2026-05-06T09:00:00Z",
+		UpdatedAt: "2026-05-06T09:00:00Z",
+		Items:     []domain.Item{domain.NewInputTextMessage("user", "governance seed")},
+	}
+	require.NoError(t, store.CreateConversation(ctx, conversation))
+
+	chat := domain.StoredChatCompletion{
+		ID:           prefix + "chatcmpl_governance",
+		Model:        "test-chat-model",
+		Metadata:     map[string]string{"scope": "governance"},
+		RequestJSON:  `{"model":"test-chat-model","store":true,"messages":[{"role":"user","content":"hello"}]}`,
+		ResponseJSON: `{"id":"` + prefix + `chatcmpl_governance","object":"chat.completion","created":1778067600,"model":"test-chat-model","choices":[]}`,
+		CreatedAt:    1778067600,
+	}
+	require.NoError(t, store.SaveChatCompletion(ctx, chat))
+
+	file := testStoredFile(prefix+"file_governance", "governance.txt", "assistants", "governance purge content", 1778067601)
+	require.NoError(t, store.SaveFile(ctx, file))
+	vectorStore := testVectorStore(prefix+"vs_governance", "Governance", 1778067602)
+	require.NoError(t, store.SaveVectorStore(ctx, vectorStore))
+	_, err := store.AttachFileToVectorStore(ctx, vectorStore.ID, file.ID, map[string]any{"scope": "governance"}, domain.DefaultFileChunkingStrategy(), 1778067603)
+	require.NoError(t, err)
+
+	session := domain.CodeInterpreterSession{
+		ID:                  prefix + "ci_governance",
+		Owner:               "owner-a",
+		Backend:             "docker",
+		Status:              "running",
+		Name:                "Governance",
+		MemoryLimit:         "1g",
+		ExpiresAfterMinutes: 20,
+		CreatedAt:           "2026-05-06T09:00:00Z",
+		LastActiveAt:        "2026-05-06T09:00:00Z",
+	}
+	require.NoError(t, store.SQLiteSidecar().SaveCodeInterpreterSession(ctx, session))
+	_, err = store.SQLiteSidecar().SaveCodeInterpreterContainerFile(ctx, domain.CodeInterpreterContainerFile{
+		ID:                prefix + "cfile_governance",
+		ContainerID:       session.ID,
+		BackingFileID:     file.ID,
+		DeleteBackingFile: false,
+		Path:              "/workspace/governance.txt",
+		Source:            "generated",
+		Bytes:             file.Bytes,
+		CreatedAt:         1778067604,
+	})
+	require.NoError(t, err)
 }
 
 func testStoredFile(id, filename, purpose, content string, createdAt int64) domain.StoredFile {

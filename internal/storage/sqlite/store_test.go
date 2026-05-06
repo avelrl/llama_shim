@@ -14,6 +14,7 @@ import (
 
 	"llama_shim/internal/domain"
 	"llama_shim/internal/retrieval"
+	"llama_shim/internal/storage"
 	"llama_shim/internal/storage/sqlite"
 	"llama_shim/internal/testutil"
 
@@ -1910,6 +1911,58 @@ func TestStoreSearchVectorStoreReturnsMultipleTopChunksPerFile(t *testing.T) {
 	require.Equal(t, "backup code note", searchPage.Results[0].Content[2].Text)
 }
 
+func TestStoreGovernancePurgeDryRunAndApply(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store := openTestStore(t, ctx)
+	seedSQLiteGovernancePurgeState(t, ctx, store)
+
+	dryRun, err := store.GovernancePurge(ctx, storage.GovernancePurgeOptions{
+		DryRun:    true,
+		BatchSize: 1,
+		StartedAt: "2026-05-06T09:00:00Z",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "governance.purge_report", dryRun.Object)
+	require.Equal(t, storage.BackendSQLite, dryRun.Backend)
+	require.Equal(t, storage.GovernancePurgeScopeAllLocalState, dryRun.Scope)
+	require.True(t, dryRun.DryRun)
+	require.False(t, dryRun.Applied)
+	require.Greater(t, dryRun.Primary.MatchedTotal, int64(0))
+	require.Zero(t, dryRun.Primary.DeletedTotal)
+	require.NotEmpty(t, dryRun.OutOfScope)
+
+	_, err = store.GetResponse(ctx, "resp_governance")
+	require.NoError(t, err)
+	_, err = store.GetCodeInterpreterSession(ctx, "ci_governance")
+	require.NoError(t, err)
+
+	applied, err := store.GovernancePurge(ctx, storage.GovernancePurgeOptions{
+		DryRun:    false,
+		BatchSize: 1,
+		StartedAt: "2026-05-06T09:01:00Z",
+	})
+	require.NoError(t, err)
+	require.False(t, applied.DryRun)
+	require.True(t, applied.Applied)
+	require.Greater(t, applied.Primary.DeletedTotal, int64(0))
+	require.NotEmpty(t, applied.CompletedAt)
+
+	_, err = store.GetResponse(ctx, "resp_governance")
+	require.ErrorIs(t, err, storage.ErrNotFound)
+	_, _, err = store.GetConversation(ctx, "conv_governance")
+	require.ErrorIs(t, err, storage.ErrNotFound)
+	_, err = store.GetChatCompletion(ctx, "chatcmpl_governance")
+	require.ErrorIs(t, err, storage.ErrNotFound)
+	_, err = store.GetFile(ctx, "file_governance")
+	require.ErrorIs(t, err, storage.ErrNotFound)
+	_, err = store.GetVectorStore(ctx, "vs_governance")
+	require.ErrorIs(t, err, storage.ErrNotFound)
+	_, err = store.GetCodeInterpreterSession(ctx, "ci_governance")
+	require.ErrorIs(t, err, storage.ErrNotFound)
+}
+
 func openTestStore(t *testing.T, ctx context.Context) *sqlite.Store {
 	t.Helper()
 
@@ -1919,4 +1972,91 @@ func openTestStore(t *testing.T, ctx context.Context) *sqlite.Store {
 		require.NoError(t, store.Close())
 	})
 	return store
+}
+
+func seedSQLiteGovernancePurgeState(t *testing.T, ctx context.Context, store *sqlite.Store) {
+	t.Helper()
+
+	response := domain.StoredResponse{
+		ID:                   "resp_governance",
+		Model:                "test-model",
+		RequestJSON:          `{"input":"hello"}`,
+		ResponseJSON:         `{"id":"resp_governance","object":"response","status":"completed","output":[]}`,
+		NormalizedInputItems: []domain.Item{domain.NewInputTextMessage("user", "hello")},
+		EffectiveInputItems:  []domain.Item{domain.NewInputTextMessage("user", "hello")},
+		Output:               []domain.Item{domain.NewOutputTextMessage("ok")},
+		OutputText:           "ok",
+		Store:                true,
+		CreatedAt:            "2026-05-06T09:00:00Z",
+		CompletedAt:          "2026-05-06T09:00:01Z",
+	}
+	require.NoError(t, store.SaveResponse(ctx, response))
+	require.NoError(t, store.SaveResponseReplayArtifacts(ctx, response.ID, []domain.ResponseReplayArtifact{
+		{Sequence: 1, EventType: "response.completed", PayloadJSON: `{"type":"response.completed"}`},
+	}))
+
+	conversation := domain.Conversation{
+		ID:        "conv_governance",
+		Object:    "conversation",
+		Version:   1,
+		CreatedAt: "2026-05-06T09:00:00Z",
+		UpdatedAt: "2026-05-06T09:00:00Z",
+		Items:     []domain.Item{domain.NewInputTextMessage("user", "conversation seed")},
+	}
+	require.NoError(t, store.CreateConversation(ctx, conversation))
+
+	completion := domain.StoredChatCompletion{
+		ID:           "chatcmpl_governance",
+		Model:        "test-chat-model",
+		Metadata:     map[string]string{"scope": "governance"},
+		RequestJSON:  `{"model":"test-chat-model","store":true,"messages":[{"role":"user","content":"hello"}]}`,
+		ResponseJSON: `{"id":"chatcmpl_governance","object":"chat.completion","created":1778067600,"model":"test-chat-model","choices":[]}`,
+		CreatedAt:    1778067600,
+	}
+	require.NoError(t, store.SaveChatCompletion(ctx, completion))
+
+	file := domain.StoredFile{
+		ID:        "file_governance",
+		Filename:  "governance.txt",
+		Purpose:   "assistants",
+		Bytes:     int64(len("governance purge test content")),
+		CreatedAt: 1778067601,
+		Status:    "processed",
+		Content:   []byte("governance purge test content"),
+	}
+	require.NoError(t, store.SaveFile(ctx, file))
+	vectorStore := domain.StoredVectorStore{
+		ID:           "vs_governance",
+		Name:         "Governance",
+		Metadata:     map[string]string{"scope": "governance"},
+		CreatedAt:    1778067602,
+		LastActiveAt: 1778067602,
+	}
+	require.NoError(t, store.SaveVectorStore(ctx, vectorStore))
+	_, err := store.AttachFileToVectorStore(ctx, vectorStore.ID, file.ID, map[string]any{}, domain.DefaultFileChunkingStrategy(), 1778067603)
+	require.NoError(t, err)
+
+	session := domain.CodeInterpreterSession{
+		ID:                  "ci_governance",
+		Owner:               "owner",
+		Backend:             "docker",
+		Status:              "running",
+		Name:                "governance",
+		MemoryLimit:         "1g",
+		ExpiresAfterMinutes: 20,
+		CreatedAt:           "2026-05-06T09:00:00Z",
+		LastActiveAt:        "2026-05-06T09:00:00Z",
+	}
+	require.NoError(t, store.SaveCodeInterpreterSession(ctx, session))
+	_, err = store.SaveCodeInterpreterContainerFile(ctx, domain.CodeInterpreterContainerFile{
+		ID:                "cfile_governance",
+		ContainerID:       session.ID,
+		BackingFileID:     file.ID,
+		DeleteBackingFile: false,
+		Path:              "/workspace/governance.txt",
+		Source:            "generated",
+		Bytes:             file.Bytes,
+		CreatedAt:         1778067604,
+	})
+	require.NoError(t, err)
 }

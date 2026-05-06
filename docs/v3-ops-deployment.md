@@ -203,12 +203,15 @@ Maintenance boundary:
   multi-instance deployment smoke.
 - The detailed Postgres follow-up backlog is tracked in
   [V3 Storage And Retrieval Backends](v3-storage-retrieval-backends.md#6-broader-storage-expansion):
-  hard-delete/governance hooks and future ANN search-tuning knobs.
+  tenant/project governance, future ANN search-tuning knobs, and broader
+  shared-state modes.
 
 ### Phase 3: Governance/Tenanting
 
 Status: candidate.
 
+- The V3 storage track now implements only the shim-local
+  `shimctl governance purge` `all_local_state` operator subset.
 - Split into a dedicated plan before implementation.
 - Require explicit API-boundary review before adding any request-visible
   behavior.

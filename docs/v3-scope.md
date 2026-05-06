@@ -98,7 +98,10 @@ response replay-artifact retention is implemented for standalone responses.
 Explicit pgvector HNSW/IVFFlat ANN indexing is implemented as an operator
 opt-in with fixed dimensions.
 Cluster-native Postgres backup guidance is documented as a runbook; backup
-scheduling and retention remain operator-owned.
+scheduling and retention remain operator-owned. `shimctl governance purge` is
+implemented for the single `all_local_state` operator scope with dry-run,
+bounded batches, audit JSON, SQLite coverage, and Postgres-plus-sidecar
+coverage.
 See
 [v3-storage-retrieval-backends.md](v3-storage-retrieval-backends.md).
 
@@ -107,7 +110,8 @@ See
   responses/conversations/stored-chat/file/vector boundary
 - code-interpreter store ownership stays sidecar-local unless a future shared
   runtime design exists
-- hard-delete/governance hooks
+- tenant/project governance, legal hold, redaction, approval workflow,
+  upstream delete propagation, and backup/PITR deletion guarantees
 - more embedders and rerankers beyond the current compatibility-driven set
 
 ### 3. Richer local-only runtimes
@@ -325,8 +329,10 @@ for the Postgres-owned beta tables is implemented in the storage track. See
 - multi-tenant authz / tenant isolation
 - richer exporters and dashboards
 - governance-heavy storage features such as encryption-at-rest options,
-  redaction policy, and hard-delete controls; the V3 storage beta now keeps
-  this as a documented boundary in
+  redaction policy, tenant/project purge, legal hold, approval workflow,
+  upstream delete propagation, and backup/PITR deletion guarantees; the V3
+  storage beta now implements only the shim-local `all_local_state`
+  `shimctl governance purge` subset documented in
   [v3-hard-delete-governance.md](v3-hard-delete-governance.md)
 - cluster-native Postgres backup scheduling/retention and remaining
   shared-state deployment modes
@@ -356,11 +362,11 @@ The next practical implementation work should be selected from this queue:
    search-tuning knobs, broader shared-storage modes, or backend-specific
    optimization. The Postgres/pgvector beta path is no longer blocking a new
    V3 track after migration, sidecar ownership, retention, backup guidance,
-   multi-instance smoke, and ANN indexing.
+   governance purge, multi-instance smoke, and ANN indexing.
 5. Continue [V3 Ops And Deployment Expansion](v3-ops-deployment.md) for
    governance/tenanting only after splitting a dedicated operator-surface plan.
-   Hard-delete/governance remains a documented boundary, not hidden behavior in
-   OpenAI-shaped resource delete routes.
+   Tenant/project governance remains a documented boundary, not hidden behavior
+   in OpenAI-shaped resource delete routes.
 
 ## V3 Result-Curation Work
 
