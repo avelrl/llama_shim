@@ -2,7 +2,7 @@
 
 Status: implemented as an optional local smoke harness.
 
-Last updated: May 5, 2026.
+Last updated: May 6, 2026.
 
 This document covers the real browser executor used to validate the
 shim-local `computer` loop beyond JSON-only fixtures.
@@ -39,6 +39,21 @@ The make target defaults to all deterministic fixture scenarios:
 
 The script itself defaults to `COMPUTER_HARNESS_SCENARIOS=type` so manual real
 upstream runs can stay short unless the caller opts into broader coverage.
+
+## Current Checkpoint
+
+The current V3 local-runtime closeout treats this harness as implemented for
+the practical browser/computer protocol slice.
+
+- Official Computer Use guidance was rechecked on May 6, 2026: applications
+  inspect `computer_call`, execute every returned action in order, send an
+  updated screenshot as `computer_call_output`, and repeat until the model stops
+  returning `computer_call`.
+- The full deterministic scenario set (`type`, `keypress`, `scroll`, and
+  `drag`) passed against a real upstream-backed shim on May 6, 2026.
+- This checkpoint validates shim state, action normalization, and the external
+  browser executor loop. It does not claim hosted browser parity or broad model
+  visual-grounding quality.
 
 ## Requirements
 

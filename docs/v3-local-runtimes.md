@@ -1,12 +1,17 @@
 # V3 Richer Local-Only Runtimes
 
-Status: partial. Browser/computer runtime hardening and the optional external
-browser harness are implemented as the first focused runtime slice.
+Status: implemented for the current practical V3 local-runtime scope.
+Browser/computer runtime hardening and the optional external browser harness
+are closed as the first focused runtime slice. Future multimodal or app-runtime
+extensions remain candidate tracks, not open work in this slice.
 
-Last updated: May 5, 2026.
+Last updated: May 6, 2026.
 
 This document tracks V3 runtime-expansion work that is useful locally but does
-not cleanly map to a complete hosted OpenAI surface.
+not cleanly map to a complete hosted OpenAI surface. The current closeout is
+for the local `computer` browser/external-executor loop. Broader local runtime
+ideas are kept below as future candidate slices so they do not blur the done
+criteria for this implemented block.
 
 The shim already has practical local subsets for several tool families. This
 track is for future runtime loops that need more local machinery, stricter
@@ -48,6 +53,8 @@ config, capability reporting, and tests.
 
 ### 1. Browser/Computer Runtime
 
+Status: implemented for the current practical scope.
+
 Build on the current screenshot-first `computer` subset.
 
 Implemented first slice:
@@ -73,6 +80,16 @@ Implemented first slice:
 - deterministic real-browser fixture scenarios for `type`, `keypress`,
   `scroll`, and `drag`
 
+Closure checkpoint:
+
+- On May 6, 2026, the optional real-upstream browser harness passed the full
+  deterministic scenario set (`type`, `keypress`, `scroll`, and `drag`) through
+  a Qwen 3.6 upstream-backed shim.
+- The checkpoint validates the shim protocol bridge, typed item state, planner
+  action normalization, and Playwright executor loop. It is not a broad
+  visual-grounding model-quality claim because the fixture prompts include
+  explicit coordinates.
+
 Still out of scope:
 
 - an in-process browser or VM runtime
@@ -97,6 +114,8 @@ Useful next tracks:
 
 ### 2. Multimodal Local Loop
 
+Status: candidate future slice.
+
 Support richer local image/file/media input loops where the shim owns state and
 the backend is OpenAI-compatible or explicitly local.
 
@@ -108,6 +127,8 @@ Potential work:
 - capability-gated smoke coverage
 
 ### 3. Shell/App Runtime Extensions
+
+Status: candidate future slice.
 
 Build on local `shell`, `apply_patch`, and Codex eval evidence.
 
@@ -147,16 +168,19 @@ Status: done for the first browser/computer slice.
 
 ### Phase 3: Regression Import
 
-Status: not started.
+Status: done for the first browser/computer slice.
 
-- Convert manual failures into deterministic tasks only after they reduce to a
-  stable fixture scenario.
-- Keep flaky model behavior in model-matrix notes instead of hardcoding broad
-  shim repairs.
+- Manual browser-harness failures were reduced to deterministic fixture
+  scenarios or focused local computer planner parser tests.
+- Safe planner repairs are allow-listed to documented action families and
+  stable provider-output aliases. The shim still does not invent missing
+  actions, coordinates, or text.
+- Flaky upstream transport failures and broad visual-grounding quality remain
+  outside the required smoke.
 
 ## Done Criteria
 
-The first richer local runtime slice is done when:
+The first richer local runtime slice is done. It met these criteria:
 
 - it has deterministic fixture or devstack coverage: `make
   v3-local-runtimes-smoke`

@@ -108,6 +108,10 @@ curl http://127.0.0.1:8080/v1/responses \
   browser fixture. The make target covers deterministic `type`, `keypress`,
   `scroll`, and `drag` scenarios and writes run artifacts under
   `.tmp/v3-computer-browser-harness-runs/`.
+- The current V3 local-runtime closeout treats this browser/computer slice as
+  implemented for protocol, state, action-normalization, and deterministic
+  executor coverage. Future visual-grounding evals or richer local runtimes are
+  separate tracks.
 
 ## Gotchas
 

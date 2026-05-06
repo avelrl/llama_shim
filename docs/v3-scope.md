@@ -112,14 +112,15 @@ See
 
 ### 3. Richer local-only runtimes
 
-Status: `Partial`. The first browser/computer runtime hardening slice and
-optional real-browser harness are implemented; see
-[v3-local-runtimes.md](v3-local-runtimes.md) and
+Status: `Implemented` for the current practical V3 local-runtime scope. The
+browser/computer runtime hardening slice and optional real-browser harness are
+closed; see [v3-local-runtimes.md](v3-local-runtimes.md) and
 [v3-computer-browser-harness.md](v3-computer-browser-harness.md).
 
 - additional local tools that do not map cleanly to current OpenAI surface area
 - more ambitious local shell / browser / multimodal runtime loops after the V2
-  contract is stable
+  contract is stable; these remain future candidate tracks, not open work in
+  the closed browser/computer slice
 - deterministic fixture and capability-gated runtime slices before any
   production-grade runtime claims; the current implemented slice covers the
   screenshot-first local `computer` loop, planner action normalization, and

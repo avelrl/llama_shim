@@ -656,8 +656,9 @@ Shim reality:
   `wait`, `keypress`, `drag`, and `move`.
 - The shim preserves typed `computer_call` and `computer_call_output` items in
   stored response and input item surfaces.
-- The optional V3 browser harness proves one real external-executor flow
-  against the deterministic devstack page; it is not a hosted browser runtime.
+- The optional V3 browser harness proves real external-executor flows against
+  deterministic devstack pages for `type`, `keypress`, `scroll`, and `drag`;
+  it is not a hosted browser runtime or broad visual-grounding benchmark.
 - Exact hosted `response.computer_call.*` SSE choreography is not claimed.
 
 ## 12. Code Interpreter
