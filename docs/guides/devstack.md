@@ -165,6 +165,27 @@ Stop the stack:
 make devstack-down
 ```
 
+Preview or run a devstack reset:
+
+```bash
+make devstack-reset-dry-run
+make devstack-reset
+```
+
+`devstack-reset` runs `docker compose -f docker-compose.devstack.yml down
+--remove-orphans` and keeps Compose volumes. To reset Compose-managed volumes
+as well, use the explicit volume target:
+
+```bash
+make devstack-reset-volumes-dry-run
+make devstack-reset-volumes
+```
+
+These reset targets affect Docker Compose state only. They do not remove repo
+`.data`, `.tmp`, `.cache`, logs, eval artifacts, or smoke artifacts. Use
+`make local-state-report`, `make clean-artifacts`, or `shimctl governance purge`
+for those separate scopes.
+
 Equivalent raw Compose commands:
 
 ```bash
@@ -195,6 +216,25 @@ bash ./scripts/codex-cli-coding-task-smoke.sh
 bash ./scripts/codex-cli-task-matrix-smoke.sh
 docker compose -f docker-compose.devstack.yml down --remove-orphans
 ```
+
+## Reset And Local State
+
+Before a long eval or real-upstream smoke, inspect local state:
+
+```bash
+make local-state-report
+```
+
+Clean disposable run artifacts without touching durable local data:
+
+```bash
+make clean-artifacts-dry-run
+make clean-artifacts
+```
+
+The cleanup targets intentionally do not delete `.data`. If the local API store
+must be reset, use `shimctl governance purge` and review its dry-run counts
+before applying.
 
 ## Ports
 

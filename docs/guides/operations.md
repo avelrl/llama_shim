@@ -155,13 +155,17 @@ Default cleanup targets intentionally do not remove `.data`.
 
 | Goal | Command | Removes `.data`? | Notes |
 | --- | --- | --- | --- |
+| Inspect local state | `make local-state-report` | No | Read-only size/count report for `.tmp`, `.cache`, `.data`, common smoke artifacts, and devstack Compose status when Docker is available. |
 | Preview disposable run-artifact cleanup | `make clean-artifacts-dry-run` | No | Lists allowlisted `.tmp` artifact directories that would be removed. |
 | Remove disposable run artifacts | `make clean-artifacts` | No | Removes Codex eval runs, Codex smoke workdirs, browser harness runs, governance smoke runs, and Playwright daemon sockets/sessions under `.tmp`. |
 | Preview broader local dev cleanup | `make clean-dev-artifacts-dry-run` | No | Adds local tool caches to the artifact preview. |
 | Remove broader local dev artifacts | `make clean-dev-artifacts` | No | Removes the allowlisted `.tmp` artifacts plus `.cache`, `.playwright-cli`, `.tmp/go-build`, and `.tmp/go-tmp`. |
 | Remove only Codex eval runs | `make codex-eval-clean` | No | Removes `.tmp/codex-eval-runs`, `.tmp/codex-eval-loops`, and `.tmp/codex-eval-auto`. |
+| Preview devstack reset | `make devstack-reset-dry-run` | No | Prints the Compose reset command; keeps Docker volumes. |
+| Stop/reset devstack containers | `make devstack-reset` | No | Runs `docker compose -f docker-compose.devstack.yml down --remove-orphans`; keeps Docker volumes. |
+| Preview devstack volume reset | `make devstack-reset-volumes-dry-run` | No | Prints the Compose reset command with `-v`. |
+| Stop/reset devstack containers and volumes | `make devstack-reset-volumes` | No | Removes Compose-managed devstack volumes only; still does not touch repo `.data`. |
 | Reset shim-local durable state | `shimctl governance purge` | Yes, for configured store rows only | Use dry-run first. Does not delete logs, backups, eval artifacts, or external upstream state. |
-| Reset Docker devstack volumes | `docker compose -f docker-compose.devstack.yml down -v` | Docker volumes only | Explicit manual action; not wrapped by the safe artifact cleanup targets. |
 
 Safe cleanup target boundaries:
 
@@ -172,6 +176,8 @@ Safe cleanup target boundaries:
   compatibility artifacts, or `shim.log`
 - they are useful before re-running Codex evals, browser harness smokes, or
   governance smoke tests
+- `devstack-reset*` targets affect Docker Compose state only; they do not clean
+  repo files or `.data`
 
 Treat `.data` as durable local state:
 
@@ -184,6 +190,27 @@ Treat `.data` as durable local state:
 To clear local API state, use `shimctl governance purge` instead of deleting
 `.data` by habit. To clear logs, external tester artifacts, or backups, make a
 separate explicit operator decision after copying anything that must be kept.
+
+Practical reset playbook:
+
+```bash
+make local-state-report
+make clean-artifacts-dry-run
+make devstack-reset-dry-run
+
+make clean-artifacts
+make devstack-reset
+make devstack-up
+make devstack-ci-smoke
+```
+
+If the devstack Postgres volume itself must be reset, preview the destructive
+Docker-volume command first:
+
+```bash
+make devstack-reset-volumes-dry-run
+make devstack-reset-volumes
+```
 
 For Postgres mode, configure `storage.backend=postgres` and `postgres.dsn` in
 `config.yaml`, or provide matching environment overrides:

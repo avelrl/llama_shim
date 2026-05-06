@@ -127,3 +127,8 @@ if [[ "${dry_run}" == "1" ]]; then
 else
   echo "cleanup completed: removed=${removed}"
 fi
+
+echo "next steps:"
+echo "  make local-state-report       # inspect remaining .tmp/.cache/.data state"
+echo "  make devstack-reset-dry-run   # preview Docker devstack reset"
+echo "  shimctl governance purge ...  # reset configured local API state"
