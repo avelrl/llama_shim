@@ -181,30 +181,71 @@ save_json() {
 post_json() {
   local body="$1"
   local label="${2:-response}"
-  local safe_label response_file request_file error_file status
+  local safe_label response_file request_file error_file status curl_exit
   safe_label="$(sanitize_label "${label}")"
   request_file="${artifact_dir}/requests/${safe_label}.json"
   response_file="${tmp_dir}/${safe_label}.response.json"
   error_file="${artifact_dir}/errors/${safe_label}.json"
   save_json "${request_file}" "${body}"
 
+  curl_exit=0
   if [[ -n "${auth_header}" ]]; then
     status="$(curl -sS -o "${response_file}" -w '%{http_code}' -H "${auth_header}" "${shim_base_url}/v1/responses" \
       -H 'Content-Type: application/json' \
-      -d "${body}")"
+      -d "${body}")" || curl_exit="$?"
   else
     status="$(curl -sS -o "${response_file}" -w '%{http_code}' "${shim_base_url}/v1/responses" \
       -H 'Content-Type: application/json' \
-      -d "${body}")"
+      -d "${body}")" || curl_exit="$?"
   fi
-  if [[ "${status}" -lt 200 || "${status}" -ge 300 ]]; then
-    cp "${response_file}" "${error_file}" >/dev/null 2>&1 || true
+  if [[ -z "${status}" ]]; then
+    status="000"
+  fi
+  if [[ "${curl_exit}" != "0" || ! "${status}" =~ ^[0-9]+$ || "${status}" -lt 200 || "${status}" -ge 300 ]]; then
+    if [[ -s "${response_file}" ]]; then
+      cp "${response_file}" "${error_file}" >/dev/null 2>&1 || true
+    else
+      jq -nc \
+        --arg status "${status}" \
+        --argjson curl_exit "${curl_exit}" \
+        --arg message "curl failed before writing a response body" \
+        '{error: {message: $message, type: "transport_error", param: null, code: null}, http_status: $status, curl_exit: $curl_exit}' \
+        > "${error_file}"
+    fi
     echo "POST /v1/responses failed with HTTP ${status}" >&2
-    cat "${response_file}" >&2
+    cat "${error_file}" >&2
     echo >&2
     return 22
   fi
   cat "${response_file}"
+}
+
+post_failure_status() {
+  local label="$1"
+  local safe_label error_file error_type http_status curl_exit
+  safe_label="$(sanitize_label "${label}")"
+  error_file="${artifact_dir}/errors/${safe_label}.json"
+  if [[ ! -s "${error_file}" ]]; then
+    printf 'failed\n'
+    return
+  fi
+
+  error_type="$(jq -r '.error.type // empty' "${error_file}" 2>/dev/null || true)"
+  http_status="$(jq -r '.http_status // empty' "${error_file}" 2>/dev/null || true)"
+  curl_exit="$(jq -r '.curl_exit // empty' "${error_file}" 2>/dev/null || true)"
+  if [[ -n "${curl_exit}" && "${curl_exit}" != "0" ]]; then
+    printf 'failed_transport\n'
+    return
+  fi
+  if [[ "${error_type}" == "transport_error" || "${error_type}" == "upstream_timeout_error" ]]; then
+    printf 'failed_transport\n'
+    return
+  fi
+  if [[ "${http_status}" =~ ^5[0-9][0-9]$ ]]; then
+    printf 'failed_transport\n'
+    return
+  fi
+  printf 'failed\n'
 }
 
 wait_http_ok() {
@@ -533,14 +574,17 @@ run_scenario() {
 
   prompt="$(scenario_prompt "${scenario}")"
   echo "==> requesting screenshot-first computer_call (${scenario})"
-  first="$(post_json "$(jq -nc --arg model "${model}" --arg prompt "${prompt}" '{
+  if ! first="$(post_json "$(jq -nc --arg model "${model}" --arg prompt "${prompt}" '{
     model: $model,
     store: true,
     input: $prompt,
     tools: [{type: "computer"}],
     tool_choice: "required",
     include: ["computer_call_output.output.image_url"]
-  }')" "${scenario}_turn0_request_screenshot")"
+  }')" "${scenario}_turn0_request_screenshot")"; then
+    record_scenario_result "${scenario}" "$(post_failure_status "${scenario}_turn0_request_screenshot")" 0 "initial screenshot request failed"
+    return 1
+  fi
   first_response_id="$(printf '%s\n' "${first}" | jq -r '.id')"
   first_call_id="$(printf '%s\n' "${first}" | jq -r '.output[0].call_id')"
   response_ids+=("${first_response_id}")
@@ -557,7 +601,10 @@ run_scenario() {
   for turn in $(seq 1 4); do
     echo "==> computer loop ${scenario} turn ${turn}: capturing screenshot and sending computer_call_output"
     screenshot_data_url="$(capture_screenshot_data_url "${scenario}" "${turn}")"
-    response="$(post_screenshot_output "${scenario}" "${turn}" "${previous_response_id}" "${call_id}" "${screenshot_data_url}")"
+    if ! response="$(post_screenshot_output "${scenario}" "${turn}" "${previous_response_id}" "${call_id}" "${screenshot_data_url}")"; then
+      record_scenario_result "${scenario}" "$(post_failure_status "${scenario}_turn${turn}_screenshot_output")" "${turn}" "computer_call_output request failed"
+      return 1
+    fi
     response_id="$(printf '%s\n' "${response}" | jq -r '.id')"
     response_ids+=("${response_id}")
     save_json "${artifact_dir}/responses/${scenario}_turn${turn}.json" "${response}"

@@ -147,7 +147,16 @@ make v3-local-runtimes-smoke
   plan`: the model did not produce a usable computer planner object. The shim
   accepts the strict `decision/actions` planner JSON, fenced/embedded JSON, and
   single-action `action`/`args` JSON for known actions. `action_type` is
-  accepted as a `type` alias. The shim does not invent missing actions.
+  accepted as a `type` alias. Chat-backed planner repair also accepts
+  model-internal `{"type":"computer","action":"key","args":...}` and
+  `{"type":"action","action":"key","args":...}` wrappers, plus
+  function-call-like `{"name":"scroll","arguments":...}` objects, when they
+  map cleanly to a known action. Namespaced function names such as
+  `default_api::scroll` are reduced to the final action segment. For `scroll`,
+  `dx/dy` and `delta_x/delta_y` aliases are normalized to `scroll_x/scroll_y`;
+  a single `pixels` field is treated as vertical `scroll_y`. For `drag`, nested
+  `params.from_x/from_y/to_x/to_y` endpoints are normalized to the canonical
+  `path` form. The shim does not invent missing actions.
 - DOM value mismatch: inspect the emitted `computer_call.actions` and the
   deterministic fixture coordinate at `/pages/computer-harness`. The prompt
   gives the fixture click coordinate explicitly so this smoke primarily checks

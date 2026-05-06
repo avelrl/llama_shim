@@ -75,6 +75,96 @@ func TestParseLocalComputerPlanNormalizesTypeTextAlias(t *testing.T) {
 	require.Equal(t, []map[string]any{{"type": "type", "text": "penguin"}}, plan.Actions)
 }
 
+func TestParseLocalComputerPlanNormalizesComputerKeyWrapper(t *testing.T) {
+	plan, err := parseLocalComputerPlan(`{"type":"computer","action":"key","args":{"keys":["enter"]}}`)
+	require.NoError(t, err)
+	require.Equal(t, "computer_call", plan.Decision)
+	require.Equal(t, []map[string]any{{"type": "keypress", "key": "Enter"}}, plan.Actions)
+}
+
+func TestParseLocalComputerPlanNormalizesActionKeyWrapper(t *testing.T) {
+	plan, err := parseLocalComputerPlan(`{"type":"action","action":"key","args":{"keys":["enter"]}}`)
+	require.NoError(t, err)
+	require.Equal(t, "computer_call", plan.Decision)
+	require.Equal(t, []map[string]any{{"type": "keypress", "key": "Enter"}}, plan.Actions)
+}
+
+func TestParseLocalComputerPlanNormalizesComputerWrapperActions(t *testing.T) {
+	plan, err := parseLocalComputerPlan(`{"decision":"computer_call","actions":[{"type":"computer","action":"mouse_click","args":{"coordinate":[636,343]}},{"type":"computer","action":"input_text","args":{"value":"penguin"}}]}`)
+	require.NoError(t, err)
+	require.Equal(t, []map[string]any{
+		{
+			"type": "click",
+			"x":    float64(636),
+			"y":    float64(343),
+		},
+		{
+			"type": "type",
+			"text": "penguin",
+		},
+	}, plan.Actions)
+}
+
+func TestParseLocalComputerPlanNormalizesDragParams(t *testing.T) {
+	plan, err := parseLocalComputerPlan(`{"decision":"computer_call","actions":[{"type":"drag","params":{"from_x":142,"from_y":642,"to_x":400,"to_y":646}}]}`)
+	require.NoError(t, err)
+	require.Len(t, plan.Actions, 1)
+	require.Equal(t, "drag", plan.Actions[0]["type"])
+	require.Equal(t, []map[string]any{
+		{"x": float64(142), "y": float64(642)},
+		{"x": float64(400), "y": float64(646)},
+	}, plan.Actions[0]["path"])
+	require.NotContains(t, plan.Actions[0], "params")
+	require.NotContains(t, plan.Actions[0], "from_x")
+	require.NotContains(t, plan.Actions[0], "to_x")
+}
+
+func TestParseLocalComputerPlanNormalizesScrollDeltaAliases(t *testing.T) {
+	plan, err := parseLocalComputerPlan(`{"decision":"computer_call","actions":[{"type":"scroll","dx":0,"dy":520}]}`)
+	require.NoError(t, err)
+	require.Equal(t, []map[string]any{{
+		"type":     "scroll",
+		"scroll_x": float64(0),
+		"scroll_y": float64(520),
+	}}, plan.Actions)
+	require.NotContains(t, plan.Actions[0], "dx")
+	require.NotContains(t, plan.Actions[0], "dy")
+}
+
+func TestParseLocalComputerPlanNormalizesNamedArgumentsAction(t *testing.T) {
+	plan, err := parseLocalComputerPlan(`{"name":"scroll","arguments":{"scroll_x":0,"scroll_y":520}}`)
+	require.NoError(t, err)
+	require.Equal(t, "computer_call", plan.Decision)
+	require.Equal(t, []map[string]any{{
+		"type":     "scroll",
+		"scroll_x": float64(0),
+		"scroll_y": float64(520),
+	}}, plan.Actions)
+	require.NotContains(t, plan.Actions[0], "name")
+	require.NotContains(t, plan.Actions[0], "arguments")
+}
+
+func TestParseLocalComputerPlanNormalizesNamespacedNamedArgumentsAction(t *testing.T) {
+	plan, err := parseLocalComputerPlan(`{"name":"default_api::scroll","arguments":{"delta_x":0,"delta_y":520}}`)
+	require.NoError(t, err)
+	require.Equal(t, "computer_call", plan.Decision)
+	require.Equal(t, []map[string]any{{
+		"type":     "scroll",
+		"scroll_x": float64(0),
+		"scroll_y": float64(520),
+	}}, plan.Actions)
+}
+
+func TestParseLocalComputerPlanNormalizesScrollPixelsAlias(t *testing.T) {
+	plan, err := parseLocalComputerPlan(`{"decision":"computer_call","actions":[{"type":"scroll","pixels":520}]}`)
+	require.NoError(t, err)
+	require.Equal(t, []map[string]any{{
+		"type":     "scroll",
+		"scroll_y": float64(520),
+	}}, plan.Actions)
+	require.NotContains(t, plan.Actions[0], "pixels")
+}
+
 func TestParseLocalComputerPlanAcceptsFixtureActionFamily(t *testing.T) {
 	plan, err := parseLocalComputerPlan(`{"decision":"computer_call","actions":[{"type":"scroll","scroll_y":520},{"type":"keypress","key":"Enter"},{"type":"drag","path":[{"x":142,"y":642},{"x":400,"y":646}]}]}`)
 	require.NoError(t, err)

@@ -169,6 +169,7 @@ func (h *responseHandler) logLocalComputerPlannerParseError(ctx context.Context,
 		return
 	}
 	h.logger.WarnContext(ctx, "shim-local computer planner output rejected",
+		"request_id", RequestIDFromContext(ctx),
 		"model", model,
 		"err", err,
 		"output_bytes", len(raw),
@@ -645,6 +646,7 @@ func localComputerPlanObjectLooksValid(candidate string) bool {
 	}
 	return localComputerRawActionTypeKnown(payload["action"]) ||
 		localComputerRawActionTypeKnown(payload["action_type"]) ||
+		localComputerRawActionTypeKnown(payload["name"]) ||
 		localComputerRawActionTypeKnown(payload["type"])
 }
 
@@ -656,7 +658,7 @@ func localComputerRawActionTypeKnown(raw json.RawMessage) bool {
 	if err := json.Unmarshal(raw, &actionType); err != nil {
 		return false
 	}
-	_, ok := localComputerActionTypes[strings.ToLower(strings.TrimSpace(actionType))]
+	_, ok := localComputerActionTypes[normalizeLocalComputerActionType(strings.TrimSpace(actionType))]
 	return ok
 }
 
@@ -697,12 +699,19 @@ func balancedJSONObjectAt(value string, start int) (string, bool) {
 
 func normalizeLocalComputerAction(action map[string]any) error {
 	actionType := strings.ToLower(strings.TrimSpace(asString(action["type"])))
+	if actionType == "computer" || actionType == "action" {
+		actionType = ""
+	}
 	if actionType == "" {
 		actionType = strings.ToLower(strings.TrimSpace(asString(action["action"])))
 	}
 	if actionType == "" {
 		actionType = strings.ToLower(strings.TrimSpace(asString(action["action_type"])))
 	}
+	if actionType == "" {
+		actionType = strings.ToLower(strings.TrimSpace(asString(action["name"])))
+	}
+	actionType = normalizeLocalComputerActionType(actionType)
 	if actionType == "" {
 		return domain.ErrUnsupportedShape
 	}
@@ -712,14 +721,22 @@ func normalizeLocalComputerAction(action map[string]any) error {
 
 	mergeLocalComputerActionInput(action, actionType, action["action_input"])
 	mergeLocalComputerActionInput(action, actionType, action["args"])
+	mergeLocalComputerActionInput(action, actionType, action["arguments"])
+	mergeLocalComputerActionInput(action, actionType, action["params"])
 	normalizeLocalComputerCoordinate(action)
 	normalizeLocalComputerText(action, actionType)
+	normalizeLocalComputerScroll(action, actionType)
+	normalizeLocalComputerKeypress(action, actionType)
+	normalizeLocalComputerDrag(action, actionType)
 
 	action["type"] = actionType
 	delete(action, "action")
 	delete(action, "action_type")
+	delete(action, "name")
 	delete(action, "action_input")
 	delete(action, "args")
+	delete(action, "arguments")
+	delete(action, "params")
 	delete(action, "coordinate")
 	delete(action, "coordinates")
 	delete(action, "position")
@@ -728,6 +745,30 @@ func normalizeLocalComputerAction(action map[string]any) error {
 	delete(action, "input")
 	delete(action, "content")
 	return nil
+}
+
+func normalizeLocalComputerActionType(actionType string) string {
+	actionType = strings.ToLower(strings.TrimSpace(actionType))
+	if index := strings.LastIndex(actionType, "::"); index >= 0 {
+		actionType = strings.TrimSpace(actionType[index+2:])
+	}
+	if index := strings.LastIndex(actionType, "."); index >= 0 {
+		actionType = strings.TrimSpace(actionType[index+1:])
+	}
+	switch actionType {
+	case "key", "key_press", "key-press", "keyboard", "keyboard_press", "keyboard-press", "press":
+		return "keypress"
+	case "input", "input_text", "input-text", "text", "type_text", "type-text":
+		return "type"
+	case "doubleclick", "double-click":
+		return "double_click"
+	case "mouse_click", "mouse-click":
+		return "click"
+	case "mouse_move", "mouse-move":
+		return "move"
+	default:
+		return actionType
+	}
 }
 
 func mergeLocalComputerActionInput(action map[string]any, actionType string, input any) {
@@ -742,6 +783,194 @@ func mergeLocalComputerActionInput(action map[string]any, actionType string, inp
 		if actionType == "type" && strings.TrimSpace(asString(action["text"])) == "" {
 			action["text"] = value
 		}
+	}
+}
+
+func normalizeLocalComputerKeypress(action map[string]any, actionType string) {
+	if actionType != "keypress" {
+		return
+	}
+	if key := normalizeLocalComputerKeyName(asString(action["key"])); key != "" {
+		action["key"] = key
+		return
+	}
+
+	keys := localComputerStringSlice(action["keys"])
+	if len(keys) == 0 {
+		return
+	}
+	normalized := make([]string, 0, len(keys))
+	for _, key := range keys {
+		key = normalizeLocalComputerKeyName(key)
+		if key != "" {
+			normalized = append(normalized, key)
+		}
+	}
+	switch len(normalized) {
+	case 0:
+		return
+	case 1:
+		action["key"] = normalized[0]
+		delete(action, "keys")
+	default:
+		action["keys"] = normalized
+	}
+}
+
+func normalizeLocalComputerScroll(action map[string]any, actionType string) {
+	if actionType != "scroll" {
+		return
+	}
+	if _, exists := action["scroll_x"]; !exists {
+		for _, key := range []string{"dx", "delta_x", "deltaX"} {
+			value, ok := localComputerCoordinateNumber(action[key])
+			if ok {
+				action["scroll_x"] = value
+				break
+			}
+		}
+	}
+	if _, exists := action["scroll_y"]; !exists {
+		for _, key := range []string{"dy", "delta_y", "deltaY", "pixels"} {
+			value, ok := localComputerCoordinateNumber(action[key])
+			if ok {
+				action["scroll_y"] = value
+				break
+			}
+		}
+	}
+	for _, key := range []string{"dx", "dy", "delta_x", "delta_y", "deltaX", "deltaY", "pixels"} {
+		delete(action, key)
+	}
+}
+
+func localComputerStringSlice(value any) []string {
+	switch typed := value.(type) {
+	case []string:
+		return typed
+	case []any:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if text := asString(item); text != "" {
+				out = append(out, text)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func normalizeLocalComputerKeyName(key string) string {
+	key = strings.TrimSpace(key)
+	switch strings.ToLower(key) {
+	case "":
+		return ""
+	case "enter", "return":
+		return "Enter"
+	case "esc", "escape":
+		return "Escape"
+	case "tab":
+		return "Tab"
+	case "space", "spacebar":
+		return "Space"
+	case "backspace":
+		return "Backspace"
+	case "delete", "del":
+		return "Delete"
+	case "arrowleft", "left":
+		return "ArrowLeft"
+	case "arrowright", "right":
+		return "ArrowRight"
+	case "arrowup", "up":
+		return "ArrowUp"
+	case "arrowdown", "down":
+		return "ArrowDown"
+	default:
+		return key
+	}
+}
+
+func normalizeLocalComputerDrag(action map[string]any, actionType string) {
+	if actionType != "drag" {
+		return
+	}
+	if path, ok := localComputerDragPath(action["path"]); ok {
+		action["path"] = path
+		return
+	}
+
+	if path, ok := localComputerDragEndpointPath(action); ok {
+		action["path"] = path
+		deleteLocalComputerDragEndpointAliases(action)
+	}
+}
+
+func localComputerDragPath(value any) ([]map[string]any, bool) {
+	points, ok := value.([]any)
+	if !ok || len(points) < 2 {
+		return nil, false
+	}
+	path := make([]map[string]any, 0, len(points))
+	for _, point := range points {
+		x, y, ok := localComputerCoordinatePair(point)
+		if !ok {
+			return nil, false
+		}
+		path = append(path, map[string]any{"x": x, "y": y})
+	}
+	return path, true
+}
+
+func localComputerDragEndpointPath(action map[string]any) ([]map[string]any, bool) {
+	endpointKeys := [][4]string{
+		{"x", "y", "end_x", "end_y"},
+		{"from_x", "from_y", "to_x", "to_y"},
+		{"start_x", "start_y", "end_x", "end_y"},
+		{"source_x", "source_y", "target_x", "target_y"},
+	}
+	for _, keys := range endpointKeys {
+		startX, okStartX := localComputerCoordinateNumber(action[keys[0]])
+		startY, okStartY := localComputerCoordinateNumber(action[keys[1]])
+		endX, okEndX := localComputerCoordinateNumber(action[keys[2]])
+		endY, okEndY := localComputerCoordinateNumber(action[keys[3]])
+		if okStartX && okStartY && okEndX && okEndY {
+			return []map[string]any{
+				{"x": startX, "y": startY},
+				{"x": endX, "y": endY},
+			}, true
+		}
+	}
+
+	startX, startY, okStart := localComputerCoordinatePair(action["from"])
+	endX, endY, okEnd := localComputerCoordinatePair(action["to"])
+	if !okStart {
+		startX, startY, okStart = localComputerCoordinatePair(action["start"])
+	}
+	if !okEnd {
+		endX, endY, okEnd = localComputerCoordinatePair(action["end"])
+	}
+	if !okEnd {
+		endX, endY, okEnd = localComputerCoordinatePair(action["target"])
+	}
+	if okStart && okEnd {
+		return []map[string]any{
+			{"x": startX, "y": startY},
+			{"x": endX, "y": endY},
+		}, true
+	}
+	return nil, false
+}
+
+func deleteLocalComputerDragEndpointAliases(action map[string]any) {
+	for _, key := range []string{
+		"x", "y", "end_x", "end_y",
+		"from_x", "from_y", "to_x", "to_y",
+		"start_x", "start_y",
+		"source_x", "source_y", "target_x", "target_y",
+		"from", "to", "start", "end", "target",
+	} {
+		delete(action, key)
 	}
 }
 
