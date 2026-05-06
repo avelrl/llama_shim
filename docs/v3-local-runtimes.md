@@ -56,6 +56,9 @@ Implemented first slice:
 - optional real-browser executor coverage through
   `make v3-computer-browser-harness-smoke`; see
   [v3-computer-browser-harness.md](v3-computer-browser-harness.md)
+- browser harness artifacts for triage: request/response JSON, action arrays,
+  screenshots, DOM state snapshots, capabilities, and summary JSON under
+  `.tmp/v3-computer-browser-harness-runs/`
 - `/debug/capabilities.tools.computer` and
   `/debug/capabilities.probes.computer_runtime` coverage for the configured
   `chat_completions` runtime
@@ -67,14 +70,16 @@ Implemented first slice:
   `original` is mapped to `high` for the Chat-backed planner projection.
 - non-stream create, stream create, stored retrieve, retrieve-stream, and
   `/v1/responses/{id}/input_items` coverage for the screenshot-first loop
+- deterministic real-browser fixture scenarios for `type`, `keypress`,
+  `scroll`, and `drag`
 
 Still out of scope:
 
 - an in-process browser or VM runtime
 - hosted-equivalent planner behavior
 - hosted action execution, coordinate remapping, or screenshot downscaling
-  ownership; the optional browser harness executes one deterministic fixture
-  flow only
+  ownership; the optional browser harness executes deterministic fixture flows
+  with explicit task coordinates only
 - exact hosted `response.computer_call.*` SSE choreography
 
 Useful next tracks:
@@ -82,13 +87,11 @@ Useful next tracks:
 - visual-grounding eval profile: use the same fixture without giving the model
   coordinates, record pass/fail in model-matrix style output, and do not make
   it a required smoke
-- browser executor hardening: keep per-session artifacts, screenshots, and
-  action traces for failure triage without committing run output
 - optional coordinate remapping experiments for downscaled screenshots, guarded
   by explicit docs because OpenAI recommends `detail: "original"` for computer
   use
-- additional deterministic fixture pages for scroll, keypress, drag, and
-  multi-step form flows
+- additional deterministic fixture pages for multi-step form flows or richer
+  DOM state transitions
 - model-specific compatibility notes only when failures reduce to stable
   parser aliases or documented provider limitations
 

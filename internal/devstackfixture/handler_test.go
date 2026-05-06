@@ -54,6 +54,9 @@ func TestHandlerExposesComputerHarnessPage(t *testing.T) {
 	text := string(body)
 	require.Contains(t, text, "Computer Harness Fixture")
 	require.Contains(t, text, `id="harness-input"`)
+	require.Contains(t, text, `id="keypress-input"`)
+	require.Contains(t, text, `id="drag-source"`)
+	require.Contains(t, text, `id="scroll-section"`)
 	require.Contains(t, text, "coordinate 636,343")
 }
 
@@ -194,6 +197,51 @@ func TestHandlerChatCompletionsPlansLocalComputerLoop(t *testing.T) {
 	require.True(t, ok)
 	message = choices[0].(map[string]any)["message"].(map[string]any)
 	require.JSONEq(t, `{"decision":"computer_call","actions":[{"type":"click","button":"left","keys":null,"x":636,"y":343},{"type":"type","text":"penguin"}]}`, asString(message["content"]))
+
+	for name, testCase := range map[string]struct {
+		prompt   string
+		expected string
+	}{
+		"keypress": {
+			prompt:   "After you receive the screenshot, click the keyboard target, type orca, and press Enter.",
+			expected: `{"decision":"computer_call","actions":[{"type":"click","x":204,"y":536},{"type":"type","text":"orca"},{"type":"keypress","key":"Enter"}]}`,
+		},
+		"scroll": {
+			prompt:   "After you receive the screenshot, scroll down by 520 pixels.",
+			expected: `{"decision":"computer_call","actions":[{"type":"scroll","scroll_y":520}]}`,
+		},
+		"drag": {
+			prompt:   "After you receive the screenshot, drag the orange square into the drop zone.",
+			expected: `{"decision":"computer_call","actions":[{"type":"drag","path":[{"x":142,"y":642},{"x":400,"y":646}]}]}`,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			payload["messages"] = []map[string]any{
+				{"role": "system", "content": "You are the shim-local computer planner."},
+				{"role": "user", "content": testCase.prompt},
+				{
+					"role": "user",
+					"content": []map[string]any{
+						{"type": "text", "text": "computer_call_output screenshot received for call_id call_test. Use this as the latest UI state."},
+						{"type": "image_url", "image_url": map[string]any{"url": "data:image/png;base64,ZmFrZQ==", "detail": "original"}},
+					},
+				},
+			}
+			body, err = json.Marshal(payload)
+			require.NoError(t, err)
+
+			resp, err = server.Client().Post(server.URL+"/v1/chat/completions", "application/json", bytes.NewReader(body))
+			require.NoError(t, err)
+			defer resp.Body.Close()
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+
+			require.NoError(t, json.NewDecoder(resp.Body).Decode(&response))
+			choices, ok = response["choices"].([]any)
+			require.True(t, ok)
+			message = choices[0].(map[string]any)["message"].(map[string]any)
+			require.JSONEq(t, testCase.expected, asString(message["content"]))
+		})
+	}
 }
 
 func TestHandlerChatCompletionsPlansAndCompletesMCPToolCalls(t *testing.T) {

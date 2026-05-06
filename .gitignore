@@ -2,6 +2,7 @@
 config.yaml
 *.jsonl
 .cache/
+.playwright-cli/
 .tmp/
 .data/
 .DS_Store

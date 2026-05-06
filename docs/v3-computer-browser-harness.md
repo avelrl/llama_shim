@@ -24,11 +24,21 @@ browser runtime.
 - captures a real browser screenshot and sends it back as
   `computer_call_output`
 - executes returned actions in the browser across a bounded computer loop
-- verifies the actual DOM input value is `penguin`
+- verifies actual DOM state for the selected fixture scenarios
 
 This proves the typed computer-loop contract can drive a real external
 executor. It is intentionally more practical than `v3-local-runtimes-smoke`,
 which stays JSON-only and CI-friendly.
+
+The make target defaults to all deterministic fixture scenarios:
+
+- `type`: click the search input and type `penguin`
+- `keypress`: click the keyboard input, type `orca`, and press Enter
+- `scroll`: scroll the page down by 520 pixels
+- `drag`: drag the orange square into the drop zone
+
+The script itself defaults to `COMPUTER_HARNESS_SCENARIOS=type` so manual real
+upstream runs can stay short unless the caller opts into broader coverage.
 
 ## Requirements
 
@@ -59,12 +69,56 @@ PLAYWRIGHT_BROWSER=chrome \
 make v3-computer-browser-harness-smoke
 ```
 
+Run a narrower or explicit scenario set:
+
+```bash
+COMPUTER_HARNESS_SCENARIOS=type,keypress \
+make v3-computer-browser-harness-smoke
+```
+
+Run the script directly against a real upstream-backed shim, keeping the short
+default `type` scenario:
+
+```bash
+SHIM_BASE_URL=http://127.0.0.1:18080 \
+FIXTURE_BASE_URL=http://127.0.0.1:18081 \
+MODEL=<model> \
+SHIM_AUTH_HEADER='Authorization: Bearer <token>' \
+bash ./scripts/v3-computer-browser-harness-smoke.sh
+```
+
 If the shim requires auth, pass the exact HTTP header:
 
 ```bash
 SHIM_AUTH_HEADER='Authorization: Bearer <token>' \
 make v3-computer-browser-harness-smoke
 ```
+
+## Artifacts
+
+Each run writes repo-local, ignored artifacts under:
+
+```text
+.tmp/v3-computer-browser-harness-runs/<model>_<timestamp>/
+```
+
+The directory contains:
+
+- `summary.json`: overall status and per-scenario results
+- `capabilities.json`: `/debug/capabilities` snapshot used by the run
+- `requests/*.json`: `/v1/responses` request bodies
+- `responses/*.json`: successful `/v1/responses` bodies
+- `actions/*.json`: action arrays executed by Playwright
+- `screenshots/*.png`: screenshots sent back as `computer_call_output`
+- `states/*.json`: DOM state after each action batch
+- `errors/*.json`: HTTP error bodies, when a request fails
+
+Use `COMPUTER_HARNESS_ARTIFACT_DIR` to choose a different artifact root or
+`COMPUTER_HARNESS_RUN_DIR` for an exact run directory.
+
+The script writes Playwright daemon sockets to a short `/tmp`-based path by
+default. If you override `PLAYWRIGHT_DAEMON_SOCKETS_DIR`, keep the resulting
+Unix socket path short enough for macOS.
 
 ## CI Boundary
 
@@ -84,6 +138,9 @@ make v3-local-runtimes-smoke
   Playwright CLI.
 - browser launch failure: install the selected browser or set
   `PLAYWRIGHT_BROWSER` to one that is available locally.
+- `listen EADDRINUSE` during `playwright-cli open`: check for stale daemon
+  processes first, then ensure `PLAYWRIGHT_DAEMON_SOCKETS_DIR` and
+  `PLAYWRIGHT_SESSION` do not produce an overlong Unix socket path.
 - `/debug/capabilities` failure: ensure `responses.computer.backend` is
   `chat_completions` and devstack was rebuilt after config changes.
 - `shim-local computer planner did not return a supported computer action
@@ -99,6 +156,10 @@ make v3-local-runtimes-smoke
   likely clicked outside the input or the browser executor lost focus. The
   harness fails immediately in this case instead of spending another upstream
   turn.
+- `keypress`, `scroll`, or `drag` terminal action returned but state did not
+  change: inspect `actions/*.json`, `states/*.json`, and the matching
+  screenshot pair in the run artifact directory. That usually distinguishes a
+  planner/action-shape problem from a browser executor problem.
 
 ## Boundaries
 

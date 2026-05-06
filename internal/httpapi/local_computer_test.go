@@ -75,6 +75,17 @@ func TestParseLocalComputerPlanNormalizesTypeTextAlias(t *testing.T) {
 	require.Equal(t, []map[string]any{{"type": "type", "text": "penguin"}}, plan.Actions)
 }
 
+func TestParseLocalComputerPlanAcceptsFixtureActionFamily(t *testing.T) {
+	plan, err := parseLocalComputerPlan(`{"decision":"computer_call","actions":[{"type":"scroll","scroll_y":520},{"type":"keypress","key":"Enter"},{"type":"drag","path":[{"x":142,"y":642},{"x":400,"y":646}]}]}`)
+	require.NoError(t, err)
+	require.Equal(t, "scroll", plan.Actions[0]["type"])
+	require.Equal(t, float64(520), plan.Actions[0]["scroll_y"])
+	require.Equal(t, "keypress", plan.Actions[1]["type"])
+	require.Equal(t, "Enter", plan.Actions[1]["key"])
+	require.Equal(t, "drag", plan.Actions[2]["type"])
+	require.Len(t, plan.Actions[2]["path"], 2)
+}
+
 func TestBuildLocalComputerPlannerBodyForcesJSONMode(t *testing.T) {
 	item, err := domain.NewItem([]byte(`{"type":"message","role":"user","content":"Use the computer."}`))
 	require.NoError(t, err)

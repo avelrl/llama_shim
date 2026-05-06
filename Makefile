@@ -134,7 +134,7 @@ v3-local-runtimes-smoke:
 	bash ./scripts/v3-local-runtimes-smoke.sh
 
 v3-computer-browser-harness-smoke:
-	bash ./scripts/v3-computer-browser-harness-smoke.sh
+	COMPUTER_HARNESS_SCENARIOS=$${COMPUTER_HARNESS_SCENARIOS:-all} bash ./scripts/v3-computer-browser-harness-smoke.sh
 
 v3-coding-tools-smoke:
 	bash ./scripts/v3-coding-tools-smoke.sh

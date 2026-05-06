@@ -240,8 +240,11 @@ It intentionally does not require the real `codex` binary.
 shim-local `computer` loop. It opens the deterministic fixture page in a real
 Playwright browser, executes returned `computer_call.actions`, sends
 `computer_call_output` screenshots back to `/v1/responses`, and verifies the
-DOM changed. It is intentionally excluded from `make devstack-ci-smoke`
-because it depends on local browser availability and sandbox permissions.
+DOM changed. The make target defaults to all fixture scenarios (`type`,
+`keypress`, `scroll`, and `drag`) and writes ignored run artifacts under
+`.tmp/v3-computer-browser-harness-runs/`. It is intentionally excluded from
+`make devstack-ci-smoke` because it depends on local browser availability and
+sandbox permissions.
 
 `make responses-compat-external-smoke` is the repo-owned bridge for external
 Responses API compatibility testers in `devstack-fixture` mode. With no tester

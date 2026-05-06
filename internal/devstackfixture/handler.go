@@ -561,7 +561,7 @@ func handleComputerHarnessPage(w http.ResponseWriter, r *http.Request) {
       html, body {
         margin: 0;
         width: 1024px;
-        height: 768px;
+        min-height: 1400px;
         font-family: system-ui, sans-serif;
         background: #f7f9fc;
         color: #172033;
@@ -569,7 +569,7 @@ func handleComputerHarnessPage(w http.ResponseWriter, r *http.Request) {
       main {
         position: relative;
         width: 1024px;
-        height: 768px;
+        height: 1400px;
       }
       h1 {
         position: absolute;
@@ -612,6 +612,72 @@ func handleComputerHarnessPage(w http.ResponseWriter, r *http.Request) {
         top: 390px;
         font-size: 16px;
       }
+      #keypress-label {
+        position: absolute;
+        left: 64px;
+        top: 482px;
+      }
+      #keypress-input {
+        position: absolute;
+        left: 64px;
+        top: 514px;
+        width: 280px;
+        height: 44px;
+        padding: 0 14px;
+        font-size: 20px;
+        border: 2px solid #0f766e;
+        border-radius: 6px;
+        background: #fff;
+      }
+      #keypress-status {
+        position: absolute;
+        left: 64px;
+        top: 580px;
+        font-size: 16px;
+      }
+      #drag-source {
+        position: absolute;
+        left: 120px;
+        top: 620px;
+        width: 44px;
+        height: 44px;
+        border-radius: 6px;
+        background: #f59e0b;
+        border: 2px solid #92400e;
+      }
+      #drag-target {
+        position: absolute;
+        left: 320px;
+        top: 610px;
+        width: 160px;
+        height: 70px;
+        border: 2px dashed #7c3aed;
+        border-radius: 8px;
+        display: grid;
+        place-items: center;
+        font-weight: 700;
+      }
+      #drag-status {
+        position: absolute;
+        left: 320px;
+        top: 694px;
+        font-size: 16px;
+      }
+      #scroll-section {
+        position: absolute;
+        left: 64px;
+        top: 1040px;
+        width: 480px;
+        padding: 28px;
+        border: 2px solid #475569;
+        border-radius: 8px;
+        background: #e2e8f0;
+      }
+      #scroll-target-button {
+        height: 48px;
+        padding: 0 18px;
+        font-size: 18px;
+      }
     </style>
   </head>
   <body>
@@ -622,12 +688,53 @@ func handleComputerHarnessPage(w http.ResponseWriter, r *http.Request) {
       <label for="harness-input">Search term</label>
       <input id="harness-input" autocomplete="off" autofocus>
       <div id="status">Waiting for input</div>
+      <label id="keypress-label" for="keypress-input">Keyboard target</label>
+      <input id="keypress-input" autocomplete="off">
+      <div id="keypress-status">Waiting for Enter</div>
+      <div id="drag-source" aria-label="drag source"></div>
+      <div id="drag-target">Drop zone</div>
+      <div id="drag-status">Waiting for drag</div>
+      <section id="scroll-section">
+        <h2>Scroll target section</h2>
+        <p>This section starts below the initial viewport.</p>
+        <button id="scroll-target-button" type="button">Scroll target visible</button>
+      </section>
     </main>
     <script>
       const input = document.getElementById("harness-input");
       const status = document.getElementById("status");
       input.addEventListener("input", () => {
         status.textContent = input.value === "penguin" ? "Harness input complete" : "Input: " + input.value;
+      });
+      const keypressInput = document.getElementById("keypress-input");
+      const keypressStatus = document.getElementById("keypress-status");
+      keypressInput.addEventListener("keydown", event => {
+        if (event.key === "Enter" && keypressInput.value === "orca") {
+          keypressStatus.textContent = "Keypress complete";
+        }
+      });
+      const dragSource = document.getElementById("drag-source");
+      const dragTarget = document.getElementById("drag-target");
+      const dragStatus = document.getElementById("drag-status");
+      let dragging = false;
+      dragSource.addEventListener("mousedown", () => {
+        dragging = true;
+      });
+      document.addEventListener("mouseup", event => {
+        if (!dragging) {
+          return;
+        }
+        dragging = false;
+        const target = dragTarget.getBoundingClientRect();
+        if (
+          event.clientX >= target.left &&
+          event.clientX <= target.right &&
+          event.clientY >= target.top &&
+          event.clientY <= target.bottom
+        ) {
+          document.body.dataset.dragComplete = "true";
+          dragStatus.textContent = "Drag complete";
+        }
       });
     </script>
   </body>
@@ -643,6 +750,12 @@ func assistantTextForMessages(messages []chatMessage) string {
 		return `{"decision":"computer_call","actions":[{"type":"screenshot"}]}`
 	case strings.Contains(joined, "shim-local computer planner") && strings.Contains(joined, "ui is not suitable for a typing action"):
 		return `{"decision":"assistant","message":"The UI is not suitable for a typing action."}`
+	case strings.Contains(joined, "shim-local computer planner") && strings.Contains(joined, "press enter") && strings.Contains(joined, "orca"):
+		return `{"decision":"computer_call","actions":[{"type":"click","x":204,"y":536},{"type":"type","text":"orca"},{"type":"keypress","key":"Enter"}]}`
+	case strings.Contains(joined, "shim-local computer planner") && strings.Contains(joined, "scroll down by 520"):
+		return `{"decision":"computer_call","actions":[{"type":"scroll","scroll_y":520}]}`
+	case strings.Contains(joined, "shim-local computer planner") && strings.Contains(joined, "drag the orange square"):
+		return `{"decision":"computer_call","actions":[{"type":"drag","path":[{"x":142,"y":642},{"x":400,"y":646}]}]}`
 	case strings.Contains(joined, "shim-local computer planner") && strings.Contains(joined, "type penguin"):
 		return `{"decision":"computer_call","actions":[{"type":"click","button":"left","keys":null,"x":636,"y":343},{"type":"type","text":"penguin"}]}`
 	case strings.Contains(joined, "shim-local constrained custom tool generator") && strings.Contains(joined, "`math_exp`"):

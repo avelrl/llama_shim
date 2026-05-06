@@ -184,7 +184,7 @@ This now ships as:
 - `scripts/v3-image-backends-smoke.sh`
 - `scripts/v3-local-runtimes-smoke.sh`
 - optional `scripts/v3-computer-browser-harness-smoke.sh` for a real
-  Playwright browser executor over the deterministic computer fixture
+  Playwright browser executor over deterministic computer fixture scenarios
 - optional `scripts/v3-vllm-constrained-smoke.sh` for a local vLLM
   `structured_outputs.regex` / `structured_outputs.grammar` backend
 
@@ -229,7 +229,9 @@ CI runners should not need a locally installed `codex` binary.
 
 `make v3-computer-browser-harness-smoke` is the optional browser-backed check
 for the same local-computer loop. It is kept outside `devstack-ci-smoke`
-because it launches a real Playwright browser.
+because it launches a real Playwright browser. The make target covers the
+deterministic `type`, `keypress`, `scroll`, and `drag` fixture scenarios and
+writes ignored triage artifacts under `.tmp/v3-computer-browser-harness-runs/`.
 
 `make devstack-full-smoke` is the local heavy gate. It includes
 `make devstack-ci-smoke` plus real Codex CLI smoke paths that verify the

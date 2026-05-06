@@ -105,13 +105,18 @@ curl http://127.0.0.1:8080/v1/responses \
   deterministic screenshot-first loop.
 - Run `make v3-computer-browser-harness-smoke` when you want the optional
   Playwright-backed check that executes returned actions against a real local
-  browser fixture.
+  browser fixture. The make target covers deterministic `type`, `keypress`,
+  `scroll`, and `drag` scenarios and writes run artifacts under
+  `.tmp/v3-computer-browser-harness-runs/`.
 
 ## Gotchas
 
 - The shim does not claim exact hosted `response.computer_call.*` SSE behavior.
 - This is a practical external loop, not a hosted browser runtime.
 - The browser harness is a developer/release smoke, not a portable CI gate.
+- The deterministic fixture prompts include coordinates. That keeps the smoke
+  focused on protocol, state, and executor wiring. Visual-grounding quality
+  belongs in a separate eval profile.
 
 ## Related Docs
 
