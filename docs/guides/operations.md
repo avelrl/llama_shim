@@ -148,6 +148,43 @@ The smoke creates a temporary database, seeds representative local state, runs
 the real `shimctl governance purge` CLI in dry-run and apply modes, verifies the
 audit JSON, and verifies that the seeded state is gone after apply.
 
+## Artifact And Data Cleanup
+
+The repository separates disposable run artifacts from durable local data.
+Default cleanup targets intentionally do not remove `.data`.
+
+| Goal | Command | Removes `.data`? | Notes |
+| --- | --- | --- | --- |
+| Preview disposable run-artifact cleanup | `make clean-artifacts-dry-run` | No | Lists allowlisted `.tmp` artifact directories that would be removed. |
+| Remove disposable run artifacts | `make clean-artifacts` | No | Removes Codex eval runs, Codex smoke workdirs, browser harness runs, governance smoke runs, and Playwright daemon sockets/sessions under `.tmp`. |
+| Preview broader local dev cleanup | `make clean-dev-artifacts-dry-run` | No | Adds local tool caches to the artifact preview. |
+| Remove broader local dev artifacts | `make clean-dev-artifacts` | No | Removes the allowlisted `.tmp` artifacts plus `.cache`, `.playwright-cli`, `.tmp/go-build`, and `.tmp/go-tmp`. |
+| Remove only Codex eval runs | `make codex-eval-clean` | No | Removes `.tmp/codex-eval-runs`, `.tmp/codex-eval-loops`, and `.tmp/codex-eval-auto`. |
+| Reset shim-local durable state | `shimctl governance purge` | Yes, for configured store rows only | Use dry-run first. Does not delete logs, backups, eval artifacts, or external upstream state. |
+| Reset Docker devstack volumes | `docker compose -f docker-compose.devstack.yml down -v` | Docker volumes only | Explicit manual action; not wrapped by the safe artifact cleanup targets. |
+
+Safe cleanup target boundaries:
+
+- `make clean-artifacts` and `make clean-dev-artifacts` use an allowlist in
+  `scripts/clean-artifacts.sh`
+- they do not accept arbitrary paths
+- they never delete `.data`, `.env`, `config.yaml`, backups, response
+  compatibility artifacts, or `shim.log`
+- they are useful before re-running Codex evals, browser harness smokes, or
+  governance smoke tests
+
+Treat `.data` as durable local state:
+
+- `.data/shim.db` and Postgres sidecars contain local API state
+- `.data/shim.log` can contain operational evidence
+- `.data/responses-compat-external` contains external compatibility tester
+  artifacts
+- backup files under `.data` are operator-owned
+
+To clear local API state, use `shimctl governance purge` instead of deleting
+`.data` by habit. To clear logs, external tester artifacts, or backups, make a
+separate explicit operator decision after copying anything that must be kept.
+
 For Postgres mode, configure `storage.backend=postgres` and `postgres.dsn` in
 `config.yaml`, or provide matching environment overrides:
 
