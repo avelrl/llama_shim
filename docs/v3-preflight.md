@@ -1,6 +1,6 @@
 # V3 Preflight
 
-Last updated: April 25, 2026.
+Last updated: May 6, 2026.
 
 This document fixes the next logical step after the V2 freeze and before the
 project takes on new V3 backends or richer local-only runtime work.
@@ -152,6 +152,8 @@ This now ships as:
 - `docker-compose.devstack.yml`
 - `make devstack-up`
 - `make devstack-down`
+- `make devstack-doctor`
+- `make preflight-local`
 - `make devstack-smoke`
 - `make devstack-ci-smoke`
 - `make devstack-full-smoke`
@@ -238,6 +240,20 @@ writes ignored triage artifacts under `.tmp/v3-computer-browser-harness-runs/`.
 current `openai_base_url` bridge, the fallback Codex function tool named
 `shell` when `features.unified_exec=false`, and the deterministic task matrix.
 
+`make devstack-doctor` is the strict read-only health doctor for the devstack.
+It checks local tooling, the Compose file, Compose service status, fixture
+health, shim health, `/readyz`, and `/debug/capabilities`. It fails when a
+required dependency is unavailable. `make devstack-doctor-advisory` runs the
+same diagnostics without failing on missing readiness, which is useful before
+starting or after stopping the stack.
+
+`make preflight-local` is the nondestructive local preflight gate. It runs the
+local state report, strict devstack doctor, cleanup/reset dry-runs, `make
+build`, `make lint`, and `git diff --check`. It does not delete artifacts,
+stop containers, reset volumes, or purge durable API state. Set
+`PREFLIGHT_REQUIRE_DEVSTACK=0` to run the doctor in advisory mode while keeping
+the rest of the local gate.
+
 ## Non-Goals
 
 The preflight layer is not the place to:
@@ -282,10 +298,10 @@ Treat V3 preflight as complete when all of the following are true:
 - new V3 backend or runtime work no longer has to invent ad hoc setup every
   time
 
-As of April 25, 2026, the repository satisfies that preflight bar. The GitHub
+As of May 6, 2026, the repository satisfies that preflight bar. The GitHub
 Actions devstack job uses `make devstack-ci-smoke`; local release or merge
-readiness can additionally run `make devstack-full-smoke` when the Codex CLI is
-installed.
+readiness can additionally run `make preflight-local` and
+`make devstack-full-smoke` when the Codex CLI is installed.
 
 ## Working Rule
 

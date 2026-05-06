@@ -37,6 +37,12 @@ Bring the stack up:
 make devstack-up
 ```
 
+Check whether the stack is healthy before running longer smokes:
+
+```bash
+make devstack-doctor
+```
+
 Run the smoke path:
 
 ```bash
@@ -223,6 +229,21 @@ Before a long eval or real-upstream smoke, inspect local state:
 
 ```bash
 make local-state-report
+```
+
+Run the local preflight gate before a long local session:
+
+```bash
+make preflight-local
+```
+
+This is a nondestructive wrapper around local state reporting, strict devstack
+doctor checks, cleanup/reset dry-runs, `make build`, `make lint`, and
+`git diff --check`. If the stack is intentionally down but you still want the
+same local checks, run:
+
+```bash
+PREFLIGHT_REQUIRE_DEVSTACK=0 make preflight-local
 ```
 
 Clean disposable run artifacts without touching durable local data:
@@ -495,6 +516,10 @@ bench-lite result into the model matrix.
 - [config.devstack.yaml](../../config.devstack.yaml): shim config used by the stack
 - [docker-compose.devstack.yml](../../docker-compose.devstack.yml): Compose wiring
 - [scripts/devstack-smoke.sh](../../scripts/devstack-smoke.sh): repo-owned smoke path
+- [scripts/devstack-doctor.sh](../../scripts/devstack-doctor.sh):
+  read-only devstack health doctor
+- [scripts/preflight-local.sh](../../scripts/preflight-local.sh):
+  nondestructive local preflight wrapper
 - [scripts/responses-compat-external-smoke.sh](../../scripts/responses-compat-external-smoke.sh):
   repo-owned bridge for external Responses compatibility tester runs
 - [scripts/v3-coding-tools-smoke.sh](../../scripts/v3-coding-tools-smoke.sh):

@@ -48,8 +48,15 @@ Run the deterministic devstack CI-compatible smoke gate:
 
 ```bash
 make devstack-up
+make devstack-doctor
 make devstack-ci-smoke
 make devstack-down
+```
+
+Run the nondestructive local preflight gate:
+
+```bash
+make preflight-local
 ```
 
 Run the full local smoke gate when the Codex CLI is installed:
@@ -156,6 +163,9 @@ Default cleanup targets intentionally do not remove `.data`.
 | Goal | Command | Removes `.data`? | Notes |
 | --- | --- | --- | --- |
 | Inspect local state | `make local-state-report` | No | Read-only size/count report for `.tmp`, `.cache`, `.data`, common smoke artifacts, and devstack Compose status when Docker is available. |
+| Diagnose devstack health | `make devstack-doctor` | No | Read-only strict checks for required commands, Compose status, fixture health, shim health, `/readyz`, and `/debug/capabilities`. |
+| Diagnose devstack without failing on readiness | `make devstack-doctor-advisory` | No | Same report, but unavailable dependencies are warnings. Useful before starting or after stopping the stack. |
+| Run local preflight | `make preflight-local` | No | Runs local state report, strict devstack doctor, cleanup/reset dry-runs, build, lint, and `git diff --check`. |
 | Preview disposable run-artifact cleanup | `make clean-artifacts-dry-run` | No | Lists allowlisted `.tmp` artifact directories that would be removed. |
 | Remove disposable run artifacts | `make clean-artifacts` | No | Removes Codex eval runs, Codex smoke workdirs, browser harness runs, governance smoke runs, and Playwright daemon sockets/sessions under `.tmp`. |
 | Preview broader local dev cleanup | `make clean-dev-artifacts-dry-run` | No | Adds local tool caches to the artifact preview. |
@@ -195,6 +205,7 @@ Practical reset playbook:
 
 ```bash
 make local-state-report
+make devstack-doctor-advisory
 make clean-artifacts-dry-run
 make devstack-reset-dry-run
 
