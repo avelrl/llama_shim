@@ -387,6 +387,7 @@ expected:
 The schema should support:
 
 - exact file content checks
+- file checks with outer whitespace or per-line whitespace normalization
 - regex file checks
 - file existence and non-existence checks
 - JSON file checks

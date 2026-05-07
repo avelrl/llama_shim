@@ -17,7 +17,7 @@ expected:
     - CONTEXT_PATCH_OK
   files:
     - path: service.txt
-      equals_trim_space: |
+      equals_trim_lines: |
         service=payments
         mode=compatible
         requirement=requirement: preserve api

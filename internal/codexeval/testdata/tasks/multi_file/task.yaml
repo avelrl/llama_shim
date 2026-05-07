@@ -32,7 +32,7 @@ expected:
     - MULTIFILE
   files:
     - path: app/config.txt
-      equals_trim_space: |
+      equals_trim_lines: |
         mode=matrix
         feature=enabled
     - path: app/status.txt

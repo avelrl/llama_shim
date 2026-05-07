@@ -46,10 +46,10 @@ the detailed evidence and run notes in
 
 | Model / upstream | Primary test role |
 | --- | --- |
-| DeepSeek V4 Pro | strongest current API compatibility gate for the broad shim surface |
-| Qwen3.6-35B-A3B | practical Codex coding smoke and manual task loop checks |
-| Kimi K2.6 | long-context and provider-specific compatibility experiments |
-| MiMo v2.5 Pro | chat-only Responses-over-Chat gate and Codex eval candidate |
+| DeepSeek V4 Pro | broad API compatibility gate and default real-upstream Codex baseline candidate |
+| Qwen3.6-35B-A3B | experimental/manual Codex smoke and raw-markup regression probe |
+| Kimi K2.6 | tuned-provider Codex candidate, long-context checks, and provider-specific comparison |
+| MiMo v2.5 Pro | strict chat-only Responses-over-Chat gate and Codex eval candidate |
 
 Special thanks to XiaomiMiMo for the public MiMo Orbit initiative and the API
 access that made the April 29, 2026 MiMo v2.5 Pro real-upstream run possible:

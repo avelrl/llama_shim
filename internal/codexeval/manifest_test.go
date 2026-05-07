@@ -246,6 +246,34 @@ func TestRunCheckersFileEqualsTrimSpace(t *testing.T) {
 	}
 }
 
+func TestRunCheckersFileEqualsTrimLines(t *testing.T) {
+	workspace := t.TempDir()
+	content := " service=payments\r\n mode=compatible\n requirement=requirement: preserve api"
+	if err := os.WriteFile(filepath.Join(workspace, "service.txt"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(workspace, "codex.jsonl")
+	if err := os.WriteFile(output, []byte(`{"type":"turn.completed"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	manifest := Manifest{
+		ID: "trim_lines",
+		Expected: Expected{
+			Files: []FileExpectation{{
+				Path:            "service.txt",
+				EqualsTrimLines: "service=payments\nmode=compatible\nrequirement=requirement: preserve api\n",
+			}},
+		},
+	}
+	result, _, err := runCheckers(t.Context(), manifest, workspace, output, nil)
+	if err != nil {
+		t.Fatalf("runCheckers failed: %v", err)
+	}
+	if !result.Passed {
+		t.Fatalf("expected checker pass, got %#v", result.Failures)
+	}
+}
+
 func TestRunCheckersRejectsQwenRawMarkup(t *testing.T) {
 	cases := []struct {
 		name string

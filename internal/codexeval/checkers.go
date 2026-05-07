@@ -148,6 +148,9 @@ func checkFileExpectation(result *CheckResult, workspace string, expected FileEx
 	if expected.EqualsTrimSpace != "" && strings.TrimSpace(content) != strings.TrimSpace(expected.EqualsTrimSpace) {
 		result.addFailure("file_equals", fmt.Sprintf("%s trimmed content mismatch", expected.Path))
 	}
+	if expected.EqualsTrimLines != "" && normalizeTrimmedLines(content) != normalizeTrimmedLines(expected.EqualsTrimLines) {
+		result.addFailure("file_equals", fmt.Sprintf("%s line-trimmed content mismatch", expected.Path))
+	}
 	if expected.Contains != "" && !strings.Contains(content, expected.Contains) {
 		result.addFailure("file_contains", fmt.Sprintf("%s does not contain %q", expected.Path, expected.Contains))
 	}
@@ -157,6 +160,20 @@ func checkFileExpectation(result *CheckResult, workspace string, expected FileEx
 			result.addFailure("file_matches", fmt.Sprintf("%s does not match %q", expected.Path, expected.Matches))
 		}
 	}
+}
+
+func normalizeTrimmedLines(value string) string {
+	value = strings.ReplaceAll(value, "\r\n", "\n")
+	value = strings.ReplaceAll(value, "\r", "\n")
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	lines := strings.Split(value, "\n")
+	for i, line := range lines {
+		lines[i] = strings.TrimSpace(line)
+	}
+	return strings.Join(lines, "\n")
 }
 
 func checkCommandExpectation(ctx context.Context, result *CheckResult, workspace string, expected CommandExpectation, taskEnv map[string]string) {

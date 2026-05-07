@@ -42,10 +42,10 @@ OpenAI. Подробные результаты и интерпретация ж
 
 | Модель / upstream | Основная роль в проверках |
 | --- | --- |
-| DeepSeek V4 Pro | главный текущий API-compatibility gate для широкой поверхности shim |
-| Qwen3.6-35B-A3B | практический Codex smoke и ручные проверки задач |
-| Kimi K2.6 | long-context и provider-specific эксперименты совместимости |
-| MiMo v2.5 Pro | chat-only gate для Responses-over-Chat и кандидат для Codex eval |
+| DeepSeek V4 Pro | широкий API-compatibility gate и основной кандидат для real-upstream Codex baseline |
+| Qwen3.6-35B-A3B | экспериментальный/ручной Codex smoke и проверка raw-markup регрессий |
+| Kimi K2.6 | tuned-provider кандидат для Codex, long-context проверки и provider-specific сравнение |
+| MiMo v2.5 Pro | строгий chat-only gate для Responses-over-Chat и кандидат для Codex eval |
 
 Отдельное спасибо XiaomiMiMo за публичную инициативу MiMo Orbit и API-доступ,
 который сделал возможным real-upstream прогон MiMo v2.5 Pro от 2026-04-29:

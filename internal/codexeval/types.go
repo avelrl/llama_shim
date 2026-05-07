@@ -143,6 +143,7 @@ type FileExpectation struct {
 	Absent          bool   `yaml:"absent" json:"absent,omitempty"`
 	Equals          string `yaml:"equals" json:"equals,omitempty"`
 	EqualsTrimSpace string `yaml:"equals_trim_space" json:"equals_trim_space,omitempty"`
+	EqualsTrimLines string `yaml:"equals_trim_lines" json:"equals_trim_lines,omitempty"`
 	Contains        string `yaml:"contains" json:"contains,omitempty"`
 	Matches         string `yaml:"matches" json:"matches,omitempty"`
 }
