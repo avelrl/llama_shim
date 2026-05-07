@@ -113,6 +113,11 @@ func (h *responseHandler) handleWebSocketMessage(ctx context.Context, conn *webs
 		}
 		return writeWebSocketError(ctx, conn, http.StatusBadRequest, newAPIError("invalid_request_error", "malformed JSON message", "", ""))
 	}
+	ctx, _, err = h.routeContextForResponseModel(ctx, request.Model, true)
+	if err != nil {
+		status, payload := MapError(ctx, h.logger, err)
+		return writeWebSocketError(ctx, conn, status, payload)
+	}
 	if err := h.validateWebSocketPreviousResponse(ctx, request); err != nil {
 		status, payload := MapError(ctx, h.logger, err)
 		var validationErr *domain.ValidationError

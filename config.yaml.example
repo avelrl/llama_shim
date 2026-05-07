@@ -91,6 +91,24 @@ llama:
   # Base URL of the upstream server.
   # Local generation calls its /v1/chat/completions endpoint.
   base_url: http://127.0.0.1:8081
+  # Optional shim-owned provider/model routing. When this list is non-empty,
+  # model-bearing requests to /v1/responses, Responses WebSocket
+  # response.create, upstream-proxied /v1/responses/input_tokens and
+  # /v1/responses/compact, and /v1/chat/completions must use model IDs in
+  # provider/model form, for example qwen/coder. The shim then calls the
+  # provider base_url with the resolved upstream_model and provider token,
+  # while keeping the public provider/model ID in shim-owned responses.
+  providers:
+    # - id: qwen
+    #   base_url: https://api.qwen.example/v1
+    #   bearer_token_env: QWEN_API_KEY
+    #   models:
+    #     - model: coder
+    #       upstream_model: Qwen3.6-Coder
+    # - id: ollama
+    #   base_url: http://127.0.0.1:11434/v1
+    #   models:
+    #     - model: gemma4
   # Optional bearer token used only by server-side /readyz checks against
   # upstream /v1/models. This is not shim ingress auth and is not forwarded
   # for ordinary client requests.
@@ -157,7 +175,9 @@ chat_completions:
     # /v1/chat/completions calls. These rules affect both direct
     # /v1/chat/completions proxying and shim-generated Chat requests used by
     # local Responses helpers. They do not change the public OpenAI-shaped
-    # request accepted by the shim.
+    # request accepted by the shim. When `llama.providers` is configured,
+    # match the resolved upstream_model here, not the public provider/model
+    # alias.
     models: []
     # Example for DeepSeek-compatible gateways:
     # models:
@@ -320,7 +340,8 @@ responses:
     # wildcards are supported. This does not change the OpenAI Responses
     # contract: passive declarations of disabled tools are removed before
     # proxying to that upstream model, while explicit tool_choice for a
-    # disabled tool is rejected.
+    # disabled tool is rejected. When `llama.providers` is configured, match
+    # the resolved upstream_model here, not the public provider/model alias.
     models: []
     # Example for LiteLLM/Kimi backends that reject some official/OpenAI-SDK
     # Responses tool types. SDK NamespaceTool is sent on the wire as
@@ -341,6 +362,8 @@ responses:
       # before the first upstream request. Use this for OpenAI-compatible
       # backends that reject structured Responses input after Codex tool output.
       # mode=structured disables that pre-stringify shortcut for the model.
+      # When `llama.providers` is configured, match the resolved upstream_model
+      # here, not the public provider/model alias.
       models: []
       # Example:
       # models:
@@ -349,12 +372,15 @@ responses:
     model_metadata:
       # Optional Codex model catalog entries served only to Codex metadata
       # requests (`/v1/models?client_version=...` or `/api/codex/models`).
-      # Ordinary OpenAI-compatible GET /v1/models stays proxied unchanged.
+      # Ordinary OpenAI-compatible GET /v1/models follows the normal upstream
+      # or provider-routing catalog behavior. When `llama.providers` is used,
+      # these model names should be the same public provider/model aliases that
+      # Codex sends, not the hidden upstream_model names.
       models: []
       # Examples. Replace `models: []` with one list containing the entries
       # needed by your Codex upstreams.
       # models:
-      #   - model: Kimi-K2.6
+      #   - model: svgun/kimi-k2.6
       #     display_name: Kimi K2.6
       #     description: OpenAI-compatible upstream routed through llama_shim.
       #     context_window: 262144
@@ -385,7 +411,7 @@ responses:
       #       limit: 10000
       #     base_instructions: ""
       #   # DeepSeek upstream that has passed the external tester:
-      #   - model: deepseek-v4-pro
+      #   - model: deepseek/deepseek-v4-pro
       #     display_name: DeepSeek V4 Pro
       #     description: OpenAI-compatible DeepSeek upstream routed through llama_shim.
       #     context_window: 1000000
@@ -417,7 +443,7 @@ responses:
       #     base_instructions: ""
       #   # MiMo v2.5 Pro HF card advertises a 1M-token context; the
       #   # deployment example uses context-length 1048576.
-      #   - model: mimo-v2.5-pro
+      #   - model: xiaomi/mimo-v2.5-pro
       #     display_name: MiMo v2.5 Pro
       #     description: OpenAI-compatible MiMo v2.5 Pro upstream routed through llama_shim.
       #     context_window: 1048576
@@ -448,7 +474,7 @@ responses:
       #       limit: 10000
       #     base_instructions: ""
       #   # Tested Qwen3.6 gateway path:
-      #   - model: Qwen3.6-35B-A3B
+      #   - model: svgun/qwen-3.6
       #     display_name: Qwen3.6 35B A3B
       #     description: OpenAI-compatible Qwen3.6 upstream routed through llama_shim.
       #     # Conservative tested default. Raise only after the exact upstream

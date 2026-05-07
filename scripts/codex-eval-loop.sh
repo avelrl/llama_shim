@@ -8,7 +8,7 @@ Usage:
   CODEX_PROVIDER=gateway-shim \
   CODEX_API_KEY_ENV=GW_API_KEY \
   GW_API_KEY=sk-... \
-  CODEX_EVAL_MODELS="deepseek-v4-pro,kimi-k2,Qwen3.6-35B-A3B" \
+  CODEX_EVAL_MODELS="deepseek/deepseek-v4-pro,svgun/kimi-k2.6,svgun/qwen-3.6" \
   ./scripts/codex-eval-loop.sh
 
 Common optional knobs:

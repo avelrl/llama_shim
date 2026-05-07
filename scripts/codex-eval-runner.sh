@@ -38,7 +38,7 @@ Usage:
 
 Common real-upstream usage:
   SHIM_BASE_URL=http://127.0.0.1:8080 \
-  CODEX_MODEL=Qwen3.6-35B-A3B \
+  CODEX_MODEL=svgun/qwen-3.6 \
   CODEX_PROVIDER=gateway-shim \
   CODEX_API_KEY_ENV=GW_API_KEY \
   GW_API_KEY=shim-dev-key \

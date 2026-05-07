@@ -166,6 +166,7 @@ Default cleanup targets intentionally do not remove `.data`.
 | Diagnose devstack health | `make devstack-doctor` | No | Read-only strict checks for required commands, Compose status, fixture health, shim health, `/readyz`, and `/debug/capabilities`. |
 | Diagnose devstack without failing on readiness | `make devstack-doctor-advisory` | No | Same report, but unavailable dependencies are warnings. Useful before starting or after stopping the stack. |
 | Run local preflight | `make preflight-local` | No | Runs local state report, strict devstack doctor, cleanup/reset dry-runs, build, lint, and `git diff --check`. |
+| Check live upstream provider routing | `make upstream-provider-routing-smoke` | No | Verifies one public `provider/model` alias through capabilities, live `/v1/models`, routed Responses, routed Chat Completions, derived endpoint probes, and fail-closed routing boundaries. Writes artifacts under `.tmp/upstream-provider-routing-smoke`. |
 | Curate Codex eval artifacts | `make codex-eval-curate` | No | Reads `.tmp/codex-eval-*` artifacts and writes a cross-run interpretation report under `.tmp/codex-eval-curation`. |
 | Preview disposable run-artifact cleanup | `make clean-artifacts-dry-run` | No | Lists allowlisted `.tmp` artifact directories that would be removed. |
 | Remove disposable run artifacts | `make clean-artifacts` | No | Removes Codex eval runs, Codex smoke workdirs, browser harness runs, governance smoke runs, and Playwright daemon sockets/sessions under `.tmp`. |

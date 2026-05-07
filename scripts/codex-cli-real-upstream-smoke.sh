@@ -12,7 +12,7 @@ usage() {
   cat <<'EOF'
 Usage:
   SHIM_BASE_URL=http://127.0.0.1:8080 \
-  CODEX_MODEL=Kimi-K2.6 \
+  CODEX_MODEL=svgun/kimi-k2.6 \
   GW_API_KEY=shim-dev-key \
   ./scripts/codex-cli-real-upstream-smoke.sh
 
@@ -51,7 +51,7 @@ codex_bin="${CODEX_BIN:-codex}"
 require_cmd "${codex_bin}"
 
 shim_base_url="${SHIM_BASE_URL:-http://127.0.0.1:8080}"
-model="${CODEX_MODEL:-${MODEL:-Kimi-K2.6}}"
+model="${CODEX_MODEL:-${MODEL:-svgun/kimi-k2.6}}"
 provider="${CODEX_PROVIDER:-gateway-shim}"
 base_url="${CODEX_BASE_URL:-${shim_base_url%/}/v1}"
 api_key_env="${CODEX_API_KEY_ENV:-GW_API_KEY}"

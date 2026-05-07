@@ -113,6 +113,37 @@ func (h *responseHandler) applyConfiguredCodexUpstreamInputCompatibility(ctx con
 	return body, nil
 }
 
+func (h *responseHandler) routeContextForResponseModel(ctx context.Context, model string, requireModel bool) (context.Context, bool, error) {
+	if !h.upstreamProviderRoutingEnabled() {
+		return ctx, false, nil
+	}
+	if strings.TrimSpace(model) == "" {
+		if requireModel {
+			return ctx, false, domain.NewValidationError("model", "model must use configured provider/model form")
+		}
+		return ctx, false, nil
+	}
+	routedCtx, route, err := h.proxy.routeContextForModel(ctx, model)
+	if err != nil {
+		return ctx, false, err
+	}
+	return routedCtx, route != nil, nil
+}
+
+func (h *responseHandler) upstreamProviderRoutingEnabled() bool {
+	return h != nil && h.proxy != nil && h.proxy.upstreamProviderResolver != nil && h.proxy.upstreamProviderResolver.Enabled()
+}
+
+func (h *responseHandler) canProxyNativeResponsesWithRoute(model string, routed bool) bool {
+	if !h.canProxyNativeResponses() {
+		return false
+	}
+	if !h.upstreamProviderRoutingEnabled() {
+		return true
+	}
+	return strings.TrimSpace(model) != "" && routed
+}
+
 func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 	rawBody, err := readJSONBody(w, r)
 	if err != nil {
@@ -133,6 +164,14 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.writeError(w, r, err)
 		return
+	}
+	ctx, _, err := h.routeContextForResponseModel(r.Context(), request.Model, true)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	if ctx != r.Context() {
+		r = r.WithContext(ctx)
 	}
 
 	hasLocalState, err := h.hasLocalCreateState(r.Context(), request)
@@ -542,6 +581,14 @@ func (h *responseHandler) inputTokens(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusBadRequest, "invalid_request_error", "malformed JSON body", "")
 		return
 	}
+	ctx, routed, err := h.routeContextForResponseModel(r.Context(), request.Model, false)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	if ctx != r.Context() {
+		r = r.WithContext(ctx)
+	}
 
 	hasLocalState, err := h.hasLocalCreateState(r.Context(), request)
 	if err != nil {
@@ -549,9 +596,10 @@ func (h *responseHandler) inputTokens(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	localSupported := supportsLocalDerivedResponsesState(rawFields)
+	nativeResponsesProxy := h.canProxyNativeResponsesWithRoute(request.Model, routed)
 
 	switch {
-	case h.responsesMode == config.ResponsesModePreferUpstream && !hasLocalState && h.canProxyNativeResponses():
+	case h.responsesMode == config.ResponsesModePreferUpstream && !hasLocalState && nativeResponsesProxy:
 		h.proxyBufferedJSONRequest(w, r, rawBody)
 		return
 	case localSupported:
@@ -569,7 +617,7 @@ func (h *responseHandler) inputTokens(w http.ResponseWriter, r *http.Request) {
 			WriteJSON(w, http.StatusOK, response)
 			return
 		}
-		if !hasLocalState && h.shouldFallbackLocalState(err) {
+		if !hasLocalState && h.shouldFallbackLocalState(err) && nativeResponsesProxy {
 			h.proxyBufferedJSONRequest(w, r, rawBody)
 			return
 		}
@@ -581,7 +629,7 @@ func (h *responseHandler) inputTokens(w http.ResponseWriter, r *http.Request) {
 	case h.responsesMode == config.ResponsesModeLocalOnly:
 		h.writeError(w, r, newLocalOnlyUnsupportedDerivedFieldsError("/v1/responses/input_tokens", rawFields))
 		return
-	case h.canProxyNativeResponses():
+	case nativeResponsesProxy:
 		h.proxyBufferedJSONRequest(w, r, rawBody)
 	default:
 		h.writeError(w, r, newLocalOnlyUnsupportedDerivedFieldsError("/v1/responses/input_tokens", rawFields))
@@ -604,6 +652,14 @@ func (h *responseHandler) compact(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusBadRequest, "invalid_request_error", "malformed JSON body", "")
 		return
 	}
+	ctx, routed, err := h.routeContextForResponseModel(r.Context(), request.Model, false)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	if ctx != r.Context() {
+		r = r.WithContext(ctx)
+	}
 
 	hasLocalState, err := h.hasLocalCreateState(r.Context(), request)
 	if err != nil {
@@ -611,9 +667,10 @@ func (h *responseHandler) compact(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	localSupported := supportsLocalDerivedResponsesState(rawFields)
+	nativeResponsesProxy := h.canProxyNativeResponsesWithRoute(request.Model, routed)
 
 	switch {
-	case h.responsesMode == config.ResponsesModePreferUpstream && !hasLocalState && h.canProxyNativeResponses():
+	case h.responsesMode == config.ResponsesModePreferUpstream && !hasLocalState && nativeResponsesProxy:
 		h.proxyBufferedJSONRequest(w, r, rawBody)
 		return
 	case localSupported:
@@ -631,7 +688,7 @@ func (h *responseHandler) compact(w http.ResponseWriter, r *http.Request) {
 			WriteJSON(w, http.StatusOK, response)
 			return
 		}
-		if !hasLocalState && h.shouldFallbackLocalState(err) {
+		if !hasLocalState && h.shouldFallbackLocalState(err) && nativeResponsesProxy {
 			h.proxyBufferedJSONRequest(w, r, rawBody)
 			return
 		}
@@ -643,7 +700,7 @@ func (h *responseHandler) compact(w http.ResponseWriter, r *http.Request) {
 	case h.responsesMode == config.ResponsesModeLocalOnly:
 		h.writeError(w, r, newLocalOnlyUnsupportedDerivedFieldsError("/v1/responses/compact", rawFields))
 		return
-	case h.canProxyNativeResponses():
+	case nativeResponsesProxy:
 		h.proxyBufferedJSONRequest(w, r, rawBody)
 	default:
 		h.writeError(w, r, newLocalOnlyUnsupportedDerivedFieldsError("/v1/responses/compact", rawFields))
@@ -672,19 +729,23 @@ func (h *responseHandler) createLocalStateViaUpstream(ctx context.Context, reque
 		return domain.Response{}, err
 	}
 
-	upstreamBody, plan, err := buildUpstreamResponsesBodyWithCompatibility(rawFields, prepared.ContextItems, prepared.NormalizedInput, prepared.ToolCallRefs, h.customToolsMode, h.codexCompatibilityEnabled, h.upstreamToolCompatibility)
+	upstreamFields, err := upstreamRawFieldsForContext(ctx, rawFields)
 	if err != nil {
 		return domain.Response{}, err
 	}
-	upstreamBody, err = h.applyConfiguredCodexUpstreamInputCompatibility(ctx, rawFields, upstreamBody)
+	upstreamBody, plan, err := buildUpstreamResponsesBodyWithCompatibility(upstreamFields, prepared.ContextItems, prepared.NormalizedInput, prepared.ToolCallRefs, h.customToolsMode, h.codexCompatibilityEnabled, h.upstreamToolCompatibility)
 	if err != nil {
 		return domain.Response{}, err
 	}
-	logCustomToolTransport(ctx, h.logger, rawFields, upstreamBody, plan, h.codexCompatibilityEnabled)
+	upstreamBody, err = h.applyConfiguredCodexUpstreamInputCompatibility(ctx, upstreamFields, upstreamBody)
+	if err != nil {
+		return domain.Response{}, err
+	}
+	logCustomToolTransport(ctx, h.logger, upstreamFields, upstreamBody, plan, h.codexCompatibilityEnabled)
 
 	rawResponse, usedFallback, err := h.createResponseWithToolChoiceFallback(ctx, upstreamBody, plan)
 	if err != nil && shouldRetryCustomToolsWithBridgeError(err, plan) {
-		upstreamBody, plan, err = h.buildBridgedUpstreamResponsesBody(ctx, rawFields, prepared.ContextItems, prepared.NormalizedInput, prepared.ToolCallRefs)
+		upstreamBody, plan, err = h.buildBridgedUpstreamResponsesBody(ctx, upstreamFields, prepared.ContextItems, prepared.NormalizedInput, prepared.ToolCallRefs)
 		if err != nil {
 			return domain.Response{}, err
 		}
@@ -724,16 +785,21 @@ func (h *responseHandler) createLocalStateViaUpstream(ctx context.Context, reque
 	if err != nil {
 		return domain.Response{}, err
 	}
+	response = restoreRoutedModelInResponse(ctx, response)
 
 	return h.service.SaveExternalResponse(ctx, prepared, input, response)
 }
 
 func (h *responseHandler) createProxyResponseViaUpstream(ctx context.Context, request CreateResponseRequest, requestJSON string, rawFields map[string]json.RawMessage) (domain.Response, error) {
-	upstreamBody, plan, err := remapCustomToolsPayloadWithCompatibility(rawFields, h.customToolsMode, h.codexCompatibilityEnabled, h.upstreamToolCompatibility)
+	upstreamFields, err := upstreamRawFieldsForContext(ctx, rawFields)
 	if err != nil {
 		return domain.Response{}, err
 	}
-	upstreamBody, err = h.applyConfiguredCodexUpstreamInputCompatibility(ctx, rawFields, upstreamBody)
+	upstreamBody, plan, err := remapCustomToolsPayloadWithCompatibility(upstreamFields, h.customToolsMode, h.codexCompatibilityEnabled, h.upstreamToolCompatibility)
+	if err != nil {
+		return domain.Response{}, err
+	}
+	upstreamBody, err = h.applyConfiguredCodexUpstreamInputCompatibility(ctx, upstreamFields, upstreamBody)
 	if err != nil {
 		return domain.Response{}, err
 	}
@@ -742,11 +808,11 @@ func (h *responseHandler) createProxyResponseViaUpstream(ctx context.Context, re
 			"request_id", RequestIDFromContext(ctx),
 		)
 	}
-	logCustomToolTransport(ctx, h.logger, rawFields, upstreamBody, plan, h.codexCompatibilityEnabled)
+	logCustomToolTransport(ctx, h.logger, upstreamFields, upstreamBody, plan, h.codexCompatibilityEnabled)
 
 	rawResponse, usedFallback, err := h.createResponseWithToolChoiceFallback(ctx, upstreamBody, plan)
 	if err != nil && shouldRetryCustomToolsWithBridgeError(err, plan) {
-		upstreamBody, plan, err = h.buildBridgedProxyResponsesBody(ctx, rawFields)
+		upstreamBody, plan, err = h.buildBridgedProxyResponsesBody(ctx, upstreamFields)
 		if err != nil {
 			return domain.Response{}, err
 		}
@@ -774,6 +840,7 @@ func (h *responseHandler) createProxyResponseViaUpstream(ctx context.Context, re
 	if err != nil {
 		return domain.Response{}, err
 	}
+	response = restoreRoutedModelInResponse(ctx, response)
 
 	prepared, input, ok := prepareShadowStore(ctx, h.service.PrepareCreateContext, request, requestJSON)
 	if !ok {
@@ -873,11 +940,15 @@ func (h *responseHandler) retryResponseWithAuto(ctx context.Context, upstreamBod
 }
 
 func (h *responseHandler) buildBridgedProxyResponsesBody(ctx context.Context, rawFields map[string]json.RawMessage) ([]byte, customToolTransportPlan, error) {
-	body, plan, err := remapCustomToolsPayloadWithCompatibility(rawFields, string(customToolsModeBridge), h.codexCompatibilityEnabled, h.upstreamToolCompatibility)
+	upstreamFields, err := upstreamRawFieldsForContext(ctx, rawFields)
 	if err != nil {
 		return nil, customToolTransportPlan{}, err
 	}
-	body, err = h.applyConfiguredCodexUpstreamInputCompatibility(ctx, rawFields, body)
+	body, plan, err := remapCustomToolsPayloadWithCompatibility(upstreamFields, string(customToolsModeBridge), h.codexCompatibilityEnabled, h.upstreamToolCompatibility)
+	if err != nil {
+		return nil, customToolTransportPlan{}, err
+	}
+	body, err = h.applyConfiguredCodexUpstreamInputCompatibility(ctx, upstreamFields, body)
 	if err != nil {
 		return nil, customToolTransportPlan{}, err
 	}
@@ -887,7 +958,7 @@ func (h *responseHandler) buildBridgedProxyResponsesBody(ctx context.Context, ra
 			"request_id", RequestIDFromContext(ctx),
 		)
 	}
-	logCustomToolTransport(ctx, h.logger, rawFields, body, plan, h.codexCompatibilityEnabled)
+	logCustomToolTransport(ctx, h.logger, upstreamFields, body, plan, h.codexCompatibilityEnabled)
 	return body, plan, nil
 }
 
@@ -929,11 +1000,15 @@ func (h *responseHandler) buildStringifiedResponsesBody(ctx context.Context, ups
 }
 
 func (h *responseHandler) buildBridgedUpstreamResponsesBody(ctx context.Context, rawFields map[string]json.RawMessage, contextItems []domain.Item, currentInput []domain.Item, refs map[string]domain.ToolCallReference) ([]byte, customToolTransportPlan, error) {
-	body, plan, err := buildUpstreamResponsesBodyWithCompatibility(rawFields, contextItems, currentInput, refs, string(customToolsModeBridge), h.codexCompatibilityEnabled, h.upstreamToolCompatibility)
+	upstreamFields, err := upstreamRawFieldsForContext(ctx, rawFields)
 	if err != nil {
 		return nil, customToolTransportPlan{}, err
 	}
-	body, err = h.applyConfiguredCodexUpstreamInputCompatibility(ctx, rawFields, body)
+	body, plan, err := buildUpstreamResponsesBodyWithCompatibility(upstreamFields, contextItems, currentInput, refs, string(customToolsModeBridge), h.codexCompatibilityEnabled, h.upstreamToolCompatibility)
+	if err != nil {
+		return nil, customToolTransportPlan{}, err
+	}
+	body, err = h.applyConfiguredCodexUpstreamInputCompatibility(ctx, upstreamFields, body)
 	if err != nil {
 		return nil, customToolTransportPlan{}, err
 	}
@@ -943,7 +1018,7 @@ func (h *responseHandler) buildBridgedUpstreamResponsesBody(ctx context.Context,
 			"request_id", RequestIDFromContext(ctx),
 		)
 	}
-	logCustomToolTransport(ctx, h.logger, rawFields, body, plan, h.codexCompatibilityEnabled)
+	logCustomToolTransport(ctx, h.logger, upstreamFields, body, plan, h.codexCompatibilityEnabled)
 	return body, plan, nil
 }
 
@@ -1741,17 +1816,22 @@ func joinCSV(values []string) string {
 }
 
 func (h *responseHandler) proxyCreateWithShadowStore(w http.ResponseWriter, r *http.Request, request CreateResponseRequest, rawBody []byte, requestJSON string, rawFields map[string]json.RawMessage) {
-	upstreamBody, plan, err := remapCustomToolsPayloadWithCompatibility(rawFields, h.customToolsMode, h.codexCompatibilityEnabled, h.upstreamToolCompatibility)
+	upstreamFields, err := upstreamRawFieldsForContext(r.Context(), rawFields)
 	if err != nil {
 		h.writeError(w, r, err)
 		return
 	}
-	upstreamBody, err = h.applyConfiguredCodexUpstreamInputCompatibility(r.Context(), rawFields, upstreamBody)
+	upstreamBody, plan, err := remapCustomToolsPayloadWithCompatibility(upstreamFields, h.customToolsMode, h.codexCompatibilityEnabled, h.upstreamToolCompatibility)
 	if err != nil {
 		h.writeError(w, r, err)
 		return
 	}
-	logCustomToolTransport(r.Context(), h.logger, rawFields, upstreamBody, plan, h.codexCompatibilityEnabled)
+	upstreamBody, err = h.applyConfiguredCodexUpstreamInputCompatibility(r.Context(), upstreamFields, upstreamBody)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	logCustomToolTransport(r.Context(), h.logger, upstreamFields, upstreamBody, plan, h.codexCompatibilityEnabled)
 
 	cloned := r.Clone(r.Context())
 	cloned.Body = io.NopCloser(bytes.NewReader(upstreamBody))
@@ -1785,7 +1865,7 @@ func (h *responseHandler) proxyCreateWithShadowStore(w http.ResponseWriter, r *h
 		return
 	}
 	if shouldRetryCustomToolsWithBridgeBody(response.StatusCode, body, plan) {
-		upstreamBody, plan, err = h.buildBridgedProxyResponsesBody(r.Context(), rawFields)
+		upstreamBody, plan, err = h.buildBridgedProxyResponsesBody(r.Context(), upstreamFields)
 		if err != nil {
 			h.writeError(w, r, err)
 			return
@@ -1891,6 +1971,8 @@ func (h *responseHandler) proxyCreateWithShadowStore(w http.ResponseWriter, r *h
 		parsed, err = domain.ParseUpstreamResponse(responseBody)
 		if err == nil && (parsed.OutputText != "" || len(parsed.Output) > 0) {
 			parsed = annotateResponseCustomToolMetadata(parsed, plan)
+			parsed = restoreRoutedModelInResponse(r.Context(), parsed)
+			responseBody = restoreRoutedModelInResponseBody(r.Context(), responseBody)
 			parsedOK = true
 			if hasMCPToolDefinitions(rawFields) {
 				hydrated := domain.HydrateResponseRequestSurface(parsed, requestJSON)
@@ -1916,6 +1998,7 @@ func (h *responseHandler) proxyCreateWithShadowStore(w http.ResponseWriter, r *h
 			h.writeError(w, r, err)
 			return
 		}
+		parsed = restoreRoutedModelInResponse(r.Context(), parsed)
 		if hydratedBody, hydrateErr := domain.HydrateResponseContinuationJSON(finalBody, requestJSON); hydrateErr == nil {
 			finalBody = hydratedBody
 		} else {
@@ -1927,6 +2010,7 @@ func (h *responseHandler) proxyCreateWithShadowStore(w http.ResponseWriter, r *h
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
+		finalBody = restoreRoutedModelInResponseBody(r.Context(), finalBody)
 		_, _ = w.Write(finalBody)
 
 		prepared, input, ok := prepareShadowStore(r.Context(), h.service.PrepareCreateContext, request, requestJSON)
@@ -1949,6 +2033,7 @@ func (h *responseHandler) proxyCreateWithShadowStore(w http.ResponseWriter, r *h
 			h.writeError(w, r, err)
 			return
 		}
+		parsed = restoreRoutedModelInResponse(r.Context(), parsed)
 		if hydratedBody, hydrateErr := domain.HydrateResponseContinuationJSON(finalBody, requestJSON); hydrateErr == nil {
 			finalBody = hydratedBody
 		} else {
@@ -1960,6 +2045,7 @@ func (h *responseHandler) proxyCreateWithShadowStore(w http.ResponseWriter, r *h
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
+		finalBody = restoreRoutedModelInResponseBody(r.Context(), finalBody)
 		_, _ = w.Write(finalBody)
 
 		prepared, input, ok := prepareShadowStore(r.Context(), h.service.PrepareCreateContext, request, requestJSON)
@@ -1975,6 +2061,9 @@ func (h *responseHandler) proxyCreateWithShadowStore(w http.ResponseWriter, r *h
 		responseBody = canonical
 	} else {
 		logResponsesUpstreamHTTPError(r.Context(), h.logger, "responses_proxy_create", response, body, false)
+	}
+	if response.StatusCode >= 200 && response.StatusCode < 300 {
+		responseBody = restoreRoutedModelInResponseBody(r.Context(), responseBody)
 	}
 
 	copyResponseHeaders(w.Header(), response.Header)

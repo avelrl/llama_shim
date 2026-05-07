@@ -92,6 +92,23 @@ func TestCheckReadyDoesNotUseStartupCalibrationToken(t *testing.T) {
 	require.Empty(t, seenAuth)
 }
 
+func TestCheckReadyAcceptsVersionedBaseURL(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, http.MethodGet, r.Method)
+		require.Equal(t, "/v1/models", r.URL.Path)
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"object": "list",
+			"data": []map[string]any{
+				{"id": "test-model", "object": "model"},
+			},
+		}))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL+"/v1", time.Second)
+	require.NoError(t, client.CheckReady(context.Background()))
+}
+
 func TestGenerateDoesNotUseStartupCalibrationTokenWithoutContextAuthorization(t *testing.T) {
 	var seenAuth string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

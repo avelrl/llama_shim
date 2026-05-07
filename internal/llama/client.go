@@ -163,6 +163,10 @@ func (c *Client) CheckReadyWithBearerToken(ctx context.Context, bearerToken stri
 	return err
 }
 
+func (c *Client) ListModels(ctx context.Context) ([]string, error) {
+	return c.listModels(ctx)
+}
+
 func (c *Client) listModels(ctx context.Context) ([]string, error) {
 	return c.listModelsWithBearerToken(ctx, "")
 }
@@ -183,7 +187,7 @@ func (c *Client) listModelsDetailedWithBearerToken(ctx context.Context, bearerTo
 		return listModelsResult{}, errors.New("llama client is nil")
 	}
 
-	endpoint, err := url.JoinPath(c.baseURL, "/v1/models")
+	endpoint, err := c.buildUpstreamURLForContext(ctx, "/v1/models", "")
 	if err != nil {
 		return listModelsResult{}, fmt.Errorf("build llama url: %w", err)
 	}
@@ -194,14 +198,17 @@ func (c *Client) listModelsDetailedWithBearerToken(ctx context.Context, bearerTo
 	}
 	req.Header.Set("Accept", "application/json")
 	applyContextHeaders(ctx, req.Header)
-	applyBearerAuth(req.Header, bearerToken)
+	applyUpstreamAuth(ctx, req.Header, bearerToken)
 
 	resp, err := c.requestClient.Do(req)
 	if err != nil {
 		if mappedErr := mapTimeoutError(err); mappedErr != nil {
+			c.logUpstreamRequestError(ctx, http.MethodGet, "/v1/models", "upstream_models", mappedErr)
 			return listModelsResult{}, mappedErr
 		}
-		return listModelsResult{}, fmt.Errorf("call llama: %w", err)
+		wrappedErr := fmt.Errorf("call llama: %w", err)
+		c.logUpstreamRequestError(ctx, http.MethodGet, "/v1/models", "upstream_models", wrappedErr)
+		return listModelsResult{}, wrappedErr
 	}
 	defer resp.Body.Close()
 
@@ -306,7 +313,7 @@ func (c *Client) GenerateStream(ctx context.Context, model string, items []domai
 }
 
 func (c *Client) Proxy(ctx context.Context, incoming *http.Request) (*http.Response, error) {
-	endpoint, err := c.buildUpstreamURL(incoming.URL.Path, incoming.URL.RawQuery)
+	endpoint, err := c.buildUpstreamURLForContext(ctx, incoming.URL.Path, incoming.URL.RawQuery)
 	if err != nil {
 		return nil, fmt.Errorf("build llama url: %w", err)
 	}
@@ -319,6 +326,7 @@ func (c *Client) Proxy(ctx context.Context, incoming *http.Request) (*http.Respo
 	removeHopByHopHeaders(req.Header)
 	applyForwardedHeaders(req, incoming)
 	applyContextHeaders(ctx, req.Header)
+	applyUpstreamAuth(ctx, req.Header, "")
 
 	scope := proxyAdmissionScope(incoming.URL.Path)
 	release, err := c.acquireUpstreamSlot(ctx, scope)
@@ -356,9 +364,13 @@ type jsonRequestResult struct {
 }
 
 func (c *Client) doJSONRequestDetailedWithBearerToken(ctx context.Context, method string, path string, requestBody []byte, scope string, maxBodyBytes int64, bearerToken string) (jsonRequestResult, error) {
-	endpoint, err := url.JoinPath(c.baseURL, path)
+	endpoint, err := c.buildUpstreamURLForContext(ctx, path, "")
 	if err != nil {
 		return jsonRequestResult{}, fmt.Errorf("build llama url: %w", err)
+	}
+	requestBody, err = RewriteJSONModelForUpstreamRoute(ctx, requestBody)
+	if err != nil {
+		return jsonRequestResult{}, err
 	}
 	requestBody = c.normalizeChatCompletionRequestForUpstream(ctx, path, scope, requestBody)
 
@@ -368,7 +380,7 @@ func (c *Client) doJSONRequestDetailedWithBearerToken(ctx context.Context, metho
 	}
 	req.Header.Set("Content-Type", "application/json")
 	applyContextHeaders(ctx, req.Header)
-	applyBearerAuth(req.Header, bearerToken)
+	applyUpstreamAuth(ctx, req.Header, bearerToken)
 
 	release, err := c.acquireUpstreamSlot(ctx, scope)
 	if err != nil {
@@ -412,9 +424,13 @@ func (c *Client) doJSONRequestDetailedWithBearerToken(ctx context.Context, metho
 }
 
 func (c *Client) doStreamingRequest(ctx context.Context, path string, requestBody []byte, scope string) (*http.Response, func(), error) {
-	endpoint, err := url.JoinPath(c.baseURL, path)
+	endpoint, err := c.buildUpstreamURLForContext(ctx, path, "")
 	if err != nil {
 		return nil, nil, fmt.Errorf("build llama url: %w", err)
+	}
+	requestBody, err = RewriteJSONModelForUpstreamRoute(ctx, requestBody)
+	if err != nil {
+		return nil, nil, err
 	}
 	requestBody = c.normalizeChatCompletionRequestForUpstream(ctx, path, scope, requestBody)
 
@@ -425,6 +441,7 @@ func (c *Client) doStreamingRequest(ctx context.Context, path string, requestBod
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
 	applyContextHeaders(ctx, req.Header)
+	applyUpstreamAuth(ctx, req.Header, "")
 
 	release, err := c.acquireUpstreamSlot(ctx, scope)
 	if err != nil {
@@ -450,12 +467,14 @@ func (c *Client) logUpstreamRequestError(ctx context.Context, method string, pat
 	if c == nil || c.logger == nil || err == nil {
 		return
 	}
-	c.logger.WarnContext(ctx, "llama upstream request failed",
+	attrs := []any{
 		"method", method,
 		"path", path,
 		"scope", scope,
 		"err", err,
-	)
+	}
+	attrs = append(attrs, upstreamRouteLogAttrs(ctx)...)
+	c.logger.WarnContext(ctx, "llama upstream request failed", attrs...)
 }
 
 func (c *Client) logUpstreamHTTPError(ctx context.Context, method string, path string, scope string, resp *http.Response, body []byte, bodyTruncated bool) {
@@ -463,7 +482,7 @@ func (c *Client) logUpstreamHTTPError(ctx context.Context, method string, path s
 		return
 	}
 
-	c.logger.WarnContext(ctx, "llama upstream returned error",
+	attrs := []any{
 		"method", method,
 		"path", path,
 		"scope", scope,
@@ -473,7 +492,21 @@ func (c *Client) logUpstreamHTTPError(ctx context.Context, method string, path s
 		"body_bytes", len(body),
 		"body_truncated", bodyTruncated || len(body) > upstreamErrorBodyLogLimit,
 		"body_preview", bodyPreviewForLog(body, upstreamErrorBodyLogLimit),
-	)
+	}
+	attrs = append(attrs, upstreamRouteLogAttrs(ctx)...)
+	c.logger.WarnContext(ctx, "llama upstream returned error", attrs...)
+}
+
+func upstreamRouteLogAttrs(ctx context.Context) []any {
+	route, ok := UpstreamRouteFromContext(ctx)
+	if !ok {
+		return nil
+	}
+	attrs := []any{"upstream_provider_id", route.ProviderID}
+	if strings.TrimSpace(route.UpstreamModel) != "" {
+		attrs = append(attrs, "upstream_model", route.UpstreamModel)
+	}
+	return attrs
 }
 
 func firstResponseHeader(header http.Header, keys ...string) string {
@@ -571,8 +604,24 @@ func applyBearerAuth(outgoing http.Header, bearerToken string) {
 	outgoing.Set("Authorization", "Bearer "+strings.TrimSpace(bearerToken))
 }
 
-func (c *Client) buildUpstreamURL(path, rawQuery string) (string, error) {
-	endpoint, err := url.JoinPath(c.baseURL, path)
+func applyUpstreamAuth(ctx context.Context, outgoing http.Header, bearerToken string) {
+	if route, ok := UpstreamRouteFromContext(ctx); ok {
+		outgoing.Del("Authorization")
+		outgoing.Del("Api-Key")
+		outgoing.Del("X-Api-Key")
+		applyBearerAuth(outgoing, route.BearerToken)
+		return
+	}
+	applyBearerAuth(outgoing, bearerToken)
+}
+
+func (c *Client) buildUpstreamURLForContext(ctx context.Context, path, rawQuery string) (string, error) {
+	baseURL := c.baseURL
+	if route, ok := UpstreamRouteFromContext(ctx); ok && strings.TrimSpace(route.BaseURL) != "" {
+		baseURL = strings.TrimRight(strings.TrimSpace(route.BaseURL), "/")
+	}
+	path = normalizeUpstreamPathForBaseURL(baseURL, path)
+	endpoint, err := url.JoinPath(baseURL, path)
 	if err != nil {
 		return "", err
 	}
@@ -580,6 +629,41 @@ func (c *Client) buildUpstreamURL(path, rawQuery string) (string, error) {
 		return endpoint, nil
 	}
 	return endpoint + "?" + rawQuery, nil
+}
+
+func normalizeUpstreamPathForBaseURL(baseURL, path string) string {
+	parsed, err := url.Parse(baseURL)
+	if err != nil {
+		return path
+	}
+	basePath := strings.TrimRight(parsed.Path, "/")
+	requestPath := "/" + strings.TrimLeft(path, "/")
+	if strings.HasSuffix(basePath, "/v1") && strings.HasPrefix(requestPath, "/v1/") {
+		return strings.TrimPrefix(requestPath, "/v1")
+	}
+	return path
+}
+
+func RewriteJSONModelForUpstreamRoute(ctx context.Context, body []byte) ([]byte, error) {
+	route, ok := UpstreamRouteFromContext(ctx)
+	if !ok || strings.TrimSpace(route.UpstreamModel) == "" {
+		return body, nil
+	}
+
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, fmt.Errorf("rewrite routed upstream model: %w", err)
+	}
+	encodedModel, err := json.Marshal(route.UpstreamModel)
+	if err != nil {
+		return nil, fmt.Errorf("rewrite routed upstream model: %w", err)
+	}
+	payload["model"] = encodedModel
+	rewritten, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("rewrite routed upstream model: %w", err)
+	}
+	return rewritten, nil
 }
 
 type releaseOnCloseReadCloser struct {

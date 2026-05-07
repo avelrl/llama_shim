@@ -318,7 +318,30 @@ This is a V3 compatibility-quality track. It should not claim exact hosted
 parity and should not promote flaky profile tasks into `codex-core` or
 `codex-real-upstream` until the profile has deterministic evidence.
 
-### 10. Ops and deployment expansion
+### 10. Upstream provider/model routing
+
+Status: `Implemented`. See
+[v3-upstream-provider-routing.md](v3-upstream-provider-routing.md).
+
+This track implements shim-owned provider/model routing for configured
+`/v1/responses`, Responses WebSocket `response.create`,
+`/v1/responses/input_tokens`, `/v1/responses/compact`,
+`/v1/chat/completions`, `/v1/models`, `/readyz`, and `/debug/capabilities`
+paths. Clients send request-body `model` as `provider/model`; the shim resolves
+the provider and configured model map, calls the selected OpenAI-compatible
+upstream with shim-owned credentials, and forwards the stripped model or
+configured `upstream_model`.
+
+Non-model resource routes such as `/v1/conversations`, stored response reads,
+files, vector stores, containers, and delete/list operations are not
+provider-routed. Model-less derived Responses requests never fall back to
+legacy `llama.base_url` while provider routing is enabled: supported helpers
+stay local, and helpers that need model context fail locally.
+
+The implemented slice has only an auth placeholder and no client authorization layer.
+It is not an OpenAI-hosted parity claim and does not widen the V2 contract.
+
+### 11. Ops and deployment expansion
 
 Status: `Partial`; Phase 0 inventory, the first bounded readiness-probe
 metrics slice, the Postgres/pgvector beta multi-instance devstack profile, and

@@ -8,7 +8,7 @@ Usage:
   CODEX_PROVIDER=gateway-shim \
   CODEX_API_KEY_ENV=GW_API_KEY \
   GW_API_KEY=sk-... \
-  CODEX_EVAL_MODELS="deepseek-v4-pro" \
+  CODEX_EVAL_MODELS="deepseek/deepseek-v4-pro" \
   bash ./scripts/codex-eval-auto.sh
 
 Runs the configured model(s) through a full local automation pass:

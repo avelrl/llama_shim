@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"llama_shim/internal/domain"
+	"llama_shim/internal/llama"
 	"llama_shim/internal/storage"
 	"llama_shim/internal/upstreamcompat"
 )
@@ -31,8 +32,30 @@ func (h *proxyHandler) forwardChatCompletions(w http.ResponseWriter, r *http.Req
 		WriteJSON(w, status, apiErrorPayload{Error: payload})
 		return
 	}
+	model := chatCompletionRequestModel(rawBody)
+	ctx, route, err := h.routeContextForModel(r.Context(), model)
+	if err != nil {
+		status, payload := MapError(r.Context(), h.logger, err)
+		WriteJSON(w, status, apiErrorPayload{Error: payload})
+		return
+	}
+	if route != nil {
+		r = r.WithContext(ctx)
+	}
 	sanitizeProfile := buildChatCompletionSanitizationProfile(rawBody)
-	upstreamBody, upstreamCompatibility, err := upstreamcompat.NormalizeChatCompletionRequest(rawBody, h.chatCompletionsCompatibility)
+	if route != nil {
+		sanitizeProfile.ModelOverride = route.PublicModel
+	}
+	upstreamInputBody := rawBody
+	if route != nil {
+		upstreamInputBody, err = llama.RewriteJSONModelForUpstreamRoute(r.Context(), rawBody)
+		if err != nil {
+			status, payload := MapError(r.Context(), h.logger, err)
+			WriteJSON(w, status, apiErrorPayload{Error: payload})
+			return
+		}
+	}
+	upstreamBody, upstreamCompatibility, err := upstreamcompat.NormalizeChatCompletionRequest(upstreamInputBody, h.chatCompletionsCompatibility)
 	if err != nil {
 		status, payload := MapError(r.Context(), h.logger, err)
 		WriteJSON(w, status, apiErrorPayload{Error: payload})
@@ -141,6 +164,7 @@ func (h *proxyHandler) forwardChatCompletions(w http.ResponseWriter, r *http.Req
 	}
 
 	copyResponseHeaders(w.Header(), response.Header)
+	w.Header().Del("Content-Length")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("X-Accel-Buffering", "no")
 	disableWriteDeadline(w)
@@ -179,6 +203,7 @@ func shouldSanitizeChatCompletionJSON(contentType string) bool {
 
 type chatCompletionSanitizationProfile struct {
 	NormalizeStructuredJSON bool
+	ModelOverride           string
 }
 
 func buildChatCompletionSanitizationProfile(rawRequest []byte) chatCompletionSanitizationProfile {
@@ -749,6 +774,16 @@ func validateChatCompletionsRequest(raw []byte) error {
 	return nil
 }
 
+func chatCompletionRequestModel(raw []byte) string {
+	var request struct {
+		Model string `json:"model"`
+	}
+	if err := json.Unmarshal(raw, &request); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(request.Model)
+}
+
 var disallowedChatCompletionFields = map[string]struct{}{
 	"provider_specific_fields": {},
 	"reasoning_content":        {},
@@ -829,6 +864,27 @@ func writeSanitizedChatCompletionJSONObject(dst io.Writer, decoder *json.Decoder
 		}
 		if _, drop := disallowedChatCompletionFields[key]; drop {
 			if err := skipJSONValue(decoder); err != nil {
+				return err
+			}
+			continue
+		}
+		if len(path) == 0 && key == "model" && strings.TrimSpace(profile.ModelOverride) != "" {
+			if err := skipJSONValue(decoder); err != nil {
+				return err
+			}
+			if !first {
+				if _, err := io.WriteString(dst, ","); err != nil {
+					return err
+				}
+			}
+			first = false
+			if err := writeJSONToken(dst, key); err != nil {
+				return err
+			}
+			if _, err := io.WriteString(dst, ":"); err != nil {
+				return err
+			}
+			if err := writeJSONToken(dst, profile.ModelOverride); err != nil {
 				return err
 			}
 			continue

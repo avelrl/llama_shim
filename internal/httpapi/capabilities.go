@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -87,9 +88,23 @@ type capabilityRuntimeConfig struct {
 	Compaction                           capabilityCompactionConfig          `json:"compaction"`
 	ConstrainedDecoding                  capabilityConstrainedDecodingConfig `json:"constrained_decoding"`
 	Codex                                capabilityCodexConfig               `json:"codex"`
+	UpstreamProviderRouting              capabilityUpstreamProviderRouting   `json:"upstream_provider_routing"`
 	Persistence                          capabilityPersistenceInfo           `json:"persistence"`
 	Retrieval                            capabilityRetrievalConfig           `json:"retrieval"`
 	Ops                                  capabilityOpsConfig                 `json:"ops"`
+}
+
+type capabilityUpstreamProviderRouting struct {
+	Enabled       bool                                  `json:"enabled"`
+	ProviderCount int                                   `json:"provider_count"`
+	ModelCount    int                                   `json:"model_count"`
+	Providers     []capabilityUpstreamProviderRoutingID `json:"providers"`
+}
+
+type capabilityUpstreamProviderRoutingID struct {
+	ID         string   `json:"id"`
+	ModelCount int      `json:"model_count"`
+	Models     []string `json:"models"`
 }
 
 type capabilityCompactionConfig struct {
@@ -301,8 +316,9 @@ func buildCapabilityManifest(ctx context.Context, deps RouterDeps) capabilityMan
 				UpstreamInputCompatibilityRules: len(deps.ResponsesCodexUpstreamInputCompatibility),
 				ModelMetadataModels:             len(deps.ResponsesCodexModelMetadata),
 			},
-			Persistence: capabilityPersistence(deps),
-			Retrieval:   capabilityRetrieval(deps),
+			UpstreamProviderRouting: upstreamProviderRoutingCapability(deps),
+			Persistence:             capabilityPersistence(deps),
+			Retrieval:               capabilityRetrieval(deps),
 			Ops: capabilityOpsConfig{
 				AuthMode: normalizedCapabilityAuthMode(authConfig.Mode),
 				RateLimit: capabilityRateLimit{
@@ -453,6 +469,44 @@ func compactionCapability(deps RouterDeps) capabilityCompactionConfig {
 			PreferUpstream: "proxy_first_or_local_state",
 			LocalOnly:      "local_subset",
 		},
+	}
+}
+
+func upstreamProviderRoutingCapability(deps RouterDeps) capabilityUpstreamProviderRouting {
+	if len(deps.LlamaProviders) == 0 {
+		return capabilityUpstreamProviderRouting{}
+	}
+	providers := make([]capabilityUpstreamProviderRoutingID, 0, len(deps.LlamaProviders))
+	modelCount := 0
+	for _, provider := range deps.LlamaProviders {
+		providerID := strings.TrimSpace(provider.ID)
+		if providerID == "" {
+			continue
+		}
+		models := make([]string, 0, len(provider.Models))
+		for _, model := range provider.Models {
+			suffix := strings.TrimSpace(model.Model)
+			if suffix == "" {
+				continue
+			}
+			models = append(models, providerID+"/"+suffix)
+		}
+		sort.Strings(models)
+		modelCount += len(models)
+		providers = append(providers, capabilityUpstreamProviderRoutingID{
+			ID:         providerID,
+			ModelCount: len(models),
+			Models:     models,
+		})
+	}
+	sort.Slice(providers, func(i, j int) bool {
+		return providers[i].ID < providers[j].ID
+	})
+	return capabilityUpstreamProviderRouting{
+		Enabled:       len(providers) > 0,
+		ProviderCount: len(providers),
+		ModelCount:    modelCount,
+		Providers:     providers,
 	}
 }
 
@@ -646,7 +700,12 @@ func collectCapabilityProbes(ctx context.Context, deps RouterDeps) capabilityPro
 	if deps.LlamaClient != nil {
 		upstreamCtx, cancel := context.WithTimeout(ctx, readyzUpstreamTimeout)
 		probeStart := time.Now()
-		err := deps.LlamaClient.CheckReadyWithBearerToken(upstreamCtx, deps.LlamaReadinessBearerToken)
+		var err error
+		if resolver := newUpstreamProviderResolver(deps.LlamaProviders); resolver.Enabled() {
+			err = resolver.CheckReady(upstreamCtx, deps.LlamaClient)
+		} else {
+			err = deps.LlamaClient.CheckReadyWithBearerToken(upstreamCtx, deps.LlamaReadinessBearerToken)
+		}
 		cancel()
 		if err != nil {
 			observeReadinessProbe(deps.Metrics, "capabilities", "llama", probeStart, err)

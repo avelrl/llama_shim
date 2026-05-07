@@ -91,8 +91,10 @@ type TestAppOptions struct {
 	CodeInterpreterMaxConcurrentRuns      int
 	DBPath                                string
 	LlamaBaseURL                          string
+	LlamaProviders                        []config.LlamaProvider
 	LlamaReadinessBearerToken             string
 	LlamaStartupCalibrationBearerToken    string
+	LlamaTimeout                          time.Duration
 	LlamaMaxConcurrentRequests            int
 	LlamaMaxQueueWait                     time.Duration
 	RetrievalConfig                       retrieval.Config
@@ -133,7 +135,11 @@ func NewTestAppWithOptions(t *testing.T, options TestAppOptions) *TestApp {
 	if llamaMaxConcurrentRequests <= 0 {
 		llamaMaxConcurrentRequests = 4
 	}
-	llamaClient := llama.NewClientWithOptions(llamaBaseURL, 200*time.Millisecond, llama.ClientOptions{
+	llamaTimeout := options.LlamaTimeout
+	if llamaTimeout <= 0 {
+		llamaTimeout = 200 * time.Millisecond
+	}
+	llamaClient := llama.NewClientWithOptions(llamaBaseURL, llamaTimeout, llama.ClientOptions{
 		MaxConcurrentRequests:         llamaMaxConcurrentRequests,
 		MaxQueueWait:                  options.LlamaMaxQueueWait,
 		ChatCompletionsCompatibility:  append([]upstreamcompat.ChatCompletionRule(nil), options.ChatCompletionsUpstreamCompatibility...),
@@ -174,6 +180,7 @@ func NewTestAppWithOptions(t *testing.T, options TestAppOptions) *TestApp {
 	server := httptest.NewServer(httpapi.NewRouter(httpapi.RouterDeps{
 		Logger:                    logger,
 		LlamaClient:               llamaClient,
+		LlamaProviders:            append([]config.LlamaProvider(nil), options.LlamaProviders...),
 		LlamaReadinessBearerToken: options.LlamaReadinessBearerToken,
 		ResponseService:           responseService,
 		ConversationService:       conversationService,

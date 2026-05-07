@@ -8,6 +8,15 @@ import (
 type contextKey string
 
 const forwardHeadersKey contextKey = "llama_forward_headers"
+const upstreamRouteKey contextKey = "llama_upstream_route"
+
+type UpstreamRoute struct {
+	ProviderID    string
+	PublicModel   string
+	UpstreamModel string
+	BaseURL       string
+	BearerToken   string
+}
 
 var forwardedRequestHeaders = []string{
 	"Authorization",
@@ -24,6 +33,18 @@ func ContextWithForwardHeaders(ctx context.Context, incoming http.Header) contex
 		return ctx
 	}
 	return context.WithValue(ctx, forwardHeadersKey, headers)
+}
+
+func ContextWithUpstreamRoute(ctx context.Context, route UpstreamRoute) context.Context {
+	if route.ProviderID == "" && route.BaseURL == "" && route.PublicModel == "" && route.UpstreamModel == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, upstreamRouteKey, route)
+}
+
+func UpstreamRouteFromContext(ctx context.Context) (UpstreamRoute, bool) {
+	route, ok := ctx.Value(upstreamRouteKey).(UpstreamRoute)
+	return route, ok
 }
 
 func applyContextHeaders(ctx context.Context, outgoing http.Header) {

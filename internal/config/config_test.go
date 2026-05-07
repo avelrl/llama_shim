@@ -155,7 +155,7 @@ responses:
           mode: stringify
     model_metadata:
       models:
-        - model: Kimi-K2.6
+        - model: svgun/kimi-k2.6
           display_name: Kimi K2.6
           context_window: 262144
           max_context_window: 262144
@@ -184,7 +184,7 @@ responses:
             mode: tokens
             limit: 12000
           base_instructions: Custom Codex instructions.
-        - model: deepseek-v4-pro
+        - model: deepseek/deepseek-v4-pro
           display_name: DeepSeek V4 Pro
           context_window: 1000000
           max_context_window: 1000000
@@ -192,7 +192,7 @@ responses:
           shell_type: shell_command
           apply_patch_tool_type: freeform
           input_modalities: [text]
-        - model: Qwen3.6-35B-A3B
+        - model: svgun/qwen-3.6
           display_name: Qwen3.6 35B A3B
           context_window: 262144
           max_context_window: 262144
@@ -322,8 +322,8 @@ responses:
 		{Model: "Kimi-*", Mode: "stringify"},
 	}, cfg.ResponsesCodexUpstreamInputCompatibility)
 	require.Len(t, cfg.ResponsesCodexModelMetadata, 3)
-	codexMetadata := requireCodexMetadata(t, cfg.ResponsesCodexModelMetadata, "Kimi-K2.6")
-	require.Equal(t, "Kimi-K2.6", codexMetadata.Model)
+	codexMetadata := requireCodexMetadata(t, cfg.ResponsesCodexModelMetadata, "svgun/kimi-k2.6")
+	require.Equal(t, "svgun/kimi-k2.6", codexMetadata.Model)
 	require.Equal(t, "Kimi K2.6", codexMetadata.DisplayName)
 	require.Equal(t, "OpenAI-compatible upstream routed through llama_shim.", codexMetadata.Description)
 	require.EqualValues(t, 262144, codexMetadata.ContextWindow)
@@ -353,13 +353,13 @@ responses:
 	require.Equal(t, "Available through llama_shim.", codexMetadata.AvailabilityNuxMessage)
 	require.Equal(t, config.ResponsesCodexTruncationPolicy{Mode: "tokens", Limit: 12000}, codexMetadata.TruncationPolicy)
 	require.Equal(t, "Custom Codex instructions.", codexMetadata.BaseInstructions)
-	deepseekMetadata := requireCodexMetadata(t, cfg.ResponsesCodexModelMetadata, "deepseek-v4-pro")
+	deepseekMetadata := requireCodexMetadata(t, cfg.ResponsesCodexModelMetadata, "deepseek/deepseek-v4-pro")
 	require.Equal(t, "DeepSeek V4 Pro", deepseekMetadata.DisplayName)
 	require.EqualValues(t, 1000000, deepseekMetadata.ContextWindow)
 	require.EqualValues(t, 1000000, deepseekMetadata.MaxContextWindow)
 	require.EqualValues(t, 90, deepseekMetadata.EffectiveContextWindowPercent)
 	require.Equal(t, "freeform", deepseekMetadata.ApplyPatchToolType)
-	qwenMetadata := requireCodexMetadata(t, cfg.ResponsesCodexModelMetadata, "Qwen3.6-35B-A3B")
+	qwenMetadata := requireCodexMetadata(t, cfg.ResponsesCodexModelMetadata, "svgun/qwen-3.6")
 	require.Equal(t, "Qwen3.6 35B A3B", qwenMetadata.DisplayName)
 	require.EqualValues(t, 262144, qwenMetadata.ContextWindow)
 	require.EqualValues(t, 262144, qwenMetadata.MaxContextWindow)
@@ -1074,6 +1074,80 @@ responses:
 	_, err := config.Load(configPath)
 	require.Error(t, err)
 	require.ErrorContains(t, err, "parse responses.computer.backend")
+}
+
+func TestLoadParsesLlamaProviders(t *testing.T) {
+	disableDotEnv(t)
+	t.Setenv("QWEN_API_KEY", "qwen-secret")
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	writeFile(t, configPath, `
+llama:
+  providers:
+    - id: qwen
+      base_url: http://127.0.0.1:8081/
+      bearer_token_env: QWEN_API_KEY
+      models:
+        - model: coder
+          upstream_model: Qwen3.6-Coder
+        - model: local/gemma
+    - id: ollama
+      base_url: http://127.0.0.1:11434/v1
+      models:
+        - model: gemma4
+`)
+
+	cfg, err := config.Load(configPath)
+	require.NoError(t, err)
+	require.Len(t, cfg.LlamaProviders, 2)
+	require.Equal(t, "qwen", cfg.LlamaProviders[0].ID)
+	require.Equal(t, "http://127.0.0.1:8081", cfg.LlamaProviders[0].BaseURL)
+	require.Equal(t, "QWEN_API_KEY", cfg.LlamaProviders[0].BearerTokenEnv)
+	require.Equal(t, "qwen-secret", cfg.LlamaProviders[0].BearerToken)
+	require.Equal(t, "coder", cfg.LlamaProviders[0].Models[0].Model)
+	require.Equal(t, "Qwen3.6-Coder", cfg.LlamaProviders[0].Models[0].UpstreamModel)
+	require.Equal(t, "local/gemma", cfg.LlamaProviders[0].Models[1].Model)
+	require.Equal(t, "local/gemma", cfg.LlamaProviders[0].Models[1].UpstreamModel)
+	require.Equal(t, "ollama", cfg.LlamaProviders[1].ID)
+	require.Empty(t, cfg.LlamaProviders[1].BearerToken)
+}
+
+func TestLoadRejectsDuplicateLlamaProviders(t *testing.T) {
+	disableDotEnv(t)
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	writeFile(t, configPath, `
+llama:
+  providers:
+    - id: qwen
+      base_url: http://127.0.0.1:8081
+      models:
+        - model: coder
+    - id: qwen
+      base_url: http://127.0.0.1:8082
+      models:
+        - model: coder
+`)
+
+	_, err := config.Load(configPath)
+	require.Error(t, err)
+	require.ErrorContains(t, err, `duplicate provider id "qwen"`)
+}
+
+func TestLoadRejectsDuplicateLlamaProviderModels(t *testing.T) {
+	disableDotEnv(t)
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	writeFile(t, configPath, `
+llama:
+  providers:
+    - id: qwen
+      base_url: http://127.0.0.1:8081
+      models:
+        - model: coder
+        - model: coder
+`)
+
+	_, err := config.Load(configPath)
+	require.Error(t, err)
+	require.ErrorContains(t, err, `duplicate model "coder" for provider "qwen"`)
 }
 
 func TestLoadRejectsUnsupportedResponsesUpstreamTransport(t *testing.T) {

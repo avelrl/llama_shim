@@ -150,6 +150,7 @@ func main() {
 		Handler: httpapi.NewRouter(httpapi.RouterDeps{
 			Logger:                    logger,
 			LlamaClient:               llamaClient,
+			LlamaProviders:            append([]config.LlamaProvider(nil), cfg.LlamaProviders...),
 			LlamaReadinessBearerToken: cfg.LlamaReadinessBearerToken,
 			ResponseService:           responseService,
 			ConversationService:       conversationService,
@@ -206,6 +207,7 @@ func main() {
 		"shim listening",
 		"addr", cfg.Addr,
 		"llama_base_url", cfg.LlamaBaseURL,
+		"llama_provider_count", len(cfg.LlamaProviders),
 		"llama_readiness_bearer_token_configured", cfg.LlamaReadinessBearerToken != "",
 		"llama_timeout", cfg.LlamaTimeout,
 		"llama_max_concurrent_requests", cfg.LlamaMaxConcurrentRequests,

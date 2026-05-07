@@ -27,6 +27,7 @@ type Config struct {
 	StorageResponseReplayArtifactsMaxAge           time.Duration
 	StorageResponseReplayArtifactsMaxResponses     int
 	LlamaBaseURL                                   string
+	LlamaProviders                                 []LlamaProvider
 	LlamaReadinessBearerToken                      string
 	LlamaTimeout                                   time.Duration
 	LlamaMaxConcurrentRequests                     int
@@ -123,6 +124,19 @@ type Config struct {
 	ResponsesCodeInterpreterInputFileURLAllowHosts []string
 	ResponsesCodeInterpreterCleanupInterval        time.Duration
 	ConfigFile                                     string
+}
+
+type LlamaProvider struct {
+	ID             string               `mapstructure:"id"`
+	BaseURL        string               `mapstructure:"base_url"`
+	BearerTokenEnv string               `mapstructure:"bearer_token_env"`
+	BearerToken    string               `mapstructure:"-"`
+	Models         []LlamaProviderModel `mapstructure:"models"`
+}
+
+type LlamaProviderModel struct {
+	Model         string `mapstructure:"model"`
+	UpstreamModel string `mapstructure:"upstream_model"`
 }
 
 type ResponsesUpstreamToolCompatibilityRule struct {
@@ -285,6 +299,11 @@ func Load(configPath string) (Config, error) {
 			cfg.ResponsesCodeInterpreterBackend = ResponsesCodeInterpreterBackendDisabled
 		}
 	}
+	llamaProviders, err := parseLlamaProviders(v)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.LlamaProviders = llamaProviders
 	chatCompletionsUpstreamCompatibility, err := parseChatCompletionsUpstreamCompatibility(v)
 	if err != nil {
 		return Config{}, err
@@ -713,6 +732,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("storage.retention.response_replay_artifacts.max_age", "0s")
 	v.SetDefault("storage.retention.response_replay_artifacts.max_responses", "0")
 	v.SetDefault("llama.base_url", "http://127.0.0.1:8081")
+	v.SetDefault("llama.providers", []map[string]any{})
 	v.SetDefault("llama.readiness_bearer_token", "")
 	v.SetDefault("llama.timeout", "60s")
 	v.SetDefault("llama.max_concurrent_requests", "4")
@@ -920,6 +940,60 @@ func parseConstrainedDecodingBackend(value string) error {
 	default:
 		return strconv.ErrSyntax
 	}
+}
+
+func parseLlamaProviders(v *viper.Viper) ([]LlamaProvider, error) {
+	var providers []LlamaProvider
+	if err := v.UnmarshalKey("llama.providers", &providers); err != nil {
+		return nil, fmt.Errorf("parse llama.providers: %w", err)
+	}
+
+	seenProviders := make(map[string]struct{}, len(providers))
+	for providerIdx := range providers {
+		provider := &providers[providerIdx]
+		provider.ID = strings.TrimSpace(provider.ID)
+		provider.BaseURL = strings.TrimRight(strings.TrimSpace(provider.BaseURL), "/")
+		provider.BearerTokenEnv = strings.TrimSpace(provider.BearerTokenEnv)
+		if provider.ID == "" {
+			return nil, fmt.Errorf("parse llama.providers: id is required")
+		}
+		if strings.Contains(provider.ID, "/") || strings.ContainsAny(provider.ID, " \t\r\n") {
+			return nil, fmt.Errorf("parse llama.providers: id %q must not contain slashes or whitespace", provider.ID)
+		}
+		if _, exists := seenProviders[provider.ID]; exists {
+			return nil, fmt.Errorf("parse llama.providers: duplicate provider id %q", provider.ID)
+		}
+		seenProviders[provider.ID] = struct{}{}
+		if provider.BaseURL == "" {
+			return nil, fmt.Errorf("parse llama.providers: base_url is required for provider %q", provider.ID)
+		}
+		if len(provider.Models) == 0 {
+			return nil, fmt.Errorf("parse llama.providers: provider %q must configure at least one model", provider.ID)
+		}
+		if provider.BearerTokenEnv != "" {
+			provider.BearerToken = strings.TrimSpace(os.Getenv(provider.BearerTokenEnv))
+		}
+		seenModels := make(map[string]struct{}, len(provider.Models))
+		for modelIdx := range provider.Models {
+			model := &provider.Models[modelIdx]
+			model.Model = strings.TrimSpace(model.Model)
+			model.UpstreamModel = strings.TrimSpace(model.UpstreamModel)
+			if model.Model == "" {
+				return nil, fmt.Errorf("parse llama.providers: model is required for provider %q", provider.ID)
+			}
+			if strings.HasPrefix(model.Model, "/") || strings.HasSuffix(model.Model, "/") || strings.ContainsAny(model.Model, " \t\r\n") {
+				return nil, fmt.Errorf("parse llama.providers: model %q for provider %q must not have empty slash parts or whitespace", model.Model, provider.ID)
+			}
+			if _, exists := seenModels[model.Model]; exists {
+				return nil, fmt.Errorf("parse llama.providers: duplicate model %q for provider %q", model.Model, provider.ID)
+			}
+			seenModels[model.Model] = struct{}{}
+			if model.UpstreamModel == "" {
+				model.UpstreamModel = model.Model
+			}
+		}
+	}
+	return providers, nil
 }
 
 func parseChatCompletionsUpstreamCompatibility(v *viper.Viper) ([]ChatCompletionsUpstreamCompatibilityRule, error) {

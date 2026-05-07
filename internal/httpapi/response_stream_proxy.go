@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	"llama_shim/internal/domain"
+	"llama_shim/internal/llama"
 	"llama_shim/internal/service"
 )
 
@@ -26,17 +27,22 @@ const (
 )
 
 func (h *responseHandler) proxyCreateStream(w http.ResponseWriter, r *http.Request, request CreateResponseRequest, requestJSON string, rawFields map[string]json.RawMessage, streamOptions responseStreamOptions) {
-	upstreamBody, plan, err := remapCustomToolsPayloadWithCompatibility(rawFields, h.customToolsMode, h.codexCompatibilityEnabled, h.upstreamToolCompatibility)
+	upstreamFields, err := upstreamRawFieldsForContext(r.Context(), rawFields)
 	if err != nil {
 		h.writeError(w, r, err)
 		return
 	}
-	upstreamBody, err = h.applyConfiguredCodexUpstreamInputCompatibility(r.Context(), rawFields, upstreamBody)
+	upstreamBody, plan, err := remapCustomToolsPayloadWithCompatibility(upstreamFields, h.customToolsMode, h.codexCompatibilityEnabled, h.upstreamToolCompatibility)
 	if err != nil {
 		h.writeError(w, r, err)
 		return
 	}
-	logCustomToolTransport(r.Context(), h.logger, rawFields, upstreamBody, plan, h.codexCompatibilityEnabled)
+	upstreamBody, err = h.applyConfiguredCodexUpstreamInputCompatibility(r.Context(), upstreamFields, upstreamBody)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	logCustomToolTransport(r.Context(), h.logger, upstreamFields, upstreamBody, plan, h.codexCompatibilityEnabled)
 
 	resp, err := h.proxyResponseRequest(r, upstreamBody)
 	if err != nil {
@@ -56,7 +62,7 @@ func (h *responseHandler) proxyCreateStream(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if retryWithBridge {
-		upstreamBody, plan, err = h.buildBridgedProxyResponsesBody(r.Context(), rawFields)
+		upstreamBody, plan, err = h.buildBridgedProxyResponsesBody(r.Context(), upstreamFields)
 		if err != nil {
 			h.writeError(w, r, err)
 			return
@@ -133,6 +139,7 @@ func (h *responseHandler) proxyCreateStream(w http.ResponseWriter, r *http.Reque
 			h.writeError(w, r, err)
 			return
 		}
+		response = restoreRoutedModelInResponse(r.Context(), response)
 		if ok {
 			if _, err := h.service.SaveExternalResponse(r.Context(), prepared, input, response); err != nil {
 				h.logger.ErrorContext(r.Context(), "shadow store failed", "request_id", RequestIDFromContext(r.Context()), "err", err)
@@ -141,6 +148,7 @@ func (h *responseHandler) proxyCreateStream(w http.ResponseWriter, r *http.Reque
 		if hydratedBody, hydrateErr := domain.HydrateResponseContinuationJSON(responseBody, requestJSON); hydrateErr == nil {
 			responseBody = hydratedBody
 		}
+		responseBody = restoreRoutedModelInResponseBody(r.Context(), responseBody)
 		if err := writeCompletedResponseAsSSE(r.Context(), h.logger, w, responseBody, plan, streamOptions.IncludeObfuscation); err != nil && !shouldIgnoreStreamProxyError(err) {
 			h.logger.WarnContext(r.Context(), "stream proxy failed", "request_id", RequestIDFromContext(r.Context()), "err", err)
 		}
@@ -158,6 +166,7 @@ func (h *responseHandler) proxyCreateStream(w http.ResponseWriter, r *http.Reque
 			h.writeError(w, r, err)
 			return
 		}
+		response = restoreRoutedModelInResponse(r.Context(), response)
 		if ok {
 			if _, err := h.service.SaveExternalResponse(r.Context(), prepared, input, response); err != nil {
 				h.logger.ErrorContext(r.Context(), "shadow store failed", "request_id", RequestIDFromContext(r.Context()), "err", err)
@@ -166,6 +175,7 @@ func (h *responseHandler) proxyCreateStream(w http.ResponseWriter, r *http.Reque
 		if hydratedBody, hydrateErr := domain.HydrateResponseContinuationJSON(responseBody, requestJSON); hydrateErr == nil {
 			responseBody = hydratedBody
 		}
+		responseBody = restoreRoutedModelInResponseBody(r.Context(), responseBody)
 		if err := writeCompletedResponseAsSSE(r.Context(), h.logger, w, responseBody, plan, streamOptions.IncludeObfuscation); err != nil && !shouldIgnoreStreamProxyError(err) {
 			h.logger.WarnContext(r.Context(), "stream proxy failed", "request_id", RequestIDFromContext(r.Context()), "err", err)
 		}
@@ -180,6 +190,7 @@ func (h *responseHandler) proxyCreateStream(w http.ResponseWriter, r *http.Reque
 				return err
 			}
 			response = annotateResponseCustomToolMetadata(response, plan)
+			response = restoreRoutedModelInResponse(r.Context(), response)
 			if response.OutputText == "" && len(response.Output) == 0 {
 				return nil
 			}
@@ -219,17 +230,22 @@ func (h *responseHandler) createStreamViaUpstream(w http.ResponseWriter, r *http
 		return
 	}
 
-	upstreamBody, plan, err := buildUpstreamResponsesBodyWithCompatibility(rawFields, prepared.ContextItems, prepared.NormalizedInput, prepared.ToolCallRefs, h.customToolsMode, h.codexCompatibilityEnabled, h.upstreamToolCompatibility)
+	upstreamFields, err := upstreamRawFieldsForContext(r.Context(), rawFields)
 	if err != nil {
 		h.writeError(w, r, err)
 		return
 	}
-	upstreamBody, err = h.applyConfiguredCodexUpstreamInputCompatibility(r.Context(), rawFields, upstreamBody)
+	upstreamBody, plan, err := buildUpstreamResponsesBodyWithCompatibility(upstreamFields, prepared.ContextItems, prepared.NormalizedInput, prepared.ToolCallRefs, h.customToolsMode, h.codexCompatibilityEnabled, h.upstreamToolCompatibility)
 	if err != nil {
 		h.writeError(w, r, err)
 		return
 	}
-	logCustomToolTransport(r.Context(), h.logger, rawFields, upstreamBody, plan, h.codexCompatibilityEnabled)
+	upstreamBody, err = h.applyConfiguredCodexUpstreamInputCompatibility(r.Context(), upstreamFields, upstreamBody)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	logCustomToolTransport(r.Context(), h.logger, upstreamFields, upstreamBody, plan, h.codexCompatibilityEnabled)
 
 	resp, err := h.proxyResponseRequest(r, upstreamBody)
 	if err != nil {
@@ -249,7 +265,7 @@ func (h *responseHandler) createStreamViaUpstream(w http.ResponseWriter, r *http
 		return
 	}
 	if retryWithBridge {
-		upstreamBody, plan, err = h.buildBridgedUpstreamResponsesBody(r.Context(), rawFields, prepared.ContextItems, prepared.NormalizedInput, prepared.ToolCallRefs)
+		upstreamBody, plan, err = h.buildBridgedUpstreamResponsesBody(r.Context(), upstreamFields, prepared.ContextItems, prepared.NormalizedInput, prepared.ToolCallRefs)
 		if err != nil {
 			h.writeError(w, r, err)
 			return
@@ -340,12 +356,14 @@ func (h *responseHandler) createStreamViaUpstream(w http.ResponseWriter, r *http
 			h.writeError(w, r, err)
 			return
 		}
+		response = restoreRoutedModelInResponse(r.Context(), response)
 		if _, err := h.service.SaveExternalResponse(r.Context(), prepared, input, response); err != nil {
 			h.logger.ErrorContext(r.Context(), "upstream local-state stream failed", "request_id", RequestIDFromContext(r.Context()), "err", err)
 		}
 		if hydratedBody, hydrateErr := domain.HydrateResponseContinuationJSON(responseBody, requestJSON); hydrateErr == nil {
 			responseBody = hydratedBody
 		}
+		responseBody = restoreRoutedModelInResponseBody(r.Context(), responseBody)
 		if err := writeCompletedResponseAsSSE(r.Context(), h.logger, w, responseBody, plan, streamOptions.IncludeObfuscation); err != nil && !shouldIgnoreStreamProxyError(err) {
 			h.logger.WarnContext(r.Context(), "upstream local-state stream failed", "request_id", RequestIDFromContext(r.Context()), "err", err)
 		}
@@ -363,12 +381,14 @@ func (h *responseHandler) createStreamViaUpstream(w http.ResponseWriter, r *http
 			h.writeError(w, r, err)
 			return
 		}
+		response = restoreRoutedModelInResponse(r.Context(), response)
 		if _, err := h.service.SaveExternalResponse(r.Context(), prepared, input, response); err != nil {
 			h.logger.ErrorContext(r.Context(), "upstream local-state stream failed", "request_id", RequestIDFromContext(r.Context()), "err", err)
 		}
 		if hydratedBody, hydrateErr := domain.HydrateResponseContinuationJSON(responseBody, requestJSON); hydrateErr == nil {
 			responseBody = hydratedBody
 		}
+		responseBody = restoreRoutedModelInResponseBody(r.Context(), responseBody)
 		if err := writeCompletedResponseAsSSE(r.Context(), h.logger, w, responseBody, plan, streamOptions.IncludeObfuscation); err != nil && !shouldIgnoreStreamProxyError(err) {
 			h.logger.WarnContext(r.Context(), "upstream local-state stream failed", "request_id", RequestIDFromContext(r.Context()), "err", err)
 		}
@@ -381,6 +401,7 @@ func (h *responseHandler) createStreamViaUpstream(w http.ResponseWriter, r *http
 			return err
 		}
 		response = annotateResponseCustomToolMetadata(response, plan)
+		response = restoreRoutedModelInResponse(r.Context(), response)
 		if response.OutputText == "" && len(response.Output) == 0 {
 			return nil
 		}
@@ -397,6 +418,11 @@ func (h *responseHandler) createStreamViaUpstream(w http.ResponseWriter, r *http
 
 func (h *responseHandler) proxyResponseRequest(r *http.Request, body []byte) (*http.Response, error) {
 	ctx := r.Context()
+	var err error
+	body, err = llama.RewriteJSONModelForUpstreamRoute(ctx, body)
+	if err != nil {
+		return nil, err
+	}
 	started := time.Now()
 	logAttrs := summarizeResponsesRequestForLog(body)
 	if h.logger != nil && h.logger.Enabled(ctx, slog.LevelDebug) {
@@ -521,6 +547,7 @@ func proxyResponsesStream(ctx context.Context, logger *slog.Logger, w http.Respo
 	}
 
 	copyResponseHeaders(w.Header(), resp.Header)
+	w.Header().Del("Content-Length")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("X-Accel-Buffering", "no")
 	disableWriteDeadline(w)
@@ -582,6 +609,7 @@ func proxyResponsesStream(ctx context.Context, logger *slog.Logger, w http.Respo
 }
 
 func writeCompletedResponseAsSSE(ctx context.Context, logger *slog.Logger, w http.ResponseWriter, rawResponse []byte, plan customToolTransportPlan, includeObfuscation bool) error {
+	rawResponse = restoreRoutedModelInResponseBody(ctx, rawResponse)
 	headers := w.Header()
 	headers.Set("Content-Type", "text/event-stream")
 	headers.Set("Cache-Control", "no-cache")
@@ -799,6 +827,7 @@ type responseStreamEventProxy struct {
 	responseID                   string
 	itemID                       string
 	model                        string
+	modelOverride                string
 	outputAnnotations            []any
 	outputText                   strings.Builder
 	replayArtifacts              []domain.ResponseReplayArtifact
@@ -806,12 +835,17 @@ type responseStreamEventProxy struct {
 }
 
 func newResponseStreamEventProxy(ctx context.Context, logger *slog.Logger, plan customToolTransportPlan, requestJSON string, onCompleted func([]byte, []domain.ResponseReplayArtifact) error) *responseStreamEventProxy {
+	modelOverride := ""
+	if route, ok := llama.UpstreamRouteFromContext(ctx); ok {
+		modelOverride = strings.TrimSpace(route.PublicModel)
+	}
 	return &responseStreamEventProxy{
 		ctx:             ctx,
 		logger:          logger,
 		plan:            plan,
 		requestJSON:     requestJSON,
 		onCompleted:     onCompleted,
+		modelOverride:   modelOverride,
 		customItemByID:  make(map[string]customToolDescriptor),
 		addedItemIDs:    make(map[string]struct{}),
 		doneItemIDs:     make(map[string]struct{}),
@@ -915,6 +949,14 @@ func (p *responseStreamEventProxy) flushEvent(w io.Writer) error {
 func (p *responseStreamEventProxy) remapEvent(eventType string, payload map[string]any) (string, map[string]any) {
 	if eventType == "" {
 		eventType = strings.TrimSpace(asString(payload["type"]))
+	}
+	if p.modelOverride != "" {
+		if responsePayload, ok := payload["response"].(map[string]any); ok {
+			responsePayload["model"] = p.modelOverride
+		}
+		if _, exists := payload["model"]; exists {
+			payload["model"] = p.modelOverride
+		}
 	}
 	outputRemapBridge := p.plan.customToolOutputRemapBridge()
 
@@ -1579,7 +1621,12 @@ func (p *responseStreamEventProxy) observeTextStreamEvent(eventType string, payl
 
 func (p *responseStreamEventProxy) captureResponseEnvelope(responsePayload map[string]any) {
 	p.responseID = fallbackString(strings.TrimSpace(asString(responsePayload["id"])), p.responseID)
-	p.model = fallbackString(strings.TrimSpace(asString(responsePayload["model"])), p.model)
+	if p.modelOverride != "" {
+		responsePayload["model"] = p.modelOverride
+		p.model = p.modelOverride
+	} else {
+		p.model = fallbackString(strings.TrimSpace(asString(responsePayload["model"])), p.model)
+	}
 	if output, ok := responsePayload["output"].([]any); ok {
 		for _, entry := range output {
 			item, ok := entry.(map[string]any)
@@ -1618,7 +1665,11 @@ func (p *responseStreamEventProxy) captureResponseEnvelope(responsePayload map[s
 
 func (p *responseStreamEventProxy) ensureSyntheticIDs(payload map[string]any) {
 	if payload != nil {
-		p.model = fallbackString(strings.TrimSpace(asString(payload["model"])), p.model)
+		if p.modelOverride != "" {
+			p.model = p.modelOverride
+		} else {
+			p.model = fallbackString(strings.TrimSpace(asString(payload["model"])), p.model)
+		}
 		p.responseID = fallbackString(strings.TrimSpace(asString(payload["response_id"])), p.responseID)
 		itemID := strings.TrimSpace(asString(payload["item_id"]))
 		if p.responseID == "" && looksLikeResponseID(itemID) {
@@ -1640,10 +1691,14 @@ func (p *responseStreamEventProxy) ensureSyntheticIDs(payload map[string]any) {
 }
 
 func (p *responseStreamEventProxy) syntheticResponseEnvelope(final bool) map[string]any {
+	model := p.model
+	if p.modelOverride != "" {
+		model = p.modelOverride
+	}
 	response := map[string]any{
 		"id":          p.responseID,
 		"object":      "response",
-		"model":       p.model,
+		"model":       model,
 		"output_text": "",
 		"output":      nil,
 	}

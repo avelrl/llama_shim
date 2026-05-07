@@ -24,9 +24,14 @@ type proxyHandler struct {
 	serviceLimits                   ServiceLimits
 	chatCompletionsStoreWhenOmitted bool
 	chatCompletionsCompatibility    upstreamcompat.ChatCompletionOptions
+	upstreamProviderResolver        *upstreamProviderResolver
 }
 
-func newProxyHandler(logger *slog.Logger, client *llama.Client, store proxyStore, serviceLimits ServiceLimits, chatCompletionsStoreWhenOmitted bool, chatCompletionsCompatibility []upstreamcompat.ChatCompletionRule) *proxyHandler {
+func newProxyHandler(logger *slog.Logger, client *llama.Client, store proxyStore, serviceLimits ServiceLimits, chatCompletionsStoreWhenOmitted bool, chatCompletionsCompatibility []upstreamcompat.ChatCompletionRule, upstreamProviderResolvers ...*upstreamProviderResolver) *proxyHandler {
+	var upstreamProviderResolver *upstreamProviderResolver
+	if len(upstreamProviderResolvers) > 0 {
+		upstreamProviderResolver = upstreamProviderResolvers[0]
+	}
 	return &proxyHandler{
 		logger:                          logger,
 		client:                          client,
@@ -34,6 +39,7 @@ func newProxyHandler(logger *slog.Logger, client *llama.Client, store proxyStore
 		serviceLimits:                   normalizeServiceLimits(serviceLimits),
 		chatCompletionsStoreWhenOmitted: chatCompletionsStoreWhenOmitted,
 		chatCompletionsCompatibility:    upstreamcompat.ChatCompletionOptions{Rules: append([]upstreamcompat.ChatCompletionRule(nil), chatCompletionsCompatibility...)},
+		upstreamProviderResolver:        upstreamProviderResolver,
 	}
 }
 

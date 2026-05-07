@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"llama_shim/internal/config"
 	"llama_shim/internal/imagegen"
 	"llama_shim/internal/llama"
 	"llama_shim/internal/retrieval"
@@ -18,6 +19,7 @@ import (
 type RouterDeps struct {
 	Logger                                   *slog.Logger
 	LlamaClient                              *llama.Client
+	LlamaProviders                           []config.LlamaProvider
 	LlamaReadinessBearerToken                string
 	ResponseService                          *service.ResponseService
 	ConversationService                      *service.ConversationService
@@ -55,6 +57,8 @@ type RouterDeps struct {
 }
 
 const readyzUpstreamTimeout = 2 * time.Second
+const readyzProviderTimeout = 5 * time.Second
+const modelsUpstreamTimeout = 5 * time.Second
 
 func NewRouter(deps RouterDeps) http.Handler {
 	authConfig, err := normalizeStaticBearerAuthConfig(deps.Auth)
@@ -69,8 +73,9 @@ func NewRouter(deps RouterDeps) http.Handler {
 	serviceLimits := normalizeServiceLimits(deps.ServiceLimits)
 	retrievalGate := newConcurrencyGate("retrieval_search", serviceLimits.RetrievalMaxConcurrentSearches, deps.Metrics)
 	codeInterpreterGate := newConcurrencyGate("local_code_interpreter", serviceLimits.CodeInterpreterMaxConcurrentRuns, deps.Metrics)
+	upstreamProviderResolver := newUpstreamProviderResolver(deps.LlamaProviders)
 
-	proxyHandler := newProxyHandler(deps.Logger, deps.LlamaClient, deps.Store, serviceLimits, deps.ChatCompletionsStoreWhenOmitted, deps.ChatCompletionsUpstreamCompatibility)
+	proxyHandler := newProxyHandler(deps.Logger, deps.LlamaClient, deps.Store, serviceLimits, deps.ChatCompletionsStoreWhenOmitted, deps.ChatCompletionsUpstreamCompatibility, upstreamProviderResolver)
 	responseHandler := newResponseHandler(
 		deps.Logger,
 		deps.ResponseService,
@@ -127,9 +132,19 @@ func NewRouter(deps RouterDeps) http.Handler {
 			WriteError(w, http.StatusServiceUnavailable, "service_unavailable", "llama backend is not ready", "")
 			return
 		}
-		upstreamCtx, cancel := context.WithTimeout(r.Context(), readyzUpstreamTimeout)
+		upstreamTimeout := readyzUpstreamTimeout
+		if upstreamProviderResolver.Enabled() {
+			upstreamTimeout = readyzProviderTimeout
+		}
+		upstreamCtx, cancel := context.WithTimeout(r.Context(), upstreamTimeout)
 		probeStart = time.Now()
-		if err := deps.LlamaClient.CheckReadyWithBearerToken(upstreamCtx, deps.LlamaReadinessBearerToken); err != nil {
+		var err error
+		if upstreamProviderResolver.Enabled() {
+			err = upstreamProviderResolver.CheckReady(upstreamCtx, deps.LlamaClient)
+		} else {
+			err = deps.LlamaClient.CheckReadyWithBearerToken(upstreamCtx, deps.LlamaReadinessBearerToken)
+		}
+		if err != nil {
 			cancel()
 			observeReadinessProbe(deps.Metrics, "readyz", "llama", probeStart, err)
 			WriteError(w, http.StatusServiceUnavailable, "service_unavailable", "llama backend is not ready", "")
@@ -198,6 +213,12 @@ func NewRouter(deps RouterDeps) http.Handler {
 			if writeCodexModels(w, deps.ResponsesCodexModelMetadata) {
 				return
 			}
+		}
+		if r.Method == http.MethodGet && upstreamProviderResolver.Enabled() {
+			modelsCtx, cancel := context.WithTimeout(r.Context(), modelsUpstreamTimeout)
+			defer cancel()
+			upstreamProviderResolver.WriteModels(modelsCtx, w, deps.LlamaClient)
+			return
 		}
 		proxyHandler.forward(w, r)
 	})

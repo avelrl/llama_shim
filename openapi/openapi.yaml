@@ -58,7 +58,10 @@ paths:
       description: |
         Returns `200` only when the active storage backend is reachable, the
         configured upstream llama-compatible backend responds successfully to
-        `GET /v1/models` with a models-list payload, and, when
+        `GET /v1/models` with a models-list payload. When
+        `llama.providers` is configured, the shim checks each configured
+        provider with that provider's base URL and redacted bearer token
+        instead of using the legacy `llama.base_url` readiness token. When
         `retrieval.index.backend=sqlite_vec` or `pgvector` is enabled with a
         readiness-aware embedder backend, the local retrieval embedder is also
         reachable. When `responses.web_search.backend=searxng` is
@@ -90,6 +93,74 @@ paths:
                   param: null
                   code: null
         "405":
+          $ref: "#/components/responses/ErrorResponse"
+  /v1/models:
+    get:
+      tags: [ops]
+      summary: List models
+      x-shim-status: partial
+      description: |
+        Legacy behavior proxies OpenAI-compatible `GET /v1/models` to the
+        single upstream configured by `llama.base_url`.
+
+        When `llama.providers` is configured, this route is shim-owned and
+        returns live-confirmed configured public model IDs in `provider/model`
+        form. The shim queries each provider's upstream `/v1/models` with that
+        provider's credentials and lists a public alias only when its resolved
+        `upstream_model` is present. Raw upstream model IDs are not exposed or
+        merged into the public catalog.
+
+        When Codex sends the shim-specific `client_version` query parameter,
+        configured Codex model metadata can still take precedence for the
+        Codex model catalog response.
+      parameters:
+        - name: client_version
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Shim/Codex compatibility query that can trigger the configured Codex model metadata catalog.
+      responses:
+        "200":
+          description: OpenAI-compatible model list or shim-configured live-confirmed provider model list.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [object, data]
+                properties:
+                  object:
+                    type: string
+                    enum: [list]
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, object, created, owned_by]
+                      properties:
+                        id:
+                          type: string
+                          description: OpenAI model ID on legacy proxy paths, or configured public `provider/model` ID when `llama.providers` is enabled.
+                        object:
+                          type: string
+                          enum: [model]
+                        created:
+                          type: integer
+                          format: int64
+                        owned_by:
+                          type: string
+              example:
+                object: list
+                data:
+                  - id: qwen/coder
+                    object: model
+                    created: 0
+                    owned_by: provider:qwen
+        "401":
+          $ref: "#/components/responses/ErrorResponse"
+        "405":
+          $ref: "#/components/responses/ErrorResponse"
+        "503":
           $ref: "#/components/responses/ErrorResponse"
   /metrics:
     get:
@@ -209,6 +280,13 @@ paths:
         validation failures are returned as WebSocket `error` events where the
         connection can safely remain open.
 
+        When `llama.providers` is configured, `response.create` must include a
+        configured public `provider/model` ID. The shim validates this for both
+        generated turns and `generate:false` warmups. Generated turns route
+        upstream work through the internal HTTP/SSE Responses create path;
+        `generate:false` warmups stay local but still store the public model
+        alias.
+
         This is not exact hosted transport parity: upstream WebSocket proxying,
         exact hosted close codes, exact connection quota semantics, and
         Realtime API WebSocket behavior are out of scope.
@@ -234,6 +312,9 @@ paths:
         - core fields such as `model`, `input`, `store`, `stream`,
           `previous_response_id`, `conversation`, and `instructions` are owned
           by the shim
+        - when `llama.providers` is configured, `model` must be a configured
+          public `provider/model` ID; routed upstream calls use the provider
+          base URL, provider bearer token, and configured `upstream_model`
         - `metadata` is validated and preserved on shim-local responses
         - shim-local structured outputs support `text.format.type=text`,
           `json_object`, and a documented `json_schema` subset
@@ -737,6 +818,13 @@ paths:
           tokenization
         - requests that do not depend on shim-local state may be proxied
           upstream unchanged for exact provider-native counting
+        - when `llama.providers` is configured and the request includes
+          `model`, upstream-proxy counting requires a configured public
+          `provider/model` ID and uses the provider URL, credentials, and
+          `upstream_model`
+        - when `llama.providers` is configured and `model` is omitted, a
+          locally supported request stays local and does not fall back to
+          legacy `llama.base_url`
       requestBody:
         required: true
         content:
@@ -792,6 +880,13 @@ paths:
           shim-supported subset
         - requests that do not depend on shim-local state may be proxied
           upstream unchanged
+        - when `llama.providers` is configured and the request includes
+          `model`, upstream-proxy compaction requires a configured public
+          `provider/model` ID and uses the provider URL, credentials, and
+          `upstream_model`
+        - when `llama.providers` is configured and `model` is omitted, the
+          request fails locally if model context is required and does not fall
+          back to legacy `llama.base_url`
       requestBody:
         required: true
         content:
@@ -2090,9 +2185,12 @@ paths:
       x-shim-status: proxy
       description: |
         Validates a small core of the request (`model`, `messages`) and then
-        forwards the request to the upstream backend. Successful JSON responses
-        are sanitized to remove some backend-specific fields. SSE responses are
-        proxied through unchanged.
+        forwards the request to the upstream backend. When `llama.providers` is
+        configured, `model` must be a configured public `provider/model` ID;
+        routed upstream calls use the provider base URL, provider bearer token,
+        and configured `upstream_model`. Successful JSON responses are
+        sanitized to remove some backend-specific fields and restore the public
+        routed model. SSE responses are proxied through the same sanitizer.
 
         Successful responses are shadow-stored locally whenever either
         `store: true` is explicit or omitted-`store` local shadowing is enabled

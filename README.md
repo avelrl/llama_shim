@@ -246,6 +246,30 @@ SHIM_CONFIG=./config.yaml go run ./cmd/shim
 
 If `-config` and `SHIM_CONFIG` are not set, the service will also try to auto-load `./config.yaml` or `./config.yml` when present.
 
+Upstream generation uses the single `llama.base_url` / `LLAMA_BASE_URL`
+setting unless `llama.providers` is configured. With `llama.providers`, clients
+send model-bearing Responses, Responses WebSocket `response.create`, derived
+Responses proxy, and Chat Completions requests with `model` as
+`provider/model`; the shim resolves the configured provider, uses that
+provider's upstream `base_url` and bearer token, rewrites the outbound model to
+`upstream_model`, and keeps the public `provider/model` value in shim-owned
+responses and stored metadata. `GET /v1/models` live-checks provider catalogs
+and returns only configured public aliases whose `upstream_model` is currently
+listed by the provider. Resource-only routes such as conversations, stored
+response reads, files, vector stores, and containers are not provider-routed.
+This is a shim-owned V3 routing extension, not hosted OpenAI parity. See
+[docs/v3-upstream-provider-routing.md](docs/v3-upstream-provider-routing.md).
+
+After editing provider config or tokens, run the live routing smoke with one
+public alias at a time:
+
+```bash
+SHIM_BASE_URL=http://127.0.0.1:8080 \
+UPSTREAM_PROVIDER_ROUTING_MODEL=provider/model \
+GW_API_KEY=shim-dev-key \
+make upstream-provider-routing-smoke
+```
+
 Supported environment overrides:
 
 - `LLAMA_TIMEOUT` default `60s`
@@ -373,8 +397,9 @@ Minimal local packaging is now checked into the repo:
 - `make maint-cleanup`, `make maint-optimize`, `make maint-vacuum`, `make maint-backup`
 - `docker build -t llama-shim:local .`
 - `docker compose up --build`
-- `make devstack-up`, `make devstack-smoke`,
-  `make devstack-sqlite-fts5-smoke`, `make devstack-down`
+- `make devstack-up`, `make devstack-smoke`
+- `make upstream-provider-routing-smoke`
+- `make devstack-sqlite-fts5-smoke`, `make devstack-down`
 
 The compose setup mounts `./config.yaml` into the container and keeps SQLite
 state in `./.data`.

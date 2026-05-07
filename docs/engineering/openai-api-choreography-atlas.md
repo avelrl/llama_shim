@@ -1,6 +1,6 @@
 # OpenAI API Choreography Atlas
 
-Last updated: May 5, 2026.
+Last updated: May 7, 2026.
 
 This document is a diagram-first map of how the current OpenAI API surfaces
 work, how Codex uses them in practice, and where `llama_shim` intentionally
@@ -19,6 +19,7 @@ Docs MCP, and the current official pages for:
 - [Streaming API responses](https://developers.openai.com/api/docs/guides/streaming-responses)
 - [WebSocket Mode](https://developers.openai.com/api/docs/guides/websocket-mode)
 - [Compaction](https://developers.openai.com/api/docs/guides/compaction)
+- [Counting tokens](https://developers.openai.com/api/docs/guides/token-counting)
 - [Retrieval](https://developers.openai.com/api/docs/guides/retrieval)
 - [File search](https://developers.openai.com/api/docs/guides/tools-file-search)
 - [Web search](https://developers.openai.com/api/docs/guides/tools-web-search)
@@ -145,6 +146,17 @@ What exists today:
 - WebSocket is a transport adapter for the same current local Responses subset.
 - Chat Completions remains both a public compatibility surface and the internal
   model call used by many local tool planners.
+- Upstream model routing supports the legacy single `llama.base_url` path and
+  the V3 shim-owned `llama.providers` path. When providers are configured,
+  `/v1/responses`, Responses WebSocket `response.create`,
+  `/v1/responses/input_tokens`, `/v1/responses/compact`,
+  `/v1/chat/completions`, `/v1/models`, `/readyz`, and
+  `/debug/capabilities` use configured public `provider/model` IDs on
+  model-bearing requests while outbound upstream calls use the resolved
+  provider base URL, bearer token, and upstream model name. Non-model resource
+  routes such as conversations, stored response reads, files, vector stores,
+  containers, and delete/list operations are not provider-routed. See
+  [V3 Upstream Provider Routing](../v3-upstream-provider-routing.md).
 - `/debug/capabilities` is the operator-visible truth for active local runtime
   capabilities.
 - `/readyz` and `/debug/capabilities` emit bounded readiness-probe metrics so
@@ -339,6 +351,7 @@ sequenceDiagram
   participant C as Client or Codex
   participant W as WebSocket /v1/responses
   participant H as responseHandler
+  participant R as Provider resolver
   participant SSE as Internal SSE create path
   participant Cache as Connection-local cache
   participant DB as Store
@@ -347,11 +360,17 @@ sequenceDiagram
   W-->>C: WebSocket accepted
   C->>W: {"type":"response.create", ...}
   W->>H: normalize WS create payload
-  H->>SSE: internal POST /v1/responses stream=true
-  SSE-->>W: typed Responses streaming events
-  W-->>C: JSON text frames
-  W->>Cache: remember latest response
-  W->>DB: persist when store=true
+  H->>R: validate model when provider routing is enabled
+  alt generate=false warmup
+    H->>DB: store warmup response when requested
+    H-->>W: response.completed without model output
+  else generated turn
+    H->>SSE: internal POST /v1/responses stream=true
+    SSE-->>W: typed Responses streaming events
+    W-->>C: JSON text frames
+    W->>Cache: remember latest response
+    W->>DB: persist when store=true
+  end
   C->>W: next response.create with previous_response_id
   W->>Cache: fast path if latest id is cached
 ```
@@ -366,6 +385,9 @@ What should be true per official docs:
 What exists in the shim:
 
 - Same local generation path as HTTP/SSE.
+- Provider routing validates configured public `provider/model` aliases for
+  generated turns and `generate:false` warmups; generated turns reach upstream
+  through the internal HTTP/SSE Responses create path.
 - JSON `data:` payloads from SSE are bridged as WebSocket text frames.
 - `store=false` continuation works for the most recent response on the same
   socket via connection-local cache.
@@ -893,6 +915,10 @@ Shim reality:
 - Standalone local compaction accepts prompt-cache request metadata as a
   no-op; cache bucketing is upstream-owned and is not represented in the
   shim-owned compaction item.
+- Model-bearing standalone compact requests use configured provider routing
+  when the selected route proxies upstream. Model-less compact requests that
+  still require model context fail locally instead of falling back to a hidden
+  provider while provider routing is enabled.
 - Automatic compaction prefixes the response with one compaction item that can
   rebuild local effective context.
 
