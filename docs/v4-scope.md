@@ -1,10 +1,16 @@
 # V4 Extensions And Plugin Model
 
-Last updated: April 23, 2026.
+Last updated: May 6, 2026.
 
 This document is the parking lot for post-compatibility work that is useful in
 practice, but should not be confused with the shim's core OpenAI-compatibility
 promise.
+
+V4 implementation should start with
+[V4 Preflight: Backend Capability And Tool Routing Architecture](v4-preflight.md).
+That document captures the provider-capability registry, tool-routing
+classifier, Codex CLI profile, stream/replay interface, fallback policy, and
+plugin-boundary work needed before the extension tracks below grow further.
 
 V2 is the broad compatibility facade.
 V3 is backend and runtime expansion around that facade.

@@ -24,6 +24,12 @@ func FirstPseudoToolMarker(text string) string {
 	if containsFencedJSONPseudoCommand(lower) {
 		return "```json command/apply_patch block"
 	}
+	if containsFencedYAMLPseudoCommand(lower) {
+		return "```yaml command/apply_patch block"
+	}
+	if containsFencedPlainApplyPatch(lower) {
+		return "``` applypatch block"
+	}
 	return ""
 }
 
@@ -39,11 +45,21 @@ func pseudoToolTextMarkers() []string {
 		"<|mask_end|",
 		"<prelude>",
 		"</prelude>",
+		"[shell_command]",
+		"[/shell_command]",
 		"<tool call:",
 		"[tool call:",
+		"<chatcmpl-tool>",
+		"</chatcmpl-tool>",
+		"<function.chatcmpl.tool>",
+		"</function.chatcmpl.tool>",
 		"<function_call>",
 		"</function_call>",
 		"<function_call_output",
+		"<function name=",
+		"</function>",
+		"<tools>",
+		"</tools>",
 		"<antthinking>",
 		"</antthinking>",
 		"<toolcall::",
@@ -56,6 +72,10 @@ func pseudoToolTextMarkers() []string {
 		"</tool_call>",
 		"<tool_code_call>",
 		"</tool_code_call>",
+		"<tool_code_exec>",
+		"</tool_code_exec>",
+		"<tool_code_interpreter>",
+		"</tool_code_interpreter>",
 		"<tool_code>",
 		"<invoke name=",
 		"<read_file>",
@@ -121,19 +141,31 @@ func isPseudoToolTagBoundary(ch byte) bool {
 }
 
 func containsFencedJSONPseudoCommand(text string) bool {
+	return containsFencedPseudoCommand(text, "```json", isPseudoCommandJSONBlock)
+}
+
+func containsFencedYAMLPseudoCommand(text string) bool {
+	return containsFencedPseudoCommand(text, "```yaml", isPseudoCommandYAMLBlock)
+}
+
+func containsFencedPlainApplyPatch(text string) bool {
+	return containsFencedPseudoCommand(text, "```", isPlainApplyPatchBlock)
+}
+
+func containsFencedPseudoCommand(text string, fence string, match func(string) bool) bool {
 	offset := 0
 	for {
-		startRelative := strings.Index(text[offset:], "```json")
+		startRelative := strings.Index(text[offset:], fence)
 		if startRelative < 0 {
 			return false
 		}
-		blockStart := offset + startRelative + len("```json")
+		blockStart := offset + startRelative + len(fence)
 		blockEndRelative := strings.Index(text[blockStart:], "```")
 		block := text[blockStart:]
 		if blockEndRelative >= 0 {
 			block = text[blockStart : blockStart+blockEndRelative]
 		}
-		if isPseudoCommandJSONBlock(block) {
+		if match(block) {
 			return true
 		}
 		if blockEndRelative < 0 {
@@ -155,4 +187,22 @@ func isPseudoCommandJSONBlock(block string) bool {
 	}
 	return strings.Contains(block, `"cwd"`) &&
 		(strings.Contains(block, `"bash"`) || strings.Contains(block, `"zsh"`))
+}
+
+func isPseudoCommandYAMLBlock(block string) bool {
+	trimmed := strings.TrimSpace(block)
+	if !strings.Contains(trimmed, "command:") {
+		return false
+	}
+	return strings.Contains(trimmed, "apply_patch") ||
+		strings.Contains(trimmed, "exec_command") ||
+		strings.Contains(trimmed, "shell")
+}
+
+func isPlainApplyPatchBlock(block string) bool {
+	trimmed := strings.TrimSpace(block)
+	return strings.HasPrefix(trimmed, "applypatch\n") ||
+		strings.HasPrefix(trimmed, "apply_patch\n") ||
+		strings.Contains(trimmed, "\n*** update file:") ||
+		strings.Contains(trimmed, "\n*** begin patch")
 }

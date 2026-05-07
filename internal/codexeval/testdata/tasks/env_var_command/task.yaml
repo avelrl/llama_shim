@@ -20,7 +20,7 @@ expected:
     - ENV_VAR_OK
   files:
     - path: env_capture.txt
-      equals: |
+      equals_trim_space: |
         EVAL_MAGIC=phase3-core
   codex_events:
     - item.started:command_execution

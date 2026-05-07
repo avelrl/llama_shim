@@ -408,8 +408,9 @@ Stop criteria:
 - `saw_tool_event=false`: the upstream did not emit a tool call.
 - Tool event is present in shim logs but Codex does not execute it: inspect
   Codex tool mode and provider metadata.
-- Command executes but no final answer: check whether
-  `force_tool_choice_required` is too aggressive for this model.
+- Command executes but no final answer: inspect the model/tool loop transcript
+  and retry with a read-only prompt to separate tool-following from final-answer
+  behavior.
 
 ## Phase 3: Single-File Write
 
@@ -601,8 +602,8 @@ Notes:
 - A model that passes direct required function call but fails Codex boot usually
   needs Codex metadata, disabled-tool compatibility, or context-budget tuning.
 - A model that runs commands but cannot finish final answers may need
-  `force_tool_choice_required` disabled for normal chat and enabled only for
-  deterministic coding smokes.
+  stricter task prompts or model-specific Codex metadata; do not treat
+  successful command execution alone as a complete Codex pass.
 
 ## Log Triage
 
@@ -634,7 +635,7 @@ Common diagnosis:
 | Context-window failure on tiny task | metadata/context | Fix `responses.codex.model_metadata` or switch models. |
 | Preamble then no file | upstream tool-following/SSE | Check `saw_tool_event` and terminal stream event. |
 | Tool event in shim but no local command | Codex bridge | Check Codex tool mode and model metadata. |
-| Command ran but no final answer | model/tool loop | Check `force_tool_choice_required` and retry a read-only prompt. |
+| Command ran but no final answer | model/tool loop | Inspect the transcript and retry a read-only prompt. |
 
 ## When To Expand Task Size
 

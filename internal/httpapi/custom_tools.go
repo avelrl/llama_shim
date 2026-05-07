@@ -99,11 +99,11 @@ func parseCustomToolsMode(value string) customToolsMode {
 	}
 }
 
-func remapCustomToolsPayload(rawFields map[string]json.RawMessage, configuredMode string, codexCompatibilityEnabled bool, forceCodexToolChoiceRequired bool) ([]byte, customToolTransportPlan, error) {
-	return remapCustomToolsPayloadWithCompatibility(rawFields, configuredMode, codexCompatibilityEnabled, forceCodexToolChoiceRequired, nil)
+func remapCustomToolsPayload(rawFields map[string]json.RawMessage, configuredMode string, codexCompatibilityEnabled bool) ([]byte, customToolTransportPlan, error) {
+	return remapCustomToolsPayloadWithCompatibility(rawFields, configuredMode, codexCompatibilityEnabled, nil)
 }
 
-func remapCustomToolsPayloadWithCompatibility(rawFields map[string]json.RawMessage, configuredMode string, codexCompatibilityEnabled bool, forceCodexToolChoiceRequired bool, upstreamToolCompatibility []UpstreamToolCompatibilityRule) ([]byte, customToolTransportPlan, error) {
+func remapCustomToolsPayloadWithCompatibility(rawFields map[string]json.RawMessage, configuredMode string, codexCompatibilityEnabled bool, upstreamToolCompatibility []UpstreamToolCompatibilityRule) ([]byte, customToolTransportPlan, error) {
 	disabledTools := disabledUpstreamToolTypesForModel(rawStringField(rawFields, "model"), upstreamToolCompatibility)
 	plan, tools, err := buildCustomToolTransportPlanWithCompatibility(rawFields, configuredMode, disabledTools)
 	if err != nil {
@@ -131,7 +131,7 @@ func remapCustomToolsPayloadWithCompatibility(rawFields map[string]json.RawMessa
 		}
 	}
 	if rawChoice, ok := rawFields["tool_choice"]; ok {
-		toolChoice, err := remapToolChoice(rawChoice, rawFields, tools, plan, forceCodexToolChoiceRequired)
+		toolChoice, err := remapToolChoice(rawChoice, tools, plan)
 		if err != nil {
 			return nil, customToolTransportPlan{}, err
 		}
@@ -365,17 +365,13 @@ func remapCustomTools(tools []map[string]any, bridge customToolBridge) ([]map[st
 	return out, nil
 }
 
-func remapToolChoice(raw json.RawMessage, rawFields map[string]json.RawMessage, tools []map[string]any, plan customToolTransportPlan, forceCodexToolChoiceRequired bool) (any, error) {
+func remapToolChoice(raw json.RawMessage, tools []map[string]any, plan customToolTransportPlan) (any, error) {
 	var literal string
 	if err := json.Unmarshal(raw, &literal); err == nil {
 		switch strings.ToLower(strings.TrimSpace(literal)) {
 		case "required":
 			if len(tools) == 0 {
 				return nil, domain.NewValidationError("tool_choice", "tool_choice \"required\" requires at least one supported tool")
-			}
-		case "auto":
-			if shouldForceRequiredToolChoice(rawFields, tools, forceCodexToolChoiceRequired) {
-				return "required", nil
 			}
 		}
 		return literal, nil
@@ -493,29 +489,6 @@ func normalizeToolType(value string) string {
 	default:
 		return normalized
 	}
-}
-
-func shouldForceRequiredToolChoice(rawFields map[string]json.RawMessage, tools []map[string]any, enabled bool) bool {
-	if !enabled || len(tools) == 0 {
-		return false
-	}
-	if rawInput, ok := rawFields["input"]; ok && inputContainsToolOutput(rawInput) {
-		return false
-	}
-	return isCodexCLIRequestWithTools(rawFields, tools) && hasFunctionToolNamed(tools, "exec_command")
-}
-
-func inputContainsToolOutput(raw json.RawMessage) bool {
-	items, err := domain.NormalizeInput(raw)
-	if err != nil {
-		return false
-	}
-	for _, item := range items {
-		if item.Type == "function_call_output" || item.Type == "custom_tool_call_output" || isLocalBuiltinToolOutputType(item.Type) {
-			return true
-		}
-	}
-	return false
 }
 
 func isCodexCLIRequest(rawFields map[string]json.RawMessage) bool {

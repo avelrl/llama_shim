@@ -58,6 +58,7 @@ Assumptions:
 - [V3 Richer Local-Only Runtimes](../v3-local-runtimes.md)
 - [V3 Computer Browser Harness](../v3-computer-browser-harness.md)
 - [V3 Ops and Deployment Expansion](../v3-ops-deployment.md)
+- [V4 Preflight](../v4-preflight.md)
 - [V4 Extensions and Plugin Model](../v4-scope.md)
 - [V5 Hosted Parity and Advanced Transports](../v5-scope.md)
 - [OpenAPI spec](../../openapi/openapi.yaml)

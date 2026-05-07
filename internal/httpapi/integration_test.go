@@ -519,7 +519,6 @@ func TestCapabilitiesEndpointReportsConfiguredRuntime(t *testing.T) {
 		ResponsesUpstreamTransport:        config.ResponsesUpstreamTransportChatCompletions,
 		CustomToolsMode:                   "bridge",
 		CodexCompatibilityEnabled:         true,
-		ForceToolChoiceRequired:           true,
 		ResponsesCompactionBackend:        "model_assisted_text",
 		ResponsesCompactionModel:          "compact-model",
 		ResponsesCompactionRetainedItems:  5,
@@ -616,7 +615,6 @@ func TestCapabilitiesEndpointReportsConfiguredRuntime(t *testing.T) {
 
 	codex := runtime["codex"].(map[string]any)
 	require.Equal(t, true, codex["compatibility_enabled"])
-	require.Equal(t, true, codex["force_tool_choice_required"])
 	require.Equal(t, float64(0), codex["upstream_input_compatibility_rules"])
 
 	persistence := runtime["persistence"].(map[string]any)
@@ -8141,7 +8139,7 @@ func TestResponsesStreamKeepsSafeExecCommandEscalationByDefault(t *testing.T) {
 }
 
 func TestResponsesStreamKeepsExecCommandUntouchedWhenCodexCompatibilityEnabled(t *testing.T) {
-	app := testutil.NewTestAppWithCodexSettings(t, "", true, false)
+	app := testutil.NewTestAppWithCodexSettings(t, "", true)
 
 	reqBody, err := json.Marshal(map[string]any{
 		"model":        "test-model",
@@ -8192,7 +8190,7 @@ func TestResponsesStreamKeepsExecCommandUntouchedWhenCodexCompatibilityEnabled(t
 }
 
 func TestResponsesStreamKeepsCompletedPlanLoopAndDoesNotSynthesizeSummary(t *testing.T) {
-	app := testutil.NewTestAppWithCodexSettings(t, "", true, false)
+	app := testutil.NewTestAppWithCodexSettings(t, "", true)
 
 	reqBody, err := json.Marshal(map[string]any{
 		"model":        "test-model",

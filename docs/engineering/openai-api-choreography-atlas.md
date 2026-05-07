@@ -958,9 +958,12 @@ Practical finding:
 - Chat-backed Codex tool-loop repair is also bounded to one re-ask when the
   assistant text leaks obvious provider pseudo-tool syntax such as
   `<read_file ...>`, `<bash ...>`, `<command-message>`,
-  `<command-name>`, or `<command-output>`. The retry only asks for a structured
-  function tool call or final plain text; it never converts that text into a
-  local command or patch.
+  `<command-name>`, `<command-output>`, `<chatcmpl-tool>`,
+  `<function.chatcmpl.tool>`, `<tools>`, `[shell_command]`,
+  `<function name="shell">`, `<tool_code_exec>`,
+  `<tool_code_interpreter>`, or fenced command/apply_patch blocks. The retry
+  only asks for a structured function tool call or final plain text; it never
+  converts that text into a local command or patch.
 - They do not prove that current Codex emits native Responses `shell` or
   `apply_patch` declarations.
 - Practical model/provider quality is tracked separately in

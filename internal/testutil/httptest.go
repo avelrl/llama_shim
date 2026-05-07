@@ -42,20 +42,18 @@ func NewTestAppWithResponsesMode(t *testing.T, responsesMode string) *TestApp {
 	return NewTestAppWithOptions(t, TestAppOptions{ResponsesMode: responsesMode})
 }
 
-func NewTestAppWithCodexSettings(t *testing.T, customToolsMode string, codexCompatibilityEnabled bool, forceToolChoiceRequired bool) *TestApp {
+func NewTestAppWithCodexSettings(t *testing.T, customToolsMode string, codexCompatibilityEnabled bool) *TestApp {
 	return NewTestAppWithOptions(t, TestAppOptions{
 		CustomToolsMode:           customToolsMode,
 		CodexCompatibilityEnabled: codexCompatibilityEnabled,
-		ForceToolChoiceRequired:   forceToolChoiceRequired,
 	})
 }
 
-func NewTestAppWithResponsesAndCodexSettings(t *testing.T, responsesMode string, customToolsMode string, codexCompatibilityEnabled bool, forceToolChoiceRequired bool) *TestApp {
+func NewTestAppWithResponsesAndCodexSettings(t *testing.T, responsesMode string, customToolsMode string, codexCompatibilityEnabled bool) *TestApp {
 	return NewTestAppWithOptions(t, TestAppOptions{
 		ResponsesMode:             responsesMode,
 		CustomToolsMode:           customToolsMode,
 		CodexCompatibilityEnabled: codexCompatibilityEnabled,
-		ForceToolChoiceRequired:   forceToolChoiceRequired,
 	})
 }
 
@@ -66,7 +64,6 @@ type TestAppOptions struct {
 	ResponsesConstrainedDecodingBackend   string
 	ChatCompletionsUpstreamCompatibility  []upstreamcompat.ChatCompletionRule
 	CodexCompatibilityEnabled             bool
-	ForceToolChoiceRequired               bool
 	CodexUpstreamInputCompatibility       []httpapi.CodexUpstreamInputCompatibilityRule
 	CodexModelMetadata                    []httpapi.CodexModelMetadata
 	ResponsesCompactionBackend            string
@@ -204,7 +201,6 @@ func NewTestAppWithOptions(t *testing.T, options TestAppOptions) *TestApp {
 		ResponsesCustomToolsMode:                 options.CustomToolsMode,
 		ResponsesConstrainedDecodingBackend:      options.ResponsesConstrainedDecodingBackend,
 		ResponsesCodexEnableCompatibility:        options.CodexCompatibilityEnabled,
-		ResponsesCodexForceToolChoiceRequired:    options.ForceToolChoiceRequired,
 		ResponsesCodexUpstreamInputCompatibility: append([]httpapi.CodexUpstreamInputCompatibilityRule(nil), options.CodexUpstreamInputCompatibility...),
 		ResponsesCodexModelMetadata:              append([]httpapi.CodexModelMetadata(nil), options.CodexModelMetadata...),
 		ResponsesCompactionBackend:               options.ResponsesCompactionBackend,

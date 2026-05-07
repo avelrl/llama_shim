@@ -26,7 +26,7 @@ const (
 )
 
 func (h *responseHandler) proxyCreateStream(w http.ResponseWriter, r *http.Request, request CreateResponseRequest, requestJSON string, rawFields map[string]json.RawMessage, streamOptions responseStreamOptions) {
-	upstreamBody, plan, err := remapCustomToolsPayloadWithCompatibility(rawFields, h.customToolsMode, h.codexCompatibilityEnabled, h.effectiveForceCodexToolChoiceRequired(rawFields), h.upstreamToolCompatibility)
+	upstreamBody, plan, err := remapCustomToolsPayloadWithCompatibility(rawFields, h.customToolsMode, h.codexCompatibilityEnabled, h.upstreamToolCompatibility)
 	if err != nil {
 		h.writeError(w, r, err)
 		return
@@ -219,7 +219,7 @@ func (h *responseHandler) createStreamViaUpstream(w http.ResponseWriter, r *http
 		return
 	}
 
-	upstreamBody, plan, err := buildUpstreamResponsesBodyWithCompatibility(rawFields, prepared.ContextItems, prepared.NormalizedInput, prepared.ToolCallRefs, h.customToolsMode, h.codexCompatibilityEnabled, h.effectiveForceCodexToolChoiceRequired(rawFields), h.upstreamToolCompatibility)
+	upstreamBody, plan, err := buildUpstreamResponsesBodyWithCompatibility(rawFields, prepared.ContextItems, prepared.NormalizedInput, prepared.ToolCallRefs, h.customToolsMode, h.codexCompatibilityEnabled, h.upstreamToolCompatibility)
 	if err != nil {
 		h.writeError(w, r, err)
 		return

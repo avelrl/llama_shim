@@ -50,12 +50,6 @@ responses:
     enabled: true
   codex:
     enable_compatibility: true
-    force_tool_choice_required: true
-    # Keep the rewrite available for deterministic smokes, but disable it for
-    # upstream models that answer normal Codex questions poorly when every
-    # tool_choice=auto turn is forced to call a tool.
-    force_tool_choice_required_disabled_models:
-      - Kimi-*
     upstream_input_compatibility:
       models:
         - model: Kimi-*
@@ -910,30 +904,6 @@ chat_completions:
         invalid_tool_arguments_fallback: final_text
 ```
 
-If Codex runs a command for a plain question and then prints no final answer,
-check the shim startup log for:
-
-```text
-responses_codex_force_tool_choice_required=true
-```
-
-For weaker or non-OpenAI upstreams, that compatibility rewrite can be too
-aggressive. It turns Codex `tool_choice=auto` into `required` on the first
-tool-capable turn, so the model must emit a tool call even when the user asked
-for a direct answer. Keep the global setting enabled for deterministic tool
-smokes, but exclude that model:
-
-```yaml
-responses:
-  codex:
-    force_tool_choice_required: true
-    force_tool_choice_required_disabled_models:
-      - Kimi-*
-```
-
-After changing this shim config, restart the shim and retry the same Codex
-prompt.
-
 If the shim log repeatedly shows a structured-input validation retry for the
 same model:
 
@@ -963,11 +933,10 @@ Allowed modes are:
   first upstream request; the generic validation-error retry fallback still
   applies.
 
-For a coding-task smoke where the model must call tools, temporarily remove the
-model from `force_tool_choice_required_disabled_models` or run a separate shim
-profile without that exclusion. This makes Codex `tool_choice=auto` proxy as
-`required`, which is useful for proving tool-call behavior but can make normal
-chat turns worse on weaker upstreams.
+For a coding-task smoke where the model must call tools, use a task prompt and
+runner profile that make the tool requirement explicit. The shim preserves the
+client's `tool_choice` contract instead of rewriting Codex `tool_choice=auto`
+into `required`.
 
 You can also test another coding model by changing only the Codex model slug:
 

@@ -134,11 +134,9 @@ type capabilityConstrainedStructuredJSONConfig struct {
 }
 
 type capabilityCodexConfig struct {
-	CompatibilityEnabled                  bool     `json:"compatibility_enabled"`
-	ForceToolChoiceRequired               bool     `json:"force_tool_choice_required"`
-	ForceToolChoiceRequiredDisabledModels []string `json:"force_tool_choice_required_disabled_models"`
-	UpstreamInputCompatibilityRules       int      `json:"upstream_input_compatibility_rules"`
-	ModelMetadataModels                   int      `json:"model_metadata_models"`
+	CompatibilityEnabled            bool `json:"compatibility_enabled"`
+	UpstreamInputCompatibilityRules int  `json:"upstream_input_compatibility_rules"`
+	ModelMetadataModels             int  `json:"model_metadata_models"`
 }
 
 type capabilityPersistenceInfo struct {
@@ -299,11 +297,9 @@ func buildCapabilityManifest(ctx context.Context, deps RouterDeps) capabilityMan
 			Compaction:                           compactionCapability(deps),
 			ConstrainedDecoding:                  constrainedDecodingCapability(deps),
 			Codex: capabilityCodexConfig{
-				CompatibilityEnabled:                  deps.ResponsesCodexEnableCompatibility,
-				ForceToolChoiceRequired:               deps.ResponsesCodexForceToolChoiceRequired,
-				ForceToolChoiceRequiredDisabledModels: append([]string(nil), deps.ResponsesCodexForceToolChoiceRequiredDisabledModels...),
-				UpstreamInputCompatibilityRules:       len(deps.ResponsesCodexUpstreamInputCompatibility),
-				ModelMetadataModels:                   len(deps.ResponsesCodexModelMetadata),
+				CompatibilityEnabled:            deps.ResponsesCodexEnableCompatibility,
+				UpstreamInputCompatibilityRules: len(deps.ResponsesCodexUpstreamInputCompatibility),
+				ModelMetadataModels:             len(deps.ResponsesCodexModelMetadata),
 			},
 			Persistence: capabilityPersistence(deps),
 			Retrieval:   capabilityRetrieval(deps),

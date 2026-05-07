@@ -32,7 +32,7 @@ func (e *constrainedCustomToolValidationError) Unwrap() error {
 	return e.Cause
 }
 
-func buildLocalChatCompletionRequest(rawFields map[string]json.RawMessage, contextItems []domain.Item, currentInput []domain.Item, _ map[string]domain.ToolCallReference, serviceLimits ServiceLimits, codexCompatibilityEnabled bool, forceCodexToolChoiceRequired bool, repairPrompt string) ([]byte, customToolTransportPlan, error) {
+func buildLocalChatCompletionRequest(rawFields map[string]json.RawMessage, contextItems []domain.Item, currentInput []domain.Item, _ map[string]domain.ToolCallReference, serviceLimits ServiceLimits, codexCompatibilityEnabled bool, repairPrompt string) ([]byte, customToolTransportPlan, error) {
 	model := strings.TrimSpace(rawStringField(rawFields, "model"))
 	if model == "" {
 		return nil, customToolTransportPlan{}, domain.NewValidationError("model", "model is required")
@@ -45,7 +45,7 @@ func buildLocalChatCompletionRequest(rawFields map[string]json.RawMessage, conte
 		effectiveTools = augmentCodexToolDescriptions(rawTools)
 	}
 
-	chatTools, plan, toolChoice, extraInstructions, err := buildLocalToolLoopTransportPlan(rawFields, effectiveTools, serviceLimits, forceCodexToolChoiceRequired)
+	chatTools, plan, toolChoice, extraInstructions, err := buildLocalToolLoopTransportPlan(rawFields, effectiveTools, serviceLimits)
 	if err != nil {
 		return nil, customToolTransportPlan{}, err
 	}
@@ -91,7 +91,7 @@ func buildLocalChatCompletionRequest(rawFields map[string]json.RawMessage, conte
 	return body, plan, nil
 }
 
-func buildLocalToolLoopTransportPlan(rawFields map[string]json.RawMessage, tools []map[string]any, serviceLimits ServiceLimits, forceCodexToolChoiceRequired bool) ([]map[string]any, customToolTransportPlan, any, string, error) {
+func buildLocalToolLoopTransportPlan(rawFields map[string]json.RawMessage, tools []map[string]any, serviceLimits ServiceLimits) ([]map[string]any, customToolTransportPlan, any, string, error) {
 	plan := customToolTransportPlan{
 		Mode: customToolsModeBridge,
 		Bridge: customToolBridge{
@@ -103,7 +103,7 @@ func buildLocalToolLoopTransportPlan(rawFields map[string]json.RawMessage, tools
 	if len(tools) == 0 {
 		var toolChoice any
 		if rawChoice, ok := rawFields["tool_choice"]; ok {
-			rewrittenChoice, err := remapToolChoice(rawChoice, rawFields, nil, plan, forceCodexToolChoiceRequired)
+			rewrittenChoice, err := remapToolChoice(rawChoice, nil, plan)
 			if err != nil {
 				return nil, customToolTransportPlan{}, nil, "", err
 			}
@@ -189,7 +189,7 @@ func buildLocalToolLoopTransportPlan(rawFields map[string]json.RawMessage, tools
 
 	var toolChoice any
 	if rawChoice := rewrittenToolChoice; len(bytes.TrimSpace(rawChoice)) > 0 {
-		rewrittenChoice, err := remapToolChoice(rawChoice, rawFields, tools, plan, forceCodexToolChoiceRequired)
+		rewrittenChoice, err := remapToolChoice(rawChoice, tools, plan)
 		if err != nil {
 			return nil, customToolTransportPlan{}, nil, "", err
 		}

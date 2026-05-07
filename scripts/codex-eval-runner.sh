@@ -31,6 +31,11 @@ Usage:
     --json-out .tmp/codex-eval-auto/<auto-id>/summary.json \
     .tmp/codex-eval-auto/<auto-id>/profiles/*
 
+  ./scripts/codex-eval-runner.sh curate \
+    --out .tmp/codex-eval-curation/<curation-id>/summary.md \
+    --json-out .tmp/codex-eval-curation/<curation-id>/summary.json \
+    .tmp/codex-eval-auto .tmp/codex-eval-loops .tmp/codex-eval-runs
+
 Common real-upstream usage:
   SHIM_BASE_URL=http://127.0.0.1:8080 \
   CODEX_MODEL=Qwen3.6-35B-A3B \
@@ -69,6 +74,11 @@ Optional:
   CODEX_EVAL_AUTO_REPORT_OUT=.tmp/codex-eval-auto/<auto-id>/summary.md
   CODEX_EVAL_AUTO_REPORT_JSON_OUT=.tmp/codex-eval-auto/<auto-id>/summary.json
   CODEX_EVAL_AUTO_STRICT=baseline|all|none
+  CODEX_EVAL_CURATE_OUT=.tmp/codex-eval-curation/<curation-id>/summary.md
+  CODEX_EVAL_CURATE_JSON_OUT=.tmp/codex-eval-curation/<curation-id>/summary.json
+  CODEX_EVAL_CURATE_LIMIT=50
+  CODEX_EVAL_CURATE_MODEL=deepseek-v4-pro
+  CODEX_EVAL_CURATE_SINCE=2026-05-01
 
 Profile gates:
   CODEX_EVAL_SUITE=codex-core-shell CODEX_EVAL_UNIFIED_EXEC=false \

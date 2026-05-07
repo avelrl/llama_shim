@@ -1,12 +1,14 @@
 # V3 Codex Eval Curation
 
-Last updated: May 4, 2026.
+Last updated: May 6, 2026.
 
-Status: implemented runbook for interpreting generated Codex eval artifacts.
+Status: implemented runbook and automated curation report for interpreting
+generated Codex eval artifacts.
 
-This document defines the human review loop for `codex-eval-auto` results.
-Generated reports provide counts and links; this runbook decides what those
-counts mean for model quality, shim regressions, and follow-up work.
+This document defines the review loop for `codex-eval-auto` results. Generated
+reports provide counts and links; the curation report turns those into stable
+trend summaries and suggested matrix interpretation. Humans still own the final
+wording copied into the model matrix.
 
 This is not a new OpenAI API compatibility claim. It is an operational process
 for curating Codex-through-shim evidence.
@@ -50,14 +52,41 @@ record is the interpreted summary copied into
 [docs/engineering/codex-upstream-model-matrix.md](engineering/codex-upstream-model-matrix.md)
 or a permanent regression task imported into the repo.
 
+Generate a cross-run curation report:
+
+```bash
+make codex-eval-curate
+```
+
+This scans existing local artifacts under `.tmp/codex-eval-auto`,
+`.tmp/codex-eval-loops`, and `.tmp/codex-eval-runs`, then writes:
+
+```text
+.tmp/codex-eval-curation/curation-<timestamp>/summary.md
+.tmp/codex-eval-curation/curation-<timestamp>/summary.json
+```
+
+Useful filters:
+
+```bash
+CODEX_EVAL_CURATE_MODEL=deepseek-v4-pro make codex-eval-curate
+CODEX_EVAL_CURATE_SINCE=2026-05-01 make codex-eval-curate
+CODEX_EVAL_CURATE_LIMIT=100 make codex-eval-curate
+```
+
+The curation report does not replace the source artifacts. It summarizes the
+latest profile results, per-model/profile trends, repeated failed or
+retry-dependent tasks, diagnosis counts, and matrix-transfer recommendations.
+
 ## First-Pass Review
 
 Read files in this order:
 
-1. `summary.md`
-2. each failed or retry-dependent profile's `compare.md`
-3. each relevant `shim-log-diagnostics.md`
-4. task-level `checker.json`, `failure.md`, `codex.jsonl`, and `git.diff` only
+1. `.tmp/codex-eval-curation/<curation-id>/summary.md`
+2. `.tmp/codex-eval-auto/<auto-id>/summary.md`
+3. each failed or retry-dependent profile's `compare.md`
+4. each relevant `shim-log-diagnostics.md`
+5. task-level `checker.json`, `failure.md`, `codex.jsonl`, and `git.diff` only
    for failed or retry-dependent tasks
 
 Do not start by reading the full `shim.log.slice`. Use diagnostics first, then
@@ -232,6 +261,18 @@ Write by hand:
 Do not paste every historical run into the matrix. Keep meaningful baselines,
 regressions, and explanatory evidence rows.
 
+The curation report helps choose what to copy:
+
+- `promote_baseline_after_log_spot_check`: candidate for current strict-clean
+  baseline after checking relevant shim diagnostics
+- `record_retry_dependent_baseline`: candidate passed, but the matrix notes
+  must name retry-dependent tasks
+- `do_not_promote_baseline`: do not update the baseline row from this run
+- `diagnostic_strict_green`: useful expanded/bench evidence, not a baseline
+  replacement by itself
+- `diagnostic_retry_dependent_green`: useful but unstable diagnostic evidence
+- `diagnostic_attention`: inspect before using as evidence
+
 ## Regression Import Decision
 
 Import a permanent regression only when the failure reduces to a deterministic
@@ -258,6 +299,22 @@ Use the regression import workflow in
 task. The imported task starts quarantined and must be minimized before it is
 promoted into a normal suite.
 
+## Scope Discipline
+
+The curation track is the current practical V3 focus. It is intentionally not a
+new backend track.
+
+Do not use a curation report as a reason to add broad model-specific repair
+logic or new runtime adapters. Use it to decide one of three actions:
+
+- update the model matrix with conservative interpretation
+- rerun a focused profile or task
+- import a minimized deterministic regression
+
+If a result points at a new backend, local runtime, or hosted-parity question,
+split that into a separate V3/V5 design item instead of growing the curation
+tool.
+
 ## Current Example
 
 The May 4, 2026 DeepSeek repeat illustrates the intended process:
@@ -271,4 +328,3 @@ The May 4, 2026 DeepSeek repeat illustrates the intended process:
   - `bench-lite`: 20/20, with one retry-dependent `patch_after_context`
 - conclusion: no shim regression; treat the earlier failed run as model flake
   and keep the repeat as current evidence
-

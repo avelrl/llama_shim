@@ -186,9 +186,9 @@ func (h *responseHandler) createLocalToolLoopResponse(ctx context.Context, reque
 	return h.service.SaveExternalResponse(ctx, prepared, input, response)
 }
 
-func buildLocalToolLoopChatCompletionBody(rawFields map[string]json.RawMessage, contextItems []domain.Item, currentInput []domain.Item, refs map[string]domain.ToolCallReference, serviceLimits ServiceLimits, customToolsMode string, codexCompatibilityEnabled bool, forceCodexToolChoiceRequired bool, repairPrompt string) ([]byte, customToolTransportPlan, error) {
+func buildLocalToolLoopChatCompletionBody(rawFields map[string]json.RawMessage, contextItems []domain.Item, currentInput []domain.Item, refs map[string]domain.ToolCallReference, serviceLimits ServiceLimits, customToolsMode string, codexCompatibilityEnabled bool, repairPrompt string) ([]byte, customToolTransportPlan, error) {
 	_ = customToolsMode
-	return buildLocalChatCompletionRequest(rawFields, contextItems, currentInput, refs, serviceLimits, codexCompatibilityEnabled, forceCodexToolChoiceRequired, repairPrompt)
+	return buildLocalChatCompletionRequest(rawFields, contextItems, currentInput, refs, serviceLimits, codexCompatibilityEnabled, repairPrompt)
 }
 
 func logLocalToolLoopChatBridgeState(ctx context.Context, logger *slog.Logger, model string, attempt int, chatBody []byte) {
@@ -870,7 +870,7 @@ func containsRawToolCallMarkup(text string) bool {
 }
 
 func buildRawToolCallMarkupRepairPrompt() string {
-	return "Your previous assistant message printed internal tool-call markup as text. That is invalid. If you still need a tool, emit a structured function tool call through the tools interface. If the task is complete, reply with final plain text only. Do not include pseudo-tool markup such as <|tool_call, <|tool_calls_section, <|mask_start|>, <prelude>, <tool_call>, <function_call>, <tool_code_call>, <read_file>, <patch>, <apply_patch>, <command>, <command-message>, <command-name>, <command-output>, <command-arg>, <function_call_output>, <invoke name=..., <||DSML||tool_calls>, fenced JSON command/apply_patch blocks, or <bash> in assistant text."
+	return "Your previous assistant message printed internal tool-call markup as text. That is invalid. If you still need a tool, emit a structured function tool call through the tools interface. If the task is complete, reply with final plain text only. Do not include pseudo-tool markup such as <|tool_call, <|tool_calls_section, <|mask_start|>, <prelude>, [shell_command], <tool_call>, <function_call>, <function name=...>, <tool_code_call>, <tool_code_exec>, <tool_code_interpreter>, <chatcmpl-tool>, <function.chatcmpl.tool>, <tools>, <read_file>, <patch>, <apply_patch>, <command>, <command-message>, <command-name>, <command-output>, <command-arg>, <function_call_output>, <invoke name=..., <||DSML||tool_calls>, fenced JSON/YAML/plain command or apply_patch blocks, or <bash> in assistant text."
 }
 
 func extractChatCompletionContent(raw json.RawMessage) string {

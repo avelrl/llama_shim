@@ -2630,11 +2630,9 @@ components:
           type: string
     ShimCapabilityCodexConfig:
       type: object
-      required: [compatibility_enabled, force_tool_choice_required]
+      required: [compatibility_enabled]
       properties:
         compatibility_enabled:
-          type: boolean
-        force_tool_choice_required:
           type: boolean
     ShimCapabilityPersistence:
       type: object

@@ -149,10 +149,6 @@ responses:
           - image_generation
   codex:
     enable_compatibility: true
-    force_tool_choice_required: true
-    force_tool_choice_required_disabled_models:
-      - Kimi-*
-      - qwen3-*
     upstream_input_compatibility:
       models:
         - model: Kimi-*
@@ -322,8 +318,6 @@ responses:
 		{Model: "Kimi-*", DisabledTools: []string{"image_generation", "namespace_tool", "computer"}},
 	}, cfg.ResponsesUpstreamToolCompatibility)
 	require.True(t, cfg.ResponsesCodexEnableCompatibility)
-	require.True(t, cfg.ResponsesCodexForceToolChoiceRequired)
-	require.Equal(t, []string{"Kimi-*", "qwen3-*"}, cfg.ResponsesCodexForceToolChoiceRequiredDisabledModels)
 	require.Equal(t, []config.ResponsesCodexUpstreamInputCompatibilityRule{
 		{Model: "Kimi-*", Mode: "stringify"},
 	}, cfg.ResponsesCodexUpstreamInputCompatibility)
@@ -405,7 +399,6 @@ responses:
   mode: prefer_upstream
   codex:
     enable_compatibility: false
-    force_tool_choice_required: false
   code_interpreter:
     backend: disabled
     python_binary: python3
@@ -478,8 +471,6 @@ responses:
 	t.Setenv("RESPONSES_COMPACTION_MAX_INPUT_CHARS", "50000")
 	t.Setenv("RESPONSES_COMPUTER_BACKEND", "chat_completions")
 	t.Setenv("RESPONSES_CODEX_ENABLE_COMPATIBILITY", "true")
-	t.Setenv("RESPONSES_CODEX_FORCE_TOOL_CHOICE_REQUIRED", "true")
-	t.Setenv("RESPONSES_CODEX_FORCE_TOOL_CHOICE_REQUIRED_DISABLED_MODELS", "Kimi-*,qwen3-*")
 	t.Setenv("RESPONSES_CODE_INTERPRETER_BACKEND", "docker")
 	t.Setenv("RESPONSES_CODE_INTERPRETER_PYTHON_BINARY", "/usr/bin/python3")
 	t.Setenv("RESPONSES_CODE_INTERPRETER_DOCKER_BINARY", "/usr/bin/docker")
@@ -559,8 +550,6 @@ responses:
 	require.Equal(t, 50000, cfg.ResponsesCompactionMaxInputRunes)
 	require.Equal(t, config.ResponsesComputerBackendChatCompletions, cfg.ResponsesComputerBackend)
 	require.True(t, cfg.ResponsesCodexEnableCompatibility)
-	require.True(t, cfg.ResponsesCodexForceToolChoiceRequired)
-	require.Equal(t, []string{"Kimi-*", "qwen3-*"}, cfg.ResponsesCodexForceToolChoiceRequiredDisabledModels)
 	require.Equal(t, config.ResponsesCodeInterpreterBackendDocker, cfg.ResponsesCodeInterpreterBackend)
 	require.Equal(t, "/usr/bin/python3", cfg.ResponsesCodeInterpreterPythonBinary)
 	require.Equal(t, "/usr/bin/docker", cfg.ResponsesCodeInterpreterDockerBinary)
@@ -632,7 +621,6 @@ func TestLoadUsesCodexSafeDefaults(t *testing.T) {
 	require.Equal(t, "auto", cfg.ResponsesCustomToolsMode)
 	require.Equal(t, config.ResponsesConstrainedDecodingBackendShimValidateRepair, cfg.ResponsesConstrainedDecodingBackend)
 	require.True(t, cfg.ResponsesCodexEnableCompatibility)
-	require.True(t, cfg.ResponsesCodexForceToolChoiceRequired)
 	require.Empty(t, cfg.ResponsesCodexUpstreamInputCompatibility)
 	require.Equal(t, config.ResponsesCodeInterpreterBackendDisabled, cfg.ResponsesCodeInterpreterBackend)
 	require.Equal(t, "python3", cfg.ResponsesCodeInterpreterPythonBinary)

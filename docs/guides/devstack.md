@@ -505,6 +505,12 @@ and writes matrix, compare, JSON summary, and failure-bundle artifacts under
 default to `<model>_baseline_<timestamp>` so promoted baseline candidates are
 recognizable before `.tmp` is cleaned.
 
+`make codex-eval-curate` scans local Codex eval auto, loop, and run artifacts
+and writes a cross-run interpretation report under
+`.tmp/codex-eval-curation/<curation-id>/`. Use it after long real-upstream
+runs to summarize strict-clean baselines, retry-dependent passes, failed
+tasks, diagnosis trends, and model-matrix transfer notes.
+
 `make codex-eval-bench-lite` runs the longer repo-owned benchmark-lite profile
 against the configured local target. `make codex-eval-loop-bench-lite` runs the
 same `codex-bench-lite` suite against both the devstack control and the real
@@ -538,6 +544,8 @@ bench-lite result into the model matrix.
   manifest-backed Codex eval runner wrapper
 - [scripts/codex-eval-loop.sh](../../scripts/codex-eval-loop.sh):
   control-vs-real Codex eval orchestration wrapper
+- [scripts/codex-eval-curate.sh](../../scripts/codex-eval-curate.sh):
+  cross-run Codex eval curation wrapper
 - [cmd/codex-eval-runner/main.go](../../cmd/codex-eval-runner/main.go):
   Codex eval runner, matrix, compare, and failure-bundle CLI
 - [internal/codexeval/testdata/tasks](../../internal/codexeval/testdata/tasks):

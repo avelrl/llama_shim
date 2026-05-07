@@ -88,7 +88,6 @@ responses:
     mode: auto
   codex:
     enable_compatibility: true
-    force_tool_choice_required: true
   code_interpreter:
     backend: disabled
     python_binary: python3

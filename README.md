@@ -30,6 +30,8 @@ v1 supports:
 - frozen V2 release ledger: [docs/v2-scope.md](docs/v2-scope.md)
 - completed V3 preflight substrate: [docs/v3-preflight.md](docs/v3-preflight.md)
 - post-V2 capability expansion parking lot: [docs/v3-scope.md](docs/v3-scope.md)
+- V4 backend-capability and tool-routing preflight:
+  [docs/v4-preflight.md](docs/v4-preflight.md)
 - extension and plugin directions after the compatibility core:
   [docs/v4-scope.md](docs/v4-scope.md)
 - exact hosted-parity and advanced transport backlog:
@@ -71,6 +73,8 @@ transport path, not native upstream `/v1/responses` parity.
 - V3 expansion staging: [docs/v3-scope.md](docs/v3-scope.md)
 - V3 storage and retrieval backend plan:
   [docs/v3-storage-retrieval-backends.md](docs/v3-storage-retrieval-backends.md)
+- V4 backend-capability and tool-routing preflight:
+  [docs/v4-preflight.md](docs/v4-preflight.md)
 - V4 extensions and plugin model: [docs/v4-scope.md](docs/v4-scope.md)
 - V5 hosted parity and advanced transports: [docs/v5-scope.md](docs/v5-scope.md)
 - OpenAPI spec: [openapi/openapi.yaml](openapi/openapi.yaml)
@@ -209,7 +213,6 @@ responses:
     mode: auto
   codex:
     enable_compatibility: true
-    force_tool_choice_required: true
   code_interpreter:
     backend: disabled
     execution_timeout: 20s
@@ -301,7 +304,6 @@ Supported environment overrides:
 - `RESPONSES_CUSTOM_TOOLS_MODE` overrides `responses.custom_tools.mode`; supported values: `bridge`, `auto`, `passthrough`
   Use `auto` for the default path: it keeps bridge behavior for plain-text custom tools, routes supported `grammar` / `regex` custom tools into the shim-local constrained path, uses backend-native structured generation of raw `input` for named constrained custom tools and `tool_choice: "required"` with a single constrained tool, and in broader auto/mixed cases runs a shim-local tool selector before backend-native constrained generation for the selected custom tool. Shim-local `tool_choice.type=allowed_tools` is supported for function/custom subsets. The old validation/repair loop remains only as an error fallback, not the happy path.
 - `RESPONSES_CODEX_ENABLE_COMPATIBILITY` overrides `responses.codex.enable_compatibility`; when disabled, the shim stops injecting Codex-specific instructions/context and skips Codex-specific response normalization
-- `RESPONSES_CODEX_FORCE_TOOL_CHOICE_REQUIRED` overrides `responses.codex.force_tool_choice_required`; when enabled, Codex-like requests with `tool_choice: "auto"` are rewritten to `required`
 - `RESPONSES_CODE_INTERPRETER_BACKEND` overrides `responses.code_interpreter.backend`; supported values: `disabled`, `docker`
 - `RESPONSES_CODE_INTERPRETER_DOCKER_BINARY` overrides `responses.code_interpreter.docker.binary`
 - `RESPONSES_CODE_INTERPRETER_DOCKER_IMAGE` overrides `responses.code_interpreter.docker.image`

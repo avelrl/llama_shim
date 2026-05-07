@@ -30,7 +30,7 @@ func TestBuildLocalToolLoopTransportPlanConvertsNamedFunctionToolChoiceToChatSha
 		},
 	}
 
-	_, plan, toolChoice, _, err := buildLocalToolLoopTransportPlan(rawFields, tools, ServiceLimits{}, false)
+	_, plan, toolChoice, _, err := buildLocalToolLoopTransportPlan(rawFields, tools, ServiceLimits{})
 
 	require.NoError(t, err)
 	require.Equal(t, toolChoiceContractRequiredNamedFunction, plan.ToolChoiceContract.Mode)
@@ -59,7 +59,7 @@ func TestBuildLocalToolLoopTransportPlanConvertsShellToolChoiceToChatShape(t *te
 		},
 	}
 
-	_, plan, toolChoice, _, err := buildLocalToolLoopTransportPlan(rawFields, tools, ServiceLimits{}, false)
+	_, plan, toolChoice, _, err := buildLocalToolLoopTransportPlan(rawFields, tools, ServiceLimits{})
 
 	require.NoError(t, err)
 	require.Equal(t, toolChoiceContractRequiredNamedFunction, plan.ToolChoiceContract.Mode)

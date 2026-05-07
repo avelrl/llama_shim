@@ -33,6 +33,9 @@ func main() {
 		case "auto-report":
 			runAutoReport(os.Args[2:])
 			return
+		case "curate":
+			runCurate(os.Args[2:])
+			return
 		}
 	}
 
@@ -267,6 +270,52 @@ func runAutoReport(args []string) {
 	}
 	if codexeval.AutoReportShouldFail(report, *strict) {
 		os.Exit(1)
+	}
+}
+
+func runCurate(args []string) {
+	flags := flag.NewFlagSet("curate", flag.ExitOnError)
+	out := flags.String("out", envString("CODEX_EVAL_CURATE_OUT", ""), "write markdown curation report to this file instead of stdout")
+	jsonOut := flags.String("json-out", envString("CODEX_EVAL_CURATE_JSON_OUT", ""), "write machine-readable curation report JSON to this file")
+	limit := flags.Int("limit", envInt("CODEX_EVAL_CURATE_LIMIT", 50), "maximum profile results to include after filtering; 0 means no limit")
+	model := flags.String("model", envString("CODEX_EVAL_CURATE_MODEL", ""), "optional exact model filter")
+	since := flags.String("since", envString("CODEX_EVAL_CURATE_SINCE", ""), "optional lower bound as RFC3339 or YYYY-MM-DD")
+	if err := flags.Parse(args); err != nil {
+		fmt.Fprintf(os.Stderr, "codex eval curate failed: %v\n", err)
+		os.Exit(2)
+	}
+	report, err := codexeval.BuildCurationReport(codexeval.CurationOptions{
+		Paths: flags.Args(),
+		Limit: *limit,
+		Model: *model,
+		Since: *since,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "codex eval curate failed: %v\n", err)
+		os.Exit(1)
+	}
+	markdown := codexeval.RenderCurationReportMarkdown(report)
+	if strings.TrimSpace(*out) == "" {
+		fmt.Print(markdown)
+	} else {
+		if err := writeTextFile(*out, markdown); err != nil {
+			fmt.Fprintf(os.Stderr, "codex eval curate failed: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("codex eval curation report: %s\n", *out)
+	}
+	if strings.TrimSpace(*jsonOut) != "" {
+		raw, err := json.MarshalIndent(report, "", "  ")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "codex eval curate failed: %v\n", err)
+			os.Exit(1)
+		}
+		raw = append(raw, '\n')
+		if err := writeTextFile(*jsonOut, string(raw)); err != nil {
+			fmt.Fprintf(os.Stderr, "codex eval curate failed: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("codex eval curation summary: %s\n", *jsonOut)
 	}
 }
 

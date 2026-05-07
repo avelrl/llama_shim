@@ -166,11 +166,12 @@ Default cleanup targets intentionally do not remove `.data`.
 | Diagnose devstack health | `make devstack-doctor` | No | Read-only strict checks for required commands, Compose status, fixture health, shim health, `/readyz`, and `/debug/capabilities`. |
 | Diagnose devstack without failing on readiness | `make devstack-doctor-advisory` | No | Same report, but unavailable dependencies are warnings. Useful before starting or after stopping the stack. |
 | Run local preflight | `make preflight-local` | No | Runs local state report, strict devstack doctor, cleanup/reset dry-runs, build, lint, and `git diff --check`. |
+| Curate Codex eval artifacts | `make codex-eval-curate` | No | Reads `.tmp/codex-eval-*` artifacts and writes a cross-run interpretation report under `.tmp/codex-eval-curation`. |
 | Preview disposable run-artifact cleanup | `make clean-artifacts-dry-run` | No | Lists allowlisted `.tmp` artifact directories that would be removed. |
 | Remove disposable run artifacts | `make clean-artifacts` | No | Removes Codex eval runs, Codex smoke workdirs, browser harness runs, governance smoke runs, and Playwright daemon sockets/sessions under `.tmp`. |
 | Preview broader local dev cleanup | `make clean-dev-artifacts-dry-run` | No | Adds local tool caches to the artifact preview. |
 | Remove broader local dev artifacts | `make clean-dev-artifacts` | No | Removes the allowlisted `.tmp` artifacts plus `.cache`, `.playwright-cli`, `.tmp/go-build`, and `.tmp/go-tmp`. |
-| Remove only Codex eval runs | `make codex-eval-clean` | No | Removes `.tmp/codex-eval-runs`, `.tmp/codex-eval-loops`, and `.tmp/codex-eval-auto`. |
+| Remove only Codex eval runs | `make codex-eval-clean` | No | Removes `.tmp/codex-eval-runs`, `.tmp/codex-eval-loops`, `.tmp/codex-eval-auto`, and `.tmp/codex-eval-curation`. |
 | Preview devstack reset | `make devstack-reset-dry-run` | No | Prints the Compose reset command; keeps Docker volumes. |
 | Stop/reset devstack containers | `make devstack-reset` | No | Runs `docker compose -f docker-compose.devstack.yml down --remove-orphans`; keeps Docker volumes. |
 | Preview devstack volume reset | `make devstack-reset-volumes-dry-run` | No | Prints the Compose reset command with `-v`. |

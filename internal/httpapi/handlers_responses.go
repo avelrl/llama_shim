@@ -36,68 +36,51 @@ type ResponseService interface {
 }
 
 type responseHandler struct {
-	logger                                     *slog.Logger
-	service                                    *service.ResponseService
-	proxy                                      *proxyHandler
-	metrics                                    *Metrics
-	serviceLimits                              ServiceLimits
-	retrievalGate                              *concurrencyGate
-	codeInterpreterGate                        *concurrencyGate
-	responsesMode                              string
-	responsesUpstreamTransport                 string
-	customToolsMode                            string
-	constrainedDecodingBackend                 string
-	upstreamToolCompatibility                  []UpstreamToolCompatibilityRule
-	codexCompatibilityEnabled                  bool
-	forceCodexToolChoiceRequired               bool
-	forceCodexToolChoiceRequiredDisabledModels []string
-	codexUpstreamInputCompatibility            []CodexUpstreamInputCompatibilityRule
-	webSearchProvider                          websearch.Provider
-	imageGenerationProvider                    imagegen.Provider
-	localComputer                              LocalComputerRuntimeConfig
-	localCodeInterpreter                       LocalCodeInterpreterRuntimeConfig
-	localCodeInterpreterFiles                  LocalCodeInterpreterFileStore
-	localCodeInterpreterSessions               LocalCodeInterpreterSessionStore
+	logger                          *slog.Logger
+	service                         *service.ResponseService
+	proxy                           *proxyHandler
+	metrics                         *Metrics
+	serviceLimits                   ServiceLimits
+	retrievalGate                   *concurrencyGate
+	codeInterpreterGate             *concurrencyGate
+	responsesMode                   string
+	responsesUpstreamTransport      string
+	customToolsMode                 string
+	constrainedDecodingBackend      string
+	upstreamToolCompatibility       []UpstreamToolCompatibilityRule
+	codexCompatibilityEnabled       bool
+	codexUpstreamInputCompatibility []CodexUpstreamInputCompatibilityRule
+	webSearchProvider               websearch.Provider
+	imageGenerationProvider         imagegen.Provider
+	localComputer                   LocalComputerRuntimeConfig
+	localCodeInterpreter            LocalCodeInterpreterRuntimeConfig
+	localCodeInterpreterFiles       LocalCodeInterpreterFileStore
+	localCodeInterpreterSessions    LocalCodeInterpreterSessionStore
 }
 
-func newResponseHandler(logger *slog.Logger, service *service.ResponseService, proxy *proxyHandler, responsesMode string, responsesUpstreamTransport string, customToolsMode string, constrainedDecodingBackend string, upstreamToolCompatibility []UpstreamToolCompatibilityRule, codexCompatibilityEnabled bool, forceCodexToolChoiceRequired bool, forceCodexToolChoiceRequiredDisabledModels []string, codexUpstreamInputCompatibility []CodexUpstreamInputCompatibilityRule, webSearchProvider websearch.Provider, imageGenerationProvider imagegen.Provider, localComputer LocalComputerRuntimeConfig, localCodeInterpreter LocalCodeInterpreterRuntimeConfig, localCodeInterpreterFiles LocalCodeInterpreterFileStore, localCodeInterpreterSessions LocalCodeInterpreterSessionStore, metrics *Metrics, serviceLimits ServiceLimits, retrievalGate *concurrencyGate, codeInterpreterGate *concurrencyGate) *responseHandler {
+func newResponseHandler(logger *slog.Logger, service *service.ResponseService, proxy *proxyHandler, responsesMode string, responsesUpstreamTransport string, customToolsMode string, constrainedDecodingBackend string, upstreamToolCompatibility []UpstreamToolCompatibilityRule, codexCompatibilityEnabled bool, codexUpstreamInputCompatibility []CodexUpstreamInputCompatibilityRule, webSearchProvider websearch.Provider, imageGenerationProvider imagegen.Provider, localComputer LocalComputerRuntimeConfig, localCodeInterpreter LocalCodeInterpreterRuntimeConfig, localCodeInterpreterFiles LocalCodeInterpreterFileStore, localCodeInterpreterSessions LocalCodeInterpreterSessionStore, metrics *Metrics, serviceLimits ServiceLimits, retrievalGate *concurrencyGate, codeInterpreterGate *concurrencyGate) *responseHandler {
 	return &responseHandler{
-		logger:                       logger,
-		service:                      service,
-		proxy:                        proxy,
-		metrics:                      metrics,
-		serviceLimits:                normalizeServiceLimits(serviceLimits),
-		retrievalGate:                retrievalGate,
-		codeInterpreterGate:          codeInterpreterGate,
-		responsesMode:                normalizeResponsesMode(responsesMode),
-		responsesUpstreamTransport:   normalizeResponsesUpstreamTransport(responsesUpstreamTransport),
-		customToolsMode:              customToolsMode,
-		constrainedDecodingBackend:   normalizeConstrainedDecodingBackend(constrainedDecodingBackend),
-		upstreamToolCompatibility:    upstreamToolCompatibility,
-		codexCompatibilityEnabled:    codexCompatibilityEnabled,
-		forceCodexToolChoiceRequired: forceCodexToolChoiceRequired,
-		forceCodexToolChoiceRequiredDisabledModels: forceCodexToolChoiceRequiredDisabledModels,
-		codexUpstreamInputCompatibility:            codexUpstreamInputCompatibility,
-		webSearchProvider:                          webSearchProvider,
-		imageGenerationProvider:                    imageGenerationProvider,
-		localComputer:                              localComputer,
-		localCodeInterpreter:                       localCodeInterpreter,
-		localCodeInterpreterFiles:                  localCodeInterpreterFiles,
-		localCodeInterpreterSessions:               localCodeInterpreterSessions,
+		logger:                          logger,
+		service:                         service,
+		proxy:                           proxy,
+		metrics:                         metrics,
+		serviceLimits:                   normalizeServiceLimits(serviceLimits),
+		retrievalGate:                   retrievalGate,
+		codeInterpreterGate:             codeInterpreterGate,
+		responsesMode:                   normalizeResponsesMode(responsesMode),
+		responsesUpstreamTransport:      normalizeResponsesUpstreamTransport(responsesUpstreamTransport),
+		customToolsMode:                 customToolsMode,
+		constrainedDecodingBackend:      normalizeConstrainedDecodingBackend(constrainedDecodingBackend),
+		upstreamToolCompatibility:       upstreamToolCompatibility,
+		codexCompatibilityEnabled:       codexCompatibilityEnabled,
+		codexUpstreamInputCompatibility: codexUpstreamInputCompatibility,
+		webSearchProvider:               webSearchProvider,
+		imageGenerationProvider:         imageGenerationProvider,
+		localComputer:                   localComputer,
+		localCodeInterpreter:            localCodeInterpreter,
+		localCodeInterpreterFiles:       localCodeInterpreterFiles,
+		localCodeInterpreterSessions:    localCodeInterpreterSessions,
 	}
-}
-
-func (h *responseHandler) effectiveForceCodexToolChoiceRequired(rawFields map[string]json.RawMessage) bool {
-	if !h.forceCodexToolChoiceRequired {
-		return false
-	}
-	model := rawStringField(rawFields, "model")
-	for _, pattern := range h.forceCodexToolChoiceRequiredDisabledModels {
-		if modelPatternMatches(pattern, model) {
-			return false
-		}
-	}
-	return true
 }
 
 func (h *responseHandler) configuredCodexUpstreamInputMode(rawFields map[string]json.RawMessage) string {
@@ -689,7 +672,7 @@ func (h *responseHandler) createLocalStateViaUpstream(ctx context.Context, reque
 		return domain.Response{}, err
 	}
 
-	upstreamBody, plan, err := buildUpstreamResponsesBodyWithCompatibility(rawFields, prepared.ContextItems, prepared.NormalizedInput, prepared.ToolCallRefs, h.customToolsMode, h.codexCompatibilityEnabled, h.effectiveForceCodexToolChoiceRequired(rawFields), h.upstreamToolCompatibility)
+	upstreamBody, plan, err := buildUpstreamResponsesBodyWithCompatibility(rawFields, prepared.ContextItems, prepared.NormalizedInput, prepared.ToolCallRefs, h.customToolsMode, h.codexCompatibilityEnabled, h.upstreamToolCompatibility)
 	if err != nil {
 		return domain.Response{}, err
 	}
@@ -746,7 +729,7 @@ func (h *responseHandler) createLocalStateViaUpstream(ctx context.Context, reque
 }
 
 func (h *responseHandler) createProxyResponseViaUpstream(ctx context.Context, request CreateResponseRequest, requestJSON string, rawFields map[string]json.RawMessage) (domain.Response, error) {
-	upstreamBody, plan, err := remapCustomToolsPayloadWithCompatibility(rawFields, h.customToolsMode, h.codexCompatibilityEnabled, h.effectiveForceCodexToolChoiceRequired(rawFields), h.upstreamToolCompatibility)
+	upstreamBody, plan, err := remapCustomToolsPayloadWithCompatibility(rawFields, h.customToolsMode, h.codexCompatibilityEnabled, h.upstreamToolCompatibility)
 	if err != nil {
 		return domain.Response{}, err
 	}
@@ -890,7 +873,7 @@ func (h *responseHandler) retryResponseWithAuto(ctx context.Context, upstreamBod
 }
 
 func (h *responseHandler) buildBridgedProxyResponsesBody(ctx context.Context, rawFields map[string]json.RawMessage) ([]byte, customToolTransportPlan, error) {
-	body, plan, err := remapCustomToolsPayloadWithCompatibility(rawFields, string(customToolsModeBridge), h.codexCompatibilityEnabled, h.effectiveForceCodexToolChoiceRequired(rawFields), h.upstreamToolCompatibility)
+	body, plan, err := remapCustomToolsPayloadWithCompatibility(rawFields, string(customToolsModeBridge), h.codexCompatibilityEnabled, h.upstreamToolCompatibility)
 	if err != nil {
 		return nil, customToolTransportPlan{}, err
 	}
@@ -914,7 +897,7 @@ func (h *responseHandler) buildBridgedCurrentResponsesBody(ctx context.Context, 
 		return nil, customToolTransportPlan{}, err
 	}
 
-	body, plan, err := remapCustomToolsPayloadWithCompatibility(rawFields, string(customToolsModeBridge), h.codexCompatibilityEnabled, h.effectiveForceCodexToolChoiceRequired(rawFields), h.upstreamToolCompatibility)
+	body, plan, err := remapCustomToolsPayloadWithCompatibility(rawFields, string(customToolsModeBridge), h.codexCompatibilityEnabled, h.upstreamToolCompatibility)
 	if err != nil {
 		return nil, customToolTransportPlan{}, err
 	}
@@ -946,7 +929,7 @@ func (h *responseHandler) buildStringifiedResponsesBody(ctx context.Context, ups
 }
 
 func (h *responseHandler) buildBridgedUpstreamResponsesBody(ctx context.Context, rawFields map[string]json.RawMessage, contextItems []domain.Item, currentInput []domain.Item, refs map[string]domain.ToolCallReference) ([]byte, customToolTransportPlan, error) {
-	body, plan, err := buildUpstreamResponsesBodyWithCompatibility(rawFields, contextItems, currentInput, refs, string(customToolsModeBridge), h.codexCompatibilityEnabled, h.effectiveForceCodexToolChoiceRequired(rawFields), h.upstreamToolCompatibility)
+	body, plan, err := buildUpstreamResponsesBodyWithCompatibility(rawFields, contextItems, currentInput, refs, string(customToolsModeBridge), h.codexCompatibilityEnabled, h.upstreamToolCompatibility)
 	if err != nil {
 		return nil, customToolTransportPlan{}, err
 	}
@@ -1758,7 +1741,7 @@ func joinCSV(values []string) string {
 }
 
 func (h *responseHandler) proxyCreateWithShadowStore(w http.ResponseWriter, r *http.Request, request CreateResponseRequest, rawBody []byte, requestJSON string, rawFields map[string]json.RawMessage) {
-	upstreamBody, plan, err := remapCustomToolsPayloadWithCompatibility(rawFields, h.customToolsMode, h.codexCompatibilityEnabled, h.effectiveForceCodexToolChoiceRequired(rawFields), h.upstreamToolCompatibility)
+	upstreamBody, plan, err := remapCustomToolsPayloadWithCompatibility(rawFields, h.customToolsMode, h.codexCompatibilityEnabled, h.upstreamToolCompatibility)
 	if err != nil {
 		h.writeError(w, r, err)
 		return
@@ -2058,17 +2041,17 @@ func prepareShadowStore(ctx context.Context, prepare func(context.Context, servi
 	}, input, true
 }
 
-func buildUpstreamResponsesBody(rawFields map[string]json.RawMessage, contextItems []domain.Item, currentInput []domain.Item, refs map[string]domain.ToolCallReference, customToolsMode string, codexCompatibilityEnabled bool, forceCodexToolChoiceRequired bool) ([]byte, customToolTransportPlan, error) {
-	return buildUpstreamResponsesBodyWithCompatibility(rawFields, contextItems, currentInput, refs, customToolsMode, codexCompatibilityEnabled, forceCodexToolChoiceRequired, nil)
+func buildUpstreamResponsesBody(rawFields map[string]json.RawMessage, contextItems []domain.Item, currentInput []domain.Item, refs map[string]domain.ToolCallReference, customToolsMode string, codexCompatibilityEnabled bool) ([]byte, customToolTransportPlan, error) {
+	return buildUpstreamResponsesBodyWithCompatibility(rawFields, contextItems, currentInput, refs, customToolsMode, codexCompatibilityEnabled, nil)
 }
 
-func buildUpstreamResponsesBodyWithCompatibility(rawFields map[string]json.RawMessage, contextItems []domain.Item, currentInput []domain.Item, refs map[string]domain.ToolCallReference, customToolsMode string, codexCompatibilityEnabled bool, forceCodexToolChoiceRequired bool, upstreamToolCompatibility []UpstreamToolCompatibilityRule) ([]byte, customToolTransportPlan, error) {
+func buildUpstreamResponsesBodyWithCompatibility(rawFields map[string]json.RawMessage, contextItems []domain.Item, currentInput []domain.Item, refs map[string]domain.ToolCallReference, customToolsMode string, codexCompatibilityEnabled bool, upstreamToolCompatibility []UpstreamToolCompatibilityRule) ([]byte, customToolTransportPlan, error) {
 	effectiveMode := customToolsMode
 	if parseCustomToolsMode(customToolsMode) == customToolsModeAuto && contextHasPassthroughCustomItems(contextItems) {
 		effectiveMode = string(customToolsModePassthrough)
 	}
 
-	body, plan, err := remapCustomToolsPayloadWithCompatibility(rawFields, effectiveMode, codexCompatibilityEnabled, forceCodexToolChoiceRequired, upstreamToolCompatibility)
+	body, plan, err := remapCustomToolsPayloadWithCompatibility(rawFields, effectiveMode, codexCompatibilityEnabled, upstreamToolCompatibility)
 	if err != nil {
 		return nil, customToolTransportPlan{}, err
 	}

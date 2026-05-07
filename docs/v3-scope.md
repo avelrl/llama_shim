@@ -1,6 +1,6 @@
 # V3 Expansion Staging
 
-Last updated: May 5, 2026.
+Last updated: May 6, 2026.
 
 This document is the parking lot for work that did not make the V2 ship bar
 and should not be reintroduced into the frozen V2 scope.
@@ -343,6 +343,18 @@ the public compatibility story less truthful.
 
 ## Current V3 Implementation Queue
 
+The current practical focus is not adding more backend breadth. V3 has enough
+foundation now that the high-leverage work is operating and interpreting what
+already exists: preflight, devstack, Codex eval auto-runs, curation, and model
+matrix updates.
+
+When selecting new work, prefer this order:
+
+1. stabilize run interpretation and regression import;
+2. improve operator diagnostics for existing stacks;
+3. choose one vertical use case and deepen it;
+4. add a new backend only when a concrete runtime/operator need exists.
+
 The next practical implementation work should be selected from this queue:
 
 1. Extend [V3 Alternative Image Backends](v3-image-backends.md) only when a
@@ -374,6 +386,8 @@ The automated Codex eval work is now useful enough that V3 needs a standing
 curation loop, not only one-off run inspection. The operational runbook is
 [V3 Codex Eval Curation](v3-codex-eval-curation.md):
 
+- run `make codex-eval-curate` after meaningful auto/loop runs to produce
+  `.tmp/codex-eval-curation/<curation-id>/summary.md` and `summary.json`
 - summarize each `codex-eval-auto` run into the model matrix only after
   checking profile summaries and relevant shim logs
 - classify failures as shim, transport, Codex tool registration, upstream

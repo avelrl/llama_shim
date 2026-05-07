@@ -16,44 +16,42 @@ import (
 )
 
 type RouterDeps struct {
-	Logger                                              *slog.Logger
-	LlamaClient                                         *llama.Client
-	LlamaReadinessBearerToken                           string
-	ResponseService                                     *service.ResponseService
-	ConversationService                                 *service.ConversationService
-	Auth                                                StaticBearerAuthConfig
-	RateLimit                                           RateLimitConfig
-	MetricsConfig                                       MetricsConfig
-	Metrics                                             *Metrics
-	ServiceLimits                                       ServiceLimits
-	StorageBackend                                      string
-	ChatCompletionsStoreWhenOmitted                     bool
-	ChatCompletionsUpstreamCompatibility                []upstreamcompat.ChatCompletionRule
-	ResponsesMode                                       string
-	ResponsesUpstreamTransport                          string
-	ResponsesWebSocketEnabled                           bool
-	ResponsesCustomToolsMode                            string
-	ResponsesConstrainedDecodingBackend                 string
-	ResponsesUpstreamToolCompatibility                  []UpstreamToolCompatibilityRule
-	ResponsesCodexEnableCompatibility                   bool
-	ResponsesCodexForceToolChoiceRequired               bool
-	ResponsesCodexForceToolChoiceRequiredDisabledModels []string
-	ResponsesCodexUpstreamInputCompatibility            []CodexUpstreamInputCompatibilityRule
-	ResponsesCodexModelMetadata                         []CodexModelMetadata
-	ResponsesCompactionBackend                          string
-	ResponsesCompactionModel                            string
-	ResponsesCompactionRetainedItems                    int
-	ResponsesCompactionMaxInputRunes                    int
-	ResponsesWebSearchBackend                           string
-	ResponsesImageGenerationBackend                     string
-	WebSearchProvider                                   websearch.Provider
-	ImageGenerationProvider                             imagegen.Provider
-	LocalComputer                                       LocalComputerRuntimeConfig
-	LocalCodeInterpreter                                LocalCodeInterpreterRuntimeConfig
-	RetrievalIndexBackend                               string
-	RetrievalEmbedderBackend                            string
-	RetrievalEmbedder                                   retrieval.Embedder
-	Store                                               storage.Store
+	Logger                                   *slog.Logger
+	LlamaClient                              *llama.Client
+	LlamaReadinessBearerToken                string
+	ResponseService                          *service.ResponseService
+	ConversationService                      *service.ConversationService
+	Auth                                     StaticBearerAuthConfig
+	RateLimit                                RateLimitConfig
+	MetricsConfig                            MetricsConfig
+	Metrics                                  *Metrics
+	ServiceLimits                            ServiceLimits
+	StorageBackend                           string
+	ChatCompletionsStoreWhenOmitted          bool
+	ChatCompletionsUpstreamCompatibility     []upstreamcompat.ChatCompletionRule
+	ResponsesMode                            string
+	ResponsesUpstreamTransport               string
+	ResponsesWebSocketEnabled                bool
+	ResponsesCustomToolsMode                 string
+	ResponsesConstrainedDecodingBackend      string
+	ResponsesUpstreamToolCompatibility       []UpstreamToolCompatibilityRule
+	ResponsesCodexEnableCompatibility        bool
+	ResponsesCodexUpstreamInputCompatibility []CodexUpstreamInputCompatibilityRule
+	ResponsesCodexModelMetadata              []CodexModelMetadata
+	ResponsesCompactionBackend               string
+	ResponsesCompactionModel                 string
+	ResponsesCompactionRetainedItems         int
+	ResponsesCompactionMaxInputRunes         int
+	ResponsesWebSearchBackend                string
+	ResponsesImageGenerationBackend          string
+	WebSearchProvider                        websearch.Provider
+	ImageGenerationProvider                  imagegen.Provider
+	LocalComputer                            LocalComputerRuntimeConfig
+	LocalCodeInterpreter                     LocalCodeInterpreterRuntimeConfig
+	RetrievalIndexBackend                    string
+	RetrievalEmbedderBackend                 string
+	RetrievalEmbedder                        retrieval.Embedder
+	Store                                    storage.Store
 }
 
 const readyzUpstreamTimeout = 2 * time.Second
@@ -83,8 +81,6 @@ func NewRouter(deps RouterDeps) http.Handler {
 		deps.ResponsesConstrainedDecodingBackend,
 		deps.ResponsesUpstreamToolCompatibility,
 		deps.ResponsesCodexEnableCompatibility,
-		deps.ResponsesCodexForceToolChoiceRequired,
-		deps.ResponsesCodexForceToolChoiceRequiredDisabledModels,
 		deps.ResponsesCodexUpstreamInputCompatibility,
 		deps.WebSearchProvider,
 		deps.ImageGenerationProvider,

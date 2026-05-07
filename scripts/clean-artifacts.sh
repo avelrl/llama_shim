@@ -45,6 +45,7 @@ codex_eval_paths=(
   ".tmp/codex-eval-runs"
   ".tmp/codex-eval-loops"
   ".tmp/codex-eval-auto"
+  ".tmp/codex-eval-curation"
 )
 
 artifact_paths=(

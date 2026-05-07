@@ -333,16 +333,6 @@ responses:
   codex:
     # Enables Codex-compatible payload and response adaptations for /v1/responses.
     enable_compatibility: true
-    # When true, Codex-like requests with tool_choice=auto are rewritten to
-    # required before they are sent upstream.
-    force_tool_choice_required: true
-    # Model patterns where the required-tool rewrite is disabled. This is useful
-    # for upstreams that can call tools but degrade on ordinary assistant
-    # questions when every Codex turn is forced to call a tool.
-    force_tool_choice_required_disabled_models: []
-    # Example:
-    # force_tool_choice_required_disabled_models:
-    #   - Kimi-*
     upstream_input_compatibility:
       # Per-model upstream request shape overrides for Codex-compatible clients.
       # mode=auto keeps official structured Responses input and only falls back

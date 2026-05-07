@@ -906,7 +906,7 @@ func TestRemapCustomToolsPayloadRewritesCustomToolsAndSpecificToolChoice(t *test
 		]`),
 	}
 
-	body, plan, err := remapCustomToolsPayload(rawFields, "bridge", false, false)
+	body, plan, err := remapCustomToolsPayload(rawFields, "bridge", false)
 
 	require.NoError(t, err)
 	require.True(t, plan.BridgeActive())
@@ -948,7 +948,7 @@ func TestRemapCustomToolsPayloadRejectsGrammarCustomToolsInBridgeMode(t *testing
 		]`),
 	}
 
-	_, _, err := remapCustomToolsPayload(rawFields, "bridge", false, false)
+	_, _, err := remapCustomToolsPayload(rawFields, "bridge", false)
 
 	var validationErr *domain.ValidationError
 	require.ErrorAs(t, err, &validationErr)
@@ -964,7 +964,7 @@ func TestRemapCustomToolsPayloadAcceptsCustomToolAlias(t *testing.T) {
 		]`),
 	}
 
-	body, plan, err := remapCustomToolsPayload(rawFields, "bridge", false, false)
+	body, plan, err := remapCustomToolsPayload(rawFields, "bridge", false)
 
 	require.NoError(t, err)
 	require.True(t, plan.BridgeActive())
@@ -1006,7 +1006,7 @@ func TestRemapCustomToolsPayloadDropsDisabledWebSearchTool(t *testing.T) {
 		]`),
 	}
 
-	body, plan, err := remapCustomToolsPayload(rawFields, "bridge", false, false)
+	body, plan, err := remapCustomToolsPayload(rawFields, "bridge", false)
 
 	require.NoError(t, err)
 	require.False(t, plan.BridgeActive())
@@ -1035,7 +1035,7 @@ func TestRemapCustomToolsPayloadDropsModelDisabledTool(t *testing.T) {
 		]`),
 	}
 
-	body, plan, err := remapCustomToolsPayloadWithCompatibility(rawFields, "bridge", false, false, []UpstreamToolCompatibilityRule{
+	body, plan, err := remapCustomToolsPayloadWithCompatibility(rawFields, "bridge", false, []UpstreamToolCompatibilityRule{
 		{Model: "kimi-*", DisabledTools: []string{"image_generation", "namespace_tool"}},
 	})
 
@@ -1065,7 +1065,7 @@ func TestRemapCustomToolsPayloadRejectsModelDisabledToolChoice(t *testing.T) {
 		]`),
 	}
 
-	_, _, err := remapCustomToolsPayloadWithCompatibility(rawFields, "bridge", false, false, []UpstreamToolCompatibilityRule{
+	_, _, err := remapCustomToolsPayloadWithCompatibility(rawFields, "bridge", false, []UpstreamToolCompatibilityRule{
 		{Model: "Kimi-*", DisabledTools: []string{"image_generation"}},
 	})
 
@@ -1084,7 +1084,7 @@ func TestRemapCustomToolsPayloadRejectsModelDisabledNamespaceToolChoice(t *testi
 		]`),
 	}
 
-	_, _, err := remapCustomToolsPayloadWithCompatibility(rawFields, "bridge", false, false, []UpstreamToolCompatibilityRule{
+	_, _, err := remapCustomToolsPayloadWithCompatibility(rawFields, "bridge", false, []UpstreamToolCompatibilityRule{
 		{Model: "Kimi-*", DisabledTools: []string{"namespace_tool"}},
 	})
 
@@ -1102,7 +1102,7 @@ func TestRemapCustomToolsPayloadPreservesSupportedWebSearchBuiltIn(t *testing.T)
 		]`),
 	}
 
-	body, plan, err := remapCustomToolsPayload(rawFields, "bridge", false, false)
+	body, plan, err := remapCustomToolsPayload(rawFields, "bridge", false)
 
 	require.NoError(t, err)
 	require.False(t, plan.BridgeActive())
@@ -1121,7 +1121,7 @@ func TestRemapCustomToolsPayloadPreservesSupportedWebSearchBuiltIn(t *testing.T)
 	require.Equal(t, "web_search", toolChoice["type"])
 }
 
-func TestRemapCustomToolsPayloadForcesRequiredToolChoiceForCodexAuto(t *testing.T) {
+func TestRemapCustomToolsPayloadPreservesAutoToolChoiceForCodexRequest(t *testing.T) {
 	rawFields := map[string]json.RawMessage{
 		"instructions": json.RawMessage(`"You are a coding agent running in the Codex CLI, a terminal-based coding assistant."`),
 		"model":        json.RawMessage(`"devstack-model"`),
@@ -1131,31 +1131,7 @@ func TestRemapCustomToolsPayloadForcesRequiredToolChoiceForCodexAuto(t *testing.
 		]`),
 	}
 
-	body, plan, err := remapCustomToolsPayload(rawFields, "bridge", true, true)
-
-	require.NoError(t, err)
-
-	var payload map[string]any
-	require.NoError(t, json.Unmarshal(body, &payload))
-	require.Equal(t, "required", payload["tool_choice"])
-	require.Equal(t, toolChoiceContractRequiredAny, plan.ToolChoiceContract.Mode)
-}
-
-func TestRemapCustomToolsPayloadKeepsAutoForCodexForceDisabledModel(t *testing.T) {
-	rawFields := map[string]json.RawMessage{
-		"instructions": json.RawMessage(`"You are a coding agent running in the Codex CLI, a terminal-based coding assistant."`),
-		"model":        json.RawMessage(`"Kimi-K2.6"`),
-		"tool_choice":  json.RawMessage(`"auto"`),
-		"tools": json.RawMessage(`[
-			{"type":"function","name":"exec_command","parameters":{"type":"object","properties":{"cmd":{"type":"string"}},"required":["cmd"]}}
-		]`),
-	}
-	handler := &responseHandler{
-		forceCodexToolChoiceRequired:               true,
-		forceCodexToolChoiceRequiredDisabledModels: []string{"Kimi-*"},
-	}
-
-	body, plan, err := remapCustomToolsPayload(rawFields, "bridge", true, handler.effectiveForceCodexToolChoiceRequired(rawFields))
+	body, plan, err := remapCustomToolsPayload(rawFields, "bridge", true)
 
 	require.NoError(t, err)
 
@@ -1175,7 +1151,7 @@ func TestRemapCustomToolsPayloadKeepsAutoToolChoiceForCodexToolOutputFollowUp(t 
 		]`),
 	}
 
-	body, plan, err := remapCustomToolsPayload(rawFields, "bridge", true, true)
+	body, plan, err := remapCustomToolsPayload(rawFields, "bridge", true)
 
 	require.NoError(t, err)
 
@@ -1194,7 +1170,7 @@ func TestRemapCustomToolsPayloadKeepsAutoToolChoiceForNonCodexRequest(t *testing
 		]`),
 	}
 
-	body, _, err := remapCustomToolsPayload(rawFields, "bridge", true, true)
+	body, _, err := remapCustomToolsPayload(rawFields, "bridge", true)
 
 	require.NoError(t, err)
 
@@ -1211,7 +1187,7 @@ func TestRemapCustomToolsPayloadCapturesRequiredToolChoiceContract(t *testing.T)
 		]`),
 	}
 
-	_, plan, err := remapCustomToolsPayload(rawFields, "bridge", false, false)
+	_, plan, err := remapCustomToolsPayload(rawFields, "bridge", false)
 
 	require.NoError(t, err)
 	require.Equal(t, toolChoiceContractRequiredAny, plan.ToolChoiceContract.Mode)
@@ -1533,8 +1509,44 @@ func TestParseLocalToolLoopChatCompletionRejectsNaturalLanguageToolCallMarkupTex
 			wantContent: "tool_code_call",
 		},
 		{
+			content:     "Checking now.\n\n<chatcmpl-tool>{\"name\":\"exec_command\",\"arguments\":{\"cmd\":\"cat README.md\"}}</chatcmpl-tool>",
+			wantContent: "chatcmpl-tool",
+		},
+		{
+			content:     "Checking now.\n\n<function.chatcmpl.tool>\n<parameter=arguments>{\"command\":[\"ls\",\"-la\"]}</parameter>\n</function.chatcmpl.tool>",
+			wantContent: "function.chatcmpl.tool",
+		},
+		{
+			content:     "Checking now.\n\n<tools>{\"call\":\"cat\",\"arguments\":{\"file\":\"README.md\"}}</tools>",
+			wantContent: "tools",
+		},
+		{
+			content:     "Checking now.\n\n[shell_command]\n{\"command\":\"find . -maxdepth 2 -type f\"}\n[/shell_command]",
+			wantContent: "shell_command",
+		},
+		{
+			content:     "Checking now.\n\n<function name=\"shell\">\n<parameter=command>cat README.md</parameter>\n</function>",
+			wantContent: "function name",
+		},
+		{
+			content:     "Checking now.\n\n<tool_code_exec>\n<parameter=command>cat README.md</parameter>\n</tool_code_exec>",
+			wantContent: "tool_code_exec",
+		},
+		{
+			content:     "Checking now.\n\n<tool_code_interpreter>\ncode='''print(\"hello\")'''\n</tool_code_interpreter>",
+			wantContent: "tool_code_interpreter",
+		},
+		{
 			content:     "Writing now.\n\n<apply_patch>\n<command>*** Begin Patch\n*** End Patch</command>\n</apply_patch>",
 			wantContent: "apply_patch",
+		},
+		{
+			content:     "Writing now.\n\n```yaml\ncommand: apply_patch\nargs:\n  patch: |\n    *** Begin Patch\n    *** End Patch\n```",
+			wantContent: "yaml",
+		},
+		{
+			content:     "Writing now.\n\n```\nApplyPatch\n*** Update File: mathutil.py\n@@\n-    return a - b\n+    return a + b\n*** End Patch\n```",
+			wantContent: "applypatch",
 		},
 		{
 			content:     "Let me inspect it.\n\n<read_file path=mathutil.go><failing to read>\nError reading file</failing to read>",
@@ -1572,7 +1584,7 @@ func TestRemapCustomToolsPayloadAppendsCodexCompatibilityHint(t *testing.T) {
 		]`),
 	}
 
-	body, _, err := remapCustomToolsPayload(rawFields, "bridge", true, false)
+	body, _, err := remapCustomToolsPayload(rawFields, "bridge", true)
 
 	require.NoError(t, err)
 
@@ -1611,7 +1623,7 @@ func TestRemapCustomToolsPayloadDetectsCodexCompatibilityFromInput(t *testing.T)
 		]`),
 	}
 
-	body, plan, err := remapCustomToolsPayload(rawFields, "auto", true, false)
+	body, plan, err := remapCustomToolsPayload(rawFields, "auto", true)
 
 	require.NoError(t, err)
 	require.Equal(t, customToolsModePassthrough, plan.Mode)
@@ -1639,7 +1651,7 @@ func TestRemapCustomToolsPayloadDetectsCodexCompatibilityFromToolSet(t *testing.
 		]`),
 	}
 
-	body, plan, err := remapCustomToolsPayload(rawFields, "auto", true, false)
+	body, plan, err := remapCustomToolsPayload(rawFields, "auto", true)
 
 	require.NoError(t, err)
 	require.Equal(t, customToolsModePassthrough, plan.Mode)
@@ -1657,7 +1669,7 @@ func TestRemapCustomToolsPayloadDetectsCodexCompatibilityFromToolSet(t *testing.
 	require.Contains(t, execCommand["description"], "single shell string")
 }
 
-func TestRemapCustomToolsPayloadSkipsCodexCompatibilityWhenDisabled(t *testing.T) {
+func TestRemapCustomToolsPayloadSkipsCodexCompatibilityWhenDisabledAndPreservesAuto(t *testing.T) {
 	rawFields := map[string]json.RawMessage{
 		"instructions": json.RawMessage(`"You are a coding agent running in the Codex CLI, a terminal-based coding assistant."`),
 		"tool_choice":  json.RawMessage(`"auto"`),
@@ -1666,17 +1678,17 @@ func TestRemapCustomToolsPayloadSkipsCodexCompatibilityWhenDisabled(t *testing.T
 		]`),
 	}
 
-	body, _, err := remapCustomToolsPayload(rawFields, "bridge", false, true)
+	body, _, err := remapCustomToolsPayload(rawFields, "bridge", false)
 
 	require.NoError(t, err)
 
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal(body, &payload))
-	require.Equal(t, "required", payload["tool_choice"])
+	require.Equal(t, "auto", payload["tool_choice"])
 	require.NotContains(t, payload["instructions"], codexCompatibilityHint)
 }
 
-func TestRemapCustomToolsPayloadKeepsAutoWithoutCompatAndWithoutForce(t *testing.T) {
+func TestRemapCustomToolsPayloadKeepsAutoWithoutCompat(t *testing.T) {
 	rawFields := map[string]json.RawMessage{
 		"instructions": json.RawMessage(`"You are a coding agent running in the Codex CLI, a terminal-based coding assistant."`),
 		"tool_choice":  json.RawMessage(`"auto"`),
@@ -1685,7 +1697,7 @@ func TestRemapCustomToolsPayloadKeepsAutoWithoutCompatAndWithoutForce(t *testing
 		]`),
 	}
 
-	body, _, err := remapCustomToolsPayload(rawFields, "bridge", false, false)
+	body, _, err := remapCustomToolsPayload(rawFields, "bridge", false)
 
 	require.NoError(t, err)
 
@@ -1801,7 +1813,7 @@ func TestNormalizeUpstreamResponseBodyRepairsPassthroughCustomToolFunctionCallFa
 			{"type":"custom","name":"apply_patch","format":{"type":"grammar","syntax":"lark","definition":"start: /.+/"}}
 		]`),
 	}
-	_, plan, err := remapCustomToolsPayload(rawFields, "passthrough", false, false)
+	_, plan, err := remapCustomToolsPayload(rawFields, "passthrough", false)
 	require.NoError(t, err)
 	require.Equal(t, customToolsModePassthrough, plan.Mode)
 	require.True(t, plan.PassthroughCustomTools.Active())
@@ -1987,7 +1999,7 @@ func TestRemapCustomToolsPayloadRejectsDuplicateBridgeNamesAcrossNamespaces(t *t
 		]`),
 	}
 
-	_, _, err := remapCustomToolsPayload(rawFields, "bridge", false, false)
+	_, _, err := remapCustomToolsPayload(rawFields, "bridge", false)
 
 	var validationErr *domain.ValidationError
 	require.ErrorAs(t, err, &validationErr)
@@ -2099,7 +2111,6 @@ func TestBuildUpstreamResponsesBodyReplaysBridgeCustomToolsWithoutCurrentTools(t
 		[]domain.Item{output},
 		refs,
 		"bridge",
-		false,
 		false,
 	)
 	require.NoError(t, err)

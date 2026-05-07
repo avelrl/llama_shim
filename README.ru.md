@@ -155,7 +155,6 @@ responses:
     mode: auto
   codex:
     enable_compatibility: true
-    force_tool_choice_required: true
 ```
 
 Запуск с явным файлом конфигурации:
@@ -200,9 +199,6 @@ SHIM_CONFIG=./config.yaml go run ./cmd/shim
 - `RESPONSES_CODEX_ENABLE_COMPATIBILITY` переопределяет
   `responses.codex.enable_compatibility`; если выключить, сервис перестанет
   добавлять Codex-специфический контекст и нормализацию
-- `RESPONSES_CODEX_FORCE_TOOL_CHOICE_REQUIRED` переопределяет
-  `responses.codex.force_tool_choice_required`; если включить, Codex-подобные
-  запросы с `tool_choice: "auto"` будут переписываться в `required`
 
 ### Замечания по хранению `Responses`
 
