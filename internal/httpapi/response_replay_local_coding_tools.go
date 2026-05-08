@@ -6,16 +6,33 @@ import (
 )
 
 type responseReplayProfile struct {
+	replayClass                 string
+	capabilities                []responseReplayCapability
 	includeShellToolFamily      bool
 	includeApplyPatchToolFamily bool
 }
 
+type responseReplayCapability string
+
+const (
+	responseReplayCapabilityTypedText                 responseReplayCapability = "typed_text"
+	responseReplayCapabilityTypedFunction             responseReplayCapability = "typed_function_call"
+	responseReplayCapabilityTypedToolFamily           responseReplayCapability = "typed_tool_family"
+	responseReplayCapabilityGeneric                   responseReplayCapability = "generic_replay"
+	responseReplayCapabilityFixtureBackedHostedReplay responseReplayCapability = "fixture_backed_hosted_replay"
+	responseReplayCapabilityUnsupported               responseReplayCapability = "unsupported"
+)
+
 var (
 	completedResponseReplayProfile = responseReplayProfile{
+		replayClass:                 "create_stream_completed_response",
+		capabilities:                []responseReplayCapability{responseReplayCapabilityTypedText, responseReplayCapabilityTypedFunction, responseReplayCapabilityTypedToolFamily, responseReplayCapabilityGeneric},
 		includeShellToolFamily:      true,
 		includeApplyPatchToolFamily: true,
 	}
 	retrieveResponseReplayProfile = responseReplayProfile{
+		replayClass:                 "retrieve_stream_synthetic_replay",
+		capabilities:                []responseReplayCapability{responseReplayCapabilityTypedText, responseReplayCapabilityTypedToolFamily, responseReplayCapabilityGeneric},
 		includeApplyPatchToolFamily: true,
 	}
 )

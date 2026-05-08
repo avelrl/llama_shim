@@ -48,6 +48,11 @@ The first implementation slice is complete:
   `mcp.connector_id`, client-executed `tool_search`, unknown future tool types,
   and upstream-only aliases. Local tool-family parser/runtime errors remain
   owned by the existing local handlers so their diagnostics stay specific.
+- Create-stream, retrieve-stream, and Responses WebSocket warmup now share a
+  `responseReplayEmitter` path with explicit replay classes and capability
+  labels. This keeps event writing incremental, records whether a path is
+  `generic_replay` or typed local-tool replay, and preserves the existing
+  public SSE/WebSocket payloads.
 
 These slices intentionally do not create a new OpenAI public surface. They
 centralize what is already true so future V4 memory/plugin work has one
@@ -55,8 +60,8 @@ operator-visible contract instead of one-off backend claims.
 
 ## Official References Reviewed
 
-This wording was checked on May 6, 2026, and the request-time classifier slice
-was spot-checked again on May 8, 2026 against:
+This wording was checked on May 6, 2026, and the request-time classifier plus
+stream/replay slices were spot-checked again on May 8, 2026 against:
 
 - local official-docs index: `openapi/llms.txt`
 - OpenAI Docs MCP on `developers.openai.com` / `platform.openai.com`
@@ -64,6 +69,7 @@ was spot-checked again on May 8, 2026 against:
   `/v1/responses/{response_id}`, `/v1/responses/{response_id}/input_items`,
   `/v1/responses/compact`, `/v1/conversations`,
   `/v1/chat/completions`, `/v1/files`, and `/v1/vector_stores`
+- [Responses streaming events API reference](https://platform.openai.com/docs/api-reference/responses-streaming)
 - [Migrate to the Responses API](https://developers.openai.com/api/docs/guides/migrate-to-responses)
 - [Conversation state](https://developers.openai.com/api/docs/guides/conversation-state)
 - [Streaming API responses](https://developers.openai.com/api/docs/guides/streaming-responses)
@@ -484,24 +490,27 @@ Non-useful cleanup examples:
 ### 6. Stream And Replay Transformer Interface
 
 Classification: V4 preflight platform work.
+Status: implemented for the V4 preflight platform scope.
 
 Goal:
 Centralize create-stream and retrieve-stream event writing without forcing
 exact hosted choreography where the shim only claims a broad subset.
 
-The interface should support:
+Implemented interface support:
 
-- streaming backend event normalization
+- streaming backend event normalization through the existing upstream stream
+  proxy
 - typed Responses event emission
 - generic replay emission for stored responses
 - tool-family-specific replay where docs or fixtures support it
 - event sequence tracking where the current shim uses it
-- persisted replay artifacts that can be compared in tests
+- persisted replay artifacts that can be compared in tests on artifact-backed
+  paths
 - incremental writing without prebuilding the full event list
 - clear split between create-stream and retrieve-stream behavior
 - WebSocket reuse where the event payload is the same and the transport differs
 
-The interface should expose capability levels:
+The interface exposes these capability levels:
 
 - `typed_text`
 - `typed_function_call`
@@ -519,14 +528,21 @@ Rules:
 - store enough replay metadata to explain why retrieve-stream differs from
   create-stream when it does
 
-Acceptance criteria:
+Implemented checks:
 
-- create-stream and retrieve-stream tests cover text, function calls, at least
-  one local tool family, generic replay, and unsupported hosted exact replay
-- fixture-backed event tests are mandatory before upgrading any hosted
-  tool-family status
-- large replay tests prove incremental emission instead of full event
-  materialization
+- `emitResponseReplayEvents` owns sequence numbering, `starting_after`
+  filtering, replay summary metadata, and transport-agnostic event emission.
+- `writeCompletedResponseAsSSE`, `writeResponseReplayAsSSE`, and
+  `writeCompletedResponseAsWebSocket` use the same emitter path.
+- focused tests cover replay classes, capability labels, `starting_after`
+  numbering, WebSocket/SSE-compatible sequence payloads, and short-circuiting
+  on emitter errors so the replay walker does not need to prebuild a full
+  event list before writing.
+
+Boundary:
+
+- exact hosted tool-family SSE choreography is still V5 fixture-backed parity
+  work, not a V4 preflight claim.
 
 ### 7. Fallback, Cooldown, Quota, And Health Policy
 

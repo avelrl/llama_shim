@@ -302,9 +302,9 @@ func createResponseInputFromRequest(request CreateResponseRequest, requestJSON s
 }
 
 func writeCompletedResponseAsWebSocket(ctx context.Context, logger *slog.Logger, conn *websocket.Conn, rawResponse []byte) error {
-	response, eventCount, lastEventType, err := forEachCompletedResponseReplayEvent(rawResponse, customToolTransportPlan{}, true, func(event responseReplayEvent) error {
+	response, summary, err := forEachCompletedResponseReplayEvent(rawResponse, customToolTransportPlan{}, true, responseReplayEmitterFunc(func(event responseReplayEvent) error {
 		return writeWebSocketJSON(ctx, conn, event.payload)
-	})
+	}))
 	if err != nil {
 		status, payload := MapError(ctx, logger, err)
 		if writeErr := writeWebSocketError(ctx, conn, status, payload); writeErr != nil {
@@ -312,11 +312,14 @@ func writeCompletedResponseAsWebSocket(ctx context.Context, logger *slog.Logger,
 		}
 		return nil
 	}
-	if logger != nil && logger.Enabled(ctx, slog.LevelDebug) && eventCount > 0 {
+	if logger != nil && logger.Enabled(ctx, slog.LevelDebug) && summary.EventCount > 0 {
 		logger.DebugContext(ctx, "responses websocket stream summary",
 			"request_id", RequestIDFromContext(ctx),
-			"event_count", eventCount,
-			"last_event_type", lastEventType,
+			"replay_class", summary.ReplayClass,
+			"replay_capabilities", summary.Capabilities,
+			"event_count", summary.EventCount,
+			"emitted_event_count", summary.EmittedCount,
+			"last_event_type", summary.LastEvent,
 			"response_id", response.ID,
 			"output_text_preview", truncateForLog(response.OutputText, 240),
 		)

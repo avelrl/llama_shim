@@ -18,7 +18,10 @@ and classifier disposition summaries for the current tool families. In
 addition, `POST /v1/responses` now uses the same classifier vocabulary as a
 request-time gate so `responses.mode=local_only` fails closed for proxy-only,
 client-round-trip, upstream-only, and unknown tool families instead of letting
-them drift into a lossy local path.
+them drift into a lossy local path. Create-stream, retrieve-stream, and
+Responses WebSocket warmup also share a stream/replay emitter interface with
+explicit replay classes and capability labels, while preserving the existing
+OpenAI-shaped event payloads.
 
 V2 is the broad compatibility facade.
 V3 is backend and runtime expansion around that facade.

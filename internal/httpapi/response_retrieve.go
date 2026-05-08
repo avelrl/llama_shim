@@ -201,23 +201,19 @@ func parseOptionalIntQuery(values url.Values, name string) (int, bool, error) {
 }
 
 func writeResponseReplayAsSSE(w http.ResponseWriter, response domain.Response, artifacts []domain.ResponseReplayArtifact, startingAfter int, includeObfuscation bool) error {
-	emitter, err := newResponseStreamEmitter(w, false)
+	emitter, err := newSSEResponseReplayEmitter(w)
 	if err != nil {
 		return err
 	}
 
-	sequence := 0
-	if err := forEachResponseReplayEvent(response, artifacts, includeObfuscation, retrieveResponseReplayProfile, func(event responseReplayEvent) error {
-		sequence++
-		if sequence <= startingAfter {
-			return nil
-		}
-		event.payload["sequence_number"] = sequence
-		return emitter.write(event.eventType, event.payload)
-	}); err != nil {
+	if _, err := emitResponseReplayEvents(response, artifacts, responseReplayEmitOptions{
+		IncludeObfuscation: includeObfuscation,
+		StartingAfter:      startingAfter,
+		Profile:            retrieveResponseReplayProfile,
+	}, emitter); err != nil {
 		return err
 	}
-	return emitter.done()
+	return emitter.Done()
 }
 
 func forEachResponseReplayEvent(response domain.Response, artifacts []domain.ResponseReplayArtifact, includeObfuscation bool, profile responseReplayProfile, visit func(responseReplayEvent) error) error {

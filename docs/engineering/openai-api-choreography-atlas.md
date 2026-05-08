@@ -286,21 +286,24 @@ sequenceDiagram
   autonumber
   participant C as Client
   participant H as responseHandler
+  participant R as Stream/replay interface
   participant S as SSE writer
   participant L as Model/tool loop
   participant DB as Store
 
   C->>H: POST /v1/responses {stream:true}
-  H->>S: response.created
-  H->>S: response.in_progress
+  H->>R: choose create_stream_completed_response profile
+  R->>S: response.created
+  R->>S: response.in_progress
   H->>L: generate or execute local tool loop
-  L-->>S: response.output_item.added
-  L-->>S: response.output_text.delta or tool-family deltas
-  L-->>S: response.output_text.done or tool-family done
-  L-->>S: response.output_item.done
+  L-->>R: final Response plus replay artifacts
+  R-->>S: response.output_item.added
+  R-->>S: response.output_text.delta or tool-family deltas
+  R-->>S: response.output_text.done or tool-family done
+  R-->>S: response.output_item.done
   H->>DB: persist final response and replay artifacts
   Note over H,DB: Retention cleanup can remove replay artifacts later, not response rows
-  H->>S: response.completed
+  R->>S: response.completed
   S-->>C: text/event-stream frames
 ```
 
@@ -312,6 +315,11 @@ styles:
 - generic `response.output_item.*` replay where exact hosted choreography is
   unknown or intentionally out of scope
 
+The stream/replay interface owns sequence numbering, `starting_after`
+filtering for retrieve-stream, and replay capability labels such as
+`typed_text`, `typed_tool_family`, and `generic_replay`. These labels are
+internal diagnostics; they are not added to public SSE payloads.
+
 ## 5. Stored Retrieve-Stream Replay
 
 ```mermaid
@@ -320,19 +328,21 @@ sequenceDiagram
   participant C as Client
   participant H as responseHandler
   participant DB as Store
+  participant R as Stream/replay interface
   participant S as SSE writer
 
   C->>H: GET /v1/responses/{id}?stream=true
   H->>DB: load response
   H->>DB: load replay artifacts
+  H->>R: choose retrieve_stream_synthetic_replay profile
   alt exact local artifacts exist
-    H->>S: replay stored artifacts in order
+    R->>S: replay stored artifacts in order
   else synthetic replay required
     Note over H,DB: This also covers artifacts pruned by shim-local retention
-    H->>S: response.created / in_progress
-    H->>S: output item events
-    H->>S: text or tool-family events when supported
-    H->>S: response.completed
+    R->>S: response.created / in_progress
+    R->>S: output item events
+    R->>S: text or tool-family events when supported
+    R->>S: response.completed
   end
   S-->>C: text/event-stream frames
 ```
@@ -346,6 +356,9 @@ Current boundary:
 - Optional replay-artifact retention prunes only standalone response artifacts.
   It does not delete stored response rows and does not apply to
   conversation-attached responses.
+- Retrieve-stream replay is emitted incrementally through the same replay
+  interface used by create-stream and WebSocket warmup; the shim does not
+  prebuild a full event list before writing.
 
 ## 6. Responses WebSocket Mode
 

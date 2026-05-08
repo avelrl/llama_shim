@@ -618,24 +618,25 @@ func writeCompletedResponseAsSSE(ctx context.Context, logger *slog.Logger, w htt
 	disableWriteDeadline(w)
 	w.WriteHeader(http.StatusOK)
 
-	emitter, err := newResponseStreamEmitter(w, false)
+	emitter, err := newSSEResponseReplayEmitter(w)
 	if err != nil {
 		return err
 	}
-	response, eventCount, lastEventType, err := forEachCompletedResponseReplayEvent(rawResponse, plan, includeObfuscation, func(event responseReplayEvent) error {
-		return emitter.write(event.eventType, event.payload)
-	})
+	response, summary, err := forEachCompletedResponseReplayEvent(rawResponse, plan, includeObfuscation, emitter)
 	if err != nil {
 		return err
 	}
-	if err := emitter.done(); err != nil {
+	if err := emitter.Done(); err != nil {
 		return err
 	}
-	if logger != nil && logger.Enabled(ctx, slog.LevelDebug) && eventCount > 0 {
+	if logger != nil && logger.Enabled(ctx, slog.LevelDebug) && summary.EventCount > 0 {
 		logger.DebugContext(ctx, "responses stream summary",
 			"request_id", RequestIDFromContext(ctx),
-			"event_count", eventCount,
-			"last_event_type", lastEventType,
+			"replay_class", summary.ReplayClass,
+			"replay_capabilities", summary.Capabilities,
+			"event_count", summary.EventCount,
+			"emitted_event_count", summary.EmittedCount,
+			"last_event_type", summary.LastEvent,
 			"response_id", response.ID,
 			"output_text_preview", truncateForLog(response.OutputText, 240),
 		)
@@ -643,27 +644,24 @@ func writeCompletedResponseAsSSE(ctx context.Context, logger *slog.Logger, w htt
 	return nil
 }
 
-func forEachCompletedResponseReplayEvent(rawResponse []byte, plan customToolTransportPlan, includeObfuscation bool, visit func(responseReplayEvent) error) (domain.Response, int, string, error) {
+func forEachCompletedResponseReplayEvent(rawResponse []byte, plan customToolTransportPlan, includeObfuscation bool, emitter responseReplayEmitter) (domain.Response, responseReplayEmitSummary, error) {
 	response, err := domain.ParseUpstreamResponse(rawResponse)
 	if err != nil {
-		return domain.Response{}, 0, "", err
+		return domain.Response{}, responseReplayEmitSummary{}, err
 	}
 	response = annotateResponseCustomToolMetadata(response, plan)
 	response, err = normalizeResponseForStreaming(response, nil)
 	if err != nil {
-		return domain.Response{}, 0, "", err
+		return domain.Response{}, responseReplayEmitSummary{}, err
 	}
-	eventCount := 0
-	lastEventType := ""
-	if err := forEachResponseReplayEvent(response, nil, includeObfuscation, completedResponseReplayProfile, func(event responseReplayEvent) error {
-		eventCount++
-		lastEventType = event.eventType
-		event.payload["sequence_number"] = eventCount
-		return visit(event)
-	}); err != nil {
-		return domain.Response{}, eventCount, lastEventType, err
+	summary, err := emitResponseReplayEvents(response, nil, responseReplayEmitOptions{
+		IncludeObfuscation: includeObfuscation,
+		Profile:            completedResponseReplayProfile,
+	}, emitter)
+	if err != nil {
+		return domain.Response{}, summary, err
 	}
-	return response, eventCount, lastEventType, nil
+	return response, summary, nil
 }
 
 func shouldIgnoreStreamProxyError(err error) bool {
