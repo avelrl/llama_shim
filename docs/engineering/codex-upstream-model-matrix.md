@@ -6,6 +6,10 @@ Status: practical Codex-through-shim model notes. This is not a general model
 benchmark and not an OpenAI API parity claim. Scores below reflect only the
 observed shim/Codex smoke and external-tester behavior captured in this repo.
 
+For day-to-day provider/model operating choices, promotion rules, and commands,
+use [V4 Model/Provider Operational Matrix](v4-model-provider-operational-matrix.md).
+This document remains the longer historical evidence ledger.
+
 ## Source References
 
 Official and implementation references used for this matrix:

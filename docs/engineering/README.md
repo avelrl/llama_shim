@@ -14,8 +14,12 @@ not practical user guides and are not release scope documents.
 - [Responses Compatibility External Tester](responses-compatibility-external-tester.md):
   Broad subset tester profile, capability-gating rules, and repo-owned runner
   contract for external API-surface compatibility tests.
+- [V4 Model/Provider Operational Matrix](v4-model-provider-operational-matrix.md):
+  current provider/model operating choices, promotion rules, and commands for
+  V4 preflight, provider routing, and Codex auto runs.
 - [Codex Upstream Model Matrix](codex-upstream-model-matrix.md): practical
-  DeepSeek, Qwen, and Kimi comparison for Codex-through-shim smoke testing.
+  historical DeepSeek, MiMo, Qwen, and Kimi comparison for
+  Codex-through-shim smoke testing.
 - [V3 Codex Eval Curation](../v3-codex-eval-curation.md): human review
   procedure for generated Codex auto-run artifacts and baseline promotion.
 - [V3 Storage and Retrieval Backends](../v3-storage-retrieval-backends.md):

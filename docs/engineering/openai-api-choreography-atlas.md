@@ -1046,7 +1046,9 @@ Practical finding:
   converts that text into a local command or patch.
 - They do not prove that current Codex emits native Responses `shell` or
   `apply_patch` declarations.
-- Practical model/provider quality is tracked separately in
+- Practical model/provider operating choices are tracked separately in
+  [V4 Model/Provider Operational Matrix](v4-model-provider-operational-matrix.md),
+  with longer historical evidence in
   [Codex Upstream Model Matrix](codex-upstream-model-matrix.md); those ratings
   are smoke-test guidance, not OpenAI wire-contract claims.
 

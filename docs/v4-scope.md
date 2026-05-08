@@ -39,6 +39,8 @@ are explicit plugin behavior rather than hidden request mutation.
 Codex-through-shim setup now has shim-owned
 `shimctl codex config` and `shimctl codex doctor` tooling so provider/model
 aliases can be validated before long eval runs.
+The current operator choices for those aliases are tracked in
+[V4 Model/Provider Operational Matrix](engineering/v4-model-provider-operational-matrix.md).
 
 V2 is the broad compatibility facade.
 V3 is backend and runtime expansion around that facade.
