@@ -27,26 +27,29 @@ type Registry struct {
 }
 
 type Component struct {
-	ID              string   `json:"id"`
-	Category        string   `json:"category"`
-	Kind            string   `json:"kind"`
-	DisplayName     string   `json:"display_name,omitempty"`
-	ConfigNamespace string   `json:"config_namespace"`
-	Backend         string   `json:"backend,omitempty"`
-	CapabilityClass string   `json:"capability_class"`
-	Enabled         bool     `json:"enabled"`
-	Ready           bool     `json:"ready"`
-	ReadinessProbe  string   `json:"readiness_probe,omitempty"`
-	Auth            string   `json:"auth,omitempty"`
-	SecretRefs      []string `json:"secret_refs,omitempty"`
-	StateOwnership  string   `json:"state_ownership,omitempty"`
-	WireModes       []string `json:"wire_modes,omitempty"`
-	PublicSurfaces  []string `json:"public_surfaces,omitempty"`
-	Tools           []string `json:"tools,omitempty"`
-	ModelIDs        []string `json:"model_ids,omitempty"`
-	RoutingModes    []string `json:"routing_modes,omitempty"`
-	Evidence        []string `json:"evidence,omitempty"`
-	Notes           []string `json:"notes,omitempty"`
+	ID                    string   `json:"id"`
+	Category              string   `json:"category"`
+	Kind                  string   `json:"kind"`
+	DisplayName           string   `json:"display_name,omitempty"`
+	ConfigNamespace       string   `json:"config_namespace"`
+	Backend               string   `json:"backend,omitempty"`
+	CapabilityClass       string   `json:"capability_class"`
+	Enabled               bool     `json:"enabled"`
+	Ready                 bool     `json:"ready"`
+	ReadinessProbe        string   `json:"readiness_probe,omitempty"`
+	PluginID              string   `json:"plugin_id,omitempty"`
+	PluginVersion         string   `json:"plugin_version,omitempty"`
+	PluginContractVersion string   `json:"plugin_contract_version,omitempty"`
+	Auth                  string   `json:"auth,omitempty"`
+	SecretRefs            []string `json:"secret_refs,omitempty"`
+	StateOwnership        string   `json:"state_ownership,omitempty"`
+	WireModes             []string `json:"wire_modes,omitempty"`
+	PublicSurfaces        []string `json:"public_surfaces,omitempty"`
+	Tools                 []string `json:"tools,omitempty"`
+	ModelIDs              []string `json:"model_ids,omitempty"`
+	RoutingModes          []string `json:"routing_modes,omitempty"`
+	Evidence              []string `json:"evidence,omitempty"`
+	Notes                 []string `json:"notes,omitempty"`
 }
 
 type Issue struct {
@@ -124,6 +127,9 @@ func normalizeComponent(component Component) Component {
 	component.Backend = strings.TrimSpace(component.Backend)
 	component.CapabilityClass = strings.TrimSpace(component.CapabilityClass)
 	component.ReadinessProbe = strings.TrimSpace(component.ReadinessProbe)
+	component.PluginID = strings.TrimSpace(component.PluginID)
+	component.PluginVersion = strings.TrimSpace(component.PluginVersion)
+	component.PluginContractVersion = strings.TrimSpace(component.PluginContractVersion)
 	component.Auth = strings.TrimSpace(component.Auth)
 	component.StateOwnership = strings.TrimSpace(component.StateOwnership)
 	component.SecretRefs = normalizeStringList(component.SecretRefs)

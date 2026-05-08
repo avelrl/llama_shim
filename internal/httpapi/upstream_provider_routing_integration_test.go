@@ -155,11 +155,11 @@ func TestUpstreamProviderRoutingResponsesProxy(t *testing.T) {
 		},
 	})
 
-	status, payload := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+	status, headers, payload := rawRequestWithHeaders(t, app, http.MethodPost, "/v1/responses", map[string]any{
 		"model": "qwen/coder",
 		"store": true,
 		"input": "Reply OK",
-	})
+	}, nil)
 	require.Equal(t, http.StatusOK, status)
 	var response domain.Response
 	mustDecode(t, payload, &response)
@@ -172,6 +172,14 @@ func TestUpstreamProviderRoutingResponsesProxy(t *testing.T) {
 	stored, err := app.Store.GetResponse(context.Background(), response.ID)
 	require.NoError(t, err)
 	require.Equal(t, "qwen/coder", stored.Model)
+
+	requestID := headers.Get("X-Request-Id")
+	require.NotEmpty(t, requestID)
+	status, trace := rawRequest(t, app, http.MethodGet, "/debug/traces/"+requestID, nil)
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, "provider.qwen", asStringAny(trace["plugin_id"]))
+	require.Equal(t, "v1", asStringAny(trace["plugin_version"]))
+	require.Equal(t, "v4.plugin_contracts.v1", asStringAny(trace["plugin_contract_version"]))
 }
 
 func TestUpstreamProviderRoutingResponsesChatBacked(t *testing.T) {
@@ -613,6 +621,9 @@ func TestUpstreamProviderRoutingCapabilitiesReportProviderBackends(t *testing.T)
 	require.Equal(t, "model_provider", asStringAny(provider["category"]))
 	require.Equal(t, "openai_compatible", asStringAny(provider["kind"]))
 	require.Equal(t, "llama.providers.qwen", asStringAny(provider["config_namespace"]))
+	require.Equal(t, "provider.qwen", asStringAny(provider["plugin_id"]))
+	require.Equal(t, "v1", asStringAny(provider["plugin_version"]))
+	require.Equal(t, "v4.plugin_contracts.v1", asStringAny(provider["plugin_contract_version"]))
 	require.Equal(t, backendcap.ClassChatProjection, asStringAny(provider["capability_class"]))
 	require.Equal(t, true, provider["enabled"])
 	require.Equal(t, true, provider["ready"])
@@ -624,6 +635,21 @@ func TestUpstreamProviderRoutingCapabilitiesReportProviderBackends(t *testing.T)
 	rawProvider, err := json.Marshal(provider)
 	require.NoError(t, err)
 	require.NotContains(t, string(rawProvider), "qwen-secret")
+
+	plugins := payload["plugins"].(map[string]any)
+	require.Equal(t, "v4.plugin_contracts.v1", asStringAny(plugins["schema_version"]))
+	require.NotContains(t, plugins, "issues")
+	descriptors := pluginDescriptorsByID(t, plugins)
+	plugin := descriptors["provider.qwen"]
+	require.Equal(t, "model_provider", asStringAny(plugin["kind"]))
+	require.Equal(t, "llama.providers.qwen", asStringAny(plugin["config_namespace"]))
+	require.Equal(t, "provider.qwen", asStringAny(plugin["capability_component_id"]))
+	require.ElementsMatch(t, []any{"QWEN_API_KEY"}, plugin["required_secrets"].([]any))
+	require.Equal(t, false, plugin["ci_fixture_safe"])
+	require.Equal(t, true, plugin["production_intended"])
+	rawPlugin, err := json.Marshal(plugin)
+	require.NoError(t, err)
+	require.NotContains(t, string(rawPlugin), "qwen-secret")
 }
 
 func jsonRequestWithHeaders(t *testing.T, url string, body map[string]any, headers map[string]string) (int, map[string]any) {

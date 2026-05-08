@@ -725,8 +725,22 @@ func TestCapabilitiesEndpointReportsConfiguredRuntime(t *testing.T) {
 	modelBackend := backendComponents["model.llama"]
 	require.Equal(t, "model_backend", asStringAny(modelBackend["category"]))
 	require.Equal(t, backendcap.ClassChatProjection, asStringAny(modelBackend["capability_class"]))
+	require.Equal(t, "model.llama", asStringAny(modelBackend["plugin_id"]))
+	require.Equal(t, "v1", asStringAny(modelBackend["plugin_version"]))
+	require.Equal(t, "v4.plugin_contracts.v1", asStringAny(modelBackend["plugin_contract_version"]))
 	require.ElementsMatch(t, []any{"chat_completions", "raw_proxy", "responses_over_chat", "websocket_responses"}, modelBackend["wire_modes"].([]any))
 	require.ElementsMatch(t, []any{"chat_completions.create", "models.list", "responses.compact", "responses.create", "responses.input_tokens"}, modelBackend["public_surfaces"].([]any))
+
+	plugins := payload["plugins"].(map[string]any)
+	require.Equal(t, "v4.plugin_contracts.v1", asStringAny(plugins["schema_version"]))
+	require.NotContains(t, plugins, "issues")
+	pluginDescriptors := pluginDescriptorsByID(t, plugins)
+	modelPlugin := pluginDescriptors["model.llama"]
+	require.Equal(t, "model_backend", asStringAny(modelPlugin["kind"]))
+	require.Equal(t, "model.llama", asStringAny(modelPlugin["capability_component_id"]))
+	require.Equal(t, true, modelPlugin["ci_fixture_safe"])
+	require.Equal(t, true, modelPlugin["production_intended"])
+	require.ElementsMatch(t, []any{"chat_completions.create", "models.list", "responses.compact", "responses.create", "responses.input_tokens"}, modelPlugin["public_surfaces"].([]any))
 
 	retrievalIndex := backendComponents["retrieval.index"]
 	require.Equal(t, retrieval.IndexBackendSQLiteVec, asStringAny(retrievalIndex["backend"]))
@@ -14398,6 +14412,19 @@ func backendComponentsByID(t *testing.T, backends map[string]any) map[string]map
 		component, ok := raw.(map[string]any)
 		require.True(t, ok)
 		out[asStringAny(component["id"])] = component
+	}
+	return out
+}
+
+func pluginDescriptorsByID(t *testing.T, plugins map[string]any) map[string]map[string]any {
+	t.Helper()
+	descriptors, ok := plugins["plugins"].([]any)
+	require.True(t, ok)
+	out := make(map[string]map[string]any, len(descriptors))
+	for _, raw := range descriptors {
+		descriptor, ok := raw.(map[string]any)
+		require.True(t, ok)
+		out[asStringAny(descriptor["id"])] = descriptor
 	}
 	return out
 }

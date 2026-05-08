@@ -11,6 +11,7 @@ import (
 	"llama_shim/internal/compactor"
 	"llama_shim/internal/config"
 	"llama_shim/internal/imagegen"
+	"llama_shim/internal/plugincontract"
 	"llama_shim/internal/retrieval"
 	"llama_shim/internal/storage"
 	"llama_shim/internal/websearch"
@@ -23,6 +24,7 @@ type capabilityManifest struct {
 	Runtime  capabilityRuntimeConfig `json:"runtime"`
 	Tools    capabilityToolSet       `json:"tools"`
 	Backends backendcap.Registry     `json:"backends"`
+	Plugins  plugincontract.Registry `json:"plugins"`
 	Probes   capabilityProbeSet      `json:"probes"`
 }
 
@@ -106,6 +108,7 @@ type capabilityUpstreamProviderRouting struct {
 
 type capabilityUpstreamProviderRoutingID struct {
 	ID         string   `json:"id"`
+	PluginID   string   `json:"plugin_id,omitempty"`
 	ModelCount int      `json:"model_count"`
 	Models     []string `json:"models"`
 }
@@ -284,11 +287,13 @@ func buildCapabilityManifest(ctx context.Context, deps RouterDeps) capabilityMan
 	}
 	metricsConfig := normalizeMetricsConfig(deps.MetricsConfig)
 	probes := collectCapabilityProbes(ctx, deps)
+	responsesTransport := normalizeResponsesUpstreamTransport(deps.ResponsesUpstreamTransport)
 	backends := capabilityBackendRegistry(deps, probes)
+	plugins := capabilityPluginRegistry(deps, probes, responsesTransport)
 
 	return capabilityManifest{
 		Object: "shim.capabilities",
-		Ready:  probes.ready() && !backendcap.HasErrors(backends.Issues),
+		Ready:  probes.ready() && !backendcap.HasErrors(backends.Issues) && !plugincontract.HasErrors(plugins.Issues),
 		Surfaces: capabilitySurfaceSet{
 			Responses: capabilityResponsesSurface{
 				Enabled:        true,
@@ -309,7 +314,7 @@ func buildCapabilityManifest(ctx context.Context, deps RouterDeps) capabilityMan
 					Multiplexing: false,
 				},
 				Mode:      deps.ResponsesMode,
-				Transport: normalizeResponsesUpstreamTransport(deps.ResponsesUpstreamTransport),
+				Transport: responsesTransport,
 			},
 			Conversations: capabilityConversationsRoute{
 				Enabled:  true,
@@ -332,7 +337,7 @@ func buildCapabilityManifest(ctx context.Context, deps RouterDeps) capabilityMan
 		},
 		Runtime: capabilityRuntimeConfig{
 			ResponsesMode:                        deps.ResponsesMode,
-			ResponsesUpstreamTransport:           normalizeResponsesUpstreamTransport(deps.ResponsesUpstreamTransport),
+			ResponsesUpstreamTransport:           responsesTransport,
 			CustomToolsMode:                      deps.ResponsesCustomToolsMode,
 			ChatCompletionsUpstreamCompatibility: len(deps.ChatCompletionsUpstreamCompatibility),
 			UpstreamToolCompatibilityRules:       len(deps.ResponsesUpstreamToolCompatibility),
@@ -482,6 +487,7 @@ func buildCapabilityManifest(ctx context.Context, deps RouterDeps) capabilityMan
 			},
 		},
 		Backends: backends,
+		Plugins:  plugins,
 		Probes:   probes,
 	}
 }
@@ -536,6 +542,7 @@ func upstreamProviderRoutingCapability(deps RouterDeps) capabilityUpstreamProvid
 		modelCount += len(models)
 		providers = append(providers, capabilityUpstreamProviderRoutingID{
 			ID:         providerID,
+			PluginID:   upstreamProviderPluginID(providerID),
 			ModelCount: len(models),
 			Models:     models,
 		})
@@ -566,6 +573,7 @@ func debugTraceCapability(cfg DebugTraceConfig) capabilityDebugTraces {
 			"source_format",
 			"model",
 			"provider_route",
+			"plugin_contract",
 			"routing_mode",
 			"selected_backend",
 			"tool_classifier_decisions",
@@ -798,76 +806,12 @@ func capabilityBackendRegistry(deps RouterDeps, probes capabilityProbeSet) backe
 	return backendcap.NewRegistry(components...)
 }
 
+func capabilityPluginRegistry(deps RouterDeps, probes capabilityProbeSet, responsesTransport string) plugincontract.Registry {
+	return plugincontract.NewRegistryFromPlugins(modelProviderPlugins(deps, probes.Llama, responsesTransport)...)
+}
+
 func modelBackendComponents(deps RouterDeps, llamaProbe capabilityProbe, responsesTransport string) []backendcap.Component {
-	wireModes := []string{"chat_completions", "raw_proxy"}
-	if responsesTransport == config.ResponsesUpstreamTransportChatCompletions {
-		wireModes = append(wireModes, "responses_over_chat")
-	} else {
-		wireModes = append(wireModes, "responses_native")
-	}
-	if deps.ResponsesWebSocketEnabled {
-		wireModes = append(wireModes, "websocket_responses")
-	}
-	class := modelBackendRegistryClass(responsesTransport)
-	publicSurfaces := []string{
-		"models.list",
-		"responses.create",
-		"responses.input_tokens",
-		"responses.compact",
-		"chat_completions.create",
-	}
-	if len(deps.LlamaProviders) == 0 {
-		return []backendcap.Component{{
-			ID:              "model.llama",
-			Category:        "model_backend",
-			Kind:            "openai_compatible",
-			ConfigNamespace: "llama",
-			CapabilityClass: class,
-			Enabled:         deps.LlamaClient != nil,
-			Ready:           deps.LlamaClient != nil && probeReady(llamaProbe),
-			ReadinessProbe:  "llama",
-			Auth:            "single_upstream_config",
-			WireModes:       wireModes,
-			PublicSurfaces:  publicSurfaces,
-			RoutingModes:    standardRoutingModes(),
-			Evidence:        []string{"docs/v3-upstream-provider-routing.md"},
-		}}
-	}
-	components := make([]backendcap.Component, 0, len(deps.LlamaProviders))
-	for _, provider := range deps.LlamaProviders {
-		providerID := strings.TrimSpace(provider.ID)
-		if providerID == "" {
-			continue
-		}
-		models := make([]string, 0, len(provider.Models))
-		for _, model := range provider.Models {
-			publicModel := strings.TrimSpace(model.Model)
-			if publicModel == "" {
-				continue
-			}
-			models = append(models, providerID+"/"+publicModel)
-		}
-		components = append(components, backendcap.Component{
-			ID:              "provider." + providerID,
-			Category:        "model_provider",
-			Kind:            "openai_compatible",
-			DisplayName:     providerID,
-			ConfigNamespace: "llama.providers." + providerID,
-			CapabilityClass: class,
-			Enabled:         true,
-			Ready:           probeReady(llamaProbe),
-			ReadinessProbe:  "llama",
-			Auth:            providerAuthSummary(provider),
-			SecretRefs:      providerSecretRefs(provider),
-			StateOwnership:  "stateless_backend_with_shim_state",
-			WireModes:       wireModes,
-			PublicSurfaces:  publicSurfaces,
-			ModelIDs:        models,
-			RoutingModes:    standardRoutingModes(),
-			Evidence:        []string{"docs/v3-upstream-provider-routing.md"},
-		})
-	}
-	return components
+	return plugincontract.ComponentsFromPlugins(modelProviderPlugins(deps, llamaProbe, responsesTransport)...)
 }
 
 func normalizedCompactionBackend(backend string) string {

@@ -14,6 +14,8 @@ type UpstreamRoute struct {
 	ProviderID    string
 	PublicModel   string
 	UpstreamModel string
+	PluginID      string
+	PluginVersion string
 	BaseURL       string
 	BearerToken   string
 }
@@ -36,7 +38,7 @@ func ContextWithForwardHeaders(ctx context.Context, incoming http.Header) contex
 }
 
 func ContextWithUpstreamRoute(ctx context.Context, route UpstreamRoute) context.Context {
-	if route.ProviderID == "" && route.BaseURL == "" && route.PublicModel == "" && route.UpstreamModel == "" {
+	if route.ProviderID == "" && route.BaseURL == "" && route.PublicModel == "" && route.UpstreamModel == "" && route.PluginID == "" {
 		return ctx
 	}
 	return context.WithValue(ctx, upstreamRouteKey, route)

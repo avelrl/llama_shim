@@ -162,7 +162,12 @@ What exists today:
   components, capability classes such as `local_subset`, `chat_projection`,
   and `proxy_only`, readiness state, redacted secret references, public
   surfaces, tool ownership, and model-provider aliases without changing any
-  public `/v1/*` response shape.
+  public `/v1/*` response shape. Its V4 `plugins` registry records stable
+  plugin contract descriptors such as model backend/provider id, version,
+  config namespace, readiness probe, public surfaces, backend projections,
+  required env secret names, timeout labels, and error classes. Backend
+  components cross-link to plugins through `plugin_id`; plugin registration
+  alone does not widen compatibility claims.
 - `/readyz` and `/debug/capabilities` emit bounded readiness-probe metrics so
   operators can distinguish storage, upstream model, retrieval embedder, web
   search, and image-generation readiness failures without widening any
@@ -177,10 +182,11 @@ What exists today:
   OpenAI response fields.
 - Debug traces are shim-owned operator state. `/debug/traces` retains a
   bounded in-memory metadata-only view keyed by `X-Request-Id`; it records
-  route, surface/source format, provider/model route, classifier and backend
-  projection decisions, failure-policy/fallback/rate-limit decisions, and the
-  final public status. It deliberately excludes prompts, bearer tokens,
-  private provider headers, tool outputs, file contents, and decrypted state.
+  route, surface/source format, provider/model route, selected plugin
+  contract, classifier and backend projection decisions,
+  failure-policy/fallback/rate-limit decisions, and the final public status.
+  It deliberately excludes prompts, bearer tokens, private provider headers,
+  tool outputs, file contents, and decrypted state.
 - Codex-through-shim setup is covered by shim-owned `shimctl codex config` and
   `shimctl codex doctor` tooling. The generated TOML targets Codex's Responses
   provider shape, while the doctor checks local Codex presence, shim health,

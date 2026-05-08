@@ -74,7 +74,8 @@ make devstack-down
   local retrieval or tool backends
 - `/debug/capabilities`: shim-owned capability manifest for operators, testers,
   and autonomous agents; always returns a JSON manifest with current surfaces,
-  routing classes, runtime config, and dependency probe state
+  routing classes, runtime config, backend/plugin registries, and dependency
+  probe state
 - `/debug/traces` and `/debug/traces/{request_id}`: shim-owned bounded
   in-memory request traces for the latest requests; these are metadata-only
   and intentionally omit prompts, bearer tokens, private provider headers,
@@ -90,7 +91,10 @@ Important distinction:
   is used only for the `/readyz` upstream probe
 - `/debug/capabilities` remains a normal shim route, so it shares shim ingress
   auth and request rate limiting, and reports degraded dependencies inside
-  `ready` and `probes.*` instead of failing the route itself
+  `ready` and `probes.*` instead of failing the route itself. Its
+  `plugins.plugins[]` entries are metadata-only plugin contracts: they expose
+  ids, versions, config namespaces, required env secret names, surfaces, and
+  backend projections, but never secret values.
 - `/debug/traces` remains a normal shim route as well. Configure
   `shim.debug_traces.enabled` / `SHIM_DEBUG_TRACES_ENABLED` and
   `shim.debug_traces.max_entries` / `SHIM_DEBUG_TRACES_MAX_ENTRIES`.

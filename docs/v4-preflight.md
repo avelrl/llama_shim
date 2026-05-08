@@ -32,13 +32,18 @@ The first implementation slice is complete:
 - `GET /debug/capabilities` now includes `backends.schema_version:
   v4.backend_capabilities.v1` and a `backends.components[]` registry generated
   from current config plus runtime probes.
+- `GET /debug/capabilities` also includes `plugins.schema_version:
+  v4.plugin_contracts.v1` and a `plugins.plugins[]` registry for the first
+  stable plugin contract slice. Current model backend/provider entries are
+  cross-linked from `backends.components[].plugin_id`.
 - The registry covers the current practical backend/plugin boundaries:
   primary storage, retrieval index, retrieval embedder, compaction,
   constrained decoding, Responses WebSocket transport, upstream model
   providers, web search, image generation, computer, code interpreter, native
   local `shell`, native local `apply_patch`, and the Codex client profile.
 - Provider-routed model backends expose only public model aliases and secret
-  env names. Actual bearer tokens are not emitted.
+  env names. Actual bearer tokens are not emitted. Provider routes also carry
+  plugin id/version metadata into debug traces.
 - Existing `tools.*` capability entries now include a `disposition` summary
   using the V4 classifier vocabulary such as `local_execute`, `proxy_only`,
   and `client_round_trip`.
@@ -66,8 +71,9 @@ operator-visible contract instead of one-off backend claims.
 
 ## Official References Reviewed
 
-This wording was checked on May 6, 2026, and the request-time classifier plus
-stream/replay slices were spot-checked again on May 8, 2026 against:
+This wording was checked on May 6, 2026. The request-time classifier,
+stream/replay, and plugin-contract/debug-trace slices were spot-checked again
+on May 8, 2026 against:
 
 - local official-docs index: `openapi/llms.txt`
 - OpenAI Docs MCP on `developers.openai.com` / `platform.openai.com`
@@ -75,6 +81,9 @@ stream/replay slices were spot-checked again on May 8, 2026 against:
   `/v1/responses/{response_id}`, `/v1/responses/{response_id}/input_items`,
   `/v1/responses/compact`, `/v1/conversations`,
   `/v1/chat/completions`, `/v1/files`, and `/v1/vector_stores`
+- absence of `/debug/capabilities`, `/debug/traces`, and plugin-contract
+  endpoints from the official OpenAI endpoint list; these remain shim-owned
+  operator surfaces
 - [Responses streaming events API reference](https://platform.openai.com/docs/api-reference/responses-streaming)
 - [Migrate to the Responses API](https://developers.openai.com/api/docs/guides/migrate-to-responses)
 - [Conversation state](https://developers.openai.com/api/docs/guides/conversation-state)
@@ -781,6 +790,9 @@ fields to OpenAI-shaped responses.
 
 Classification: V4 plugin platform work.
 
+Status: implemented for the first stable model backend/provider contract
+slice.
+
 Goal:
 Prepare extension/plugin interfaces after the capability and routing substrate
 exists.
@@ -823,6 +835,23 @@ Plugin rules:
 - plugin capabilities must be visible in `/debug/capabilities`
 - plugins must fail closed when configured for `local_only` but unavailable
 - plugin errors must map into the shared error taxonomy
+
+Implemented first slice:
+
+- `internal/plugincontract` defines `v4.plugin_contracts.v1` descriptors,
+  backend projection declarations, required secret references, readiness probe
+  links, public surfaces, timeout/error-class metadata, validation, and a
+  `CapabilityPlugin` interface.
+- The default `model.llama` backend and configured `llama.providers[]` entries
+  are exposed as model backend/provider plugins. Their descriptors live in
+  `/debug/capabilities.plugins.plugins[]`, while their backend capability
+  components are cross-linked through `plugin_id`, `plugin_version`, and
+  `plugin_contract_version`.
+- Provider-routed requests record the selected plugin contract in
+  `/debug/traces/{request_id}`.
+- Plugin descriptors expose only config namespaces and required env secret
+  names. They do not emit bearer-token values and do not add any public
+  `/v1/*` request or response fields.
 
 ### 12. Security And Regression Guardrails
 
@@ -958,12 +987,22 @@ Status: implemented for bounded request traces and capability advertising.
 
 ### Phase 6: Plugin Contracts
 
-Status: planned.
+Status: implemented for the first model backend/provider contract slice.
 
 - introduce the first stable plugin interface only after the registry,
   classifier, and traces are in place
 - migrate one existing backend/runtime behind the contract as proof
 - document plugin capability reporting and failure behavior
+
+Implemented details:
+
+- `internal/plugincontract` owns the stable descriptor schema.
+- model backends/providers are the first migrated plugin family.
+- `/debug/capabilities.plugins` reports plugin descriptors, while
+  `/debug/capabilities.backends.components[]` remains the operational
+  readiness/capability registry.
+- `/debug/traces` records selected provider plugin metadata for model-routed
+  requests.
 
 ## Non-Goals
 

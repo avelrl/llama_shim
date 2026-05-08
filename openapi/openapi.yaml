@@ -2613,6 +2613,12 @@ components:
           type: string
         upstream_model:
           type: string
+        plugin_id:
+          type: string
+        plugin_version:
+          type: string
+        plugin_contract_version:
+          type: string
         routing_mode:
           type: string
         upstream_transport:
@@ -2745,7 +2751,7 @@ components:
           type: string
     ShimCapabilitiesResponse:
       type: object
-      required: [object, ready, surfaces, runtime, tools, backends, probes]
+      required: [object, ready, surfaces, runtime, tools, backends, plugins, probes]
       properties:
         object:
           type: string
@@ -2760,6 +2766,8 @@ components:
           $ref: "#/components/schemas/ShimCapabilityToolSet"
         backends:
           $ref: "#/components/schemas/ShimBackendCapabilityRegistry"
+        plugins:
+          $ref: "#/components/schemas/ShimPluginContractRegistry"
         probes:
           $ref: "#/components/schemas/ShimCapabilityProbeSet"
     ShimCapabilitySurfaceSet:
@@ -2863,7 +2871,7 @@ components:
           type: boolean
     ShimCapabilityRuntime:
       type: object
-      required: [responses_mode, responses_upstream_transport, custom_tools_mode, compaction, constrained_decoding, codex, persistence, retrieval, ops]
+      required: [responses_mode, responses_upstream_transport, custom_tools_mode, chat_completions_upstream_compatibility_rules, upstream_tool_compatibility_rules, compaction, constrained_decoding, codex, upstream_provider_routing, persistence, retrieval, ops]
       properties:
         responses_mode:
           type: string
@@ -2872,12 +2880,18 @@ components:
           enum: [responses, chat_completions]
         custom_tools_mode:
           type: string
+        chat_completions_upstream_compatibility_rules:
+          type: integer
+        upstream_tool_compatibility_rules:
+          type: integer
         compaction:
           $ref: "#/components/schemas/ShimCapabilityCompactionRuntime"
         constrained_decoding:
           $ref: "#/components/schemas/ShimCapabilityConstrainedDecodingRuntime"
         codex:
           $ref: "#/components/schemas/ShimCapabilityCodexConfig"
+        upstream_provider_routing:
+          $ref: "#/components/schemas/ShimCapabilityUpstreamProviderRouting"
         persistence:
           $ref: "#/components/schemas/ShimCapabilityPersistence"
         retrieval:
@@ -2976,10 +2990,42 @@ components:
           type: string
     ShimCapabilityCodexConfig:
       type: object
-      required: [compatibility_enabled]
+      required: [compatibility_enabled, upstream_input_compatibility_rules, model_metadata_models]
       properties:
         compatibility_enabled:
           type: boolean
+        upstream_input_compatibility_rules:
+          type: integer
+        model_metadata_models:
+          type: integer
+    ShimCapabilityUpstreamProviderRouting:
+      type: object
+      required: [enabled, provider_count, model_count, providers]
+      properties:
+        enabled:
+          type: boolean
+        provider_count:
+          type: integer
+        model_count:
+          type: integer
+        providers:
+          type: array
+          items:
+            $ref: "#/components/schemas/ShimCapabilityUpstreamProvider"
+    ShimCapabilityUpstreamProvider:
+      type: object
+      required: [id, model_count, models]
+      properties:
+        id:
+          type: string
+        plugin_id:
+          type: string
+        model_count:
+          type: integer
+        models:
+          type: array
+          items:
+            type: string
     ShimCapabilityPersistence:
       type: object
       required: [backend, response_store, conversation_store, chat_completion_store, file_store, vector_store, code_interpreter_store, expected_durable]
@@ -3184,6 +3230,93 @@ components:
           type: string
         local_only:
           type: string
+    ShimPluginContractRegistry:
+      type: object
+      required: [schema_version, plugins]
+      properties:
+        schema_version:
+          type: string
+          enum: [v4.plugin_contracts.v1]
+        plugins:
+          type: array
+          items:
+            $ref: "#/components/schemas/ShimPluginContractDescriptor"
+        issues:
+          type: array
+          items:
+            $ref: "#/components/schemas/ShimPluginContractIssue"
+    ShimPluginContractDescriptor:
+      type: object
+      required: [id, version, kind, config_namespace, capability_component_id, ci_fixture_safe, production_intended]
+      properties:
+        id:
+          type: string
+        version:
+          type: string
+        kind:
+          type: string
+          description: Shim-owned plugin contract kind such as model_backend, model_provider, tool_runtime, retrieval_store, or image_backend.
+        display_name:
+          type: string
+        config_namespace:
+          type: string
+          description: Repo config namespace that owns this plugin configuration.
+        required_secrets:
+          type: array
+          description: Environment/config secret names only, never secret values.
+          items:
+            type: string
+        readiness_probe:
+          type: string
+        capability_component_id:
+          type: string
+          description: Matching entry in backends.components.
+        public_surfaces:
+          type: array
+          items:
+            type: string
+        backend_projections:
+          type: array
+          items:
+            $ref: "#/components/schemas/ShimPluginContractProjection"
+        limits:
+          type: array
+          items:
+            type: string
+        timeouts:
+          type: array
+          items:
+            type: string
+        error_classes:
+          type: array
+          items:
+            type: string
+        ci_fixture_safe:
+          type: boolean
+        production_intended:
+          type: boolean
+    ShimPluginContractProjection:
+      type: object
+      required: [class, source_format, target_format]
+      properties:
+        class:
+          type: string
+          enum: [native, local_subset, proxy_only, chat_projection, repair_or_validate, unsupported]
+        source_format:
+          type: string
+        target_format:
+          type: string
+    ShimPluginContractIssue:
+      type: object
+      required: [severity, message]
+      properties:
+        severity:
+          type: string
+          enum: [error, warn]
+        plugin:
+          type: string
+        message:
+          type: string
     ShimBackendCapabilityRegistry:
       type: object
       required: [schema_version, components]
@@ -3225,6 +3358,12 @@ components:
         ready:
           type: boolean
         readiness_probe:
+          type: string
+        plugin_id:
+          type: string
+        plugin_version:
+          type: string
+        plugin_contract_version:
           type: string
         auth:
           type: string

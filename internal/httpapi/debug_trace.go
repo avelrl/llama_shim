@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"llama_shim/internal/llama"
+	"llama_shim/internal/plugincontract"
 )
 
 const defaultDebugTraceMaxEntries = 256
@@ -39,6 +40,9 @@ type DebugTrace struct {
 	Provider               string                    `json:"provider,omitempty"`
 	PublicModel            string                    `json:"public_model,omitempty"`
 	UpstreamModel          string                    `json:"upstream_model,omitempty"`
+	PluginID               string                    `json:"plugin_id,omitempty"`
+	PluginVersion          string                    `json:"plugin_version,omitempty"`
+	PluginContractVersion  string                    `json:"plugin_contract_version,omitempty"`
 	RoutingMode            string                    `json:"routing_mode,omitempty"`
 	UpstreamTransport      string                    `json:"upstream_transport,omitempty"`
 	SelectedBackend        string                    `json:"selected_backend,omitempty"`
@@ -240,6 +244,11 @@ func RecordDebugTraceUpstreamRoute(ctx context.Context, route llama.UpstreamRout
 		trace.Provider = strings.TrimSpace(route.ProviderID)
 		trace.PublicModel = strings.TrimSpace(route.PublicModel)
 		trace.UpstreamModel = strings.TrimSpace(route.UpstreamModel)
+		trace.PluginID = strings.TrimSpace(route.PluginID)
+		trace.PluginVersion = strings.TrimSpace(route.PluginVersion)
+		if trace.PluginID != "" {
+			trace.PluginContractVersion = plugincontract.SchemaVersion
+		}
 	})
 }
 
@@ -350,6 +359,11 @@ func recordDebugTraceChatCompletion(ctx context.Context, model string, route *ll
 			trace.Provider = strings.TrimSpace(route.ProviderID)
 			trace.PublicModel = strings.TrimSpace(route.PublicModel)
 			trace.UpstreamModel = strings.TrimSpace(route.UpstreamModel)
+			trace.PluginID = strings.TrimSpace(route.PluginID)
+			trace.PluginVersion = strings.TrimSpace(route.PluginVersion)
+			if trace.PluginID != "" {
+				trace.PluginContractVersion = plugincontract.SchemaVersion
+			}
 		}
 		fields := compatibility.Fields()
 		if len(fields) > 0 {

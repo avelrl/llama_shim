@@ -14,6 +14,8 @@ func TestNewRegistryNormalizesAndSortsComponents(t *testing.T) {
 			Kind:            " searxng ",
 			ConfigNamespace: " responses.web_search ",
 			CapabilityClass: ClassLocalSubset,
+			PluginID:        " provider.searxng ",
+			PluginVersion:   " v1 ",
 			Enabled:         true,
 			Ready:           true,
 			Tools:           []string{"web_search", "web_search", " "},
@@ -36,6 +38,8 @@ func TestNewRegistryNormalizesAndSortsComponents(t *testing.T) {
 	require.Len(t, registry.Components, 2)
 	require.Equal(t, "storage.primary", registry.Components[0].ID)
 	require.Equal(t, "tool.web_search", registry.Components[1].ID)
+	require.Equal(t, "provider.searxng", registry.Components[1].PluginID)
+	require.Equal(t, "v1", registry.Components[1].PluginVersion)
 	require.Equal(t, []string{"web_search"}, registry.Components[1].Tools)
 	require.Equal(t, []string{"qwen/coder"}, registry.Components[1].ModelIDs)
 	require.Equal(t, []string{"chat_completions", "responses_over_chat"}, registry.Components[1].WireModes)

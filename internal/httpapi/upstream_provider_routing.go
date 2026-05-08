@@ -20,10 +20,12 @@ type upstreamProviderResolver struct {
 }
 
 type upstreamProviderConfig struct {
-	ID          string
-	BaseURL     string
-	BearerToken string
-	modelsByID  map[string]upstreamProviderModelConfig
+	ID            string
+	PluginID      string
+	PluginVersion string
+	BaseURL       string
+	BearerToken   string
+	modelsByID    map[string]upstreamProviderModelConfig
 }
 
 type upstreamProviderModelConfig struct {
@@ -50,10 +52,12 @@ func newUpstreamProviderResolver(providers []config.LlamaProvider) *upstreamProv
 			continue
 		}
 		entry := upstreamProviderConfig{
-			ID:          providerID,
-			BaseURL:     strings.TrimRight(strings.TrimSpace(provider.BaseURL), "/"),
-			BearerToken: strings.TrimSpace(provider.BearerToken),
-			modelsByID:  make(map[string]upstreamProviderModelConfig, len(provider.Models)),
+			ID:            providerID,
+			PluginID:      upstreamProviderPluginID(providerID),
+			PluginVersion: modelProviderPluginVersion,
+			BaseURL:       strings.TrimRight(strings.TrimSpace(provider.BaseURL), "/"),
+			BearerToken:   strings.TrimSpace(provider.BearerToken),
+			modelsByID:    make(map[string]upstreamProviderModelConfig, len(provider.Models)),
 		}
 		for _, model := range provider.Models {
 			publicSuffix := strings.TrimSpace(model.Model)
@@ -110,6 +114,8 @@ func (r *upstreamProviderResolver) Resolve(publicModel string) (llama.UpstreamRo
 		ProviderID:    provider.ID,
 		PublicModel:   provider.ID + "/" + model.PublicModel,
 		UpstreamModel: model.UpstreamModel,
+		PluginID:      provider.PluginID,
+		PluginVersion: provider.PluginVersion,
 		BaseURL:       provider.BaseURL,
 		BearerToken:   provider.BearerToken,
 	}, nil
@@ -189,9 +195,11 @@ func (r *upstreamProviderResolver) CheckReady(ctx context.Context, client *llama
 		go func(provider upstreamProviderConfig) {
 			defer wg.Done()
 			route := llama.UpstreamRoute{
-				ProviderID:  provider.ID,
-				BaseURL:     provider.BaseURL,
-				BearerToken: provider.BearerToken,
+				ProviderID:    provider.ID,
+				PluginID:      provider.PluginID,
+				PluginVersion: provider.PluginVersion,
+				BaseURL:       provider.BaseURL,
+				BearerToken:   provider.BearerToken,
 			}
 			err := client.CheckReady(llama.ContextWithUpstreamRoute(ctx, route))
 			if err != nil {
@@ -240,9 +248,11 @@ func (r *upstreamProviderResolver) LiveProviderModelCatalogs(ctx context.Context
 		go func(provider upstreamProviderConfig) {
 			defer wg.Done()
 			route := llama.UpstreamRoute{
-				ProviderID:  provider.ID,
-				BaseURL:     provider.BaseURL,
-				BearerToken: provider.BearerToken,
+				ProviderID:    provider.ID,
+				PluginID:      provider.PluginID,
+				PluginVersion: provider.PluginVersion,
+				BaseURL:       provider.BaseURL,
+				BearerToken:   provider.BearerToken,
 			}
 			models, err := client.ListModels(llama.ContextWithUpstreamRoute(ctx, route))
 			if err != nil {
