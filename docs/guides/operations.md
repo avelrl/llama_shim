@@ -154,13 +154,16 @@ use the aggregate smoke instead of launching one model at a time:
 
 ```bash
 make v4-provider-matrix-smoke
+make v4-provider-matrix-curate
 ```
 
-Limit it during iteration:
+Limit the smoke during iteration, or focus the curation report on one model:
 
 ```bash
 V4_PROVIDER_MATRIX_MODELS="deepseek/deepseek-v4-pro xiaomi/mimo-v2.5-pro" \
   make v4-provider-matrix-smoke
+V4_PROVIDER_MATRIX_CURATE_MODEL=deepseek/deepseek-v4-pro \
+  make v4-provider-matrix-curate
 ```
 
 What a passing run means:
@@ -346,6 +349,7 @@ Default cleanup targets intentionally do not remove `.data`.
 | Run local preflight | `make preflight-local` | No | Runs local state report, strict devstack doctor, cleanup/reset dry-runs, build, lint, and `git diff --check`. |
 | Run V4 preflight smoke | `make v4-preflight-smoke` | No | Aggregates health/readiness, `/v1/models`, V4 capabilities/plugin contract validation, one Responses debug-trace/tool-classifier probe, optional provider-routing smoke, and optional Codex config doctor. Writes artifacts under `.tmp/v4-preflight-smoke`. |
 | Run V4 provider matrix smoke | `make v4-provider-matrix-smoke` | No | Runs provider-routing smoke and V4 preflight for each configured matrix model, then writes one aggregate JSON/Markdown report under `.tmp/v4-provider-matrix-smoke`. |
+| Curate V4 provider matrix artifacts | `make v4-provider-matrix-curate` | No | Reads existing matrix-smoke artifacts, groups routing/preflight/Codex doctor/readiness failures, and writes a local operator verdict under `.tmp/v4-provider-matrix-curation`. |
 | Check live upstream provider routing | `make upstream-provider-routing-smoke` | No | Verifies one public `provider/model` alias through capabilities, live `/v1/models`, routed Responses, routed Chat Completions, derived endpoint probes, and fail-closed routing boundaries. Writes artifacts under `.tmp/upstream-provider-routing-smoke`. |
 | Diagnose Codex provider config | `make codex-config-doctor` | No | Generates an isolated Codex config, checks the local Codex binary, verifies shim auth env, health/readiness, capabilities, `/v1/models`, and one direct `/v1/responses` smoke. Writes artifacts under `.tmp/shimctl-codex`. |
 | Curate Codex eval artifacts | `make codex-eval-curate` | No | Reads `.tmp/codex-eval-*` artifacts and writes a cross-run interpretation report under `.tmp/codex-eval-curation`. |

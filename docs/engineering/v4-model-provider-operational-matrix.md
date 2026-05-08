@@ -57,6 +57,12 @@ SHIM_BASE_URL=http://127.0.0.1:8080 \
   make v4-provider-matrix-smoke
 ```
 
+Then curate the local artifacts into a short operator verdict:
+
+```bash
+make v4-provider-matrix-curate
+```
+
 Limit it to one or more aliases when iterating:
 
 ```bash
@@ -65,10 +71,19 @@ SHIM_BASE_URL=http://127.0.0.1:8080 \
   make v4-provider-matrix-smoke
 ```
 
+Focus the curation report on one model:
+
+```bash
+V4_PROVIDER_MATRIX_CURATE_MODEL=deepseek/deepseek-v4-pro \
+  make v4-provider-matrix-curate
+```
+
 Set `V4_PROVIDER_MATRIX_RUN_CODEX_DOCTOR=1` when the same pass should also
 run the isolated Codex config doctor for each model. The matrix smoke writes a
 single report under `.tmp/v4-provider-matrix-smoke/` and nests the per-model
-provider-routing and V4-preflight artifacts below it.
+provider-routing and V4-preflight artifacts below it. The curation report reads
+those artifacts without calling upstream providers and writes
+`.tmp/v4-provider-matrix-curation/<curation-id>/summary.md` plus `summary.json`.
 
 Provider-routing smoke for one public alias:
 
@@ -111,6 +126,8 @@ Promote a model/provider row only when:
 - provider secrets are referenced by env names and not committed as values
 - `make v4-provider-matrix-smoke` passes for the row, or a deliberately scoped
   single-model matrix run passes for that row
+- `make v4-provider-matrix-curate` classifies the latest row as
+  `release_gate_ok`
 - live provider-routing smoke passes `/v1/models`, Responses, Chat
   Completions, helper endpoints, and fail-closed unknown-provider checks
 - `V4_PREFLIGHT_PROVIDER_MODEL=<provider>/<model> make v4-preflight-smoke`

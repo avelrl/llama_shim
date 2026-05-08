@@ -58,6 +58,7 @@ artifact_paths=(
   ".tmp/governance-purge-smoke"
   ".tmp/v4-preflight-smoke"
   ".tmp/v4-provider-matrix-smoke"
+  ".tmp/v4-provider-matrix-curation"
   ".tmp/v3-computer-browser-harness-runs"
   ".tmp/playwright-daemon-sessions"
   ".tmp/playwright-daemon-sockets"
