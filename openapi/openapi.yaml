@@ -3255,7 +3255,7 @@ components:
           type: string
         kind:
           type: string
-          description: Shim-owned plugin contract kind such as model_backend, model_provider, tool_runtime, retrieval_store, or image_backend.
+          description: Shim-owned plugin contract kind such as storage_backend, retrieval_index, retrieval_embedder, runtime, transport, tool_runtime, client_profile, model_backend, or model_provider.
         display_name:
           type: string
         config_namespace:

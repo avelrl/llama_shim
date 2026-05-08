@@ -92,9 +92,10 @@ Important distinction:
 - `/debug/capabilities` remains a normal shim route, so it shares shim ingress
   auth and request rate limiting, and reports degraded dependencies inside
   `ready` and `probes.*` instead of failing the route itself. Its
-  `plugins.plugins[]` entries are metadata-only plugin contracts: they expose
-  ids, versions, config namespaces, required env secret names, surfaces, and
-  backend projections, but never secret values.
+  `plugins.plugins[]` entries are metadata-only plugin contracts cross-linked
+  to `backends.components[]`: they expose ids, versions, config namespaces,
+  required env secret names, surfaces, backend projections, timeout labels,
+  and error classes, but never secret values.
 - `/debug/traces` remains a normal shim route as well. Configure
   `shim.debug_traces.enabled` / `SHIM_DEBUG_TRACES_ENABLED` and
   `shim.debug_traces.max_entries` / `SHIM_DEBUG_TRACES_MAX_ENTRIES`.

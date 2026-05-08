@@ -289,7 +289,7 @@ func buildCapabilityManifest(ctx context.Context, deps RouterDeps) capabilityMan
 	probes := collectCapabilityProbes(ctx, deps)
 	responsesTransport := normalizeResponsesUpstreamTransport(deps.ResponsesUpstreamTransport)
 	backends := capabilityBackendRegistry(deps, probes)
-	plugins := capabilityPluginRegistry(deps, probes, responsesTransport)
+	plugins := capabilityPluginRegistry(deps, probes, responsesTransport, backends.Components)
 
 	return capabilityManifest{
 		Object: "shim.capabilities",
@@ -586,232 +586,19 @@ func debugTraceCapability(cfg DebugTraceConfig) capabilityDebugTraces {
 }
 
 func capabilityBackendRegistry(deps RouterDeps, probes capabilityProbeSet) backendcap.Registry {
-	storageBackend := strings.ToLower(strings.TrimSpace(deps.StorageBackend))
-	if storageBackend == "" && deps.Store != nil {
-		storageBackend = storage.BackendSQLite
-	}
-	if storageBackend == "" {
-		storageBackend = "none"
-	}
-	retrievalIndexBackend := strings.ToLower(strings.TrimSpace(deps.RetrievalIndexBackend))
-	if retrievalIndexBackend == "" {
-		retrievalIndexBackend = retrieval.IndexBackendLexical
-	}
-	retrievalEmbedderBackend := strings.ToLower(strings.TrimSpace(deps.RetrievalEmbedderBackend))
-	if retrievalEmbedderBackend == "" {
-		if deps.RetrievalEmbedder != nil {
-			retrievalEmbedderBackend = "custom"
-		} else {
-			retrievalEmbedderBackend = retrieval.EmbedderBackendDisabled
-		}
-	}
 	responsesTransport := normalizeResponsesUpstreamTransport(deps.ResponsesUpstreamTransport)
-	components := []backendcap.Component{
-		{
-			ID:              "storage.primary",
-			Category:        "storage",
-			Kind:            "local_store",
-			ConfigNamespace: "storage",
-			Backend:         storageBackend,
-			CapabilityClass: backendcap.ClassLocalSubset,
-			Enabled:         true,
-			Ready:           probeReady(probes.Storage),
-			ReadinessProbe:  "storage",
-			StateOwnership:  "shim_owned_store",
-			PublicSurfaces: []string{
-				"responses.retrieve",
-				"responses.delete",
-				"responses.input_items",
-				"conversations",
-				"chat_completions.stored",
-				"files",
-				"vector_stores",
-				"containers",
-			},
-			Evidence: []string{
-				"docs/v3-storage-retrieval-backends.md",
-				"docs/v3-hard-delete-governance.md",
-			},
-		},
-		{
-			ID:              "retrieval.index",
-			Category:        "retrieval_index",
-			Kind:            "local_retrieval",
-			ConfigNamespace: "retrieval.index",
-			Backend:         retrievalIndexBackend,
-			CapabilityClass: backendcap.ClassLocalSubset,
-			Enabled:         true,
-			Ready:           probeReady(probes.Storage) && probeReady(probes.RetrievalEmbedder),
-			ReadinessProbe:  "storage,retrieval_embedder",
-			StateOwnership:  "shim_owned_index",
-			Tools:           []string{"file_search"},
-			PublicSurfaces:  []string{"vector_stores.search", "responses.tools.file_search"},
-			RoutingModes:    standardRoutingModes(),
-			Evidence:        []string{"docs/v3-storage-retrieval-backends.md"},
-		},
-		{
-			ID:              "retrieval.embedder",
-			Category:        "embedder",
-			Kind:            "retrieval_embedder",
-			ConfigNamespace: "retrieval.embedder",
-			Backend:         retrievalEmbedderBackend,
-			CapabilityClass: backendcap.ClassLocalSubset,
-			Enabled:         probes.RetrievalEmbedder.Enabled,
-			Ready:           probes.RetrievalEmbedder.Enabled && probeReady(probes.RetrievalEmbedder),
-			ReadinessProbe:  "retrieval_embedder",
-			Tools:           []string{"file_search"},
-			Evidence:        []string{"docs/v3-storage-retrieval-backends.md"},
-		},
-		{
-			ID:              "runtime.compaction",
-			Category:        "runtime",
-			Kind:            "compaction",
-			ConfigNamespace: "responses.compaction",
-			Backend:         normalizedCompactionBackend(deps.ResponsesCompactionBackend),
-			CapabilityClass: backendcap.ClassLocalSubset,
-			Enabled:         true,
-			Ready:           true,
-			StateOwnership:  "shim_owned_opaque_state",
-			PublicSurfaces:  []string{"responses.compact", "responses.context_management"},
-			RoutingModes:    standardRoutingModes(),
-			Evidence:        []string{"docs/v3-compaction.md"},
-		},
-		{
-			ID:              "runtime.constrained_decoding",
-			Category:        "runtime",
-			Kind:            "constrained_decoding",
-			ConfigNamespace: "responses.constrained_decoding",
-			Backend:         normalizedCapabilityBackend(deps.ResponsesConstrainedDecodingBackend, true, config.ResponsesConstrainedDecodingBackendShimValidateRepair),
-			CapabilityClass: constrainedDecodingRegistryClass(deps.ResponsesConstrainedDecodingBackend),
-			Enabled:         true,
-			Ready:           true,
-			Tools:           []string{"custom", "structured_outputs"},
-			RoutingModes:    standardRoutingModes(),
-			Evidence:        []string{"docs/v3-constrained-decoding.md"},
-		},
-		{
-			ID:              "transport.responses_websocket",
-			Category:        "transport",
-			Kind:            "responses_websocket",
-			ConfigNamespace: "responses.websocket",
-			CapabilityClass: backendcap.ClassLocalSubset,
-			Enabled:         deps.ResponsesWebSocketEnabled,
-			Ready:           deps.ResponsesWebSocketEnabled,
-			WireModes:       []string{"websocket_responses"},
-			PublicSurfaces:  []string{"responses.websocket.response_create"},
-			Evidence:        []string{"docs/v3-websocket.md"},
-		},
-		{
-			ID:              "tool.web_search",
-			Category:        "tool_runtime",
-			Kind:            "web_search",
-			ConfigNamespace: "responses.web_search",
-			Backend:         normalizedCapabilityBackend(deps.ResponsesWebSearchBackend, deps.WebSearchProvider != nil, websearch.BackendSearXNG),
-			CapabilityClass: backendcap.ClassLocalSubset,
-			Enabled:         deps.WebSearchProvider != nil,
-			Ready:           deps.WebSearchProvider != nil && probeReady(probes.WebSearchBackend),
-			ReadinessProbe:  "web_search_backend",
-			Tools:           []string{"web_search"},
-			PublicSurfaces:  []string{"responses.tools.web_search"},
-			RoutingModes:    standardRoutingModes(),
-			Evidence:        []string{"docs/v3-local-runtimes.md"},
-		},
-		{
-			ID:              "tool.image_generation",
-			Category:        "tool_runtime",
-			Kind:            "image_generation",
-			ConfigNamespace: "responses.image_generation",
-			Backend:         normalizedCapabilityBackend(deps.ResponsesImageGenerationBackend, deps.ImageGenerationProvider != nil, imagegen.BackendFixture),
-			CapabilityClass: imageGenerationRegistryClass(deps.ResponsesImageGenerationBackend),
-			Enabled:         deps.ImageGenerationProvider != nil,
-			Ready:           deps.ImageGenerationProvider != nil && probeReady(probes.ImageGenerationBackend),
-			ReadinessProbe:  "image_generation_backend",
-			Tools:           []string{"image_generation"},
-			PublicSurfaces:  []string{"responses.tools.image_generation"},
-			RoutingModes:    standardRoutingModes(),
-			Evidence:        []string{"docs/v3-image-backends.md"},
-		},
-		{
-			ID:              "tool.computer",
-			Category:        "tool_runtime",
-			Kind:            "computer",
-			ConfigNamespace: "responses.computer",
-			Backend:         normalizedCapabilityBackend(deps.LocalComputer.Backend, deps.LocalComputer.Enabled(), LocalComputerBackendChatCompletions),
-			CapabilityClass: backendcap.ClassLocalSubset,
-			Enabled:         deps.LocalComputer.Enabled(),
-			Ready:           deps.LocalComputer.Enabled() && probeReady(probes.ComputerRuntime),
-			ReadinessProbe:  "computer_runtime",
-			Tools:           []string{"computer"},
-			PublicSurfaces:  []string{"responses.tools.computer"},
-			RoutingModes:    standardRoutingModes(),
-			Evidence:        []string{"docs/v3-local-runtimes.md", "docs/v3-computer-browser-harness.md"},
-		},
-		{
-			ID:              "tool.code_interpreter",
-			Category:        "tool_runtime",
-			Kind:            "code_interpreter",
-			ConfigNamespace: "responses.code_interpreter",
-			Backend:         localCodeInterpreterCapabilityBackend(deps.LocalCodeInterpreter),
-			CapabilityClass: backendcap.ClassLocalSubset,
-			Enabled:         deps.LocalCodeInterpreter.Enabled(),
-			Ready:           deps.LocalCodeInterpreter.Enabled(),
-			Tools:           []string{"code_interpreter"},
-			PublicSurfaces:  []string{"containers", "responses.tools.code_interpreter"},
-			RoutingModes:    standardRoutingModes(),
-			Evidence:        []string{"docs/v3-local-runtimes.md", "docs/engineering/runtime-hardening.md"},
-		},
-		{
-			ID:              "tool.shell",
-			Category:        "tool_runtime",
-			Kind:            "native_local_tool",
-			ConfigNamespace: "responses.native_tools.shell",
-			Backend:         "chat_completions_tool_loop",
-			CapabilityClass: backendcap.ClassLocalSubset,
-			Enabled:         true,
-			Ready:           true,
-			Tools:           []string{"shell"},
-			PublicSurfaces:  []string{"responses.tools.shell"},
-			RoutingModes:    standardRoutingModes(),
-			Evidence:        []string{"docs/v3-coding-tools.md"},
-		},
-		{
-			ID:              "tool.apply_patch",
-			Category:        "tool_runtime",
-			Kind:            "native_local_tool",
-			ConfigNamespace: "responses.native_tools.apply_patch",
-			Backend:         "chat_completions_tool_loop",
-			CapabilityClass: backendcap.ClassLocalSubset,
-			Enabled:         true,
-			Ready:           true,
-			Tools:           []string{"apply_patch"},
-			PublicSurfaces:  []string{"responses.tools.apply_patch"},
-			RoutingModes:    standardRoutingModes(),
-			Evidence:        []string{"docs/v3-coding-tools.md"},
-		},
-		{
-			ID:              "client_profile.codex",
-			Category:        "client_profile",
-			Kind:            "codex_cli",
-			ConfigNamespace: "responses.codex",
-			CapabilityClass: backendcap.ClassLocalSubset,
-			Enabled:         deps.ResponsesCodexEnableCompatibility || len(deps.ResponsesCodexModelMetadata) > 0,
-			Ready:           deps.ResponsesCodexEnableCompatibility || len(deps.ResponsesCodexModelMetadata) > 0,
-			PublicSurfaces:  []string{"responses.create", "responses.websocket", "responses.compact"},
-			Tools:           []string{"shell", "apply_patch"},
-			WireModes:       []string{"responses_native", "websocket_responses"},
-			Evidence:        []string{"docs/v3-codex-eval-harness.md", "docs/guides/codex-cli.md"},
-		},
-	}
-	components = append(components, modelBackendComponents(deps, probes.Llama, responsesTransport)...)
+	components := plugincontract.ComponentsFromPlugins(capabilityPlugins(deps, probes, responsesTransport)...)
 	return backendcap.NewRegistry(components...)
 }
 
-func capabilityPluginRegistry(deps RouterDeps, probes capabilityProbeSet, responsesTransport string) plugincontract.Registry {
-	return plugincontract.NewRegistryFromPlugins(modelProviderPlugins(deps, probes.Llama, responsesTransport)...)
+func capabilityPluginRegistry(deps RouterDeps, probes capabilityProbeSet, responsesTransport string, components []backendcap.Component) plugincontract.Registry {
+	return plugincontract.NewRegistryFromPluginsForComponents(components, capabilityPlugins(deps, probes, responsesTransport)...)
 }
 
-func modelBackendComponents(deps RouterDeps, llamaProbe capabilityProbe, responsesTransport string) []backendcap.Component {
-	return plugincontract.ComponentsFromPlugins(modelProviderPlugins(deps, llamaProbe, responsesTransport)...)
+func capabilityPlugins(deps RouterDeps, probes capabilityProbeSet, responsesTransport string) []plugincontract.CapabilityPlugin {
+	plugins := runtimeBackendPlugins(deps, probes)
+	plugins = append(plugins, modelProviderPlugins(deps, probes.Llama, responsesTransport)...)
+	return plugins
 }
 
 func normalizedCompactionBackend(backend string) string {

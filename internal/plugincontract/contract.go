@@ -82,6 +82,12 @@ func NewRegistryFromPlugins(plugins ...CapabilityPlugin) Registry {
 	return NewRegistry(descriptors...)
 }
 
+func NewRegistryFromPluginsForComponents(components []backendcap.Component, plugins ...CapabilityPlugin) Registry {
+	registry := NewRegistryFromPlugins(plugins...)
+	registry.Issues = append(registry.Issues, ValidateComponentLinks(registry.Plugins, components)...)
+	return registry
+}
+
 func ComponentsFromPlugins(plugins ...CapabilityPlugin) []backendcap.Component {
 	components := make([]backendcap.Component, 0, len(plugins))
 	for _, plugin := range plugins {
@@ -102,6 +108,70 @@ func ComponentsFromPlugins(plugins ...CapabilityPlugin) []backendcap.Component {
 		components = append(components, component)
 	}
 	return components
+}
+
+func ValidateComponentLinks(descriptors []Descriptor, components []backendcap.Component) []Issue {
+	issues := make([]Issue, 0)
+	componentByID := make(map[string]backendcap.Component, len(components))
+	pluginByID := make(map[string]Descriptor, len(descriptors))
+	for _, component := range components {
+		id := strings.TrimSpace(component.ID)
+		if id == "" {
+			continue
+		}
+		componentByID[id] = component
+	}
+	for _, descriptor := range descriptors {
+		descriptor = normalizeDescriptor(descriptor)
+		if descriptor.ID == "" || descriptor.CapabilityComponentID == "" {
+			continue
+		}
+		pluginByID[descriptor.ID] = descriptor
+		component, ok := componentByID[descriptor.CapabilityComponentID]
+		if !ok {
+			issues = append(issues, Issue{
+				Severity: IssueError,
+				Plugin:   descriptor.ID,
+				Message:  fmt.Sprintf("plugin capability_component_id %q does not exist", descriptor.CapabilityComponentID),
+			})
+			continue
+		}
+		if component.PluginID != "" && strings.TrimSpace(component.PluginID) != descriptor.ID {
+			issues = append(issues, Issue{
+				Severity: IssueError,
+				Plugin:   descriptor.ID,
+				Message:  fmt.Sprintf("backend component %q plugin_id %q does not match plugin id", component.ID, component.PluginID),
+			})
+		}
+		if component.PluginVersion != "" && strings.TrimSpace(component.PluginVersion) != descriptor.Version {
+			issues = append(issues, Issue{
+				Severity: IssueError,
+				Plugin:   descriptor.ID,
+				Message:  fmt.Sprintf("backend component %q plugin_version %q does not match plugin version", component.ID, component.PluginVersion),
+			})
+		}
+		if component.PluginContractVersion != "" && strings.TrimSpace(component.PluginContractVersion) != SchemaVersion {
+			issues = append(issues, Issue{
+				Severity: IssueError,
+				Plugin:   descriptor.ID,
+				Message:  fmt.Sprintf("backend component %q plugin_contract_version %q does not match schema version", component.ID, component.PluginContractVersion),
+			})
+		}
+	}
+	for _, component := range components {
+		pluginID := strings.TrimSpace(component.PluginID)
+		if pluginID == "" {
+			continue
+		}
+		if _, ok := pluginByID[pluginID]; !ok {
+			issues = append(issues, Issue{
+				Severity: IssueError,
+				Plugin:   pluginID,
+				Message:  fmt.Sprintf("backend component %q references missing plugin", component.ID),
+			})
+		}
+	}
+	return issues
 }
 
 func Validate(descriptors []Descriptor) []Issue {

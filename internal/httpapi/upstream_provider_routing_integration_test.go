@@ -640,6 +640,7 @@ func TestUpstreamProviderRoutingCapabilitiesReportProviderBackends(t *testing.T)
 	require.Equal(t, "v4.plugin_contracts.v1", asStringAny(plugins["schema_version"]))
 	require.NotContains(t, plugins, "issues")
 	descriptors := pluginDescriptorsByID(t, plugins)
+	assertCapabilityPluginLinks(t, components, descriptors)
 	plugin := descriptors["provider.qwen"]
 	require.Equal(t, "model_provider", asStringAny(plugin["kind"]))
 	require.Equal(t, "llama.providers.qwen", asStringAny(plugin["config_namespace"]))

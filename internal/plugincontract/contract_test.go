@@ -117,3 +117,77 @@ func TestComponentsFromPluginsAnnotatesComponentWithPluginMetadata(t *testing.T)
 	require.Equal(t, "v1", components[0].PluginVersion)
 	require.Equal(t, SchemaVersion, components[0].PluginContractVersion)
 }
+
+func TestValidateComponentLinksReportsMissingAndMismatchedComponents(t *testing.T) {
+	issues := ValidateComponentLinks(
+		[]Descriptor{
+			{
+				ID:                    "provider.qwen",
+				Version:               "v1",
+				Kind:                  "model_provider",
+				ConfigNamespace:       "llama.providers.qwen",
+				CapabilityComponentID: "provider.qwen",
+				BackendProjections:    []Projection{{Class: "native", SourceFormat: "responses", TargetFormat: "responses"}},
+			},
+			{
+				ID:                    "tool.web_search",
+				Version:               "v1",
+				Kind:                  "tool_runtime",
+				ConfigNamespace:       "responses.web_search",
+				CapabilityComponentID: "tool.web_search",
+				BackendProjections:    []Projection{{Class: "local_subset", SourceFormat: "responses.tools.web_search", TargetFormat: "searxng"}},
+			},
+			{
+				ID:                    "missing",
+				Version:               "v1",
+				Kind:                  "tool_runtime",
+				ConfigNamespace:       "responses.missing",
+				CapabilityComponentID: "tool.missing",
+				BackendProjections:    []Projection{{Class: "local_subset", SourceFormat: "responses.tools.missing", TargetFormat: "missing"}},
+			},
+		},
+		[]backendcap.Component{
+			{
+				ID:                    "provider.qwen",
+				Category:              "model_provider",
+				Kind:                  "openai_compatible",
+				ConfigNamespace:       "llama.providers.qwen",
+				CapabilityClass:       backendcap.ClassNative,
+				Enabled:               true,
+				Ready:                 true,
+				PluginID:              "provider.other",
+				PluginVersion:         "v2",
+				PluginContractVersion: "bad.schema",
+			},
+			{
+				ID:                    "tool.web_search",
+				Category:              "tool_runtime",
+				Kind:                  "web_search",
+				ConfigNamespace:       "responses.web_search",
+				CapabilityClass:       backendcap.ClassLocalSubset,
+				Enabled:               true,
+				Ready:                 true,
+				PluginID:              "tool.web_search",
+				PluginVersion:         "v1",
+				PluginContractVersion: SchemaVersion,
+			},
+			{
+				ID:              "tool.orphan",
+				Category:        "tool_runtime",
+				Kind:            "orphan",
+				ConfigNamespace: "responses.orphan",
+				CapabilityClass: backendcap.ClassLocalSubset,
+				Enabled:         true,
+				Ready:           true,
+				PluginID:        "tool.orphan",
+			},
+		},
+	)
+
+	require.True(t, HasErrors(issues))
+	require.Contains(t, issues, Issue{Severity: IssueError, Plugin: "provider.qwen", Message: `backend component "provider.qwen" plugin_id "provider.other" does not match plugin id`})
+	require.Contains(t, issues, Issue{Severity: IssueError, Plugin: "provider.qwen", Message: `backend component "provider.qwen" plugin_version "v2" does not match plugin version`})
+	require.Contains(t, issues, Issue{Severity: IssueError, Plugin: "provider.qwen", Message: `backend component "provider.qwen" plugin_contract_version "bad.schema" does not match schema version`})
+	require.Contains(t, issues, Issue{Severity: IssueError, Plugin: "missing", Message: `plugin capability_component_id "tool.missing" does not exist`})
+	require.Contains(t, issues, Issue{Severity: IssueError, Plugin: "tool.orphan", Message: `backend component "tool.orphan" references missing plugin`})
+}

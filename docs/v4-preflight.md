@@ -23,7 +23,7 @@ The preflight goal is narrow:
 
 ## Current Implementation Slice
 
-The first implementation slice is complete:
+The current implementation slices are complete:
 
 - `internal/backendcap` defines a normalized backend capability registry,
   capability-class vocabulary, deterministic component sorting, and validation
@@ -33,8 +33,8 @@ The first implementation slice is complete:
   v4.backend_capabilities.v1` and a `backends.components[]` registry generated
   from current config plus runtime probes.
 - `GET /debug/capabilities` also includes `plugins.schema_version:
-  v4.plugin_contracts.v1` and a `plugins.plugins[]` registry for the first
-  stable plugin contract slice. Current model backend/provider entries are
+  v4.plugin_contracts.v1` and a `plugins.plugins[]` registry for the current
+  backend/runtime/plugin contract slice. Every advertised backend component is
   cross-linked from `backends.components[].plugin_id`.
 - The registry covers the current practical backend/plugin boundaries:
   primary storage, retrieval index, retrieval embedder, compaction,
@@ -790,8 +790,7 @@ fields to OpenAI-shaped responses.
 
 Classification: V4 plugin platform work.
 
-Status: implemented for the first stable model backend/provider contract
-slice.
+Status: implemented for the current backend/runtime plugin rollout.
 
 Goal:
 Prepare extension/plugin interfaces after the capability and routing substrate
@@ -836,17 +835,23 @@ Plugin rules:
 - plugins must fail closed when configured for `local_only` but unavailable
 - plugin errors must map into the shared error taxonomy
 
-Implemented first slice:
+Implemented rollout:
 
 - `internal/plugincontract` defines `v4.plugin_contracts.v1` descriptors,
   backend projection declarations, required secret references, readiness probe
   links, public surfaces, timeout/error-class metadata, validation, and a
   `CapabilityPlugin` interface.
-- The default `model.llama` backend and configured `llama.providers[]` entries
-  are exposed as model backend/provider plugins. Their descriptors live in
-  `/debug/capabilities.plugins.plugins[]`, while their backend capability
+- Primary storage, retrieval index/embedder, compaction, constrained decoding,
+  Responses WebSocket transport, web search, image generation, computer,
+  code interpreter, native local `shell`, native local `apply_patch`, Codex
+  client profile, the default `model.llama` backend, and configured
+  `llama.providers[]` entries are exposed as plugins. Their descriptors live
+  in `/debug/capabilities.plugins.plugins[]`, while their backend capability
   components are cross-linked through `plugin_id`, `plugin_version`, and
   `plugin_contract_version`.
+- The plugin registry validates that every descriptor points at an existing
+  backend component and that backend component plugin metadata points back at
+  an advertised descriptor.
 - Provider-routed requests record the selected plugin contract in
   `/debug/traces/{request_id}`.
 - Plugin descriptors expose only config namespaces and required env secret
@@ -987,7 +992,7 @@ Status: implemented for bounded request traces and capability advertising.
 
 ### Phase 6: Plugin Contracts
 
-Status: implemented for the first model backend/provider contract slice.
+Status: implemented for the current backend/runtime plugin rollout.
 
 - introduce the first stable plugin interface only after the registry,
   classifier, and traces are in place
@@ -997,10 +1002,14 @@ Status: implemented for the first model backend/provider contract slice.
 Implemented details:
 
 - `internal/plugincontract` owns the stable descriptor schema.
-- model backends/providers are the first migrated plugin family.
+- current backend/runtime families are exposed through plugin descriptors:
+  storage, retrieval, compaction, constrained decoding, Responses WebSocket,
+  tool runtimes, Codex profile, and model backends/providers.
 - `/debug/capabilities.plugins` reports plugin descriptors, while
   `/debug/capabilities.backends.components[]` remains the operational
   readiness/capability registry.
+- plugin/component cross-links are validated so the two registries cannot drift
+  silently.
 - `/debug/traces` records selected provider plugin metadata for model-routed
   requests.
 

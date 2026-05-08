@@ -735,6 +735,13 @@ func TestCapabilitiesEndpointReportsConfiguredRuntime(t *testing.T) {
 	require.Equal(t, "v4.plugin_contracts.v1", asStringAny(plugins["schema_version"]))
 	require.NotContains(t, plugins, "issues")
 	pluginDescriptors := pluginDescriptorsByID(t, plugins)
+	assertCapabilityPluginLinks(t, backendComponents, pluginDescriptors)
+	storagePlugin := pluginDescriptors["storage.primary"]
+	require.Equal(t, "storage_backend", asStringAny(storagePlugin["kind"]))
+	require.Equal(t, "storage.primary", asStringAny(storagePlugin["capability_component_id"]))
+	require.Equal(t, true, storagePlugin["ci_fixture_safe"])
+	require.Equal(t, true, storagePlugin["production_intended"])
+	require.ElementsMatch(t, storageBackend["public_surfaces"].([]any), storagePlugin["public_surfaces"].([]any))
 	modelPlugin := pluginDescriptors["model.llama"]
 	require.Equal(t, "model_backend", asStringAny(modelPlugin["kind"]))
 	require.Equal(t, "model.llama", asStringAny(modelPlugin["capability_component_id"]))
@@ -752,18 +759,32 @@ func TestCapabilitiesEndpointReportsConfiguredRuntime(t *testing.T) {
 	require.Equal(t, true, webSearchRuntime["enabled"])
 	require.Equal(t, true, webSearchRuntime["ready"])
 	require.ElementsMatch(t, []any{"web_search"}, webSearchRuntime["tools"].([]any))
+	webSearchPlugin := pluginDescriptors["tool.web_search"]
+	require.Equal(t, "tool_runtime", asStringAny(webSearchPlugin["kind"]))
+	require.Equal(t, "tool.web_search", asStringAny(webSearchPlugin["capability_component_id"]))
+	require.Equal(t, false, webSearchPlugin["ci_fixture_safe"])
+	require.Equal(t, true, webSearchPlugin["production_intended"])
+	require.Contains(t, webSearchPlugin["timeouts"].([]any), "responses.web_search.timeout")
 
 	imageRuntime := backendComponents["tool.image_generation"]
 	require.Equal(t, "responses", asStringAny(imageRuntime["backend"]))
 	require.Equal(t, backendcap.ClassProxyOnly, asStringAny(imageRuntime["capability_class"]))
 	require.Equal(t, true, imageRuntime["enabled"])
 	require.Equal(t, true, imageRuntime["ready"])
+	imagePlugin := pluginDescriptors["tool.image_generation"]
+	require.Equal(t, "tool_runtime", asStringAny(imagePlugin["kind"]))
+	require.Equal(t, "tool.image_generation", asStringAny(imagePlugin["capability_component_id"]))
+	require.Equal(t, false, imagePlugin["ci_fixture_safe"])
+	require.Equal(t, true, imagePlugin["production_intended"])
 
 	codexProfile := backendComponents["client_profile.codex"]
 	require.Equal(t, "client_profile", asStringAny(codexProfile["category"]))
 	require.Equal(t, true, codexProfile["enabled"])
 	require.Equal(t, true, codexProfile["ready"])
 	require.ElementsMatch(t, []any{"apply_patch", "shell"}, codexProfile["tools"].([]any))
+	codexPlugin := pluginDescriptors["client_profile.codex"]
+	require.Equal(t, "client_profile", asStringAny(codexPlugin["kind"]))
+	require.Equal(t, "client_profile.codex", asStringAny(codexPlugin["capability_component_id"]))
 
 	probes := payload["probes"].(map[string]any)
 	retrievalProbe := probes["retrieval_embedder"].(map[string]any)
@@ -14427,6 +14448,20 @@ func pluginDescriptorsByID(t *testing.T, plugins map[string]any) map[string]map[
 		out[asStringAny(descriptor["id"])] = descriptor
 	}
 	return out
+}
+
+func assertCapabilityPluginLinks(t *testing.T, components map[string]map[string]any, descriptors map[string]map[string]any) {
+	t.Helper()
+	require.Equal(t, len(components), len(descriptors))
+	for componentID, component := range components {
+		pluginID := asStringAny(component["plugin_id"])
+		require.NotEmpty(t, pluginID, componentID)
+		descriptor, ok := descriptors[pluginID]
+		require.True(t, ok, "missing plugin descriptor for component %s plugin %s", componentID, pluginID)
+		require.Equal(t, componentID, asStringAny(descriptor["capability_component_id"]))
+		require.Equal(t, asStringAny(component["plugin_version"]), asStringAny(descriptor["version"]))
+		require.Equal(t, "v4.plugin_contracts.v1", asStringAny(component["plugin_contract_version"]))
+	}
 }
 
 func payloadID(payload map[string]any) string {

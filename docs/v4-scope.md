@@ -15,10 +15,10 @@ Its first implementation slices are now in place: `/debug/capabilities`
 includes a normalized `backends` registry with V4 capability classes, redacted
 provider secret refs, backend readiness state, public-surface/tool ownership,
 and classifier disposition summaries for the current tool families. It also
-includes a `plugins` registry using `v4.plugin_contracts.v1`; the first
-implemented plugin family is model backend/provider routing, cross-linked from
-backend capability components and debug traces without exposing provider
-secrets. In
+includes a `plugins` registry using `v4.plugin_contracts.v1`; current
+backend/runtime families are exposed as plugin descriptors and cross-linked
+from backend capability components. Provider-routed requests also record the
+selected provider plugin in debug traces without exposing provider secrets. In
 addition, `POST /v1/responses` now uses the same classifier vocabulary as a
 request-time gate so `responses.mode=local_only` fails closed for proxy-only,
 client-round-trip, upstream-only, and unknown tool families instead of letting

@@ -163,11 +163,13 @@ What exists today:
   and `proxy_only`, readiness state, redacted secret references, public
   surfaces, tool ownership, and model-provider aliases without changing any
   public `/v1/*` response shape. Its V4 `plugins` registry records stable
-  plugin contract descriptors such as model backend/provider id, version,
+  plugin contract descriptors for storage, retrieval, local runtimes,
+  transports, Codex profile, and model backends/providers: id, version,
   config namespace, readiness probe, public surfaces, backend projections,
   required env secret names, timeout labels, and error classes. Backend
-  components cross-link to plugins through `plugin_id`; plugin registration
-  alone does not widen compatibility claims.
+  components cross-link to plugins through `plugin_id`, and the registry
+  validates that those links point both ways; plugin registration alone does
+  not widen compatibility claims.
 - `/readyz` and `/debug/capabilities` emit bounded readiness-probe metrics so
   operators can distinguish storage, upstream model, retrieval embedder, web
   search, and image-generation readiness failures without widening any
