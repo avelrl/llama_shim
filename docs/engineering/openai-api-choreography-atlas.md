@@ -195,6 +195,12 @@ What exists today:
   provider shape, while the doctor checks local Codex presence, shim health,
   capabilities, routed model catalog visibility, and a direct Responses smoke
   before longer Codex eval runs are attempted.
+- `make v4-preflight-smoke` is the aggregate operator check for this
+  choreography layer. It does not add public API behavior; it verifies the
+  private V4 capability registry, plugin cross-links, request cleanup hook
+  naming, debug trace availability, and one Responses trace with tool
+  classifier metadata before optionally chaining provider-routing and Codex
+  config smokes into one artifact report.
 
 ## Chat Completions Compatibility
 

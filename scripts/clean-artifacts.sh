@@ -56,6 +56,7 @@ artifact_paths=(
   ".tmp/codex-coding-task-smoke"
   ".tmp/codex-task-matrix-smoke"
   ".tmp/governance-purge-smoke"
+  ".tmp/v4-preflight-smoke"
   ".tmp/v3-computer-browser-harness-runs"
   ".tmp/playwright-daemon-sessions"
   ".tmp/playwright-daemon-sockets"

@@ -64,6 +64,11 @@ The current implementation slices are complete:
   capability mismatch, local runtime unavailable, and generic transport/server
   errors. The classifier drives shim error mapping, fallback eligibility for
   `prefer_upstream`, log fields, and `/debug/capabilities.runtime.ops`.
+- `make v4-preflight-smoke` is the operator-facing aggregate smoke for this
+  V4 layer. It captures health/readiness, `/v1/models`,
+  `/debug/capabilities`, one Responses request plus its `/debug/traces`
+  metadata, optional provider-routing smoke, optional `shimctl codex doctor`,
+  and a JSON/Markdown artifact summary under `.tmp/v4-preflight-smoke`.
 
 These slices intentionally do not create a new OpenAI public surface. They
 centralize what is already true so future V4 memory/plugin work has one
@@ -701,10 +706,84 @@ Boundary:
 ### 9. Smoke Scenario Inventory
 
 Classification: V4 preflight test planning.
+Status: implemented for the V4 preflight smoke aggregator and scenario
+inventory. Deeper domain-specific smokes remain in their existing V3/Codex
+targets.
 
 Goal:
 Preserve useful external-project scenario coverage while deriving expected
 behavior from this repo's docs, tests, official docs, and fixtures.
+
+The default aggregate operator smoke is:
+
+```bash
+make v4-preflight-smoke
+```
+
+It verifies the V4 platform substrate, not model quality:
+
+- `/healthz`, `/readyz`, and `/v1/models` are reachable
+- `/debug/capabilities` exposes valid
+  `v4.backend_capabilities.v1` and `v4.plugin_contracts.v1` registries
+- backend components that advertise `plugin_id` cross-link to plugin
+  descriptors with the same id/version
+- plugin descriptors keep `request_cleanup_hooks` as named strings when hooks
+  are present
+- debug traces are enabled in capabilities unless
+  `V4_PREFLIGHT_REQUIRE_DEBUG_TRACE=0` makes trace checks advisory
+- a direct `POST /v1/responses` request creates a retrievable metadata-only
+  `/debug/traces/{request_id}` record
+- that trace contains V4 tool-classifier metadata for at least one function
+  tool
+
+For a routed provider alias, run:
+
+```bash
+V4_PREFLIGHT_PROVIDER_MODEL=deepseek/deepseek-v4-pro make v4-preflight-smoke
+```
+
+That nests the existing provider-routing smoke inside the same artifact tree.
+The nested smoke verifies live `provider/model` routing through
+`/debug/capabilities`, `/v1/models`, `/v1/responses`,
+`/v1/chat/completions`, derived Responses helper endpoints, and fail-closed
+unknown-provider behavior.
+
+Optional Codex config preflight can be added to the same run:
+
+```bash
+V4_PREFLIGHT_RUN_CODEX_DOCTOR=1 \
+  V4_PREFLIGHT_PROVIDER_MODEL=deepseek/deepseek-v4-pro \
+  make v4-preflight-smoke
+```
+
+This keeps `shimctl codex doctor` as a direct config/probe check, while
+long-running Codex task success remains owned by the Codex eval harness.
+
+The aggregate smoke writes:
+
+- `summary.json` and `summary.md`
+- request/response/status/header files for each probe
+- a bounded `shim.log.slice`
+- nested provider-routing and Codex doctor artifacts when enabled
+
+Environment controls:
+
+- `SHIM_BASE_URL` chooses the running shim, default
+  `http://127.0.0.1:8080`
+- `SHIM_AUTH_HEADER` or `SHIM_API_KEY`/`GW_API_KEY`/`OPENAI_API_KEY` supplies
+  shim bearer auth
+- `V4_PREFLIGHT_MODEL` selects the direct Responses trace model; otherwise the
+  smoke uses `MODEL`, `CODEX_MODEL`, `TESTER_MODEL`, the first `/v1/models`
+  entry, then `devstack-model`
+- `V4_PREFLIGHT_REQUIRE_READYZ=0` records readiness as advisory for partial
+  local debugging
+- `V4_PREFLIGHT_REQUIRE_DEBUG_TRACE=0` records trace retrieval as advisory
+  when debug traces are intentionally disabled
+- `V4_PREFLIGHT_RUN_PROVIDER_ROUTING=0|1|auto` controls nested provider
+  routing
+- `V4_PREFLIGHT_RUN_CODEX_DOCTOR=1` enables the Codex config doctor
+- `V4_PREFLIGHT_TIMEOUT_SECONDS` controls per-probe timeout and health wait
+- `V4_PREFLIGHT_ARTIFACT_DIR` changes the artifact root
 
 Candidate scenario families:
 
