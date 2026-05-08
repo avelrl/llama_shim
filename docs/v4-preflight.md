@@ -714,6 +714,11 @@ Goal:
 Preserve useful external-project scenario coverage while deriving expected
 behavior from this repo's docs, tests, official docs, and fixtures.
 
+For day-to-day command usage, artifact reading order, failure triage, and
+scope boundaries, see the
+[V4 preflight runbook](guides/operations.md#v4-preflight-runbook). This
+section stays architecture-oriented.
+
 The default aggregate operator smoke is:
 
 ```bash

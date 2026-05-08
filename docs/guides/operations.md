@@ -112,6 +112,152 @@ Important distinction:
   operator-facing latency observations as JSON without changing the running
   HTTP server
 
+## V4 Preflight Runbook
+
+Use V4 preflight as the operator gate for the shim-owned V4 substrate: backend
+contracts, plugin descriptors, request cleanup metadata, debug traces, provider
+routing, and optional Codex config probing. It is intentionally broader than
+`/readyz`, but narrower than a full model-quality benchmark.
+
+Run it after changes to provider routing, backend/plugin registration, debug
+trace capture, request cleanup hooks, Codex config generation, or preflight
+scripts:
+
+```bash
+make v4-preflight-smoke
+```
+
+Run the same gate for a live routed provider/model alias:
+
+```bash
+V4_PREFLIGHT_PROVIDER_MODEL=<provider>/<model> make v4-preflight-smoke
+```
+
+If the shim itself requires bearer auth:
+
+```bash
+SHIM_AUTH_HEADER="Authorization: Bearer $GW_API_KEY" \
+  V4_PREFLIGHT_PROVIDER_MODEL=<provider>/<model> \
+  make v4-preflight-smoke
+```
+
+Add the isolated Codex config doctor only when validating Codex CLI wiring:
+
+```bash
+V4_PREFLIGHT_RUN_CODEX_DOCTOR=1 \
+  V4_PREFLIGHT_PROVIDER_MODEL=<provider>/<model> \
+  make v4-preflight-smoke
+```
+
+What a passing run means:
+
+- `/healthz`, `/readyz`, and `/v1/models` were reachable
+- `/debug/capabilities` advertised valid V4 backend and plugin contract
+  schemas
+- backend `plugin_id` links matched plugin descriptor ids and versions
+- plugin `request_cleanup_hooks` stayed metadata-only named hooks
+- one direct Responses request produced a retrievable metadata-only debug trace
+- the trace contained V4 tool-classifier metadata for a function tool
+- when `V4_PREFLIGHT_PROVIDER_MODEL` was set, the nested provider-routing
+  smoke proved the same alias through Responses, Chat Completions, helper
+  endpoints, live `/v1/models`, and fail-closed unknown-provider behavior
+- when `V4_PREFLIGHT_RUN_CODEX_DOCTOR=1` was set, `shimctl codex doctor`
+  verified config generation and direct probe wiring
+
+Read artifacts in this order:
+
+1. `summary.json`: machine-readable status, request ids, nested smoke status,
+   warnings, and failures.
+2. `summary.md`: human-readable short report.
+3. `responses_trace_debug_trace.response.json`: selected backend, projection,
+   plugin id, tool-classifier decision, and request-cleanup transform metadata.
+4. `provider-routing/<model>/summary.json`: nested routed-provider result when
+   `V4_PREFLIGHT_PROVIDER_MODEL` was set.
+5. `codex-doctor/summary.json`: Codex config doctor result when enabled.
+6. `warnings.txt`, `failures.txt`, and `shim.log.slice`: first stop for
+   diagnosis.
+
+Common failure shapes:
+
+- `/healthz` returns `000` or times out: the shim is not running, or
+  `SHIM_BASE_URL` points at the wrong process.
+- `/readyz` returns `503`: a configured required dependency is unavailable.
+  Inspect `/debug/capabilities.probes`. If the upstream `/v1/models`
+  readiness probe requires auth, configure `LLAMA_READINESS_BEARER_TOKEN`.
+- capability validation fails: backend/plugin registry metadata drifted, a
+  plugin cross-link is broken, or debug traces are disabled while
+  `V4_PREFLIGHT_REQUIRE_DEBUG_TRACE` still requires them.
+- the direct Responses trace fails: the request path, selected backend, tool
+  classifier, or trace capture path is broken before model-quality questions
+  matter.
+- `/debug/traces/{request_id}` returns `404`: debug traces are disabled,
+  evicted by the bounded trace store, or the request failed before trace
+  metadata was recorded.
+- nested provider routing fails: check the `provider/model` alias, provider
+  auth env, live `/v1/models`, and provider-specific cleanup hook metadata.
+- Codex doctor fails: treat it as Codex config/auth/probe wiring evidence, not
+  as evidence that the model cannot pass Codex tasks.
+
+Boundaries:
+
+- V4 preflight does not measure coding quality, instruction following, or
+  long-run stability. Use `make codex-eval-auto` and
+  `make codex-eval-curate` for that.
+- V4 preflight does not turn `/debug/*` into OpenAI-compatible API surface.
+  Debug capabilities and traces remain shim-owned operator routes.
+- V4 preflight does not delete `.data` and does not clean artifacts. Its output
+  under `.tmp/v4-preflight-smoke` is disposable.
+
+Plugin, model, and capability settings map:
+
+| Need | Configure | Inspect | Verify |
+| --- | --- | --- | --- |
+| Route one public model alias to one upstream provider | `llama.providers[]` plus provider token env names such as `DEEPSEEK_API_KEY` | `/debug/capabilities.backends.components[]`, `/debug/capabilities.plugins.plugins[]`, live `/v1/models` | `V4_PREFLIGHT_PROVIDER_MODEL=<provider>/<model> make v4-preflight-smoke` or `make upstream-provider-routing-smoke` |
+| Make Codex know model capabilities and tool shapes | `responses.codex.model_metadata.models[]` using the same public model id Codex launches with | Codex-specific `/v1/models?client_version=...` or `/api/codex/models`; normal `/v1/models` stays OpenAI-shaped | `make codex-config-doctor`, then `make codex-eval-auto` |
+| Adapt request shape for a provider without changing public input | `chat_completions.upstream_compatibility.models[]`, `responses.codex.upstream_input_compatibility.models[]`, and `responses.upstream_tool_compatibility.models[]` | `/debug/traces/{request_id}.transforms[]` and plugin `request_cleanup_hooks` | V4 preflight trace check, provider-routing smoke, and focused Codex evals |
+| Enable or disable local tool/runtime backends | `responses.web_search`, `responses.image_generation`, `responses.computer`, `responses.code_interpreter`, `responses.compaction`, `retrieval.*` | backend components and plugin descriptors with enabled/ready state | the matching domain smoke, plus V4 preflight for registry consistency |
+| Tune debug trace availability | `shim.debug_traces.*` or `SHIM_DEBUG_TRACES_*` | `/debug/capabilities.runtime.ops.debug_traces` and `/debug/traces` | `make v4-preflight-smoke` |
+
+Use these rules when adding a model or plugin:
+
+- Use the same public model id everywhere a client sees the model, for example
+  `deepseek/deepseek-v4-pro`.
+- Match provider compatibility rules against the resolved upstream model when
+  `llama.providers` is enabled, not the public `provider/model` alias.
+- Add new provider token names to `.env.example`, but never commit token
+  values.
+- Keep plugin descriptors descriptive, not executable: they advertise
+  `config_namespace`, `required_secrets`, surfaces, projections, timeouts,
+  limits, error classes, and named cleanup hooks.
+- Confirm `/debug/capabilities.plugins.issues` has no `error` entries before
+  treating the plugin registry as healthy.
+- Do not use Codex model metadata to fake ordinary OpenAI `/v1/models` data.
+  Codex metadata is a Codex client profile surface only.
+- Do not expose provider-specific knobs as public OpenAI request fields. Keep
+  them in config and make any backend projection visible through debug traces.
+
+Useful inspection snippets:
+
+```bash
+curl -fsS "$SHIM_BASE_URL/debug/capabilities" \
+  | jq '.backends.components[] | {id, category, kind, capability_class, enabled, ready, plugin_id}'
+
+curl -fsS "$SHIM_BASE_URL/debug/capabilities" \
+  | jq '.plugins.plugins[] | {id, kind, config_namespace, required_secrets, request_cleanup_hooks}'
+
+curl -fsS "$SHIM_BASE_URL/debug/capabilities" \
+  | jq '.plugins.issues // []'
+```
+
+Recommended operator flow:
+
+```bash
+make preflight-local
+V4_PREFLIGHT_PROVIDER_MODEL=<provider>/<model> make v4-preflight-smoke
+make codex-eval-auto
+make codex-eval-curate
+```
+
 ## Maintenance
 
 Background cleanup:

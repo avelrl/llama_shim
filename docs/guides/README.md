@@ -38,6 +38,8 @@ Assumptions:
 ## Operations
 
 - [Operations](operations.md): running, probing, backing up, and maintaining the shim
+- [V4 Preflight Runbook](operations.md#v4-preflight-runbook): aggregate V4
+  health, capability, debug-trace, provider-routing, and Codex config checks
 - [Postgres Backup and Restore](postgres-backup.md): cluster-native backup
   guidance for the Postgres beta backend
 - [Dev Stack](devstack.md): deterministic local stack and smoke path
