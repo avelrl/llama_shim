@@ -167,6 +167,14 @@ What exists today:
   operators can distinguish storage, upstream model, retrieval embedder, web
   search, and image-generation readiness failures without widening any
   OpenAI-compatible API contract.
+- Backend failure handling is shim-owned policy, not an OpenAI API extension.
+  Upstream auth, permission, quota, retryable rate-limit, model-unavailable,
+  unsupported tool/parameter, timeout, malformed-response, capability-mismatch,
+  local-runtime, transport, and server-error classes map to retryability,
+  cooldown hints, fallback eligibility, and OpenAI-shaped client errors.
+  `/debug/capabilities.runtime.ops.backend_failure_policy` exposes that static
+  decision table, while live quota/cooldown state is not emitted as fake
+  OpenAI response fields.
 
 ## Chat Completions Compatibility
 
@@ -495,7 +503,9 @@ What exists in the shim:
 - The vLLM adapter is registered behind the constrained runtime adapter
   registry. Invalid native output, native timeouts, and native upstream errors
   retry through the default shim validate/repair runtime before route-level
-  upstream fallback is considered.
+  upstream fallback is considered. Route-level fallback uses the shared backend
+  failure policy, so quota exhaustion and capability mismatches are not treated
+  the same as retryable rate limits or transport timeouts.
 - Future backend-specific adapters must change those capability fields before
   docs can claim `json_schema_native` or broader grammar parity.
 

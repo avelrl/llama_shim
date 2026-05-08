@@ -53,6 +53,12 @@ The first implementation slice is complete:
   labels. This keeps event writing incremental, records whether a path is
   `generic_replay` or typed local-tool replay, and preserves the existing
   public SSE/WebSocket payloads.
+- Backend failures now pass through a shared V4 policy classifier. It
+  distinguishes auth, permission, quota, retryable rate limit, model
+  unavailable, unsupported tool/parameter, timeout, malformed response,
+  capability mismatch, local runtime unavailable, and generic transport/server
+  errors. The classifier drives shim error mapping, fallback eligibility for
+  `prefer_upstream`, log fields, and `/debug/capabilities.runtime.ops`.
 
 These slices intentionally do not create a new OpenAI public surface. They
 centralize what is already true so future V4 memory/plugin work has one
@@ -547,13 +553,15 @@ Boundary:
 ### 7. Fallback, Cooldown, Quota, And Health Policy
 
 Classification: V4 preflight platform work.
+Status: implemented for the V4 preflight platform scope.
 
 Goal:
 Make multi-backend routing reliable without hiding compatibility failures.
 
-The policy should classify backend failures:
+The policy classifies backend failures:
 
 - auth failure
+- permission failure
 - quota exhausted
 - rate limit retryable
 - model unavailable
@@ -563,16 +571,15 @@ The policy should classify backend failures:
 - malformed backend response
 - backend capability mismatch
 - local runtime unavailable
-- local persistence side-effect failure
+- transport/server error
 
-For each class, define:
+For each class it defines:
 
 - whether it is retryable
 - whether it triggers cooldown
 - whether fallback is allowed
-- whether the client should see the original upstream error or a shim error
-- whether a local side effect should be skipped, retried, or made fatal
-- how it appears in `/debug/capabilities`, logs, and metrics
+- the client-visible OpenAI-shaped status/type/code/message used by the shim
+- how it appears in `/debug/capabilities` and logs
 
 Rules:
 
@@ -584,11 +591,27 @@ Rules:
 - fallback decisions must be visible in private debug traces
 - quota and cooldown state must not be exposed as fake OpenAI response fields
 
-Acceptance criteria:
+Implemented checks:
 
-- deterministic tests for each failure class
-- metrics and logs distinguish fallback from first-choice success
-- capability manifest shows degraded state without leaking secrets
+- deterministic tests cover HTTP-status classes, timeout and malformed-response
+  classes, and the operator policy table
+- `MapError` uses the policy for upstream auth, permission, quota, retryable
+  rate-limit, timeout, malformed response, capability mismatch, local runtime,
+  and transport failures while preserving the existing generic `502` behavior
+  for unknown upstream errors
+- `prefer_upstream` local-state fallback now consults the policy instead of
+  treating every upstream failure as fallback-safe
+- upstream stream/proxy logs include `failure_class`, `retryable`,
+  `cooldown`, `cooldown_hint_seconds`, and `fallback_allowed`
+- `/debug/capabilities.runtime.ops.backend_failure_policy` exposes the static
+  operator decision table without secrets or live quota state
+
+Boundary:
+
+- V4 exposes cooldown decisions and hints, not a fake OpenAI quota object.
+- Active provider quarantine across requests is still intentionally absent
+  because provider-routed model ids are explicit `provider/model` choices; the
+  shim should not silently satisfy that request through a different provider.
 
 ### 8. Codex Config Generator And Probe
 

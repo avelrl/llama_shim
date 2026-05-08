@@ -46,6 +46,22 @@ func TestMapError(t *testing.T) {
 	require.Equal(t, 502, status)
 	require.Equal(t, "upstream_error", payload.Type)
 	require.Equal(t, "upstream request failed", payload.Message)
+
+	status, payload = httpapi.MapError(context.Background(), logger, &llama.UpstreamError{
+		StatusCode: http.StatusUnauthorized,
+		Message:    `{"error":{"message":"Incorrect API key provided"}}`,
+	})
+	require.Equal(t, http.StatusUnauthorized, status)
+	require.Equal(t, "authentication_error", payload.Type)
+	require.Equal(t, "upstream_auth_failure", *payload.Code)
+
+	status, payload = httpapi.MapError(context.Background(), logger, &llama.UpstreamError{
+		StatusCode: http.StatusTooManyRequests,
+		Message:    `{"error":{"message":"Rate limit reached for requests"}}`,
+	})
+	require.Equal(t, http.StatusTooManyRequests, status)
+	require.Equal(t, "rate_limit_error", payload.Type)
+	require.Equal(t, "upstream_rate_limit", *payload.Code)
 }
 
 func TestWriteErrorUsesCanonicalOpenAIShape(t *testing.T) {

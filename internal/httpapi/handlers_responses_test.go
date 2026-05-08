@@ -183,6 +183,14 @@ func TestShouldFallbackLocalState(t *testing.T) {
 		StatusCode: 500,
 		Message:    "backend failed",
 	}))
+	require.True(t, shouldFallbackLocalState(config.ResponsesModePreferUpstream, &llama.UpstreamError{
+		StatusCode: http.StatusTooManyRequests,
+		Message:    "Rate limit reached for requests",
+	}))
+	require.False(t, shouldFallbackLocalState(config.ResponsesModePreferUpstream, &llama.UpstreamError{
+		StatusCode: http.StatusTooManyRequests,
+		Message:    "insufficient_quota",
+	}))
 	require.False(t, shouldFallbackLocalState(config.ResponsesModePreferLocal, &llama.UpstreamError{
 		StatusCode: 500,
 		Message:    "backend failed",

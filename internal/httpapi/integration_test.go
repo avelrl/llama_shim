@@ -398,8 +398,10 @@ func TestResponsesCreateDoesNotUseStartupCalibrationToken(t *testing.T) {
 		"input": "Reply with exactly: pong",
 	})
 
-	require.Equal(t, http.StatusBadGateway, status)
-	require.Equal(t, "upstream_error", asStringAny(payload["error"].(map[string]any)["type"]))
+	require.Equal(t, http.StatusUnauthorized, status)
+	errPayload := payload["error"].(map[string]any)
+	require.Equal(t, "authentication_error", asStringAny(errPayload["type"]))
+	require.Equal(t, "upstream_auth_failure", asStringAny(errPayload["code"]))
 	require.Empty(t, seenAuthorization)
 }
 
@@ -646,6 +648,18 @@ func TestCapabilitiesEndpointReportsConfiguredRuntime(t *testing.T) {
 	metrics := ops["metrics"].(map[string]any)
 	require.Equal(t, true, metrics["enabled"])
 	require.Equal(t, "/metrics", asStringAny(metrics["path"]))
+
+	backendFailurePolicy := ops["backend_failure_policy"].([]any)
+	require.NotEmpty(t, backendFailurePolicy)
+	backendFailureRules := map[string]map[string]any{}
+	for _, rawRule := range backendFailurePolicy {
+		rule := rawRule.(map[string]any)
+		backendFailureRules[asStringAny(rule["class"])] = rule
+	}
+	require.Equal(t, "authentication_error", asStringAny(backendFailureRules["auth_failure"]["client_type"]))
+	require.Equal(t, "rate_limit_error", asStringAny(backendFailureRules["rate_limit_retryable"]["client_type"]))
+	require.Equal(t, true, backendFailureRules["rate_limit_retryable"]["retryable"])
+	require.Equal(t, true, backendFailureRules["transport_timeout"]["fallback_allowed"])
 
 	tools := payload["tools"].(map[string]any)
 	computerTool := tools["computer"].(map[string]any)

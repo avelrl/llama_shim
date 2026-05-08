@@ -454,6 +454,9 @@ func (h *responseHandler) proxyResponseRequest(r *http.Request, body []byte) (*h
 				"duration_ms", duration.Milliseconds(),
 				"err", err,
 			}
+			if decision, ok := classifyBackendFailure(err); ok {
+				attrs = append(attrs, backendFailurePolicyLogAttrs(decision)...)
+			}
 			attrs = append(attrs, logAttrs...)
 			h.logger.WarnContext(ctx, "responses upstream request failed", attrs...)
 		}
@@ -479,7 +482,7 @@ func logResponsesUpstreamHTTPError(ctx context.Context, logger *slog.Logger, ope
 		return
 	}
 
-	logger.WarnContext(ctx, "responses upstream returned error",
+	attrs := []any{
 		"request_id", RequestIDFromContext(ctx),
 		"client_request_id", ClientRequestIDFromContext(ctx),
 		"operation", operation,
@@ -489,7 +492,10 @@ func logResponsesUpstreamHTTPError(ctx context.Context, logger *slog.Logger, ope
 		"body_bytes", len(body),
 		"body_truncated", bodyTruncated || len(body) > responsesUpstreamErrorBodyLogLimit,
 		"body_preview", bodyPreviewForLog(body, responsesUpstreamErrorBodyLogLimit),
-	)
+	}
+	decision := backendFailureDecisionFor(classifyBackendHTTPFailure(resp.StatusCode, string(body)))
+	attrs = append(attrs, backendFailurePolicyLogAttrs(decision)...)
+	logger.WarnContext(ctx, "responses upstream returned error", attrs...)
 }
 
 func proxyResponsesStream(ctx context.Context, logger *slog.Logger, w http.ResponseWriter, resp *http.Response, plan customToolTransportPlan, requestJSON string, bufferLimitBytes int64, onCompleted func([]byte, []domain.ResponseReplayArtifact) error) error {

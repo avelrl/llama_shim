@@ -2796,7 +2796,7 @@ components:
           minimum: 1
     ShimCapabilityOpsConfig:
       type: object
-      required: [auth_mode, rate_limit, metrics, health_public, readyz_public]
+      required: [auth_mode, rate_limit, metrics, backend_failure_policy, health_public, readyz_public]
       properties:
         auth_mode:
           type: string
@@ -2804,6 +2804,11 @@ components:
           $ref: "#/components/schemas/ShimCapabilityRateLimit"
         metrics:
           $ref: "#/components/schemas/ShimCapabilityMetrics"
+        backend_failure_policy:
+          type: array
+          description: Static shim-owned backend failure decision table. It exposes retryability, cooldown hints, fallback eligibility, and client error mapping without live quota or secret state.
+          items:
+            $ref: "#/components/schemas/ShimCapabilityBackendFailureRule"
         health_public:
           type: boolean
         readyz_public:
@@ -2825,6 +2830,41 @@ components:
         enabled:
           type: boolean
         path:
+          type: string
+    ShimCapabilityBackendFailureRule:
+      type: object
+      required: [class, retryable, cooldown, fallback_allowed, client_status, client_type]
+      properties:
+        class:
+          type: string
+          enum:
+            - auth_failure
+            - permission_failure
+            - quota_exhausted
+            - rate_limit_retryable
+            - model_unavailable
+            - unsupported_tool_or_param
+            - transport_timeout
+            - stream_idle_timeout
+            - malformed_backend_response
+            - backend_capability_mismatch
+            - local_runtime_unavailable
+            - upstream_server_error
+            - transport_error
+        retryable:
+          type: boolean
+        cooldown:
+          type: boolean
+        cooldown_hint_seconds:
+          type: integer
+          minimum: 0
+        fallback_allowed:
+          type: boolean
+        client_status:
+          type: integer
+        client_type:
+          type: string
+        client_code:
           type: string
     ShimCapabilityToolSet:
       type: object

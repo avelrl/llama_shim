@@ -1727,13 +1727,16 @@ func unsupportedLocalDerivedFields(rawFields map[string]json.RawMessage) []strin
 }
 
 func shouldFallbackLocalState(responsesMode string, err error) bool {
-	mapped := service.MapGeneratorError(err)
 	if errors.Is(err, domain.ErrUnsupportedShape) {
 		return responsesMode != config.ResponsesModeLocalOnly
 	}
 	if responsesMode != config.ResponsesModePreferUpstream {
 		return false
 	}
+	if decision, ok := classifyBackendFailure(err); ok {
+		return decision.FallbackAllowed
+	}
+	mapped := service.MapGeneratorError(err)
 	return errors.Is(mapped, service.ErrUpstreamFailure) || errors.Is(mapped, service.ErrUpstreamTimeout)
 }
 

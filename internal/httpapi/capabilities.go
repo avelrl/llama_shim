@@ -187,11 +187,12 @@ type capabilityRetrievalANNIndex struct {
 }
 
 type capabilityOpsConfig struct {
-	AuthMode     string              `json:"auth_mode"`
-	RateLimit    capabilityRateLimit `json:"rate_limit"`
-	Metrics      capabilityMetrics   `json:"metrics"`
-	HealthPublic bool                `json:"health_public"`
-	ReadyzPublic bool                `json:"readyz_public"`
+	AuthMode             string                         `json:"auth_mode"`
+	RateLimit            capabilityRateLimit            `json:"rate_limit"`
+	Metrics              capabilityMetrics              `json:"metrics"`
+	BackendFailurePolicy []capabilityBackendFailureRule `json:"backend_failure_policy"`
+	HealthPublic         bool                           `json:"health_public"`
+	ReadyzPublic         bool                           `json:"readyz_public"`
 }
 
 type capabilityRateLimit struct {
@@ -203,6 +204,17 @@ type capabilityRateLimit struct {
 type capabilityMetrics struct {
 	Enabled bool   `json:"enabled"`
 	Path    string `json:"path"`
+}
+
+type capabilityBackendFailureRule struct {
+	Class               string `json:"class"`
+	Retryable           bool   `json:"retryable"`
+	Cooldown            bool   `json:"cooldown"`
+	CooldownHintSeconds int    `json:"cooldown_hint_seconds,omitempty"`
+	FallbackAllowed     bool   `json:"fallback_allowed"`
+	ClientStatus        int    `json:"client_status"`
+	ClientType          string `json:"client_type"`
+	ClientCode          string `json:"client_code,omitempty"`
 }
 
 type capabilityToolSet struct {
@@ -335,8 +347,9 @@ func buildCapabilityManifest(ctx context.Context, deps RouterDeps) capabilityMan
 					Enabled: metricsConfig.Enabled,
 					Path:    metricsConfig.Path,
 				},
-				HealthPublic: true,
-				ReadyzPublic: true,
+				BackendFailurePolicy: capabilityBackendFailurePolicy(),
+				HealthPublic:         true,
+				ReadyzPublic:         true,
 			},
 		},
 		Tools: capabilityToolSet{
@@ -1178,6 +1191,39 @@ func probeErrorMessage(include bool, message string) string {
 		return ""
 	}
 	return message
+}
+
+func capabilityBackendFailurePolicy() []capabilityBackendFailureRule {
+	classes := []backendFailureClass{
+		backendFailureAuthFailure,
+		backendFailurePermissionFailure,
+		backendFailureQuotaExhausted,
+		backendFailureRateLimitRetryable,
+		backendFailureModelUnavailable,
+		backendFailureUnsupportedToolOrParam,
+		backendFailureTransportTimeout,
+		backendFailureStreamIdleTimeout,
+		backendFailureMalformedBackendResponse,
+		backendFailureBackendCapabilityMismatch,
+		backendFailureLocalRuntimeUnavailable,
+		backendFailureTransportError,
+		backendFailureUpstreamServerError,
+	}
+	out := make([]capabilityBackendFailureRule, 0, len(classes))
+	for _, class := range classes {
+		decision := backendFailureDecisionFor(class)
+		out = append(out, capabilityBackendFailureRule{
+			Class:               string(decision.Class),
+			Retryable:           decision.Retryable,
+			Cooldown:            decision.Cooldown,
+			CooldownHintSeconds: decision.CooldownHintSeconds,
+			FallbackAllowed:     decision.FallbackAllowed,
+			ClientStatus:        decision.ClientStatus,
+			ClientType:          decision.ClientType,
+			ClientCode:          decision.ClientCode,
+		})
+	}
+	return out
 }
 
 func normalizedCapabilityAuthMode(mode string) string {

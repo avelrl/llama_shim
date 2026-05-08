@@ -199,6 +199,8 @@ func TestProxyResponsesStreamLogsUpstreamErrorBody(t *testing.T) {
 	require.Contains(t, output, `"client_request_id":"client_req_test"`)
 	require.Contains(t, output, `"operation":"responses_proxy_stream"`)
 	require.Contains(t, output, `"status":502`)
+	require.Contains(t, output, `"failure_class":"upstream_server_error"`)
+	require.Contains(t, output, `"retryable":true`)
 	require.Contains(t, output, `"upstream_request_id":"up_req_test"`)
 	require.Contains(t, output, `context length exceeded`)
 }

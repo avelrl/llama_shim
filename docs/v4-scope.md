@@ -21,7 +21,9 @@ client-round-trip, upstream-only, and unknown tool families instead of letting
 them drift into a lossy local path. Create-stream, retrieve-stream, and
 Responses WebSocket warmup also share a stream/replay emitter interface with
 explicit replay classes and capability labels, while preserving the existing
-OpenAI-shaped event payloads.
+OpenAI-shaped event payloads. Backend failures also use a shared V4 policy
+classifier for retryability, cooldown hints, fallback eligibility, client error
+mapping, and operator diagnostics in `/debug/capabilities`.
 
 V2 is the broad compatibility facade.
 V3 is backend and runtime expansion around that facade.

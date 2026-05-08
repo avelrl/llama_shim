@@ -44,6 +44,12 @@ func MapError(ctx context.Context, logger *slog.Logger, err error) (int, apiErro
 	}
 
 	logDetailedError(ctx, logger, err)
+	if decision, ok := classifyBackendFailure(err); ok {
+		switch decision.Class {
+		case backendFailureAuthFailure, backendFailurePermissionFailure, backendFailureQuotaExhausted, backendFailureRateLimitRetryable, backendFailureModelUnavailable, backendFailureTransportTimeout, backendFailureStreamIdleTimeout, backendFailureMalformedBackendResponse, backendFailureBackendCapabilityMismatch, backendFailureLocalRuntimeUnavailable, backendFailureTransportError:
+			return decision.ClientStatus, newAPIError(decision.ClientType, decision.ClientMessage, "", decision.ClientCode)
+		}
+	}
 	mappedErr := service.MapStorageError(err)
 	mappedErr = service.MapGeneratorError(mappedErr)
 
@@ -302,29 +308,41 @@ func normalizeAPIErrorCode(raw any) any {
 func logDetailedError(ctx context.Context, logger *slog.Logger, err error) {
 	var upstreamErr *llama.UpstreamError
 	if errors.As(err, &upstreamErr) {
-		logger.ErrorContext(ctx, "upstream request failed",
+		attrs := []any{
 			"request_id", RequestIDFromContext(ctx),
 			"status", upstreamErr.StatusCode,
 			"body", truncateForLog(upstreamErr.Message, 2048),
-		)
+		}
+		if decision, ok := classifyBackendFailure(err); ok {
+			attrs = append(attrs, backendFailurePolicyLogAttrs(decision)...)
+		}
+		logger.ErrorContext(ctx, "upstream request failed", attrs...)
 		return
 	}
 
 	var timeoutErr *llama.TimeoutError
 	if errors.As(err, &timeoutErr) {
-		logger.ErrorContext(ctx, "upstream request timed out",
+		attrs := []any{
 			"request_id", RequestIDFromContext(ctx),
 			"err", timeoutErr.Error(),
-		)
+		}
+		if decision, ok := classifyBackendFailure(err); ok {
+			attrs = append(attrs, backendFailurePolicyLogAttrs(decision)...)
+		}
+		logger.ErrorContext(ctx, "upstream request timed out", attrs...)
 		return
 	}
 
 	var invalidResponseErr *llama.InvalidResponseError
 	if errors.As(err, &invalidResponseErr) {
-		logger.ErrorContext(ctx, "upstream invalid response",
+		attrs := []any{
 			"request_id", RequestIDFromContext(ctx),
 			"err", invalidResponseErr.Error(),
-		)
+		}
+		if decision, ok := classifyBackendFailure(err); ok {
+			attrs = append(attrs, backendFailurePolicyLogAttrs(decision)...)
+		}
+		logger.ErrorContext(ctx, "upstream invalid response", attrs...)
 	}
 }
 
