@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -241,6 +242,206 @@ probe:
 	require.NotContains(t, stderr.String(), "preview=\"{\\\"id\\\":\\\"chatcmpl-test\\\"")
 }
 
+func TestRunCodexConfigPrintsCurrentProviderTOML(t *testing.T) {
+	disableSharedDotEnv(t)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	err := run([]string{
+		"codex",
+		"config",
+		"-model", "deepseek/deepseek-v4-pro",
+		"-provider", "gateway-shim",
+		"-base-url", "http://127.0.0.1:8080/v1",
+		"-api-key-env", "GW_API_KEY",
+		"-supports-websockets",
+		"-model-context-window", "200000",
+	}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	out := stdout.String()
+	require.Contains(t, out, `model = "deepseek/deepseek-v4-pro"`)
+	require.Contains(t, out, `model_context_window = 200000`)
+	require.Contains(t, out, `model_provider = "gateway-shim"`)
+	require.Contains(t, out, `[model_providers.gateway-shim]`)
+	require.Contains(t, out, `base_url = "http://127.0.0.1:8080/v1"`)
+	require.Contains(t, out, `env_key = "GW_API_KEY"`)
+	require.Contains(t, out, `wire_api = "responses"`)
+	require.Contains(t, out, `supports_websockets = true`)
+	require.NotContains(t, out, "shim-dev-key")
+}
+
+func TestRunCodexConfigWritesCodexHome(t *testing.T) {
+	disableSharedDotEnv(t)
+	codexHome := filepath.Join(t.TempDir(), "codex-home")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	err := run([]string{
+		"codex",
+		"config",
+		"-model", "svgun/kimi-k2.6",
+		"-base-url", "http://127.0.0.1:8080/v1",
+		"-codex-home", codexHome,
+	}, &stdout, &stderr)
+	require.NoError(t, err)
+	require.Contains(t, stdout.String(), "codex config written:")
+
+	raw, err := os.ReadFile(filepath.Join(codexHome, "config.toml"))
+	require.NoError(t, err)
+	require.Contains(t, string(raw), `model = "svgun/kimi-k2.6"`)
+	require.Contains(t, string(raw), `env_key = "GW_API_KEY"`)
+}
+
+func TestRunCodexDoctorPassesAndWritesArtifacts(t *testing.T) {
+	disableSharedDotEnv(t)
+	t.Setenv("GW_API_KEY", "shim-dev-key")
+	model := "deepseek/deepseek-v4-pro"
+	codexBin := writeFakeCodexBinary(t, "codex 0.99.0")
+	var seenAuth []string
+	var seenResponseModel string
+
+	shim := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenAuth = append(seenAuth, r.Header.Get("Authorization"))
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/healthz":
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"status": "ok"}))
+		case r.Method == http.MethodGet && r.URL.Path == "/readyz":
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"status": "ready"}))
+		case r.Method == http.MethodGet && r.URL.Path == "/debug/capabilities":
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+				"object": "shim.capabilities",
+				"surfaces": map[string]any{
+					"responses": map[string]any{"enabled": true},
+				},
+				"upstream_provider_routing": map[string]any{
+					"enabled": true,
+					"providers": []map[string]any{
+						{"id": "deepseek", "models": []string{model}},
+					},
+				},
+			}))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/models":
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+				"object": "list",
+				"data":   []map[string]any{{"id": model, "object": "model"}},
+			}))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/responses":
+			var payload map[string]any
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+			seenResponseModel = payload["model"].(string)
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+				"id":     "resp_codex_doctor",
+				"object": "response",
+				"model":  model,
+				"status": "completed",
+				"output": []any{},
+			}))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer shim.Close()
+
+	outDir := filepath.Join(t.TempDir(), "doctor")
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	err := run([]string{
+		"codex",
+		"doctor",
+		"-model", model,
+		"-provider", "gateway-shim",
+		"-base-url", shim.URL + "/v1",
+		"-api-key-env", "GW_API_KEY",
+		"-codex-bin", codexBin,
+		"-out", outDir,
+	}, &stdout, &stderr)
+	require.NoError(t, err)
+	require.Equal(t, model, seenResponseModel)
+	require.NotEmpty(t, seenAuth)
+	for _, auth := range seenAuth {
+		require.Equal(t, "Bearer shim-dev-key", auth)
+	}
+
+	var report map[string]any
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &report))
+	require.Equal(t, "passed", report["status"])
+	require.Equal(t, model, report["model"])
+	require.Equal(t, true, report["api_key_present"])
+	require.Equal(t, "codex 0.99.0", report["codex_version"])
+	require.FileExists(t, filepath.Join(outDir, "summary.json"))
+	require.FileExists(t, filepath.Join(outDir, "summary.md"))
+	require.FileExists(t, filepath.Join(outDir, "env.sh"))
+	configRaw, err := os.ReadFile(filepath.Join(outDir, "codex-home", "config.toml"))
+	require.NoError(t, err)
+	require.Contains(t, string(configRaw), `model = "deepseek/deepseek-v4-pro"`)
+	envRaw, err := os.ReadFile(filepath.Join(outDir, "env.sh"))
+	require.NoError(t, err)
+	require.Contains(t, string(envRaw), "CODEX_EVAL_MODELS='deepseek/deepseek-v4-pro'")
+	require.NotContains(t, string(envRaw), "shim-dev-key")
+}
+
+func TestRunCodexDoctorReportsActionableFailures(t *testing.T) {
+	disableSharedDotEnv(t)
+	model := "svgun/qwen-3.6"
+	codexBin := writeFakeCodexBinary(t, "codex 0.99.0")
+	shim := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/healthz":
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"status": "ok"}))
+		case r.Method == http.MethodGet && r.URL.Path == "/readyz":
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"status": "ready"}))
+		case r.Method == http.MethodGet && r.URL.Path == "/debug/capabilities":
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+				"object": "shim.capabilities",
+				"surfaces": map[string]any{
+					"responses": map[string]any{"enabled": true},
+				},
+				"upstream_provider_routing": map[string]any{
+					"enabled":   true,
+					"providers": []map[string]any{{"id": "svgun", "models": []string{"svgun/kimi-k2.6"}}},
+				},
+			}))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/models":
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+				"object": "list",
+				"data":   []map[string]any{{"id": "svgun/kimi-k2.6", "object": "model"}},
+			}))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer shim.Close()
+
+	outDir := filepath.Join(t.TempDir(), "doctor")
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	err := run([]string{
+		"codex",
+		"doctor",
+		"-model", model,
+		"-base-url", shim.URL + "/v1",
+		"-codex-bin", codexBin,
+		"-out", outDir,
+		"-skip-direct-response",
+	}, &stdout, &stderr)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "codex doctor failed")
+
+	var report map[string]any
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &report))
+	require.Equal(t, "failed", report["status"])
+	checks := report["checks"].([]any)
+	joined, err := json.Marshal(checks)
+	require.NoError(t, err)
+	text := string(joined)
+	require.Contains(t, text, `"name":"api_key_env"`)
+	require.Contains(t, text, `"status":"failed"`)
+	require.Contains(t, text, "provider/model alias is not advertised")
+	require.Contains(t, text, "model is not listed by /v1/models")
+	require.FileExists(t, filepath.Join(outDir, "summary.md"))
+}
+
 func TestRunGovernancePurgeDryRunAndApplyRequiresConfirmAndWritesAudit(t *testing.T) {
 	disableSharedDotEnv(t)
 	ctx := context.Background()
@@ -357,5 +558,14 @@ func writeShimctlConfig(t *testing.T, body string) string {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	content := fmt.Sprintf("%s\n", body)
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+	return path
+}
+
+func writeFakeCodexBinary(t *testing.T, version string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "codex")
+	body := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' %s\n", shellQuote(version))
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o700))
+	require.True(t, strings.HasPrefix(version, "codex "))
 	return path
 }

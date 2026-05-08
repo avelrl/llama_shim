@@ -49,6 +49,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 	switch rest[0] {
 	case "cleanup":
 		return runCleanup(cfg, stdout)
+	case "codex":
+		return runCodex(cfg, rest[1:], stdout, stderr)
 	case "optimize":
 		return runOptimize(cfg, stdout)
 	case "vacuum":
@@ -444,7 +446,7 @@ func retrievalNowUnix() int64 {
 }
 
 func printUsage(w io.Writer) {
-	_, _ = fmt.Fprintln(w, "usage: shimctl [-config path-to-config.yaml] <cleanup|optimize|vacuum|probe|backup|restore|migrate|governance> [flags]")
+	_, _ = fmt.Fprintln(w, "usage: shimctl [-config path-to-config.yaml] <cleanup|codex|optimize|vacuum|probe|backup|restore|migrate|governance> [flags]")
 }
 
 func writeGovernancePurgeReport(w io.Writer, report storage.GovernancePurgeReport) error {

@@ -175,6 +175,11 @@ What exists today:
   `/debug/capabilities.runtime.ops.backend_failure_policy` exposes that static
   decision table, while live quota/cooldown state is not emitted as fake
   OpenAI response fields.
+- Codex-through-shim setup is covered by shim-owned `shimctl codex config` and
+  `shimctl codex doctor` tooling. The generated TOML targets Codex's Responses
+  provider shape, while the doctor checks local Codex presence, shim health,
+  capabilities, routed model catalog visibility, and a direct Responses smoke
+  before longer Codex eval runs are attempted.
 
 ## Chat Completions Compatibility
 

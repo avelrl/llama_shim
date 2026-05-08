@@ -762,6 +762,35 @@ real-upstream comparison. The `codex-bench-lite` suite is repo-owned and
 deterministic; it is not a default CI gate and does not import third-party
 benchmark repositories.
 
+Before running a long real-upstream eval, generate and probe the Codex provider
+configuration with `shimctl`:
+
+```bash
+SHIM_BASE_URL=http://127.0.0.1:8080 \
+CODEX_MODEL=deepseek/deepseek-v4-pro \
+CODEX_PROVIDER=gateway-shim \
+CODEX_API_KEY_ENV=GW_API_KEY \
+GW_API_KEY="$GW_API_KEY" \
+make codex-config-doctor
+```
+
+The doctor writes `.tmp/shimctl-codex/<run-id>/summary.json`,
+`summary.md`, `env.sh`, and `codex-home/config.toml`. It checks the local
+Codex binary, verifies the configured auth env var, probes shim health and
+readiness, confirms `/debug/capabilities` and `/v1/models` advertise the target
+model, and sends one direct `/v1/responses` request. It does not execute a full
+Codex task; use the eval harness below for tool-mode and task-success evidence.
+
+To print only the current TOML without writing artifacts:
+
+```bash
+SHIM_BASE_URL=http://127.0.0.1:8080 \
+CODEX_MODEL=deepseek/deepseek-v4-pro \
+CODEX_PROVIDER=gateway-shim \
+CODEX_API_KEY_ENV=GW_API_KEY \
+make codex-config
+```
+
 For a complete model qualification pass, prefer the auto wrapper:
 
 ```bash

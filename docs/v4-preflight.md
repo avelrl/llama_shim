@@ -616,16 +616,18 @@ Boundary:
 ### 8. Codex Config Generator And Probe
 
 Classification: V4 preflight developer tooling.
+Status: implemented for config generation and direct preflight doctor.
 
 Goal:
 Make Codex-through-shim setup reproducible and current with Codex docs.
 
-Candidate command shape:
+Implemented command shape:
 
 ```text
-shimctl codex config --provider gateway-shim --base-url http://127.0.0.1:8080/v1
-shimctl codex doctor --provider gateway-shim --model <model>
-shimctl codex smoke --suite codex-smoke --model <model>
+shimctl codex config -provider gateway-shim -base-url http://127.0.0.1:8080/v1 -model <provider/model>
+shimctl codex doctor -provider gateway-shim -base-url http://127.0.0.1:8080/v1 -model <provider/model>
+make codex-config
+make codex-config-doctor
 ```
 
 The generated config should include:
@@ -642,22 +644,34 @@ The generated config should include:
 - optional `model_context_window`
 - optional reasoning and verbosity settings
 
-The probe should verify:
+Implemented generator behavior:
+
+- prints a standalone current Codex `config.toml` to stdout by default
+- writes `config.toml` to `-out` or `-codex-home <dir>/config.toml` when
+  requested
+- defaults to `CODEX_MODEL`/`MODEL`, `CODEX_PROVIDER`, `CODEX_BASE_URL` or
+  `SHIM_BASE_URL + /v1`, and `CODEX_API_KEY_ENV`
+- never writes bearer token values into generated TOML
+
+The doctor verifies:
 
 - Codex binary is present and version captured
-- config parses
+- generated config can be written to an isolated artifact `CODEX_HOME`
 - provider auth env var is present
-- `/v1/models` works if the smoke profile requires it
-- `/debug/capabilities` advertises the required subset
+- `/healthz` and `/readyz` are reachable
+- `/debug/capabilities` advertises the Responses surface and, for
+  `provider/model` aliases, the routed model
+- `/v1/models` works and lists the target model
 - a direct `/v1/responses` smoke works before invoking Codex
-- Codex boot reaches the shim
-- selected tool-mode events appear as expected
+- generated artifacts include `summary.json`, `summary.md`, `env.sh`, and an
+  isolated `codex-home/config.toml`
 
-Acceptance criteria:
+Boundary:
 
-- generated config uses current TOML shape, not older YAML examples
-- docs show a copy-pasteable minimal config without secrets
-- failed probes point to config, auth, shim, backend, or Codex tool-mode cause
+- `shimctl codex doctor` does not run a full Codex task by default; the eval
+  harness remains responsible for tool-mode and task-success evidence.
+- This is shim-owned developer tooling. It does not widen the OpenAI API
+  compatibility claim.
 
 ### 9. Smoke Scenario Inventory
 
@@ -890,7 +904,7 @@ classifier evidence belongs to Phase 3.
 
 ### Phase 3: Stream And Replay Interface
 
-Status: planned.
+Status: implemented for the shared stream/replay emitter scope.
 
 - factor event emission behind a shared interface
 - preserve existing SSE behavior while making capability class explicit
@@ -899,16 +913,20 @@ Status: planned.
 
 ### Phase 4: Codex Profile And Generator
 
-Status: planned.
+Status: implemented for config generation and direct doctor preflight.
 
-- generate current Codex TOML for a shim custom provider
-- add `shimctl codex doctor` or equivalent smoke wrapper
-- feed Codex request-shape fixtures into the classifier
-- keep Codex task success separate from hosted Responses parity claims
+- `shimctl codex config` generates current Codex TOML for a shim custom
+  provider
+- `shimctl codex doctor` writes an isolated Codex home plus JSON/Markdown/env
+  artifacts and checks Codex binary, auth env, shim health, capabilities,
+  `/v1/models`, and direct `/v1/responses`
+- Codex task success remains separate from hosted Responses parity claims and
+  stays covered by the Codex eval harness
 
 ### Phase 5: Provider Hooks And Fallback Policy
 
-Status: planned.
+Status: implemented for the shared backend failure policy; provider-specific
+cleanup hooks remain future plugin/platform work.
 
 - add named backend cleanup hooks
 - map backend errors into the shared taxonomy
