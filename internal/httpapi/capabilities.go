@@ -7,8 +7,10 @@ import (
 	"strings"
 	"time"
 
+	"llama_shim/internal/backendcap"
 	"llama_shim/internal/compactor"
 	"llama_shim/internal/config"
+	"llama_shim/internal/imagegen"
 	"llama_shim/internal/retrieval"
 	"llama_shim/internal/storage"
 	"llama_shim/internal/websearch"
@@ -20,6 +22,7 @@ type capabilityManifest struct {
 	Surfaces capabilitySurfaceSet    `json:"surfaces"`
 	Runtime  capabilityRuntimeConfig `json:"runtime"`
 	Tools    capabilityToolSet       `json:"tools"`
+	Backends backendcap.Registry     `json:"backends"`
 	Probes   capabilityProbeSet      `json:"probes"`
 }
 
@@ -217,10 +220,11 @@ type capabilityToolSet struct {
 }
 
 type capabilityTool struct {
-	Support string            `json:"support"`
-	Backend string            `json:"backend,omitempty"`
-	Enabled bool              `json:"enabled"`
-	Routing capabilityRouting `json:"routing"`
+	Support     string            `json:"support"`
+	Backend     string            `json:"backend,omitempty"`
+	Enabled     bool              `json:"enabled"`
+	Disposition string            `json:"disposition"`
+	Routing     capabilityRouting `json:"routing"`
 }
 
 type capabilityRouting struct {
@@ -258,10 +262,11 @@ func buildCapabilityManifest(ctx context.Context, deps RouterDeps) capabilityMan
 	}
 	metricsConfig := normalizeMetricsConfig(deps.MetricsConfig)
 	probes := collectCapabilityProbes(ctx, deps)
+	backends := capabilityBackendRegistry(deps, probes)
 
 	return capabilityManifest{
 		Object: "shim.capabilities",
-		Ready:  probes.ready(),
+		Ready:  probes.ready() && !backendcap.HasErrors(backends.Issues),
 		Surfaces: capabilitySurfaceSet{
 			Responses: capabilityResponsesSurface{
 				Enabled:        true,
@@ -336,8 +341,9 @@ func buildCapabilityManifest(ctx context.Context, deps RouterDeps) capabilityMan
 		},
 		Tools: capabilityToolSet{
 			FileSearch: capabilityTool{
-				Support: "local_subset",
-				Enabled: true,
+				Support:     "local_subset",
+				Enabled:     true,
+				Disposition: "local_execute",
 				Routing: capabilityRouting{
 					PreferLocal:    "local_subset",
 					PreferUpstream: "proxy_first",
@@ -345,9 +351,10 @@ func buildCapabilityManifest(ctx context.Context, deps RouterDeps) capabilityMan
 				},
 			},
 			WebSearch: capabilityTool{
-				Support: "local_subset_when_configured",
-				Backend: normalizedCapabilityBackend(deps.ResponsesWebSearchBackend, deps.WebSearchProvider != nil, "configured"),
-				Enabled: deps.WebSearchProvider != nil,
+				Support:     "local_subset_when_configured",
+				Backend:     normalizedCapabilityBackend(deps.ResponsesWebSearchBackend, deps.WebSearchProvider != nil, "configured"),
+				Enabled:     deps.WebSearchProvider != nil,
+				Disposition: "local_execute",
 				Routing: capabilityRouting{
 					PreferLocal:    "local_subset_or_upstream_fallback",
 					PreferUpstream: "proxy_first",
@@ -355,9 +362,10 @@ func buildCapabilityManifest(ctx context.Context, deps RouterDeps) capabilityMan
 				},
 			},
 			ImageGeneration: capabilityTool{
-				Support: "local_subset_when_configured",
-				Backend: normalizedCapabilityBackend(deps.ResponsesImageGenerationBackend, deps.ImageGenerationProvider != nil, "configured"),
-				Enabled: deps.ImageGenerationProvider != nil,
+				Support:     "local_subset_when_configured",
+				Backend:     normalizedCapabilityBackend(deps.ResponsesImageGenerationBackend, deps.ImageGenerationProvider != nil, "configured"),
+				Enabled:     deps.ImageGenerationProvider != nil,
+				Disposition: "local_execute",
 				Routing: capabilityRouting{
 					PreferLocal:    "local_subset_or_upstream_fallback",
 					PreferUpstream: "proxy_first",
@@ -365,9 +373,10 @@ func buildCapabilityManifest(ctx context.Context, deps RouterDeps) capabilityMan
 				},
 			},
 			Computer: capabilityTool{
-				Support: "local_subset_when_configured",
-				Backend: normalizedCapabilityBackend(deps.LocalComputer.Backend, deps.LocalComputer.Enabled(), "configured"),
-				Enabled: deps.LocalComputer.Enabled(),
+				Support:     "local_subset_when_configured",
+				Backend:     normalizedCapabilityBackend(deps.LocalComputer.Backend, deps.LocalComputer.Enabled(), "configured"),
+				Enabled:     deps.LocalComputer.Enabled(),
+				Disposition: "local_execute",
 				Routing: capabilityRouting{
 					PreferLocal:    "local_subset",
 					PreferUpstream: "proxy_first",
@@ -375,9 +384,10 @@ func buildCapabilityManifest(ctx context.Context, deps RouterDeps) capabilityMan
 				},
 			},
 			CodeInterpreter: capabilityTool{
-				Support: "local_subset_when_configured",
-				Backend: localCodeInterpreterCapabilityBackend(deps.LocalCodeInterpreter),
-				Enabled: deps.LocalCodeInterpreter.Enabled(),
+				Support:     "local_subset_when_configured",
+				Backend:     localCodeInterpreterCapabilityBackend(deps.LocalCodeInterpreter),
+				Enabled:     deps.LocalCodeInterpreter.Enabled(),
+				Disposition: "local_execute",
 				Routing: capabilityRouting{
 					PreferLocal:    "local_subset",
 					PreferUpstream: "proxy_first",
@@ -385,9 +395,10 @@ func buildCapabilityManifest(ctx context.Context, deps RouterDeps) capabilityMan
 				},
 			},
 			Shell: capabilityTool{
-				Support: "native_local_subset",
-				Backend: "chat_completions_tool_loop",
-				Enabled: true,
+				Support:     "native_local_subset",
+				Backend:     "chat_completions_tool_loop",
+				Enabled:     true,
+				Disposition: "local_execute",
 				Routing: capabilityRouting{
 					PreferLocal:    "local_subset_or_validation_error",
 					PreferUpstream: "proxy_first",
@@ -395,9 +406,10 @@ func buildCapabilityManifest(ctx context.Context, deps RouterDeps) capabilityMan
 				},
 			},
 			ApplyPatch: capabilityTool{
-				Support: "native_local_subset",
-				Backend: "chat_completions_tool_loop",
-				Enabled: true,
+				Support:     "native_local_subset",
+				Backend:     "chat_completions_tool_loop",
+				Enabled:     true,
+				Disposition: "local_execute",
 				Routing: capabilityRouting{
 					PreferLocal:    "local_subset",
 					PreferUpstream: "proxy_first",
@@ -405,8 +417,9 @@ func buildCapabilityManifest(ctx context.Context, deps RouterDeps) capabilityMan
 				},
 			},
 			MCPServerURL: capabilityTool{
-				Support: "local_subset",
-				Enabled: true,
+				Support:     "local_subset",
+				Enabled:     true,
+				Disposition: "local_execute",
 				Routing: capabilityRouting{
 					PreferLocal:    "local_subset",
 					PreferUpstream: "proxy_first",
@@ -414,8 +427,9 @@ func buildCapabilityManifest(ctx context.Context, deps RouterDeps) capabilityMan
 				},
 			},
 			MCPConnectorID: capabilityTool{
-				Support: "proxy_only",
-				Enabled: true,
+				Support:     "proxy_only",
+				Enabled:     true,
+				Disposition: "proxy_only",
 				Routing: capabilityRouting{
 					PreferLocal:    "proxy_only_bridge",
 					PreferUpstream: "proxy_only_bridge",
@@ -423,8 +437,9 @@ func buildCapabilityManifest(ctx context.Context, deps RouterDeps) capabilityMan
 				},
 			},
 			ToolSearchHosted: capabilityTool{
-				Support: "local_subset",
-				Enabled: true,
+				Support:     "local_subset",
+				Enabled:     true,
+				Disposition: "local_execute",
 				Routing: capabilityRouting{
 					PreferLocal:    "local_subset",
 					PreferUpstream: "proxy_first",
@@ -432,8 +447,9 @@ func buildCapabilityManifest(ctx context.Context, deps RouterDeps) capabilityMan
 				},
 			},
 			ToolSearchClient: capabilityTool{
-				Support: "proxy_only",
-				Enabled: true,
+				Support:     "proxy_only",
+				Enabled:     true,
+				Disposition: "client_round_trip",
 				Routing: capabilityRouting{
 					PreferLocal:    "proxy_only",
 					PreferUpstream: "proxy_only",
@@ -441,7 +457,8 @@ func buildCapabilityManifest(ctx context.Context, deps RouterDeps) capabilityMan
 				},
 			},
 		},
-		Probes: probes,
+		Backends: backends,
+		Probes:   probes,
 	}
 }
 
@@ -507,6 +524,358 @@ func upstreamProviderRoutingCapability(deps RouterDeps) capabilityUpstreamProvid
 		ProviderCount: len(providers),
 		ModelCount:    modelCount,
 		Providers:     providers,
+	}
+}
+
+func capabilityBackendRegistry(deps RouterDeps, probes capabilityProbeSet) backendcap.Registry {
+	storageBackend := strings.ToLower(strings.TrimSpace(deps.StorageBackend))
+	if storageBackend == "" && deps.Store != nil {
+		storageBackend = storage.BackendSQLite
+	}
+	if storageBackend == "" {
+		storageBackend = "none"
+	}
+	retrievalIndexBackend := strings.ToLower(strings.TrimSpace(deps.RetrievalIndexBackend))
+	if retrievalIndexBackend == "" {
+		retrievalIndexBackend = retrieval.IndexBackendLexical
+	}
+	retrievalEmbedderBackend := strings.ToLower(strings.TrimSpace(deps.RetrievalEmbedderBackend))
+	if retrievalEmbedderBackend == "" {
+		if deps.RetrievalEmbedder != nil {
+			retrievalEmbedderBackend = "custom"
+		} else {
+			retrievalEmbedderBackend = retrieval.EmbedderBackendDisabled
+		}
+	}
+	responsesTransport := normalizeResponsesUpstreamTransport(deps.ResponsesUpstreamTransport)
+	components := []backendcap.Component{
+		{
+			ID:              "storage.primary",
+			Category:        "storage",
+			Kind:            "local_store",
+			ConfigNamespace: "storage",
+			Backend:         storageBackend,
+			CapabilityClass: backendcap.ClassLocalSubset,
+			Enabled:         true,
+			Ready:           probeReady(probes.Storage),
+			ReadinessProbe:  "storage",
+			StateOwnership:  "shim_owned_store",
+			PublicSurfaces: []string{
+				"responses.retrieve",
+				"responses.delete",
+				"responses.input_items",
+				"conversations",
+				"chat_completions.stored",
+				"files",
+				"vector_stores",
+				"containers",
+			},
+			Evidence: []string{
+				"docs/v3-storage-retrieval-backends.md",
+				"docs/v3-hard-delete-governance.md",
+			},
+		},
+		{
+			ID:              "retrieval.index",
+			Category:        "retrieval_index",
+			Kind:            "local_retrieval",
+			ConfigNamespace: "retrieval.index",
+			Backend:         retrievalIndexBackend,
+			CapabilityClass: backendcap.ClassLocalSubset,
+			Enabled:         true,
+			Ready:           probeReady(probes.Storage) && probeReady(probes.RetrievalEmbedder),
+			ReadinessProbe:  "storage,retrieval_embedder",
+			StateOwnership:  "shim_owned_index",
+			Tools:           []string{"file_search"},
+			PublicSurfaces:  []string{"vector_stores.search", "responses.tools.file_search"},
+			RoutingModes:    standardRoutingModes(),
+			Evidence:        []string{"docs/v3-storage-retrieval-backends.md"},
+		},
+		{
+			ID:              "retrieval.embedder",
+			Category:        "embedder",
+			Kind:            "retrieval_embedder",
+			ConfigNamespace: "retrieval.embedder",
+			Backend:         retrievalEmbedderBackend,
+			CapabilityClass: backendcap.ClassLocalSubset,
+			Enabled:         probes.RetrievalEmbedder.Enabled,
+			Ready:           probes.RetrievalEmbedder.Enabled && probeReady(probes.RetrievalEmbedder),
+			ReadinessProbe:  "retrieval_embedder",
+			Tools:           []string{"file_search"},
+			Evidence:        []string{"docs/v3-storage-retrieval-backends.md"},
+		},
+		{
+			ID:              "runtime.compaction",
+			Category:        "runtime",
+			Kind:            "compaction",
+			ConfigNamespace: "responses.compaction",
+			Backend:         normalizedCompactionBackend(deps.ResponsesCompactionBackend),
+			CapabilityClass: backendcap.ClassLocalSubset,
+			Enabled:         true,
+			Ready:           true,
+			StateOwnership:  "shim_owned_opaque_state",
+			PublicSurfaces:  []string{"responses.compact", "responses.context_management"},
+			RoutingModes:    standardRoutingModes(),
+			Evidence:        []string{"docs/v3-compaction.md"},
+		},
+		{
+			ID:              "runtime.constrained_decoding",
+			Category:        "runtime",
+			Kind:            "constrained_decoding",
+			ConfigNamespace: "responses.constrained_decoding",
+			Backend:         normalizedCapabilityBackend(deps.ResponsesConstrainedDecodingBackend, true, config.ResponsesConstrainedDecodingBackendShimValidateRepair),
+			CapabilityClass: constrainedDecodingRegistryClass(deps.ResponsesConstrainedDecodingBackend),
+			Enabled:         true,
+			Ready:           true,
+			Tools:           []string{"custom", "structured_outputs"},
+			RoutingModes:    standardRoutingModes(),
+			Evidence:        []string{"docs/v3-constrained-decoding.md"},
+		},
+		{
+			ID:              "transport.responses_websocket",
+			Category:        "transport",
+			Kind:            "responses_websocket",
+			ConfigNamespace: "responses.websocket",
+			CapabilityClass: backendcap.ClassLocalSubset,
+			Enabled:         deps.ResponsesWebSocketEnabled,
+			Ready:           deps.ResponsesWebSocketEnabled,
+			WireModes:       []string{"websocket_responses"},
+			PublicSurfaces:  []string{"responses.websocket.response_create"},
+			Evidence:        []string{"docs/v3-websocket.md"},
+		},
+		{
+			ID:              "tool.web_search",
+			Category:        "tool_runtime",
+			Kind:            "web_search",
+			ConfigNamespace: "responses.web_search",
+			Backend:         normalizedCapabilityBackend(deps.ResponsesWebSearchBackend, deps.WebSearchProvider != nil, websearch.BackendSearXNG),
+			CapabilityClass: backendcap.ClassLocalSubset,
+			Enabled:         deps.WebSearchProvider != nil,
+			Ready:           deps.WebSearchProvider != nil && probeReady(probes.WebSearchBackend),
+			ReadinessProbe:  "web_search_backend",
+			Tools:           []string{"web_search"},
+			PublicSurfaces:  []string{"responses.tools.web_search"},
+			RoutingModes:    standardRoutingModes(),
+			Evidence:        []string{"docs/v3-local-runtimes.md"},
+		},
+		{
+			ID:              "tool.image_generation",
+			Category:        "tool_runtime",
+			Kind:            "image_generation",
+			ConfigNamespace: "responses.image_generation",
+			Backend:         normalizedCapabilityBackend(deps.ResponsesImageGenerationBackend, deps.ImageGenerationProvider != nil, imagegen.BackendFixture),
+			CapabilityClass: imageGenerationRegistryClass(deps.ResponsesImageGenerationBackend),
+			Enabled:         deps.ImageGenerationProvider != nil,
+			Ready:           deps.ImageGenerationProvider != nil && probeReady(probes.ImageGenerationBackend),
+			ReadinessProbe:  "image_generation_backend",
+			Tools:           []string{"image_generation"},
+			PublicSurfaces:  []string{"responses.tools.image_generation"},
+			RoutingModes:    standardRoutingModes(),
+			Evidence:        []string{"docs/v3-image-backends.md"},
+		},
+		{
+			ID:              "tool.computer",
+			Category:        "tool_runtime",
+			Kind:            "computer",
+			ConfigNamespace: "responses.computer",
+			Backend:         normalizedCapabilityBackend(deps.LocalComputer.Backend, deps.LocalComputer.Enabled(), LocalComputerBackendChatCompletions),
+			CapabilityClass: backendcap.ClassLocalSubset,
+			Enabled:         deps.LocalComputer.Enabled(),
+			Ready:           deps.LocalComputer.Enabled() && probeReady(probes.ComputerRuntime),
+			ReadinessProbe:  "computer_runtime",
+			Tools:           []string{"computer"},
+			PublicSurfaces:  []string{"responses.tools.computer"},
+			RoutingModes:    standardRoutingModes(),
+			Evidence:        []string{"docs/v3-local-runtimes.md", "docs/v3-computer-browser-harness.md"},
+		},
+		{
+			ID:              "tool.code_interpreter",
+			Category:        "tool_runtime",
+			Kind:            "code_interpreter",
+			ConfigNamespace: "responses.code_interpreter",
+			Backend:         localCodeInterpreterCapabilityBackend(deps.LocalCodeInterpreter),
+			CapabilityClass: backendcap.ClassLocalSubset,
+			Enabled:         deps.LocalCodeInterpreter.Enabled(),
+			Ready:           deps.LocalCodeInterpreter.Enabled(),
+			Tools:           []string{"code_interpreter"},
+			PublicSurfaces:  []string{"containers", "responses.tools.code_interpreter"},
+			RoutingModes:    standardRoutingModes(),
+			Evidence:        []string{"docs/v3-local-runtimes.md", "docs/engineering/runtime-hardening.md"},
+		},
+		{
+			ID:              "tool.shell",
+			Category:        "tool_runtime",
+			Kind:            "native_local_tool",
+			ConfigNamespace: "responses.native_tools.shell",
+			Backend:         "chat_completions_tool_loop",
+			CapabilityClass: backendcap.ClassLocalSubset,
+			Enabled:         true,
+			Ready:           true,
+			Tools:           []string{"shell"},
+			PublicSurfaces:  []string{"responses.tools.shell"},
+			RoutingModes:    standardRoutingModes(),
+			Evidence:        []string{"docs/v3-coding-tools.md"},
+		},
+		{
+			ID:              "tool.apply_patch",
+			Category:        "tool_runtime",
+			Kind:            "native_local_tool",
+			ConfigNamespace: "responses.native_tools.apply_patch",
+			Backend:         "chat_completions_tool_loop",
+			CapabilityClass: backendcap.ClassLocalSubset,
+			Enabled:         true,
+			Ready:           true,
+			Tools:           []string{"apply_patch"},
+			PublicSurfaces:  []string{"responses.tools.apply_patch"},
+			RoutingModes:    standardRoutingModes(),
+			Evidence:        []string{"docs/v3-coding-tools.md"},
+		},
+		{
+			ID:              "client_profile.codex",
+			Category:        "client_profile",
+			Kind:            "codex_cli",
+			ConfigNamespace: "responses.codex",
+			CapabilityClass: backendcap.ClassLocalSubset,
+			Enabled:         deps.ResponsesCodexEnableCompatibility || len(deps.ResponsesCodexModelMetadata) > 0,
+			Ready:           deps.ResponsesCodexEnableCompatibility || len(deps.ResponsesCodexModelMetadata) > 0,
+			PublicSurfaces:  []string{"responses.create", "responses.websocket", "responses.compact"},
+			Tools:           []string{"shell", "apply_patch"},
+			WireModes:       []string{"responses_native", "websocket_responses"},
+			Evidence:        []string{"docs/v3-codex-eval-harness.md", "docs/guides/codex-cli.md"},
+		},
+	}
+	components = append(components, modelBackendComponents(deps, probes.Llama, responsesTransport)...)
+	return backendcap.NewRegistry(components...)
+}
+
+func modelBackendComponents(deps RouterDeps, llamaProbe capabilityProbe, responsesTransport string) []backendcap.Component {
+	wireModes := []string{"chat_completions", "raw_proxy"}
+	if responsesTransport == config.ResponsesUpstreamTransportChatCompletions {
+		wireModes = append(wireModes, "responses_over_chat")
+	} else {
+		wireModes = append(wireModes, "responses_native")
+	}
+	if deps.ResponsesWebSocketEnabled {
+		wireModes = append(wireModes, "websocket_responses")
+	}
+	class := modelBackendRegistryClass(responsesTransport)
+	publicSurfaces := []string{
+		"models.list",
+		"responses.create",
+		"responses.input_tokens",
+		"responses.compact",
+		"chat_completions.create",
+	}
+	if len(deps.LlamaProviders) == 0 {
+		return []backendcap.Component{{
+			ID:              "model.llama",
+			Category:        "model_backend",
+			Kind:            "openai_compatible",
+			ConfigNamespace: "llama",
+			CapabilityClass: class,
+			Enabled:         deps.LlamaClient != nil,
+			Ready:           deps.LlamaClient != nil && probeReady(llamaProbe),
+			ReadinessProbe:  "llama",
+			Auth:            "single_upstream_config",
+			WireModes:       wireModes,
+			PublicSurfaces:  publicSurfaces,
+			RoutingModes:    standardRoutingModes(),
+			Evidence:        []string{"docs/v3-upstream-provider-routing.md"},
+		}}
+	}
+	components := make([]backendcap.Component, 0, len(deps.LlamaProviders))
+	for _, provider := range deps.LlamaProviders {
+		providerID := strings.TrimSpace(provider.ID)
+		if providerID == "" {
+			continue
+		}
+		models := make([]string, 0, len(provider.Models))
+		for _, model := range provider.Models {
+			publicModel := strings.TrimSpace(model.Model)
+			if publicModel == "" {
+				continue
+			}
+			models = append(models, providerID+"/"+publicModel)
+		}
+		components = append(components, backendcap.Component{
+			ID:              "provider." + providerID,
+			Category:        "model_provider",
+			Kind:            "openai_compatible",
+			DisplayName:     providerID,
+			ConfigNamespace: "llama.providers." + providerID,
+			CapabilityClass: class,
+			Enabled:         true,
+			Ready:           probeReady(llamaProbe),
+			ReadinessProbe:  "llama",
+			Auth:            providerAuthSummary(provider),
+			SecretRefs:      providerSecretRefs(provider),
+			StateOwnership:  "stateless_backend_with_shim_state",
+			WireModes:       wireModes,
+			PublicSurfaces:  publicSurfaces,
+			ModelIDs:        models,
+			RoutingModes:    standardRoutingModes(),
+			Evidence:        []string{"docs/v3-upstream-provider-routing.md"},
+		})
+	}
+	return components
+}
+
+func normalizedCompactionBackend(backend string) string {
+	backend = strings.ToLower(strings.TrimSpace(backend))
+	if backend == "" {
+		return compactor.BackendHeuristic
+	}
+	return backend
+}
+
+func constrainedDecodingRegistryClass(backend string) string {
+	if _, ok := constrainedCustomToolBackendCapabilityFor(backend); ok {
+		return backendcap.ClassNative
+	}
+	return backendcap.ClassRepairOrValidate
+}
+
+func imageGenerationRegistryClass(backend string) string {
+	switch strings.ToLower(strings.TrimSpace(backend)) {
+	case imagegen.BackendResponses:
+		return backendcap.ClassProxyOnly
+	case "":
+		return backendcap.ClassLocalSubset
+	default:
+		return backendcap.ClassLocalSubset
+	}
+}
+
+func modelBackendRegistryClass(responsesTransport string) string {
+	if responsesTransport == config.ResponsesUpstreamTransportChatCompletions {
+		return backendcap.ClassChatProjection
+	}
+	return backendcap.ClassNative
+}
+
+func providerAuthSummary(provider config.LlamaProvider) string {
+	switch {
+	case strings.TrimSpace(provider.BearerTokenEnv) != "":
+		return "bearer_env"
+	case strings.TrimSpace(provider.BearerToken) != "":
+		return "bearer_configured"
+	default:
+		return "none"
+	}
+}
+
+func providerSecretRefs(provider config.LlamaProvider) []string {
+	if strings.TrimSpace(provider.BearerTokenEnv) == "" {
+		return nil
+	}
+	return []string{provider.BearerTokenEnv}
+}
+
+func standardRoutingModes() []string {
+	return []string{
+		config.ResponsesModePreferLocal,
+		config.ResponsesModePreferUpstream,
+		config.ResponsesModeLocalOnly,
 	}
 }
 

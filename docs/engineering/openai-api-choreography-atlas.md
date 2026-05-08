@@ -158,7 +158,11 @@ What exists today:
   containers, and delete/list operations are not provider-routed. See
   [V3 Upstream Provider Routing](../v3-upstream-provider-routing.md).
 - `/debug/capabilities` is the operator-visible truth for active local runtime
-  capabilities.
+  capabilities. Its V4 `backends` registry records configured backend/plugin
+  components, capability classes such as `local_subset`, `chat_projection`,
+  and `proxy_only`, readiness state, redacted secret references, public
+  surfaces, tool ownership, and model-provider aliases without changing any
+  public `/v1/*` response shape.
 - `/readyz` and `/debug/capabilities` emit bounded readiness-probe metrics so
   operators can distinguish storage, upstream model, retrieval embedder, web
   search, and image-generation readiness failures without widening any

@@ -2499,7 +2499,7 @@ components:
           type: string
     ShimCapabilitiesResponse:
       type: object
-      required: [object, ready, surfaces, runtime, tools, probes]
+      required: [object, ready, surfaces, runtime, tools, backends, probes]
       properties:
         object:
           type: string
@@ -2512,6 +2512,8 @@ components:
           $ref: "#/components/schemas/ShimCapabilityRuntime"
         tools:
           $ref: "#/components/schemas/ShimCapabilityToolSet"
+        backends:
+          $ref: "#/components/schemas/ShimBackendCapabilityRegistry"
         probes:
           $ref: "#/components/schemas/ShimCapabilityProbeSet"
     ShimCapabilitySurfaceSet:
@@ -2852,7 +2854,7 @@ components:
           $ref: "#/components/schemas/ShimCapabilityTool"
     ShimCapabilityTool:
       type: object
-      required: [support, enabled, routing]
+      required: [support, enabled, disposition, routing]
       properties:
         support:
           type: string
@@ -2860,6 +2862,9 @@ components:
           type: string
         enabled:
           type: boolean
+        disposition:
+          type: string
+          enum: [local_execute, upstream_passthrough, proxy_only, chat_projection, function_repair, client_round_trip, accept_noop, reject]
         routing:
           $ref: "#/components/schemas/ShimCapabilityToolRouting"
     ShimCapabilityToolRouting:
@@ -2871,6 +2876,98 @@ components:
         prefer_upstream:
           type: string
         local_only:
+          type: string
+    ShimBackendCapabilityRegistry:
+      type: object
+      required: [schema_version, components]
+      properties:
+        schema_version:
+          type: string
+          enum: [v4.backend_capabilities.v1]
+        components:
+          type: array
+          items:
+            $ref: "#/components/schemas/ShimBackendCapabilityComponent"
+        issues:
+          type: array
+          items:
+            $ref: "#/components/schemas/ShimBackendCapabilityIssue"
+    ShimBackendCapabilityComponent:
+      type: object
+      required: [id, category, kind, config_namespace, capability_class, enabled, ready]
+      properties:
+        id:
+          type: string
+        category:
+          type: string
+          description: Shim-owned backend category such as model_provider, storage, retrieval_index, embedder, tool_runtime, runtime, transport, or client_profile.
+        kind:
+          type: string
+        display_name:
+          type: string
+        config_namespace:
+          type: string
+          description: Repo config namespace that owns this backend or plugin configuration.
+        backend:
+          type: string
+        capability_class:
+          type: string
+          enum: [native, local_subset, proxy_only, chat_projection, repair_or_validate, unsupported]
+        enabled:
+          type: boolean
+        ready:
+          type: boolean
+        readiness_probe:
+          type: string
+        auth:
+          type: string
+          description: Redacted auth mode. Secret values are never returned.
+        secret_refs:
+          type: array
+          description: Environment/config secret names only, never secret values.
+          items:
+            type: string
+        state_ownership:
+          type: string
+        wire_modes:
+          type: array
+          items:
+            type: string
+        public_surfaces:
+          type: array
+          items:
+            type: string
+        tools:
+          type: array
+          items:
+            type: string
+        model_ids:
+          type: array
+          items:
+            type: string
+        routing_modes:
+          type: array
+          items:
+            type: string
+        evidence:
+          type: array
+          description: Repo-relative docs, tests, or smokes supporting the advertised class.
+          items:
+            type: string
+        notes:
+          type: array
+          items:
+            type: string
+    ShimBackendCapabilityIssue:
+      type: object
+      required: [severity, message]
+      properties:
+        severity:
+          type: string
+          enum: [error, warn]
+        component:
+          type: string
+        message:
           type: string
     ShimCapabilityProbeSet:
       type: object

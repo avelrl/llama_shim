@@ -14,6 +14,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/stretchr/testify/require"
 
+	"llama_shim/internal/backendcap"
 	"llama_shim/internal/config"
 	"llama_shim/internal/domain"
 	"llama_shim/internal/testutil"
@@ -578,6 +579,51 @@ func TestUpstreamProviderRoutingRejectsUnknownBeforeUpstream(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "model", asStringAny(errorPayload["param"]))
 	require.Equal(t, int64(0), seen.Load())
+}
+
+func TestUpstreamProviderRoutingCapabilitiesReportProviderBackends(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/v1/models", r.URL.Path)
+		writeModelsList(t, w, "Qwen3.6-Coder")
+	}))
+	defer upstream.Close()
+
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		ResponsesUpstreamTransport: config.ResponsesUpstreamTransportChatCompletions,
+		LlamaProviders: []config.LlamaProvider{
+			{
+				ID:             "qwen",
+				BaseURL:        upstream.URL,
+				BearerTokenEnv: "QWEN_API_KEY",
+				BearerToken:    "qwen-secret",
+				Models: []config.LlamaProviderModel{
+					{Model: "coder", UpstreamModel: "Qwen3.6-Coder"},
+				},
+			},
+		},
+	})
+
+	status, payload := rawRequest(t, app, http.MethodGet, "/debug/capabilities", nil)
+	require.Equal(t, http.StatusOK, status)
+	backends := payload["backends"].(map[string]any)
+	require.NotContains(t, backends, "issues")
+	components := backendComponentsByID(t, backends)
+
+	provider := components["provider.qwen"]
+	require.Equal(t, "model_provider", asStringAny(provider["category"]))
+	require.Equal(t, "openai_compatible", asStringAny(provider["kind"]))
+	require.Equal(t, "llama.providers.qwen", asStringAny(provider["config_namespace"]))
+	require.Equal(t, backendcap.ClassChatProjection, asStringAny(provider["capability_class"]))
+	require.Equal(t, true, provider["enabled"])
+	require.Equal(t, true, provider["ready"])
+	require.Equal(t, "bearer_env", asStringAny(provider["auth"]))
+	require.ElementsMatch(t, []any{"QWEN_API_KEY"}, provider["secret_refs"].([]any))
+	require.ElementsMatch(t, []any{"qwen/coder"}, provider["model_ids"].([]any))
+	require.ElementsMatch(t, []any{"chat_completions", "raw_proxy", "responses_over_chat", "websocket_responses"}, provider["wire_modes"].([]any))
+	require.ElementsMatch(t, []any{"chat_completions.create", "models.list", "responses.compact", "responses.create", "responses.input_tokens"}, provider["public_surfaces"].([]any))
+	rawProvider, err := json.Marshal(provider)
+	require.NoError(t, err)
+	require.NotContains(t, string(rawProvider), "qwen-secret")
 }
 
 func jsonRequestWithHeaders(t *testing.T, url string, body map[string]any, headers map[string]string) (int, map[string]any) {

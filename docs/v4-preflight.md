@@ -1,6 +1,6 @@
 # V4 Preflight: Backend Capability And Tool Routing Architecture
 
-Last updated: May 6, 2026.
+Last updated: May 8, 2026.
 
 This document captures the practical architecture work that should happen
 before V4 grows new extension and plugin behavior.
@@ -20,6 +20,32 @@ The preflight goal is narrow:
   "any model works" claim
 - create implementation seams for V4 plugins without changing the public
   OpenAI-compatible contract
+
+## Current Implementation Slice
+
+The first implementation slice is complete:
+
+- `internal/backendcap` defines a normalized backend capability registry,
+  capability-class vocabulary, deterministic component sorting, and validation
+  for missing ids, duplicate ids, missing namespaces, unknown classes, and
+  disabled-but-ready contradictions.
+- `GET /debug/capabilities` now includes `backends.schema_version:
+  v4.backend_capabilities.v1` and a `backends.components[]` registry generated
+  from current config plus runtime probes.
+- The registry covers the current practical backend/plugin boundaries:
+  primary storage, retrieval index, retrieval embedder, compaction,
+  constrained decoding, Responses WebSocket transport, upstream model
+  providers, web search, image generation, computer, code interpreter, native
+  local `shell`, native local `apply_patch`, and the Codex client profile.
+- Provider-routed model backends expose only public model aliases and secret
+  env names. Actual bearer tokens are not emitted.
+- Existing `tools.*` capability entries now include a `disposition` summary
+  using the V4 classifier vocabulary such as `local_execute`, `proxy_only`,
+  and `client_round_trip`.
+
+This slice intentionally does not change public `/v1/*` route behavior. It
+centralizes what is already true so future V4 memory/plugin work has one
+operator-visible contract instead of one-off backend claims.
 
 ## Official References Reviewed
 
@@ -766,7 +792,7 @@ Required checks for implementation work in this area:
 
 ### Phase 0: Documentation And Schema Sketch
 
-Status: planned.
+Status: implemented.
 
 - land this preflight document
 - add a small capability schema sketch or ADR
@@ -776,7 +802,7 @@ Status: planned.
 
 ### Phase 1: Capability Registry
 
-Status: planned.
+Status: implemented.
 
 - define normalized capability structs
 - load capabilities from config plus runtime probes
@@ -784,9 +810,23 @@ Status: planned.
 - add unit tests for capability normalization and contradiction detection
 - keep the existing public routes behavior unchanged
 
+Implemented details:
+
+- registry schema version: `v4.backend_capabilities.v1`
+- capability classes: `native`, `local_subset`, `proxy_only`,
+  `chat_projection`, `repair_or_validate`, and `unsupported`
+- component dimensions: stable id, category, kind, config namespace, backend,
+  capability class, enabled/ready state, readiness probe, auth summary,
+  secret refs, state ownership, wire modes, public surfaces, tools, model ids,
+  routing modes, evidence, and notes
+- `/debug/capabilities.ready` stays tied to existing dependency probes plus
+  registry validation errors; the route still returns `200` and reports
+  degraded state through its body
+
 ### Phase 2: Tool Classifier And Canonical Pipeline
 
-Status: planned.
+Status: planned; classifier summary vocabulary is exposed, but request-time
+classifier wiring is not part of the first slice.
 
 - add classifier result types
 - route every Responses tool family through the classifier

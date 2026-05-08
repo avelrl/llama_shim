@@ -26,6 +26,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/stretchr/testify/require"
 
+	"llama_shim/internal/backendcap"
 	"llama_shim/internal/config"
 	"llama_shim/internal/domain"
 	"llama_shim/internal/httpapi"
@@ -651,15 +652,18 @@ func TestCapabilitiesEndpointReportsConfiguredRuntime(t *testing.T) {
 	require.Equal(t, "local_subset_when_configured", asStringAny(computerTool["support"]))
 	require.Equal(t, httpapi.LocalComputerBackendChatCompletions, asStringAny(computerTool["backend"]))
 	require.Equal(t, true, computerTool["enabled"])
+	require.Equal(t, "local_execute", asStringAny(computerTool["disposition"]))
 
 	codeInterpreterTool := tools["code_interpreter"].(map[string]any)
 	require.Equal(t, "docker", asStringAny(codeInterpreterTool["backend"]))
 	require.Equal(t, true, codeInterpreterTool["enabled"])
+	require.Equal(t, "local_execute", asStringAny(codeInterpreterTool["disposition"]))
 
 	shellTool := tools["shell"].(map[string]any)
 	require.Equal(t, "native_local_subset", asStringAny(shellTool["support"]))
 	require.Equal(t, "chat_completions_tool_loop", asStringAny(shellTool["backend"]))
 	require.Equal(t, true, shellTool["enabled"])
+	require.Equal(t, "local_execute", asStringAny(shellTool["disposition"]))
 	shellRouting := shellTool["routing"].(map[string]any)
 	require.Equal(t, "local_subset_or_validation_error", asStringAny(shellRouting["prefer_local"]))
 	require.Equal(t, "proxy_first", asStringAny(shellRouting["prefer_upstream"]))
@@ -669,6 +673,7 @@ func TestCapabilitiesEndpointReportsConfiguredRuntime(t *testing.T) {
 	require.Equal(t, "native_local_subset", asStringAny(applyPatchTool["support"]))
 	require.Equal(t, "chat_completions_tool_loop", asStringAny(applyPatchTool["backend"]))
 	require.Equal(t, true, applyPatchTool["enabled"])
+	require.Equal(t, "local_execute", asStringAny(applyPatchTool["disposition"]))
 	applyPatchRouting := applyPatchTool["routing"].(map[string]any)
 	require.Equal(t, "local_subset", asStringAny(applyPatchRouting["prefer_local"]))
 	require.Equal(t, "proxy_first", asStringAny(applyPatchRouting["prefer_upstream"]))
@@ -676,8 +681,54 @@ func TestCapabilitiesEndpointReportsConfiguredRuntime(t *testing.T) {
 
 	mcpConnectorTool := tools["mcp_connector_id"].(map[string]any)
 	require.Equal(t, "proxy_only", asStringAny(mcpConnectorTool["support"]))
+	require.Equal(t, "proxy_only", asStringAny(mcpConnectorTool["disposition"]))
 	mcpConnectorRouting := mcpConnectorTool["routing"].(map[string]any)
 	require.Equal(t, "reject_with_mcp_validation_error", asStringAny(mcpConnectorRouting["local_only"]))
+
+	toolSearchClient := tools["tool_search_client"].(map[string]any)
+	require.Equal(t, "client_round_trip", asStringAny(toolSearchClient["disposition"]))
+
+	backends := payload["backends"].(map[string]any)
+	require.Equal(t, backendcap.SchemaVersion, asStringAny(backends["schema_version"]))
+	require.NotContains(t, backends, "issues")
+	backendComponents := backendComponentsByID(t, backends)
+	storageBackend := backendComponents["storage.primary"]
+	require.Equal(t, "storage", asStringAny(storageBackend["category"]))
+	require.Equal(t, "local_store", asStringAny(storageBackend["kind"]))
+	require.Equal(t, "sqlite", asStringAny(storageBackend["backend"]))
+	require.Equal(t, backendcap.ClassLocalSubset, asStringAny(storageBackend["capability_class"]))
+	require.Equal(t, true, storageBackend["enabled"])
+	require.Equal(t, true, storageBackend["ready"])
+	require.Equal(t, "shim_owned_store", asStringAny(storageBackend["state_ownership"]))
+
+	modelBackend := backendComponents["model.llama"]
+	require.Equal(t, "model_backend", asStringAny(modelBackend["category"]))
+	require.Equal(t, backendcap.ClassChatProjection, asStringAny(modelBackend["capability_class"]))
+	require.ElementsMatch(t, []any{"chat_completions", "raw_proxy", "responses_over_chat", "websocket_responses"}, modelBackend["wire_modes"].([]any))
+	require.ElementsMatch(t, []any{"chat_completions.create", "models.list", "responses.compact", "responses.create", "responses.input_tokens"}, modelBackend["public_surfaces"].([]any))
+
+	retrievalIndex := backendComponents["retrieval.index"]
+	require.Equal(t, retrieval.IndexBackendSQLiteVec, asStringAny(retrievalIndex["backend"]))
+	require.ElementsMatch(t, []any{"file_search"}, retrievalIndex["tools"].([]any))
+
+	webSearchRuntime := backendComponents["tool.web_search"]
+	require.Equal(t, "tool_runtime", asStringAny(webSearchRuntime["category"]))
+	require.Equal(t, "searxng", asStringAny(webSearchRuntime["backend"]))
+	require.Equal(t, true, webSearchRuntime["enabled"])
+	require.Equal(t, true, webSearchRuntime["ready"])
+	require.ElementsMatch(t, []any{"web_search"}, webSearchRuntime["tools"].([]any))
+
+	imageRuntime := backendComponents["tool.image_generation"]
+	require.Equal(t, "responses", asStringAny(imageRuntime["backend"]))
+	require.Equal(t, backendcap.ClassProxyOnly, asStringAny(imageRuntime["capability_class"]))
+	require.Equal(t, true, imageRuntime["enabled"])
+	require.Equal(t, true, imageRuntime["ready"])
+
+	codexProfile := backendComponents["client_profile.codex"]
+	require.Equal(t, "client_profile", asStringAny(codexProfile["category"]))
+	require.Equal(t, true, codexProfile["enabled"])
+	require.Equal(t, true, codexProfile["ready"])
+	require.ElementsMatch(t, []any{"apply_patch", "shell"}, codexProfile["tools"].([]any))
 
 	probes := payload["probes"].(map[string]any)
 	retrievalProbe := probes["retrieval_embedder"].(map[string]any)
@@ -14182,6 +14233,19 @@ func conversationItemStatuses(items conversationItemsListResponse) []string {
 func asStringAny(value any) string {
 	text, _ := value.(string)
 	return text
+}
+
+func backendComponentsByID(t *testing.T, backends map[string]any) map[string]map[string]any {
+	t.Helper()
+	components, ok := backends["components"].([]any)
+	require.True(t, ok)
+	out := make(map[string]map[string]any, len(components))
+	for _, raw := range components {
+		component, ok := raw.(map[string]any)
+		require.True(t, ok)
+		out[asStringAny(component["id"])] = component
+	}
+	return out
 }
 
 func payloadID(payload map[string]any) string {

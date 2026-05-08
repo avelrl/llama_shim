@@ -1,6 +1,6 @@
 # V4 Extensions And Plugin Model
 
-Last updated: May 6, 2026.
+Last updated: May 8, 2026.
 
 This document is the parking lot for post-compatibility work that is useful in
 practice, but should not be confused with the shim's core OpenAI-compatibility
@@ -11,6 +11,10 @@ V4 implementation should start with
 That document captures the provider-capability registry, tool-routing
 classifier, Codex CLI profile, stream/replay interface, fallback policy, and
 plugin-boundary work needed before the extension tracks below grow further.
+Its first implementation slice is now in place: `/debug/capabilities` includes
+a normalized `backends` registry with V4 capability classes, redacted provider
+secret refs, backend readiness state, public-surface/tool ownership, and
+classifier disposition summaries for the current tool families.
 
 V2 is the broad compatibility facade.
 V3 is backend and runtime expansion around that facade.
