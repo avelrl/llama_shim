@@ -50,6 +50,26 @@ auto-run facts after curation.
 
 ## Commands
 
+Fast operator check for every current matrix row:
+
+```bash
+SHIM_BASE_URL=http://127.0.0.1:8080 \
+  make v4-provider-matrix-smoke
+```
+
+Limit it to one or more aliases when iterating:
+
+```bash
+SHIM_BASE_URL=http://127.0.0.1:8080 \
+  V4_PROVIDER_MATRIX_MODELS="deepseek/deepseek-v4-pro xiaomi/mimo-v2.5-pro" \
+  make v4-provider-matrix-smoke
+```
+
+Set `V4_PROVIDER_MATRIX_RUN_CODEX_DOCTOR=1` when the same pass should also
+run the isolated Codex config doctor for each model. The matrix smoke writes a
+single report under `.tmp/v4-provider-matrix-smoke/` and nests the per-model
+provider-routing and V4-preflight artifacts below it.
+
 Provider-routing smoke for one public alias:
 
 ```bash
@@ -89,6 +109,8 @@ Promote a model/provider row only when:
 
 - the public `provider/model` alias is configured in `llama.providers[]`
 - provider secrets are referenced by env names and not committed as values
+- `make v4-provider-matrix-smoke` passes for the row, or a deliberately scoped
+  single-model matrix run passes for that row
 - live provider-routing smoke passes `/v1/models`, Responses, Chat
   Completions, helper endpoints, and fail-closed unknown-provider checks
 - `V4_PREFLIGHT_PROVIDER_MODEL=<provider>/<model> make v4-preflight-smoke`

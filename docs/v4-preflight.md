@@ -69,6 +69,9 @@ The current implementation slices are complete:
   `/debug/capabilities`, one Responses request plus its `/debug/traces`
   metadata, optional provider-routing smoke, optional `shimctl codex doctor`,
   and a JSON/Markdown artifact summary under `.tmp/v4-preflight-smoke`.
+- `make v4-provider-matrix-smoke` runs provider-routing smoke plus V4
+  preflight across the current operator model/provider matrix and writes one
+  aggregate report under `.tmp/v4-provider-matrix-smoke`.
 
 These slices intentionally do not create a new OpenAI public surface. They
 centralize what is already true so future V4 memory/plugin work has one
