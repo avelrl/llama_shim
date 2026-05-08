@@ -11,10 +11,14 @@ V4 implementation should start with
 That document captures the provider-capability registry, tool-routing
 classifier, Codex CLI profile, stream/replay interface, fallback policy, and
 plugin-boundary work needed before the extension tracks below grow further.
-Its first implementation slice is now in place: `/debug/capabilities` includes
-a normalized `backends` registry with V4 capability classes, redacted provider
-secret refs, backend readiness state, public-surface/tool ownership, and
-classifier disposition summaries for the current tool families.
+Its first implementation slices are now in place: `/debug/capabilities`
+includes a normalized `backends` registry with V4 capability classes, redacted
+provider secret refs, backend readiness state, public-surface/tool ownership,
+and classifier disposition summaries for the current tool families. In
+addition, `POST /v1/responses` now uses the same classifier vocabulary as a
+request-time gate so `responses.mode=local_only` fails closed for proxy-only,
+client-round-trip, upstream-only, and unknown tool families instead of letting
+them drift into a lossy local path.
 
 V2 is the broad compatibility facade.
 V3 is backend and runtime expansion around that facade.

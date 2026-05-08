@@ -193,6 +193,18 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	localMCPState := h.hasLocalMCPState(r.Context(), request)
+	toolClassifications := classifyResponseTools(responseToolClassifierConfig{
+		RawFields:               rawFields,
+		WebSearchProvider:       h.webSearchProvider,
+		ImageGenerationProvider: h.imageGenerationProvider,
+		LocalComputer:           h.localComputer,
+		LocalCodeInterpreter:    h.localCodeInterpreter,
+		HasLocalMCPState:        localMCPState,
+	})
+	if err := toolClassifications.validateForResponsesMode(h.responsesMode); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
 	createInputs := buildResponsesCreateRouteInputs(
 		hasLocalState,
 		rawFields,

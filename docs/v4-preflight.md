@@ -42,14 +42,21 @@ The first implementation slice is complete:
 - Existing `tools.*` capability entries now include a `disposition` summary
   using the V4 classifier vocabulary such as `local_execute`, `proxy_only`,
   and `client_round_trip`.
+- `POST /v1/responses` now runs a request-time tool classifier over `tools[]`
+  before selecting the local/proxy route. In `responses.mode=local_only`, the
+  classifier fails closed for explicitly non-local families such as
+  `mcp.connector_id`, client-executed `tool_search`, unknown future tool types,
+  and upstream-only aliases. Local tool-family parser/runtime errors remain
+  owned by the existing local handlers so their diagnostics stay specific.
 
-This slice intentionally does not change public `/v1/*` route behavior. It
-centralizes what is already true so future V4 memory/plugin work has one
+These slices intentionally do not create a new OpenAI public surface. They
+centralize what is already true so future V4 memory/plugin work has one
 operator-visible contract instead of one-off backend claims.
 
 ## Official References Reviewed
 
-This wording was checked on May 6, 2026 against:
+This wording was checked on May 6, 2026, and the request-time classifier slice
+was spot-checked again on May 8, 2026 against:
 
 - local official-docs index: `openapi/llms.txt`
 - OpenAI Docs MCP on `developers.openai.com` / `platform.openai.com`
@@ -825,14 +832,22 @@ Implemented details:
 
 ### Phase 2: Tool Classifier And Canonical Pipeline
 
-Status: planned; classifier summary vocabulary is exposed, but request-time
-classifier wiring is not part of the first slice.
+Status: implemented for the request-time classifier gate and canonical
+Responses request preservation on proxy paths. Broader stream/replay
+classifier evidence belongs to Phase 3.
 
-- add classifier result types
-- route every Responses tool family through the classifier
-- make backend projections consume classifier decisions
-- add tests for `prefer_local`, `prefer_upstream`, and `local_only`
-- prove no canonical stored state is lost in chat projections
+- added classifier result types and disposition vocabulary in
+  `internal/httpapi/tool_classifier.go`
+- route current Responses `tools[]` families through the classifier before
+  create-route selection
+- local-only mode rejects `proxy_only`, `upstream_passthrough`,
+  `client_round_trip`, and `reject` classifications with a `tools` validation
+  error
+- focused tests cover the known tool families, local-only rejection, and
+  prefer-upstream preservation of an MCP connector request body
+- canonical storage and local Chat projection still use the existing
+  Responses-owned state pipeline; this slice does not add a new stored-state
+  object model
 
 ### Phase 3: Stream And Replay Interface
 

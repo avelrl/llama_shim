@@ -1005,14 +1005,17 @@ Practical finding:
 ```mermaid
 flowchart TB
   req["Incoming /v1/responses request"]
+  classifier{"Tool classifier"}
   mode{"responses.mode"}
   localState{"References local state?"}
   localSupported{"Local subset supports request?"}
+  nonLocal{"Tool classified as proxy/upstream/client/reject?"}
   upstream["Proxy upstream"]
   local["Handle locally"]
   reject["Reject with validation/runtime error"]
 
-  req --> mode
+  req --> classifier
+  classifier --> mode
   mode -->|prefer_local| localSupported
   localSupported -->|yes| local
   localSupported -->|no| localState
@@ -1023,13 +1026,20 @@ flowchart TB
   localState -->|yes| local
   localState -->|no| upstream
 
-  mode -->|local_only| localSupported
+  mode -->|local_only| nonLocal
+  nonLocal -->|yes| reject
+  nonLocal -->|no| localSupported
   localSupported -->|yes| local
   localSupported -->|no| reject
 ```
 
 This is why `prefer_upstream` is not a hosted parity guarantee. It is a
 proxy-first escape hatch unless the request depends on shim-owned local state.
+In `local_only`, the tool classifier rejects explicitly non-local declarations
+such as MCP connectors, client-executed tool search, upstream-only aliases, and
+unknown tool families before the request can fall through to a proxy or lossy
+projection path. Local tool-family parsers still own detailed local subset and
+disabled-runtime diagnostics.
 
 ## 20. Storage And Replay Ownership
 

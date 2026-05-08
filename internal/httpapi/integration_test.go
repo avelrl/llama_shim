@@ -4780,6 +4780,87 @@ func TestResponsesLocalOnlyRejectsJSONModeWithoutJSONInstruction(t *testing.T) {
 	require.Contains(t, asStringAny(errorPayload["message"]), `"JSON"`)
 }
 
+func TestResponsesLocalOnlyRejectsProxyOnlyMCPConnectorViaToolClassifier(t *testing.T) {
+	app := testutil.NewTestAppWithResponsesMode(t, config.ResponsesModeLocalOnly)
+
+	status, payload := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model": "test-model",
+		"input": "Read my latest email.",
+		"tools": []map[string]any{
+			{
+				"type":         "mcp",
+				"server_label": "gmail",
+				"connector_id": "connector_gmail",
+			},
+		},
+	})
+
+	require.Equal(t, http.StatusBadRequest, status)
+	errorPayload := payload["error"].(map[string]any)
+	require.Equal(t, "invalid_request_error", errorPayload["type"])
+	require.Equal(t, "tools", errorPayload["param"])
+	require.Contains(t, asStringAny(errorPayload["message"]), "mcp.connector_id")
+	require.Contains(t, asStringAny(errorPayload["message"]), "proxy_only")
+	require.Contains(t, asStringAny(errorPayload["message"]), "local_only")
+}
+
+func TestResponsesPreferUpstreamAllowsProxyOnlyMCPConnector(t *testing.T) {
+	var upstreamRequest map[string]any
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, http.MethodPost, r.Method)
+		require.Equal(t, "/v1/responses", r.URL.Path)
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&upstreamRequest))
+
+		w.Header().Set("Content-Type", "application/json")
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"id":         "upstream_resp_classifier",
+			"object":     "response",
+			"created_at": 1712059200,
+			"status":     "completed",
+			"model":      asStringAny(upstreamRequest["model"]),
+			"output": []map[string]any{
+				{
+					"id":     "msg_classifier",
+					"type":   "message",
+					"status": "completed",
+					"role":   "assistant",
+					"content": []map[string]any{
+						{"type": "output_text", "text": "OK"},
+					},
+				},
+			},
+			"output_text": "OK",
+		}))
+	}))
+	defer upstream.Close()
+
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		ResponsesMode: config.ResponsesModePreferUpstream,
+		LlamaBaseURL:  upstream.URL,
+	})
+
+	status, payload := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model": "test-model",
+		"input": "Read my latest email.",
+		"tools": []map[string]any{
+			{
+				"type":         "mcp",
+				"server_label": "gmail",
+				"connector_id": "connector_gmail",
+			},
+		},
+	})
+
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, "upstream_resp_classifier", asStringAny(payload["id"]))
+	tools, ok := upstreamRequest["tools"].([]any)
+	require.True(t, ok)
+	require.Len(t, tools, 1)
+	upstreamTool := tools[0].(map[string]any)
+	require.Equal(t, "mcp", asStringAny(upstreamTool["type"]))
+	require.Equal(t, "connector_gmail", asStringAny(upstreamTool["connector_id"]))
+}
+
 func TestResponsesWithJSONSchemaAreHandledLocally(t *testing.T) {
 	app := testutil.NewTestApp(t)
 
