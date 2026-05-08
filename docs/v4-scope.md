@@ -30,9 +30,13 @@ classifier for retryability, cooldown hints, fallback eligibility, client error
 mapping, and operator diagnostics in `/debug/capabilities`. The shim also has
 a bounded metadata-only request trace contract through `/debug/traces` and
 `/debug/traces/{request_id}` so routing, backend projection, classifier,
-failure-policy, fallback, rate-limit, persistence, stream/replay, and final
-status decisions can be inspected by operators without adding fake fields to
-OpenAI-shaped responses. Codex-through-shim setup now has shim-owned
+request-cleanup hooks, failure-policy, fallback, rate-limit, persistence,
+stream/replay, and final status decisions can be inspected by operators
+without adding fake fields to OpenAI-shaped responses. Provider/model plugins
+also advertise named backend request cleanup hooks, so model alias rewrites,
+provider auth overrides, and configured Chat Completions projection cleanup
+are explicit plugin behavior rather than hidden request mutation.
+Codex-through-shim setup now has shim-owned
 `shimctl codex config` and `shimctl codex doctor` tooling so provider/model
 aliases can be validated before long eval runs.
 
@@ -236,6 +240,8 @@ Useful directions:
 - stable interfaces such as `Compactor`, `MemoryStore`, `RetrievalStore`,
   `Embedder`, `Reranker`, `MemoryConsolidator`
 - readiness and capability reporting per plugin
+- named provider-specific request cleanup hooks kept behind backend projection
+  boundaries and debug traces
 - namespaced config for optional backends
 - provider-specific knobs kept behind backend config, not exposed as fake
   OpenAI request fields

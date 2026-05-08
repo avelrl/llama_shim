@@ -64,6 +64,7 @@ func (h *proxyHandler) forwardChatCompletions(w http.ResponseWriter, r *http.Req
 	if upstreamCompatibility.Applied() && h.logger != nil {
 		h.logger.DebugContext(r.Context(), "normalized chat completion request for upstream compatibility",
 			"request_id", RequestIDFromContext(r.Context()),
+			"request_cleanup_hooks", upstreamcompat.RequestCleanupHookNames(upstreamCompatibility.AppliedRequestCleanupHooks()),
 			"developer_roles_remapped", upstreamCompatibility.DeveloperRolesRemapped,
 			"default_thinking_disabled", upstreamCompatibility.DefaultThinkingDisabled,
 			"default_max_tokens_applied", upstreamCompatibility.DefaultMaxTokensApplied,
@@ -82,15 +83,7 @@ func (h *proxyHandler) forwardChatCompletions(w http.ResponseWriter, r *http.Req
 	} else {
 		shouldStore = shadowStore
 	}
-	recordDebugTraceChatCompletion(r.Context(), model, route, upstreamCompatibilityTraceSummary{
-		DeveloperRolesRemapped:            upstreamCompatibility.DeveloperRolesRemapped > 0,
-		DefaultThinkingDisabled:           upstreamCompatibility.DefaultThinkingDisabled,
-		DefaultMaxTokensApplied:           upstreamCompatibility.DefaultMaxTokensApplied,
-		JSONSchemaDowngraded:              upstreamCompatibility.JSONSchemaDowngraded,
-		ToolParameterPropertyTypesEnsured: upstreamCompatibility.ToolParameterPropertyTypesEnsured,
-		MoonshotToolSchemaSanitized:       upstreamCompatibility.MoonshotToolSchemaSanitized,
-		EmptyAssistantToolContentOmitted:  upstreamCompatibility.EmptyAssistantToolContentOmitted > 0,
-	}, shouldStore)
+	recordDebugTraceChatCompletion(r.Context(), model, route, upstreamCompatibility.AppliedRequestCleanupHooks(), shouldStore)
 	if profile, err := parseChatToolCompatRequest(upstreamBody); err == nil && shouldApplyChatToolCompat(profile) {
 		rawResponse, err := h.createChatCompletionWithToolCompat(r.Context(), upstreamBody, profile.Contract)
 		if err != nil {

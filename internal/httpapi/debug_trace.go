@@ -3,7 +3,6 @@ package httpapi
 import (
 	"context"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -11,6 +10,7 @@ import (
 
 	"llama_shim/internal/llama"
 	"llama_shim/internal/plugincontract"
+	"llama_shim/internal/upstreamcompat"
 )
 
 const defaultDebugTraceMaxEntries = 256
@@ -78,6 +78,7 @@ type DebugTraceToolDecision struct {
 type DebugTraceTransform struct {
 	Stage    string   `json:"stage"`
 	Class    string   `json:"class"`
+	Hook     string   `json:"hook,omitempty"`
 	Fields   []string `json:"fields,omitempty"`
 	Decision string   `json:"decision,omitempty"`
 }
@@ -249,6 +250,13 @@ func RecordDebugTraceUpstreamRoute(ctx context.Context, route llama.UpstreamRout
 		if trace.PluginID != "" {
 			trace.PluginContractVersion = plugincontract.SchemaVersion
 		}
+		appendDebugTraceRequestCleanupTransforms(trace, requestCleanupHooksForUpstreamRoute(route))
+	})
+}
+
+func RecordDebugTraceRequestCleanupHooks(ctx context.Context, hooks []upstreamcompat.RequestCleanupHook) {
+	recordDebugTrace(ctx, func(trace *DebugTrace) {
+		appendDebugTraceRequestCleanupTransforms(trace, hooks)
 	})
 }
 
@@ -343,7 +351,7 @@ func recordDebugTraceDerivedResponse(ctx context.Context, request CreateResponse
 	})
 }
 
-func recordDebugTraceChatCompletion(ctx context.Context, model string, route *llama.UpstreamRoute, compatibility upstreamCompatibilityTraceSummary, shouldStore bool) {
+func recordDebugTraceChatCompletion(ctx context.Context, model string, route *llama.UpstreamRoute, cleanupHooks []upstreamcompat.RequestCleanupHook, shouldStore bool) {
 	recordDebugTrace(ctx, func(trace *DebugTrace) {
 		trace.Surface = "chat_completions"
 		trace.SourceFormat = "chat.completions.create"
@@ -365,49 +373,88 @@ func recordDebugTraceChatCompletion(ctx context.Context, model string, route *ll
 				trace.PluginContractVersion = plugincontract.SchemaVersion
 			}
 		}
-		fields := compatibility.Fields()
-		if len(fields) > 0 {
-			trace.Transforms = append(trace.Transforms, DebugTraceTransform{
-				Stage:    "chat_completions.upstream_compatibility",
-				Class:    "request_projection",
-				Fields:   fields,
-				Decision: "applied",
-			})
-		}
+		appendDebugTraceRequestCleanupTransforms(trace, cleanupHooks)
 	})
 }
 
-type upstreamCompatibilityTraceSummary struct {
-	DeveloperRolesRemapped             bool
-	DefaultThinkingDisabled            bool
-	DefaultMaxTokensApplied            bool
-	JSONSchemaDowngraded               bool
-	ToolParameterPropertyTypesEnsured  bool
-	EmptyAssistantToolContentOmitted   bool
-	MoonshotToolSchemaSanitized        bool
-	InvalidToolArgumentsRetried        bool
-	OmittedEmptyAssistantToolContent   bool
-	SanitizedMoonshotToolSchemaRequest bool
+func requestCleanupHooksForUpstreamRoute(route llama.UpstreamRoute) []upstreamcompat.RequestCleanupHook {
+	hooks := make([]upstreamcompat.RequestCleanupHook, 0, 2)
+	publicModel := strings.TrimSpace(route.PublicModel)
+	upstreamModel := strings.TrimSpace(route.UpstreamModel)
+	if publicModel != "" && upstreamModel != "" && publicModel != upstreamModel {
+		hooks = append(hooks, upstreamcompat.RequestCleanupHook{
+			Name:   upstreamcompat.RequestCleanupHookProviderRewriteModelAlias,
+			Fields: []string{"model"},
+		})
+	}
+	if strings.TrimSpace(route.BearerToken) != "" {
+		hooks = append(hooks, upstreamcompat.RequestCleanupHook{
+			Name:   upstreamcompat.RequestCleanupHookProviderOverrideAuthorizationHeader,
+			Fields: []string{"authorization_header"},
+		})
+	}
+	return hooks
 }
 
-func (s upstreamCompatibilityTraceSummary) Fields() []string {
-	fields := make([]string, 0, 8)
-	add := func(enabled bool, field string) {
-		if enabled {
-			fields = append(fields, field)
+func appendDebugTraceRequestCleanupTransforms(trace *DebugTrace, hooks []upstreamcompat.RequestCleanupHook) {
+	if trace == nil {
+		return
+	}
+	for _, hook := range hooks {
+		name := strings.TrimSpace(hook.Name)
+		if name == "" {
+			continue
+		}
+		appendDebugTraceTransformOnce(trace, DebugTraceTransform{
+			Stage:    "request_cleanup",
+			Class:    "backend_projection",
+			Hook:     name,
+			Fields:   upstreamcompat.RequestCleanupHookFieldNames(hook.Fields),
+			Decision: "applied",
+		})
+	}
+}
+
+func appendDebugTraceTransformOnce(trace *DebugTrace, transform DebugTraceTransform) {
+	if trace == nil {
+		return
+	}
+	transform.Stage = strings.TrimSpace(transform.Stage)
+	transform.Class = strings.TrimSpace(transform.Class)
+	transform.Hook = strings.TrimSpace(transform.Hook)
+	transform.Decision = strings.TrimSpace(transform.Decision)
+	transform.Fields = upstreamcompat.RequestCleanupHookFieldNames(transform.Fields)
+	if transform.Stage == "" || transform.Class == "" {
+		return
+	}
+	for _, existing := range trace.Transforms {
+		if debugTraceTransformsEqual(existing, transform) {
+			return
 		}
 	}
-	add(s.DeveloperRolesRemapped, "developer_role")
-	add(s.DefaultThinkingDisabled, "thinking")
-	add(s.DefaultMaxTokensApplied, "max_tokens")
-	add(s.JSONSchemaDowngraded, "response_format")
-	add(s.ToolParameterPropertyTypesEnsured, "tools.parameters.properties")
-	add(s.EmptyAssistantToolContentOmitted, "messages.assistant.content")
-	add(s.MoonshotToolSchemaSanitized || s.SanitizedMoonshotToolSchemaRequest, "tools.function.parameters")
-	add(s.InvalidToolArgumentsRetried, "tool_calls.function.arguments")
-	add(s.OmittedEmptyAssistantToolContent, "messages.assistant.content")
-	sort.Strings(fields)
-	return compactStrings(fields)
+	trace.Transforms = append(trace.Transforms, transform)
+}
+
+func debugTraceTransformsEqual(left DebugTraceTransform, right DebugTraceTransform) bool {
+	return strings.TrimSpace(left.Stage) == strings.TrimSpace(right.Stage) &&
+		strings.TrimSpace(left.Class) == strings.TrimSpace(right.Class) &&
+		strings.TrimSpace(left.Hook) == strings.TrimSpace(right.Hook) &&
+		strings.TrimSpace(left.Decision) == strings.TrimSpace(right.Decision) &&
+		debugTraceStringSlicesEqual(left.Fields, right.Fields)
+}
+
+func debugTraceStringSlicesEqual(left []string, right []string) bool {
+	left = upstreamcompat.RequestCleanupHookFieldNames(left)
+	right = upstreamcompat.RequestCleanupHookFieldNames(right)
+	if len(left) != len(right) {
+		return false
+	}
+	for idx := range left {
+		if left[idx] != right[idx] {
+			return false
+		}
+	}
+	return true
 }
 
 func cloneDebugTrace(trace DebugTrace) DebugTrace {
@@ -550,23 +597,6 @@ func parseDebugTraceLimit(value string) int {
 		return 0
 	}
 	return limit
-}
-
-func compactStrings(values []string) []string {
-	if len(values) == 0 {
-		return nil
-	}
-	out := values[:0]
-	var previous string
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" || value == previous {
-			continue
-		}
-		out = append(out, value)
-		previous = value
-	}
-	return out
 }
 
 func (route responsesCreateRoute) String() string {

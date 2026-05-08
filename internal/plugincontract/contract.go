@@ -32,6 +32,7 @@ type Descriptor struct {
 	CapabilityComponentID string       `json:"capability_component_id"`
 	PublicSurfaces        []string     `json:"public_surfaces,omitempty"`
 	BackendProjections    []Projection `json:"backend_projections,omitempty"`
+	RequestCleanupHooks   []string     `json:"request_cleanup_hooks,omitempty"`
 	Limits                []string     `json:"limits,omitempty"`
 	Timeouts              []string     `json:"timeouts,omitempty"`
 	ErrorClasses          []string     `json:"error_classes,omitempty"`
@@ -228,6 +229,7 @@ func normalizeDescriptor(descriptor Descriptor) Descriptor {
 	descriptor.CapabilityComponentID = strings.TrimSpace(descriptor.CapabilityComponentID)
 	descriptor.RequiredSecrets = normalizeStringList(descriptor.RequiredSecrets)
 	descriptor.PublicSurfaces = normalizeStringList(descriptor.PublicSurfaces)
+	descriptor.RequestCleanupHooks = normalizeStringList(descriptor.RequestCleanupHooks)
 	descriptor.Limits = normalizeStringList(descriptor.Limits)
 	descriptor.Timeouts = normalizeStringList(descriptor.Timeouts)
 	descriptor.ErrorClasses = normalizeStringList(descriptor.ErrorClasses)

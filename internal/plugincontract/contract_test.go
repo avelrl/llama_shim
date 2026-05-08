@@ -31,6 +31,7 @@ func TestNewRegistryNormalizesAndSortsDescriptors(t *testing.T) {
 			CapabilityComponentID: " provider.qwen ",
 			RequiredSecrets:       []string{" QWEN_API_KEY ", "QWEN_API_KEY", " "},
 			PublicSurfaces:        []string{"responses.create", "chat_completions.create", "responses.create"},
+			RequestCleanupHooks:   []string{" provider.rewrite_model_alias ", "provider.rewrite_model_alias", "chat_completions.remap_developer_role"},
 			BackendProjections: []Projection{
 				{Class: " chat_projection ", SourceFormat: " responses ", TargetFormat: " chat_completions "},
 				{Class: "chat_projection", SourceFormat: "responses", TargetFormat: "chat_completions"},
@@ -57,6 +58,7 @@ func TestNewRegistryNormalizesAndSortsDescriptors(t *testing.T) {
 	require.Equal(t, "provider.qwen", registry.Plugins[1].ID)
 	require.Equal(t, []string{"QWEN_API_KEY"}, registry.Plugins[1].RequiredSecrets)
 	require.Equal(t, []string{"chat_completions.create", "responses.create"}, registry.Plugins[1].PublicSurfaces)
+	require.Equal(t, []string{"chat_completions.remap_developer_role", "provider.rewrite_model_alias"}, registry.Plugins[1].RequestCleanupHooks)
 	require.Equal(t, []Projection{{Class: "chat_projection", SourceFormat: "responses", TargetFormat: "chat_completions"}}, registry.Plugins[1].BackendProjections)
 }
 

@@ -6,6 +6,7 @@ import (
 	"llama_shim/internal/backendcap"
 	"llama_shim/internal/config"
 	"llama_shim/internal/plugincontract"
+	"llama_shim/internal/upstreamcompat"
 )
 
 const modelProviderPluginVersion = "v1"
@@ -66,6 +67,7 @@ func modelProviderPlugins(deps RouterDeps, llamaProbe capabilityProbe, responses
 			CapabilityComponentID: "model.llama",
 			PublicSurfaces:        publicSurfaces,
 			BackendProjections:    projections,
+			RequestCleanupHooks:   upstreamcompat.RequestCleanupHookNamesForChatRules(deps.ChatCompletionsUpstreamCompatibility),
 			Timeouts:              timeouts,
 			ErrorClasses:          errorClasses,
 			CIFixtureSafe:         true,
@@ -96,13 +98,24 @@ func modelProviderPlugins(deps RouterDeps, llamaProbe capabilityProbe, responses
 			continue
 		}
 		models := make([]string, 0, len(provider.Models))
+		upstreamModels := make([]string, 0, len(provider.Models))
 		for _, model := range provider.Models {
 			publicModel := strings.TrimSpace(model.Model)
 			if publicModel == "" {
 				continue
 			}
 			models = append(models, providerID+"/"+publicModel)
+			upstreamModel := strings.TrimSpace(model.UpstreamModel)
+			if upstreamModel == "" {
+				upstreamModel = publicModel
+			}
+			upstreamModels = append(upstreamModels, upstreamModel)
 		}
+		requestCleanupHooks := []string{upstreamcompat.RequestCleanupHookProviderRewriteModelAlias}
+		if strings.TrimSpace(provider.BearerToken) != "" || strings.TrimSpace(provider.BearerTokenEnv) != "" {
+			requestCleanupHooks = append(requestCleanupHooks, upstreamcompat.RequestCleanupHookProviderOverrideAuthorizationHeader)
+		}
+		requestCleanupHooks = append(requestCleanupHooks, upstreamcompat.RequestCleanupHookNamesForChatModels(deps.ChatCompletionsUpstreamCompatibility, upstreamModels...)...)
 		pluginID := upstreamProviderPluginID(providerID)
 		descriptor := plugincontract.Descriptor{
 			ID:                    pluginID,
@@ -115,6 +128,7 @@ func modelProviderPlugins(deps RouterDeps, llamaProbe capabilityProbe, responses
 			CapabilityComponentID: "provider." + providerID,
 			PublicSurfaces:        publicSurfaces,
 			BackendProjections:    projections,
+			RequestCleanupHooks:   upstreamcompat.RequestCleanupHookFieldNames(requestCleanupHooks),
 			Timeouts:              timeouts,
 			ErrorClasses:          errorClasses,
 			CIFixtureSafe:         false,

@@ -454,6 +454,8 @@ Acceptance criteria:
 ### 5. Provider-Specific Request Cleanup Hooks
 
 Classification: V4 preflight platform work.
+Status: implemented for model-provider alias/auth cleanup and configured Chat
+Completions backend projection cleanup.
 
 Goal:
 Allow backend-specific request adaptation without mutating the public
@@ -483,6 +485,20 @@ Rules:
   optional local side effect would be too large
 - cleanup must be covered by tests that compare public input, backend
   projection, and stored replay state
+
+Implemented hook contract:
+
+- plugin descriptors expose supported backend request hooks through
+  `/debug/capabilities.plugins.plugins[].request_cleanup_hooks`
+- debug traces record applied hooks as
+  `transforms[]` entries with `stage=request_cleanup`,
+  `class=backend_projection`, `hook=<name>`, and metadata-only field labels
+- current provider hooks cover public model alias rewrite and provider auth
+  header override
+- current Chat Completions projection hooks cover configured developer-role
+  remap, default thinking disable, default `max_tokens`, JSON Schema to
+  JSON-object instruction downgrade, tool-parameter type repair, Moonshot tool
+  schema sanitization, and empty assistant tool-call content omission
 
 Useful cleanup examples:
 
@@ -965,8 +981,8 @@ Status: implemented for config generation and direct doctor preflight.
 
 ### Phase 5: Provider Hooks And Fallback Policy
 
-Status: implemented for the shared backend failure policy; provider-specific
-cleanup hooks remain future plugin/platform work.
+Status: implemented for named provider/request cleanup hooks, the shared backend
+failure policy, and debug trace visibility.
 
 - add named backend cleanup hooks
 - map backend errors into the shared taxonomy
@@ -981,8 +997,8 @@ Status: implemented for bounded request traces and capability advertising.
   `/debug/traces/{request_id}` retrieves one trace by `X-Request-Id`
 - traces capture request metadata, response route/status, model/provider route,
   Responses create-route selection, tool classifier decisions, Chat projection
-  transforms, backend failure policy decisions, rate-limit decisions, and
-  final status
+  transforms, named request cleanup hooks, backend failure policy decisions,
+  rate-limit decisions, and final status
 - traces are metadata-only and exclude raw prompts, bearer tokens, private
   headers, tool outputs, and file contents
 - `shim.debug_traces.enabled` and `shim.debug_traces.max_entries` configure

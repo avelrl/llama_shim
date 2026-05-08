@@ -564,6 +564,7 @@ func (c *Client) normalizeChatCompletionRequestForUpstream(ctx context.Context, 
 	if compatibility.Applied() && c != nil && c.logger != nil {
 		c.logger.DebugContext(ctx, "normalized chat completion request for upstream compatibility",
 			"scope", scope,
+			"request_cleanup_hooks", upstreamcompat.RequestCleanupHookNames(compatibility.AppliedRequestCleanupHooks()),
 			"developer_roles_remapped", compatibility.DeveloperRolesRemapped,
 			"default_thinking_disabled", compatibility.DefaultThinkingDisabled,
 			"default_max_tokens_applied", compatibility.DefaultMaxTokensApplied,

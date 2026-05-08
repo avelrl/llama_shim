@@ -23,15 +23,16 @@ func (p registeredCapabilityPlugin) CapabilityComponent() backendcap.Component {
 }
 
 type capabilityPluginOptions struct {
-	ID                 string
-	Kind               string
-	DisplayName        string
-	CIFixtureSafe      bool
-	ProductionIntended bool
-	BackendProjections []plugincontract.Projection
-	Limits             []string
-	Timeouts           []string
-	ErrorClasses       []string
+	ID                  string
+	Kind                string
+	DisplayName         string
+	CIFixtureSafe       bool
+	ProductionIntended  bool
+	BackendProjections  []plugincontract.Projection
+	RequestCleanupHooks []string
+	Limits              []string
+	Timeouts            []string
+	ErrorClasses        []string
 }
 
 func newRegisteredCapabilityPlugin(component backendcap.Component, opts capabilityPluginOptions) plugincontract.CapabilityPlugin {
@@ -58,6 +59,7 @@ func newRegisteredCapabilityPlugin(component backendcap.Component, opts capabili
 		CapabilityComponentID: component.ID,
 		PublicSurfaces:        component.PublicSurfaces,
 		BackendProjections:    opts.BackendProjections,
+		RequestCleanupHooks:   opts.RequestCleanupHooks,
 		Limits:                opts.Limits,
 		Timeouts:              opts.Timeouts,
 		ErrorClasses:          opts.ErrorClasses,

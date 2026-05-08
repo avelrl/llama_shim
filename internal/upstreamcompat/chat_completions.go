@@ -3,6 +3,7 @@ package upstreamcompat
 import (
 	"bytes"
 	"encoding/json"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -17,6 +18,11 @@ type ChatCompletionCompatibility struct {
 	ToolParameterPropertyTypesEnsured bool
 	MoonshotToolSchemaSanitized       bool
 	EmptyAssistantToolContentOmitted  int
+}
+
+type RequestCleanupHook struct {
+	Name   string
+	Fields []string
 }
 
 type ChatCompletionOptions struct {
@@ -45,6 +51,18 @@ const (
 	InvalidToolArgumentsFallbackFinalText = "final_text"
 )
 
+const (
+	RequestCleanupHookChatRemapDeveloperRole                = "chat_completions.remap_developer_role"
+	RequestCleanupHookChatDefaultThinkingDisabled           = "chat_completions.default_thinking_disabled"
+	RequestCleanupHookChatDefaultMaxTokens                  = "chat_completions.default_max_tokens"
+	RequestCleanupHookChatJSONSchemaToJSONObjectInstruction = "chat_completions.json_schema_to_json_object_instruction"
+	RequestCleanupHookChatEnsureToolParameterPropertyTypes  = "chat_completions.ensure_tool_parameter_property_types"
+	RequestCleanupHookChatSanitizeMoonshotToolSchema        = "chat_completions.sanitize_moonshot_tool_schema"
+	RequestCleanupHookChatOmitEmptyAssistantToolContent     = "chat_completions.omit_empty_assistant_tool_content"
+	RequestCleanupHookProviderRewriteModelAlias             = "provider.rewrite_model_alias"
+	RequestCleanupHookProviderOverrideAuthorizationHeader   = "provider.override_authorization_header"
+)
+
 func (c ChatCompletionCompatibility) Applied() bool {
 	return c.DeveloperRolesRemapped > 0 ||
 		c.DefaultThinkingDisabled ||
@@ -53,6 +71,59 @@ func (c ChatCompletionCompatibility) Applied() bool {
 		c.ToolParameterPropertyTypesEnsured ||
 		c.MoonshotToolSchemaSanitized ||
 		c.EmptyAssistantToolContentOmitted > 0
+}
+
+func (c ChatCompletionCompatibility) AppliedRequestCleanupHooks() []RequestCleanupHook {
+	hooks := make([]RequestCleanupHook, 0, 7)
+	add := func(enabled bool, name string, fields ...string) {
+		if !enabled {
+			return
+		}
+		hooks = append(hooks, RequestCleanupHook{Name: name, Fields: RequestCleanupHookFieldNames(fields)})
+	}
+	add(c.DeveloperRolesRemapped > 0, RequestCleanupHookChatRemapDeveloperRole, "developer_role")
+	add(c.DefaultThinkingDisabled, RequestCleanupHookChatDefaultThinkingDisabled, "thinking")
+	add(c.DefaultMaxTokensApplied, RequestCleanupHookChatDefaultMaxTokens, "max_tokens")
+	add(c.JSONSchemaDowngraded, RequestCleanupHookChatJSONSchemaToJSONObjectInstruction, "response_format")
+	add(c.ToolParameterPropertyTypesEnsured, RequestCleanupHookChatEnsureToolParameterPropertyTypes, "tools.parameters.properties")
+	add(c.MoonshotToolSchemaSanitized, RequestCleanupHookChatSanitizeMoonshotToolSchema, "tools.function.parameters")
+	add(c.EmptyAssistantToolContentOmitted > 0, RequestCleanupHookChatOmitEmptyAssistantToolContent, "messages.assistant.content")
+	return hooks
+}
+
+func RequestCleanupHookNames(hooks []RequestCleanupHook) []string {
+	names := make([]string, 0, len(hooks))
+	for _, hook := range hooks {
+		names = append(names, hook.Name)
+	}
+	return normalizeHookNames(names)
+}
+
+func RequestCleanupHookFieldNames(fields []string) []string {
+	return normalizeHookNames(fields)
+}
+
+func RequestCleanupHookNamesForChatRules(rules []ChatCompletionRule) []string {
+	names := make([]string, 0)
+	for _, rule := range rules {
+		names = append(names, chatCompletionRuleRequestCleanupHookNames(rule)...)
+	}
+	return normalizeHookNames(names)
+}
+
+func RequestCleanupHookNamesForChatModels(rules []ChatCompletionRule, models ...string) []string {
+	if len(models) == 0 {
+		return RequestCleanupHookNamesForChatRules(rules)
+	}
+	names := make([]string, 0)
+	for _, model := range models {
+		rule, ok := chatCompletionRuleForModel(model, rules)
+		if !ok {
+			continue
+		}
+		names = append(names, chatCompletionRuleRequestCleanupHookNames(rule)...)
+	}
+	return normalizeHookNames(names)
 }
 
 func (o ChatCompletionOptions) RetryInvalidToolArguments(model string) bool {
@@ -257,6 +328,53 @@ func chatCompletionRuleForModel(model string, rules []ChatCompletionRule) (ChatC
 		}
 	}
 	return ChatCompletionRule{}, false
+}
+
+func chatCompletionRuleRequestCleanupHookNames(rule ChatCompletionRule) []string {
+	names := make([]string, 0, 7)
+	if rule.RemapDeveloperRole {
+		names = append(names, RequestCleanupHookChatRemapDeveloperRole)
+	}
+	if rule.DefaultThinking == DefaultThinkingDisabled {
+		names = append(names, RequestCleanupHookChatDefaultThinkingDisabled)
+	}
+	if rule.DefaultMaxTokens > 0 {
+		names = append(names, RequestCleanupHookChatDefaultMaxTokens)
+	}
+	if rule.JSONSchemaMode == JSONSchemaModeObjectInstruction {
+		names = append(names, RequestCleanupHookChatJSONSchemaToJSONObjectInstruction)
+	}
+	if rule.EnsureToolParameterPropertyTypes {
+		names = append(names, RequestCleanupHookChatEnsureToolParameterPropertyTypes)
+	}
+	if rule.SanitizeMoonshotToolSchema {
+		names = append(names, RequestCleanupHookChatSanitizeMoonshotToolSchema)
+	}
+	if rule.OmitEmptyAssistantToolContent {
+		names = append(names, RequestCleanupHookChatOmitEmptyAssistantToolContent)
+	}
+	return normalizeHookNames(names)
+}
+
+func normalizeHookNames(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func modelPatternMatches(pattern string, model string) bool {

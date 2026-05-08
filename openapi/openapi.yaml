@@ -2693,6 +2693,9 @@ components:
           type: string
         class:
           type: string
+        hook:
+          type: string
+          description: Named shim-owned request cleanup hook when this transform represents provider/backend request projection.
         fields:
           type: array
           items:
@@ -3279,6 +3282,11 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ShimPluginContractProjection"
+        request_cleanup_hooks:
+          type: array
+          description: Named shim-owned backend request cleanup hooks supported by this plugin. These are backend projection hooks, not public OpenAI request fields.
+          items:
+            type: string
         limits:
           type: array
           items:

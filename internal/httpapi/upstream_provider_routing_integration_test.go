@@ -18,6 +18,7 @@ import (
 	"llama_shim/internal/config"
 	"llama_shim/internal/domain"
 	"llama_shim/internal/testutil"
+	"llama_shim/internal/upstreamcompat"
 )
 
 func TestUpstreamProviderRoutingChatCompletions(t *testing.T) {
@@ -32,10 +33,15 @@ func TestUpstreamProviderRoutingChatCompletions(t *testing.T) {
 			seenAuth = r.Header.Get("Authorization")
 			seenAPIKey = r.Header.Get("Api-Key")
 			var request struct {
-				Model string `json:"model"`
+				Model    string `json:"model"`
+				Messages []struct {
+					Role string `json:"role"`
+				} `json:"messages"`
 			}
 			require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
 			seenModel = request.Model
+			require.NotEmpty(t, request.Messages)
+			require.Equal(t, "system", request.Messages[0].Role)
 			writeChatCompletionText(t, w, "Qwen3.6-Coder", "OK")
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/models":
 			writeModelsList(t, w, "Qwen3.6-Coder")
@@ -58,11 +64,15 @@ func TestUpstreamProviderRoutingChatCompletions(t *testing.T) {
 				},
 			},
 		},
+		ChatCompletionsUpstreamCompatibility: []upstreamcompat.ChatCompletionRule{
+			{Model: "Qwen*", RemapDeveloperRole: true},
+		},
 	})
 
-	status, payload := jsonRequestWithHeaders(t, app.Server.URL+"/v1/chat/completions", map[string]any{
+	status, headers, payload := rawRequestWithHeaders(t, app, http.MethodPost, "/v1/chat/completions", map[string]any{
 		"model": "qwen/coder",
 		"messages": []map[string]any{
+			{"role": "developer", "content": "Be terse."},
 			{"role": "user", "content": "Reply OK"},
 		},
 	}, map[string]string{
@@ -75,6 +85,16 @@ func TestUpstreamProviderRoutingChatCompletions(t *testing.T) {
 	require.Equal(t, "Qwen3.6-Coder", seenModel)
 	require.Equal(t, "Bearer provider-token", seenAuth)
 	require.Empty(t, seenAPIKey)
+
+	requestID := headers.Get("X-Request-Id")
+	require.NotEmpty(t, requestID)
+	status, trace := rawRequest(t, app, http.MethodGet, "/debug/traces/"+requestID, nil)
+	require.Equal(t, http.StatusOK, status)
+	require.ElementsMatch(t, []string{
+		upstreamcompat.RequestCleanupHookChatRemapDeveloperRole,
+		upstreamcompat.RequestCleanupHookProviderOverrideAuthorizationHeader,
+		upstreamcompat.RequestCleanupHookProviderRewriteModelAlias,
+	}, traceTransformHooks(t, trace))
 }
 
 func TestUpstreamProviderRoutingChatCompletionsStreamRestoresPublicModel(t *testing.T) {
@@ -598,6 +618,9 @@ func TestUpstreamProviderRoutingCapabilitiesReportProviderBackends(t *testing.T)
 
 	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
 		ResponsesUpstreamTransport: config.ResponsesUpstreamTransportChatCompletions,
+		ChatCompletionsUpstreamCompatibility: []upstreamcompat.ChatCompletionRule{
+			{Model: "Qwen*", JSONSchemaMode: upstreamcompat.JSONSchemaModeObjectInstruction},
+		},
 		LlamaProviders: []config.LlamaProvider{
 			{
 				ID:             "qwen",
@@ -646,6 +669,11 @@ func TestUpstreamProviderRoutingCapabilitiesReportProviderBackends(t *testing.T)
 	require.Equal(t, "llama.providers.qwen", asStringAny(plugin["config_namespace"]))
 	require.Equal(t, "provider.qwen", asStringAny(plugin["capability_component_id"]))
 	require.ElementsMatch(t, []any{"QWEN_API_KEY"}, plugin["required_secrets"].([]any))
+	require.ElementsMatch(t, []any{
+		upstreamcompat.RequestCleanupHookChatJSONSchemaToJSONObjectInstruction,
+		upstreamcompat.RequestCleanupHookProviderOverrideAuthorizationHeader,
+		upstreamcompat.RequestCleanupHookProviderRewriteModelAlias,
+	}, plugin["request_cleanup_hooks"].([]any))
 	require.Equal(t, false, plugin["ci_fixture_safe"])
 	require.Equal(t, true, plugin["production_intended"])
 	rawPlugin, err := json.Marshal(plugin)
@@ -669,6 +697,23 @@ func jsonRequestWithHeaders(t *testing.T, url string, body map[string]any, heade
 	var payload map[string]any
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&payload))
 	return resp.StatusCode, payload
+}
+
+func traceTransformHooks(t *testing.T, trace map[string]any) []string {
+	t.Helper()
+	rawTransforms, ok := trace["transforms"].([]any)
+	if !ok {
+		return nil
+	}
+	hooks := make([]string, 0, len(rawTransforms))
+	for _, rawTransform := range rawTransforms {
+		transform, ok := rawTransform.(map[string]any)
+		require.True(t, ok)
+		if hook := asStringAny(transform["hook"]); hook != "" {
+			hooks = append(hooks, hook)
+		}
+	}
+	return hooks
 }
 
 func rawHTTPBody(t *testing.T, url string, body map[string]any) (int, string) {

@@ -166,10 +166,10 @@ What exists today:
   plugin contract descriptors for storage, retrieval, local runtimes,
   transports, Codex profile, and model backends/providers: id, version,
   config namespace, readiness probe, public surfaces, backend projections,
-  required env secret names, timeout labels, and error classes. Backend
-  components cross-link to plugins through `plugin_id`, and the registry
-  validates that those links point both ways; plugin registration alone does
-  not widen compatibility claims.
+  required env secret names, timeout labels, named request cleanup hooks, and
+  error classes. Backend components cross-link to plugins through `plugin_id`,
+  and the registry validates that those links point both ways; plugin
+  registration alone does not widen compatibility claims.
 - `/readyz` and `/debug/capabilities` emit bounded readiness-probe metrics so
   operators can distinguish storage, upstream model, retrieval embedder, web
   search, and image-generation readiness failures without widening any
@@ -185,8 +185,9 @@ What exists today:
 - Debug traces are shim-owned operator state. `/debug/traces` retains a
   bounded in-memory metadata-only view keyed by `X-Request-Id`; it records
   route, surface/source format, provider/model route, selected plugin
-  contract, classifier and backend projection decisions,
-  failure-policy/fallback/rate-limit decisions, and the final public status.
+  contract, classifier and backend projection decisions, named request cleanup
+  hooks, failure-policy/fallback/rate-limit decisions, and the final public
+  status.
   It deliberately excludes prompts, bearer tokens, private provider headers,
   tool outputs, file contents, and decrypted state.
 - Codex-through-shim setup is covered by shim-owned `shimctl codex config` and
@@ -206,7 +207,8 @@ sequenceDiagram
   participant DB as Shadow store
 
   C->>H: POST /v1/chat/completions
-  H->>U: forward compatible chat request
+  H->>H: validate public request and apply named backend cleanup hooks
+  H->>U: forward compatible backend-projected chat request
   alt stream=false
     U-->>H: chat completion
     H->>DB: shadow-store when configured or store=true

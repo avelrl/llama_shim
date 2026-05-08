@@ -19,6 +19,7 @@ func TestNormalizeChatCompletionRequestRemapsDeveloperRole(t *testing.T) {
 	require.Equal(t, 1, compatibility.DeveloperRolesRemapped)
 	require.False(t, compatibility.DefaultThinkingDisabled)
 	require.False(t, compatibility.JSONSchemaDowngraded)
+	require.Equal(t, []string{RequestCleanupHookChatRemapDeveloperRole}, RequestCleanupHookNames(compatibility.AppliedRequestCleanupHooks()))
 
 	var request map[string]any
 	require.NoError(t, json.Unmarshal(upstreamBody, &request))
@@ -62,6 +63,11 @@ func TestNormalizeChatCompletionRequestAppliesDeepSeekCompatibility(t *testing.T
 	require.Equal(t, 1, compatibility.DeveloperRolesRemapped)
 	require.True(t, compatibility.DefaultThinkingDisabled)
 	require.True(t, compatibility.JSONSchemaDowngraded)
+	require.ElementsMatch(t, []string{
+		RequestCleanupHookChatDefaultThinkingDisabled,
+		RequestCleanupHookChatJSONSchemaToJSONObjectInstruction,
+		RequestCleanupHookChatRemapDeveloperRole,
+	}, RequestCleanupHookNames(compatibility.AppliedRequestCleanupHooks()))
 
 	var request map[string]any
 	require.NoError(t, json.Unmarshal(upstreamBody, &request))
@@ -100,6 +106,7 @@ func TestNormalizeChatCompletionRequestDowngradesTopLevelSchemaEnvelope(t *testi
 	}}})
 	require.NoError(t, err)
 	require.True(t, compatibility.JSONSchemaDowngraded)
+	require.Equal(t, []string{RequestCleanupHookChatJSONSchemaToJSONObjectInstruction}, RequestCleanupHookNames(compatibility.AppliedRequestCleanupHooks()))
 
 	var request map[string]any
 	require.NoError(t, json.Unmarshal(upstreamBody, &request))
@@ -196,6 +203,13 @@ func TestNormalizeChatCompletionRequestAppliesKimiCompatibility(t *testing.T) {
 	require.True(t, compatibility.ToolParameterPropertyTypesEnsured)
 	require.True(t, compatibility.MoonshotToolSchemaSanitized)
 	require.Equal(t, 1, compatibility.EmptyAssistantToolContentOmitted)
+	require.ElementsMatch(t, []string{
+		RequestCleanupHookChatDefaultMaxTokens,
+		RequestCleanupHookChatEnsureToolParameterPropertyTypes,
+		RequestCleanupHookChatJSONSchemaToJSONObjectInstruction,
+		RequestCleanupHookChatOmitEmptyAssistantToolContent,
+		RequestCleanupHookChatSanitizeMoonshotToolSchema,
+	}, RequestCleanupHookNames(compatibility.AppliedRequestCleanupHooks()))
 	require.True(t, (ChatCompletionOptions{Rules: []ChatCompletionRule{{
 		Model:                     "Kimi-*",
 		RetryInvalidToolArguments: true,
@@ -267,5 +281,39 @@ func TestNormalizeChatCompletionRequestDoesNotApplyUnconfiguredDeepSeekRules(t *
 	upstreamBody, compatibility, err := NormalizeChatCompletionRequest(rawBody, ChatCompletionOptions{})
 	require.NoError(t, err)
 	require.False(t, compatibility.Applied())
+	require.Empty(t, compatibility.AppliedRequestCleanupHooks())
 	require.JSONEq(t, string(rawBody), string(upstreamBody))
+}
+
+func TestRequestCleanupHookNamesForChatModels(t *testing.T) {
+	rules := []ChatCompletionRule{
+		{
+			Model:              "deepseek-*",
+			RemapDeveloperRole: true,
+			DefaultThinking:    DefaultThinkingDisabled,
+			JSONSchemaMode:     JSONSchemaModeObjectInstruction,
+		},
+		{
+			Model:                            "Kimi-*",
+			DefaultMaxTokens:                 32000,
+			EnsureToolParameterPropertyTypes: true,
+			SanitizeMoonshotToolSchema:       true,
+			OmitEmptyAssistantToolContent:    true,
+			RetryInvalidToolArguments:        true,
+		},
+	}
+
+	require.ElementsMatch(t, []string{
+		RequestCleanupHookChatDefaultThinkingDisabled,
+		RequestCleanupHookChatJSONSchemaToJSONObjectInstruction,
+		RequestCleanupHookChatRemapDeveloperRole,
+	}, RequestCleanupHookNamesForChatModels(rules, "deepseek-v4-pro"))
+	require.ElementsMatch(t, []string{
+		RequestCleanupHookChatDefaultMaxTokens,
+		RequestCleanupHookChatEnsureToolParameterPropertyTypes,
+		RequestCleanupHookChatOmitEmptyAssistantToolContent,
+		RequestCleanupHookChatSanitizeMoonshotToolSchema,
+	}, RequestCleanupHookNamesForChatModels(rules, "Kimi-K2.6"))
+	require.Empty(t, RequestCleanupHookNamesForChatModels(rules, "unknown-model"))
+	require.NotContains(t, RequestCleanupHookNamesForChatRules(rules), "retry_invalid_tool_arguments")
 }

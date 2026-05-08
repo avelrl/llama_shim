@@ -95,12 +95,16 @@ Important distinction:
   `plugins.plugins[]` entries are metadata-only plugin contracts cross-linked
   to `backends.components[]`: they expose ids, versions, config namespaces,
   required env secret names, surfaces, backend projections, timeout labels,
-  and error classes, but never secret values.
+  named backend request cleanup hooks, and error classes, but never secret
+  values.
 - `/debug/traces` remains a normal shim route as well. Configure
   `shim.debug_traces.enabled` / `SHIM_DEBUG_TRACES_ENABLED` and
   `shim.debug_traces.max_entries` / `SHIM_DEBUG_TRACES_MAX_ENTRIES`.
   Use `X-Request-Id` from a client response to retrieve one trace:
   `curl "$SHIM_BASE_URL/debug/traces/$REQUEST_ID"`.
+  Request cleanup appears only as metadata-only `transforms[]` entries with
+  `stage=request_cleanup`; traces do not include prompts, bearer tokens, or
+  provider header values.
 - `shimctl probe` is separate from `/readyz`: it is recommendation-only,
   runs on demand from the shared `config.yaml`, can use the shared `.env` for
   `SHIMCTL_PROBE_*` overrides, prints per-request progress to `stderr`
