@@ -45,6 +45,10 @@ compatibility-rule targets, operator-matrix coverage, and Codex model metadata
 before live upstream smokes.
 The current operator choices for those aliases are tracked in
 [V4 Model/Provider Operational Matrix](engineering/v4-model-provider-operational-matrix.md).
+State/session memory now has a first local implementation documented in
+[V4 State And Session Memory](v4-state-session-memory.md): explicit metadata
+notes, SQLite/Postgres storage, hidden local developer-context injection,
+capability/plugin reporting, and governance purge coverage.
 
 V2 is the broad compatibility facade.
 V3 is backend and runtime expansion around that facade.
@@ -159,13 +163,24 @@ Goal:
 Let the shim maintain durable user and task state without pretending that this
 is an OpenAI-native public API surface.
 
-Useful directions:
+Implemented baseline:
 
-- global memory notes for durable preferences and constraints
-- session memory notes for short-lived context
+- `responses.memory.backend=local` stores global/session notes in the
+  configured shim store
+- explicit metadata capture through `llama_shim.memory.remember` /
+  `llama_shim.memory.note`
+- session scoping through `llama_shim.memory.session_id`
+- optional hidden local generation injection through
+  `responses.memory.inject` or `llama_shim.memory.inject=true`
+- bounded `max_notes`, `max_note_bytes`, and `max_context_bytes`
+- `/debug/capabilities.runtime.memory` and `runtime.memory` plugin metadata
+- SQLite and Postgres table coverage plus governance purge support
+
+Remaining useful directions:
+
 - explicit promotion rules from session memory into global memory
 - recency-aware conflict resolution and deduplication
-- memory injection policies for local `/v1/responses` and `/v1/conversations`
+- richer memory injection policies for `/v1/conversations`
 - guardrails for PII, consent, and redaction
 
 ### 2. Retrieval-backed knowledge extension

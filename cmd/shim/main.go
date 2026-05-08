@@ -15,6 +15,7 @@ import (
 	"llama_shim/internal/httpapi"
 	"llama_shim/internal/imagegen"
 	"llama_shim/internal/llama"
+	"llama_shim/internal/memory"
 	"llama_shim/internal/retrieval"
 	"llama_shim/internal/sandbox"
 	"llama_shim/internal/service"
@@ -104,6 +105,17 @@ func main() {
 		os.Exit(1)
 	}
 	responseService.SetCompactor(responseCompactor)
+	if err := responseService.SetMemory(store, memory.Config{
+		Backend:           cfg.ResponsesMemoryBackend,
+		Inject:            cfg.ResponsesMemoryInject,
+		MaxNotes:          cfg.ResponsesMemoryMaxNotes,
+		MaxNoteBytes:      int(cfg.ResponsesMemoryMaxNoteBytes),
+		MaxContextBytes:   int(cfg.ResponsesMemoryMaxContextBytes),
+		MetadataNamespace: cfg.ResponsesMemoryMetadataNamespace,
+	}); err != nil {
+		logger.Error("build response memory", "err", err)
+		os.Exit(1)
+	}
 	conversationService := service.NewConversationService(store)
 	localComputer, err := buildLocalComputerRuntimeConfig(cfg)
 	if err != nil {
@@ -188,6 +200,12 @@ func main() {
 			ResponsesCompactionModel:                 cfg.ResponsesCompactionModel,
 			ResponsesCompactionRetainedItems:         cfg.ResponsesCompactionRetainedItems,
 			ResponsesCompactionMaxInputRunes:         cfg.ResponsesCompactionMaxInputRunes,
+			ResponsesMemoryBackend:                   cfg.ResponsesMemoryBackend,
+			ResponsesMemoryInject:                    cfg.ResponsesMemoryInject,
+			ResponsesMemoryMaxNotes:                  cfg.ResponsesMemoryMaxNotes,
+			ResponsesMemoryMaxNoteBytes:              cfg.ResponsesMemoryMaxNoteBytes,
+			ResponsesMemoryMaxContextBytes:           cfg.ResponsesMemoryMaxContextBytes,
+			ResponsesMemoryMetadataNamespace:         cfg.ResponsesMemoryMetadataNamespace,
 			ResponsesWebSearchBackend:                cfg.ResponsesWebSearchBackend,
 			ResponsesImageGenerationBackend:          cfg.ResponsesImageGenerationBackend,
 			WebSearchProvider:                        webSearchProvider,
@@ -282,6 +300,12 @@ func main() {
 		"responses_compaction_max_output_tokens", cfg.ResponsesCompactionMaxOutputTokens,
 		"responses_compaction_retained_items", cfg.ResponsesCompactionRetainedItems,
 		"responses_compaction_max_input_chars", cfg.ResponsesCompactionMaxInputRunes,
+		"responses_memory_backend", cfg.ResponsesMemoryBackend,
+		"responses_memory_inject", cfg.ResponsesMemoryInject,
+		"responses_memory_max_notes", cfg.ResponsesMemoryMaxNotes,
+		"responses_memory_max_note_bytes", cfg.ResponsesMemoryMaxNoteBytes,
+		"responses_memory_max_context_bytes", cfg.ResponsesMemoryMaxContextBytes,
+		"responses_memory_metadata_namespace", cfg.ResponsesMemoryMetadataNamespace,
 		"responses_computer_backend", cfg.ResponsesComputerBackend,
 		"responses_code_interpreter_backend", cfg.ResponsesCodeInterpreterBackend,
 		"responses_code_interpreter_python_binary", cfg.ResponsesCodeInterpreterPythonBinary,

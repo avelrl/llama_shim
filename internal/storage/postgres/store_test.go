@@ -107,6 +107,9 @@ func TestStoreGovernancePurgeDryRunAndApply(t *testing.T) {
 	require.ErrorIs(t, err, storage.ErrNotFound)
 	_, err = store.SQLiteSidecar().GetFile(ctx, prefix+"file_governance")
 	require.ErrorIs(t, err, storage.ErrNotFound)
+	memoryNotes, err := store.ListMemoryNotes(ctx, domain.ListMemoryNotesQuery{SessionID: prefix + "session_governance", IncludeGlobal: true, Limit: 8})
+	require.NoError(t, err)
+	require.Empty(t, memoryNotes)
 }
 
 func TestStoreFilePaginationSkipsContentAndMirrorsSidecar(t *testing.T) {
@@ -1282,6 +1285,16 @@ func seedPostgresGovernancePurgeState(t *testing.T, ctx context.Context, store *
 		CreatedAt:    1778067600,
 	}
 	require.NoError(t, store.SaveChatCompletion(ctx, chat))
+	require.NoError(t, store.SaveMemoryNote(ctx, domain.MemoryNote{
+		ID:         prefix + "mem_governance",
+		Scope:      "session",
+		SessionID:  prefix + "session_governance",
+		Text:       "governance memory",
+		Source:     "responses.metadata",
+		CreatedAt:  "2026-05-06T09:00:00Z",
+		UpdatedAt:  "2026-05-06T09:00:00Z",
+		LastUsedAt: "2026-05-06T09:00:00Z",
+	}))
 
 	file := testStoredFile(prefix+"file_governance", "governance.txt", "assistants", "governance purge content", 1778067601)
 	require.NoError(t, store.SaveFile(ctx, file))

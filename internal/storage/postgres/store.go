@@ -1659,4 +1659,22 @@ CREATE TABLE IF NOT EXISTS chat_completion_messages (
 
 CREATE INDEX IF NOT EXISTS idx_pg_chat_completion_messages_completion_message
 	ON chat_completion_messages(completion_id, message_id);
+
+CREATE TABLE IF NOT EXISTS memory_notes (
+	id TEXT PRIMARY KEY,
+	scope TEXT NOT NULL,
+	session_id TEXT NOT NULL DEFAULT '',
+	text TEXT NOT NULL,
+	source TEXT NOT NULL DEFAULT '',
+	source_response_id TEXT NOT NULL DEFAULT '',
+	metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	last_used_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_pg_memory_notes_scope_session_updated
+	ON memory_notes(scope, session_id, updated_at, id);
+CREATE INDEX IF NOT EXISTS idx_pg_memory_notes_source_response
+	ON memory_notes(source_response_id);
 `

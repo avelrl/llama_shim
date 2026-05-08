@@ -12,6 +12,7 @@ import (
 	"llama_shim/internal/compactor"
 	"llama_shim/internal/domain"
 	"llama_shim/internal/llama"
+	"llama_shim/internal/memory"
 	"llama_shim/internal/storage"
 	"llama_shim/internal/toolmarkup"
 )
@@ -59,6 +60,8 @@ type ResponseService struct {
 	conversations ConversationStore
 	generator     Generator
 	compactor     compactor.Compactor
+	memoryStore   storage.MemoryStore
+	memoryConfig  memory.Config
 	limits        ResponseServiceLimits
 }
 
@@ -104,6 +107,23 @@ func (s *ResponseService) SetCompactor(next compactor.Compactor) {
 		return
 	}
 	s.compactor = next
+}
+
+func (s *ResponseService) SetMemory(store storage.MemoryStore, cfg memory.Config) error {
+	normalized, err := memory.NormalizeConfig(cfg)
+	if err != nil {
+		return err
+	}
+	if normalized.Enabled() && store == nil {
+		return fmt.Errorf("memory store is required when responses.memory.backend=%s", normalized.Backend)
+	}
+	s.memoryConfig = normalized
+	if normalized.Enabled() {
+		s.memoryStore = store
+	} else {
+		s.memoryStore = nil
+	}
+	return nil
 }
 
 func (s *ResponseService) Create(ctx context.Context, input CreateResponseInput) (domain.Response, error) {
@@ -162,11 +182,11 @@ func (s *ResponseService) TryCreatePreparedLocalTextResponse(ctx context.Context
 }
 
 func (s *ResponseService) PrepareCreateContext(ctx context.Context, input CreateResponseInput) (PreparedResponseContext, error) {
-	return s.prepareResponseContext(ctx, input, true, true)
+	return s.prepareResponseContext(ctx, input, true, true, true)
 }
 
 func (s *ResponseService) CountInputTokens(ctx context.Context, input CreateResponseInput) (domain.ResponseInputTokens, error) {
-	prepared, err := s.prepareResponseContext(ctx, input, false, false)
+	prepared, err := s.prepareResponseContext(ctx, input, false, false, false)
 	if err != nil {
 		return domain.ResponseInputTokens{}, err
 	}
@@ -181,7 +201,7 @@ func (s *ResponseService) CountInputTokens(ctx context.Context, input CreateResp
 }
 
 func (s *ResponseService) Compact(ctx context.Context, input CreateResponseInput) (domain.ResponseCompaction, error) {
-	prepared, err := s.prepareResponseContext(ctx, input, true, false)
+	prepared, err := s.prepareResponseContext(ctx, input, true, false, false)
 	if err != nil {
 		return domain.ResponseCompaction{}, err
 	}
@@ -221,7 +241,7 @@ func compactionResponseOutput(result compactor.Result) []domain.Item {
 	return []domain.Item{result.Item}
 }
 
-func (s *ResponseService) prepareResponseContext(ctx context.Context, input CreateResponseInput, requireModel bool, requireInput bool) (PreparedResponseContext, error) {
+func (s *ResponseService) prepareResponseContext(ctx context.Context, input CreateResponseInput, requireModel bool, requireInput bool, allowMemory bool) (PreparedResponseContext, error) {
 	if requireModel && input.Model == "" {
 		return PreparedResponseContext{}, domain.NewValidationError("model", "model is required")
 	}
@@ -279,7 +299,19 @@ func (s *ResponseService) prepareResponseContext(ctx context.Context, input Crea
 	if err != nil {
 		return PreparedResponseContext{}, err
 	}
-	contextItems = domain.AppendCurrentRequestContext(baseItems, input.Instructions, normalizedInput)
+	contextBase := baseItems
+	if allowMemory {
+		memoryItems, err := s.memoryContextItems(ctx, input)
+		if err != nil {
+			return PreparedResponseContext{}, err
+		}
+		if len(memoryItems) > 0 {
+			contextBase = make([]domain.Item, 0, len(baseItems)+len(memoryItems))
+			contextBase = append(contextBase, baseItems...)
+			contextBase = append(contextBase, memoryItems...)
+		}
+	}
+	contextItems = domain.AppendCurrentRequestContext(contextBase, input.Instructions, normalizedInput)
 	effectiveInput := make([]domain.Item, 0, len(baseItems)+len(normalizedInput))
 	effectiveInput = append(effectiveInput, baseItems...)
 	effectiveInput = append(effectiveInput, normalizedInput...)
@@ -397,6 +429,9 @@ func (s *ResponseService) SaveExternalResponse(ctx context.Context, prepared Pre
 		if err := s.responses.SaveResponse(ctx, stored); err != nil {
 			return domain.Response{}, err
 		}
+	}
+	if err := s.captureMemoryNote(ctx, input, response.ID); err != nil {
+		return domain.Response{}, err
 	}
 
 	return response, nil
@@ -830,6 +865,9 @@ func (s *ResponseService) completeCreate(ctx context.Context, prepared preparedR
 		if err := s.responses.SaveResponse(ctx, stored); err != nil {
 			return domain.Response{}, err
 		}
+	}
+	if err := s.captureMemoryNote(ctx, input, response.ID); err != nil {
+		return domain.Response{}, err
 	}
 
 	return response, nil

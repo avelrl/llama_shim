@@ -45,6 +45,12 @@ type RouterDeps struct {
 	ResponsesCompactionModel                 string
 	ResponsesCompactionRetainedItems         int
 	ResponsesCompactionMaxInputRunes         int
+	ResponsesMemoryBackend                   string
+	ResponsesMemoryInject                    bool
+	ResponsesMemoryMaxNotes                  int
+	ResponsesMemoryMaxNoteBytes              int64
+	ResponsesMemoryMaxContextBytes           int64
+	ResponsesMemoryMetadataNamespace         string
 	ResponsesWebSearchBackend                string
 	ResponsesImageGenerationBackend          string
 	WebSearchProvider                        websearch.Provider

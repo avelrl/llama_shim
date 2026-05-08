@@ -474,6 +474,12 @@ responses:
 	t.Setenv("RESPONSES_COMPACTION_MAX_OUTPUT_TOKENS", "777")
 	t.Setenv("RESPONSES_COMPACTION_RETAINED_ITEMS", "6")
 	t.Setenv("RESPONSES_COMPACTION_MAX_INPUT_CHARS", "50000")
+	t.Setenv("RESPONSES_MEMORY_BACKEND", "local")
+	t.Setenv("RESPONSES_MEMORY_INJECT", "true")
+	t.Setenv("RESPONSES_MEMORY_MAX_NOTES", "6")
+	t.Setenv("RESPONSES_MEMORY_MAX_NOTE_BYTES", "3KiB")
+	t.Setenv("RESPONSES_MEMORY_MAX_CONTEXT_BYTES", "9KiB")
+	t.Setenv("RESPONSES_MEMORY_METADATA_NAMESPACE", "local.memory")
 	t.Setenv("RESPONSES_COMPUTER_BACKEND", "chat_completions")
 	t.Setenv("RESPONSES_CODEX_ENABLE_COMPATIBILITY", "true")
 	t.Setenv("RESPONSES_CODE_INTERPRETER_BACKEND", "docker")
@@ -553,6 +559,12 @@ responses:
 	require.Equal(t, 777, cfg.ResponsesCompactionMaxOutputTokens)
 	require.Equal(t, 6, cfg.ResponsesCompactionRetainedItems)
 	require.Equal(t, 50000, cfg.ResponsesCompactionMaxInputRunes)
+	require.Equal(t, "local", cfg.ResponsesMemoryBackend)
+	require.True(t, cfg.ResponsesMemoryInject)
+	require.Equal(t, 6, cfg.ResponsesMemoryMaxNotes)
+	require.EqualValues(t, 3<<10, cfg.ResponsesMemoryMaxNoteBytes)
+	require.EqualValues(t, 9<<10, cfg.ResponsesMemoryMaxContextBytes)
+	require.Equal(t, "local.memory", cfg.ResponsesMemoryMetadataNamespace)
 	require.Equal(t, config.ResponsesComputerBackendChatCompletions, cfg.ResponsesComputerBackend)
 	require.True(t, cfg.ResponsesCodexEnableCompatibility)
 	require.Equal(t, config.ResponsesCodeInterpreterBackendDocker, cfg.ResponsesCodeInterpreterBackend)
@@ -1081,6 +1093,20 @@ responses:
 	_, err := config.Load(configPath)
 	require.Error(t, err)
 	require.ErrorContains(t, err, "parse responses.computer.backend")
+}
+
+func TestLoadRejectsUnsupportedMemoryBackend(t *testing.T) {
+	disableDotEnv(t)
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	writeFile(t, configPath, `
+responses:
+  memory:
+    backend: bogus
+`)
+
+	_, err := config.Load(configPath)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "parse responses.memory config")
 }
 
 func TestLoadParsesLlamaProviders(t *testing.T) {

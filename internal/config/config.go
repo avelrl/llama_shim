@@ -11,6 +11,7 @@ import (
 
 	"llama_shim/internal/compactor"
 	"llama_shim/internal/imagegen"
+	"llama_shim/internal/memory"
 	"llama_shim/internal/retrieval"
 	"llama_shim/internal/storage"
 	"llama_shim/internal/websearch"
@@ -102,6 +103,12 @@ type Config struct {
 	ResponsesCompactionMaxOutputTokens             int
 	ResponsesCompactionRetainedItems               int
 	ResponsesCompactionMaxInputRunes               int
+	ResponsesMemoryBackend                         string
+	ResponsesMemoryInject                          bool
+	ResponsesMemoryMaxNotes                        int
+	ResponsesMemoryMaxNoteBytes                    int64
+	ResponsesMemoryMaxContextBytes                 int64
+	ResponsesMemoryMetadataNamespace               string
 	ResponsesComputerBackend                       string
 	ChatCompletionsStoreWhenOmitted                bool
 	ChatCompletionsUpstreamCompatibility           []ChatCompletionsUpstreamCompatibilityRule
@@ -278,6 +285,9 @@ func Load(configPath string) (Config, error) {
 		ResponsesCompactionBackend:                     strings.ToLower(strings.TrimSpace(v.GetString("responses.compaction.backend"))),
 		ResponsesCompactionBaseURL:                     strings.TrimSpace(v.GetString("responses.compaction.base_url")),
 		ResponsesCompactionModel:                       strings.TrimSpace(v.GetString("responses.compaction.model")),
+		ResponsesMemoryBackend:                         strings.ToLower(strings.TrimSpace(v.GetString("responses.memory.backend"))),
+		ResponsesMemoryInject:                          v.GetBool("responses.memory.inject"),
+		ResponsesMemoryMetadataNamespace:               strings.TrimSpace(v.GetString("responses.memory.metadata_namespace")),
 		ResponsesComputerBackend:                       strings.ToLower(strings.TrimSpace(v.GetString("responses.computer.backend"))),
 		ChatCompletionsStoreWhenOmitted:                v.GetBool("chat_completions.default_store_when_omitted"),
 		ResponsesMode:                                  strings.ToLower(strings.TrimSpace(v.GetString("responses.mode"))),
@@ -650,6 +660,35 @@ func Load(configPath string) (Config, error) {
 	cfg.ResponsesCompactionMaxOutputTokens = normalizedCompaction.MaxOutputTokens
 	cfg.ResponsesCompactionRetainedItems = normalizedCompaction.RetainedItems
 	cfg.ResponsesCompactionMaxInputRunes = normalizedCompaction.MaxInputRunes
+	memoryMaxNotes, err := parseNonNegativeInt(v.GetString("responses.memory.max_notes"))
+	if err != nil {
+		return Config{}, fmt.Errorf("parse responses.memory.max_notes: %w", err)
+	}
+	memoryMaxNoteBytes, err := parseByteSize(v.GetString("responses.memory.max_note_bytes"))
+	if err != nil {
+		return Config{}, fmt.Errorf("parse responses.memory.max_note_bytes: %w", err)
+	}
+	memoryMaxContextBytes, err := parseByteSize(v.GetString("responses.memory.max_context_bytes"))
+	if err != nil {
+		return Config{}, fmt.Errorf("parse responses.memory.max_context_bytes: %w", err)
+	}
+	normalizedMemory, err := memory.NormalizeConfig(memory.Config{
+		Backend:           cfg.ResponsesMemoryBackend,
+		Inject:            cfg.ResponsesMemoryInject,
+		MaxNotes:          memoryMaxNotes,
+		MaxNoteBytes:      int(memoryMaxNoteBytes),
+		MaxContextBytes:   int(memoryMaxContextBytes),
+		MetadataNamespace: cfg.ResponsesMemoryMetadataNamespace,
+	})
+	if err != nil {
+		return Config{}, fmt.Errorf("parse responses.memory config: %w", err)
+	}
+	cfg.ResponsesMemoryBackend = normalizedMemory.Backend
+	cfg.ResponsesMemoryInject = normalizedMemory.Inject
+	cfg.ResponsesMemoryMaxNotes = normalizedMemory.MaxNotes
+	cfg.ResponsesMemoryMaxNoteBytes = int64(normalizedMemory.MaxNoteBytes)
+	cfg.ResponsesMemoryMaxContextBytes = int64(normalizedMemory.MaxContextBytes)
+	cfg.ResponsesMemoryMetadataNamespace = normalizedMemory.MetadataNamespace
 	if err := parseDuration(v.GetString("responses.code_interpreter.cleanup_interval"), &cfg.ResponsesCodeInterpreterCleanupInterval); err != nil {
 		return Config{}, fmt.Errorf("parse responses.code_interpreter.cleanup_interval: %w", err)
 	}
@@ -799,6 +838,12 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("responses.compaction.max_output_tokens", "1200")
 	v.SetDefault("responses.compaction.retained_items", "8")
 	v.SetDefault("responses.compaction.max_input_chars", "60000")
+	v.SetDefault("responses.memory.backend", memory.BackendDisabled)
+	v.SetDefault("responses.memory.inject", false)
+	v.SetDefault("responses.memory.max_notes", "8")
+	v.SetDefault("responses.memory.max_note_bytes", "2KiB")
+	v.SetDefault("responses.memory.max_context_bytes", "8KiB")
+	v.SetDefault("responses.memory.metadata_namespace", memory.DefaultMetadataNamespace)
 	v.SetDefault("responses.computer.backend", ResponsesComputerBackendDisabled)
 	v.SetDefault("responses.code_interpreter.backend", "")
 	v.SetDefault("responses.code_interpreter.enable_unsafe_host_executor", false)

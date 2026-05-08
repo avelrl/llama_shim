@@ -27,6 +27,7 @@ type Store interface {
 	VectorStore
 	ChatCompletionStore
 	CodeInterpreterStore
+	MemoryStore
 }
 
 type ResponseStore interface {
@@ -103,4 +104,10 @@ type CodeInterpreterStore interface {
 	SaveCodeInterpreterContainerFile(ctx context.Context, file domain.CodeInterpreterContainerFile) (domain.CodeInterpreterContainerFile, error)
 	DeleteCodeInterpreterContainerFile(ctx context.Context, containerID string, id string) error
 	CountCodeInterpreterContainerFileBackingReferences(ctx context.Context, backingFileID string) (int, error)
+}
+
+type MemoryStore interface {
+	SaveMemoryNote(ctx context.Context, note domain.MemoryNote) error
+	ListMemoryNotes(ctx context.Context, query domain.ListMemoryNotesQuery) ([]domain.MemoryNote, error)
+	TouchMemoryNotes(ctx context.Context, ids []string, lastUsedAt string) error
 }

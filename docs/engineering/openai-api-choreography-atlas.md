@@ -1,6 +1,6 @@
 # OpenAI API Choreography Atlas
 
-Last updated: May 7, 2026.
+Last updated: May 8, 2026.
 
 This document is a diagram-first map of how the current OpenAI API surfaces
 work, how Codex uses them in practice, and where `llama_shim` intentionally
@@ -16,6 +16,7 @@ Docs MCP, and the current official pages for:
 
 - [Migrate to the Responses API](https://developers.openai.com/api/docs/guides/migrate-to-responses)
 - [Conversation state](https://developers.openai.com/api/docs/guides/conversation-state)
+- [Text generation](https://developers.openai.com/api/docs/guides/text)
 - [Streaming API responses](https://developers.openai.com/api/docs/guides/streaming-responses)
 - [WebSocket Mode](https://developers.openai.com/api/docs/guides/websocket-mode)
 - [Compaction](https://developers.openai.com/api/docs/guides/compaction)
@@ -108,6 +109,7 @@ flowchart TB
   shim["llama_shim"]
   upstream["OpenAI-compatible upstream model backend"]
   store["SQLite local state"]
+  memory["V4 shim-owned memory notes"]
   localTools["Local tool runtimes"]
   hostedLike["Shim-owned hosted-like tools"]
   proxy["Raw upstream proxy path"]
@@ -125,6 +127,7 @@ flowchart TB
   ops --> shim
 
   shim --> store
+  shim --> memory
   shim --> upstream
   shim --> localTools
   shim --> hostedLike
@@ -279,6 +282,9 @@ Important reality:
 - `previous_response_id` and `conversation` are mutually exclusive.
 - Stored state uses effective input snapshots so follow-up turns can be rebuilt
   locally.
+- V4 state/session memory is a shim-owned extension: explicit metadata notes
+  can be injected as hidden local developer context, but they are not stored as
+  public `input_items`.
 - Unsupported shapes go to upstream in `prefer_local` only when there is no
   active shim-owned state that forces local handling.
 
@@ -291,20 +297,24 @@ flowchart TB
   previous["previous_response_id"]
   conversation["conversation object"]
   compact["compaction"]
+  memory["V4 state/session memory"]
 
   start --> manual
   start --> previous
   start --> conversation
   start --> compact
+  start --> memory
 
   manual --> m1["Client sends prior input and output items each turn"]
   previous --> p1["Client sends only new input plus previous_response_id"]
   conversation --> c1["Shim stores conversation items under conv id"]
   compact --> k1["Old state compressed into compaction item plus retained window"]
+  memory --> mem1["Explicit metadata notes stored in shim-local memory table"]
 
   p1 --> storeTrue["Best with store=true or local stored state"]
   c1 --> durable["Durable local conversation item ledger"]
   k1 --> smaller["Smaller next context window"]
+  mem1 --> hidden["Optional hidden developer context for local generation"]
 ```
 
 Shim-specific behavior:
@@ -313,6 +323,9 @@ Shim-specific behavior:
 - Conversation items preserve both response input and response output items.
 - Compaction items are shim-owned opaque state, not exact hosted encrypted
   payloads.
+- V4 memory notes are explicit shim-owned state, scoped as `global` or
+  `session`, and injected only on local generation paths when configured or
+  requested through metadata.
 
 ## 4. HTTP SSE Event Flow
 

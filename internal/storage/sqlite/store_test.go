@@ -173,6 +173,57 @@ func TestStoreSaveResponseRoundTripAndLineage(t *testing.T) {
 	require.ErrorIs(t, err, sqlite.ErrNotFound)
 }
 
+func TestStoreMemoryNotesRoundTripAndTouch(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store := openTestStore(t, ctx)
+
+	err := store.SaveMemoryNote(ctx, domain.MemoryNote{
+		ID:               "mem_session",
+		Scope:            "session",
+		SessionID:        "session-1",
+		Text:             "my code = 123",
+		Source:           "responses.metadata",
+		SourceResponseID: "resp_1",
+		Metadata:         map[string]string{"origin": "test"},
+		CreatedAt:        "2026-05-08T10:00:00Z",
+		UpdatedAt:        "2026-05-08T10:00:00Z",
+		LastUsedAt:       "2026-05-08T10:00:00Z",
+	})
+	require.NoError(t, err)
+	err = store.SaveMemoryNote(ctx, domain.MemoryNote{
+		ID:         "mem_global",
+		Scope:      "global",
+		Text:       "answer tersely",
+		CreatedAt:  "2026-05-08T09:00:00Z",
+		UpdatedAt:  "2026-05-08T09:00:00Z",
+		LastUsedAt: "2026-05-08T09:00:00Z",
+	})
+	require.NoError(t, err)
+
+	notes, err := store.ListMemoryNotes(ctx, domain.ListMemoryNotesQuery{
+		SessionID:     "session-1",
+		IncludeGlobal: true,
+		Limit:         8,
+	})
+	require.NoError(t, err)
+	require.Len(t, notes, 2)
+	require.Equal(t, "mem_session", notes[0].ID)
+	require.Equal(t, map[string]string{"origin": "test"}, notes[0].Metadata)
+	require.Equal(t, "mem_global", notes[1].ID)
+
+	err = store.TouchMemoryNotes(ctx, []string{"mem_session"}, "2026-05-08T11:00:00Z")
+	require.NoError(t, err)
+	notes, err = store.ListMemoryNotes(ctx, domain.ListMemoryNotesQuery{
+		SessionID: "session-1",
+		Limit:     8,
+	})
+	require.NoError(t, err)
+	require.Len(t, notes, 1)
+	require.Equal(t, "2026-05-08T11:00:00Z", notes[0].LastUsedAt)
+}
+
 func TestStoreGetResponseLineageLimitsAndSkipsStoredResponseJSON(t *testing.T) {
 	t.Parallel()
 
@@ -1961,6 +2012,9 @@ func TestStoreGovernancePurgeDryRunAndApply(t *testing.T) {
 	require.ErrorIs(t, err, storage.ErrNotFound)
 	_, err = store.GetCodeInterpreterSession(ctx, "ci_governance")
 	require.ErrorIs(t, err, storage.ErrNotFound)
+	memoryNotes, err := store.ListMemoryNotes(ctx, domain.ListMemoryNotesQuery{SessionID: "session-governance", IncludeGlobal: true, Limit: 8})
+	require.NoError(t, err)
+	require.Empty(t, memoryNotes)
 }
 
 func openTestStore(t *testing.T, ctx context.Context) *sqlite.Store {
@@ -2014,6 +2068,16 @@ func seedSQLiteGovernancePurgeState(t *testing.T, ctx context.Context, store *sq
 		CreatedAt:    1778067600,
 	}
 	require.NoError(t, store.SaveChatCompletion(ctx, completion))
+	require.NoError(t, store.SaveMemoryNote(ctx, domain.MemoryNote{
+		ID:         "mem_governance",
+		Scope:      "session",
+		SessionID:  "session-governance",
+		Text:       "governance memory",
+		Source:     "responses.metadata",
+		CreatedAt:  "2026-05-06T09:00:00Z",
+		UpdatedAt:  "2026-05-06T09:00:00Z",
+		LastUsedAt: "2026-05-06T09:00:00Z",
+	}))
 
 	file := domain.StoredFile{
 		ID:        "file_governance",

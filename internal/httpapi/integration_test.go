@@ -31,6 +31,7 @@ import (
 	"llama_shim/internal/domain"
 	"llama_shim/internal/httpapi"
 	"llama_shim/internal/imagegen"
+	"llama_shim/internal/memory"
 	"llama_shim/internal/retrieval"
 	"llama_shim/internal/sandbox"
 	"llama_shim/internal/storage"
@@ -526,6 +527,11 @@ func TestCapabilitiesEndpointReportsConfiguredRuntime(t *testing.T) {
 		ResponsesCompactionModel:          "compact-model",
 		ResponsesCompactionRetainedItems:  5,
 		ResponsesCompactionMaxInputRunes:  45000,
+		ResponsesMemoryBackend:            memory.BackendLocal,
+		ResponsesMemoryInject:             true,
+		ResponsesMemoryMaxNotes:           4,
+		ResponsesMemoryMaxNoteBytes:       1024,
+		ResponsesMemoryMaxContextBytes:    2048,
 		RateLimitEnabled:                  true,
 		RateLimitRequestsPerMinute:        90,
 		RetrievalConfig:                   retrieval.Config{IndexBackend: retrieval.IndexBackendSQLiteVec},
@@ -583,6 +589,17 @@ func TestCapabilitiesEndpointReportsConfiguredRuntime(t *testing.T) {
 	require.Equal(t, "proxy_first_or_local_state", asStringAny(compactionRouting["prefer_upstream"]))
 	require.Equal(t, "local_subset", asStringAny(compactionRouting["local_only"]))
 
+	memoryRuntime := runtime["memory"].(map[string]any)
+	require.Equal(t, true, memoryRuntime["enabled"])
+	require.Equal(t, "shim_owned_extension", asStringAny(memoryRuntime["support"]))
+	require.Equal(t, memory.BackendLocal, asStringAny(memoryRuntime["backend"]))
+	require.Equal(t, "local_subset", asStringAny(memoryRuntime["capability_class"]))
+	require.Equal(t, true, memoryRuntime["inject_by_default"])
+	require.Equal(t, float64(4), memoryRuntime["max_notes"])
+	require.Equal(t, float64(1024), memoryRuntime["max_note_bytes"])
+	require.Equal(t, float64(2048), memoryRuntime["max_context_bytes"])
+	require.Equal(t, memory.DefaultMetadataNamespace, asStringAny(memoryRuntime["metadata_namespace"]))
+
 	constrained := runtime["constrained_decoding"].(map[string]any)
 	require.Equal(t, true, constrained["enabled"])
 	require.Equal(t, "shim_validate_repair", asStringAny(constrained["support"]))
@@ -624,6 +641,7 @@ func TestCapabilitiesEndpointReportsConfiguredRuntime(t *testing.T) {
 	require.Equal(t, "sqlite", asStringAny(persistence["backend"]))
 	require.Equal(t, "sqlite", asStringAny(persistence["file_store"]))
 	require.Equal(t, "sqlite", asStringAny(persistence["vector_store"]))
+	require.Equal(t, "sqlite", asStringAny(persistence["memory_store"]))
 	require.Equal(t, true, persistence["expected_durable"])
 
 	retrievalRuntime := runtime["retrieval"].(map[string]any)
@@ -786,6 +804,18 @@ func TestCapabilitiesEndpointReportsConfiguredRuntime(t *testing.T) {
 	require.Equal(t, "client_profile", asStringAny(codexPlugin["kind"]))
 	require.Equal(t, "client_profile.codex", asStringAny(codexPlugin["capability_component_id"]))
 
+	memoryComponent := backendComponents["runtime.memory"]
+	require.Equal(t, "runtime", asStringAny(memoryComponent["category"]))
+	require.Equal(t, "state_session_memory", asStringAny(memoryComponent["kind"]))
+	require.Equal(t, memory.BackendLocal, asStringAny(memoryComponent["backend"]))
+	require.Equal(t, true, memoryComponent["enabled"])
+	require.Equal(t, true, memoryComponent["ready"])
+	memoryPlugin := pluginDescriptors["runtime.memory"]
+	require.Equal(t, "runtime", asStringAny(memoryPlugin["kind"]))
+	require.Equal(t, "runtime.memory", asStringAny(memoryPlugin["capability_component_id"]))
+	require.Equal(t, true, memoryPlugin["production_intended"])
+	require.Contains(t, memoryPlugin["limits"].([]any), "responses.memory.max_context_bytes")
+
 	probes := payload["probes"].(map[string]any)
 	retrievalProbe := probes["retrieval_embedder"].(map[string]any)
 	require.Equal(t, true, retrievalProbe["enabled"])
@@ -806,6 +836,34 @@ func TestCapabilitiesEndpointReportsConfiguredRuntime(t *testing.T) {
 	require.Equal(t, true, computerProbe["enabled"])
 	require.Equal(t, true, computerProbe["checked"])
 	require.Equal(t, true, computerProbe["ready"])
+}
+
+func TestResponsesMemoryMetadataCaptureAndInjection(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		ResponsesMemoryBackend: memory.BackendLocal,
+		ResponsesMemoryInject:  true,
+	})
+
+	status, first := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model": "devstack-model",
+		"input": "Reply OK",
+		"metadata": map[string]any{
+			"llama_shim.memory.session_id": "session-http",
+			"llama_shim.memory.remember":   "my code = 123",
+		},
+	})
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, "OK", asStringAny(first["output_text"]))
+
+	status, second := rawRequest(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model": "devstack-model",
+		"input": "What was my code?",
+		"metadata": map[string]any{
+			"llama_shim.memory.session_id": "session-http",
+		},
+	})
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, "123", asStringAny(second["output_text"]))
 }
 
 func TestCapabilitiesEndpointReportsSQLiteFTS5RetrievalBackend(t *testing.T) {

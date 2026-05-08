@@ -241,6 +241,7 @@ Plugin, model, and capability settings map:
 | Make Codex know model capabilities and tool shapes | `responses.codex.model_metadata.models[]` using the same public model id Codex launches with | Codex-specific `/v1/models?client_version=...` or `/api/codex/models`; normal `/v1/models` stays OpenAI-shaped | `make codex-config-doctor`, then `make codex-eval-auto` |
 | Adapt request shape for a provider without changing public input | `chat_completions.upstream_compatibility.models[]`, `responses.codex.upstream_input_compatibility.models[]`, and `responses.upstream_tool_compatibility.models[]` | `/debug/traces/{request_id}.transforms[]` and plugin `request_cleanup_hooks` | V4 preflight trace check, provider-routing smoke, and focused Codex evals |
 | Enable or disable local tool/runtime backends | `responses.web_search`, `responses.image_generation`, `responses.computer`, `responses.code_interpreter`, `responses.compaction`, `retrieval.*` | backend components and plugin descriptors with enabled/ready state | the matching domain smoke, plus V4 preflight for registry consistency |
+| Enable explicit V4 state/session memory | `responses.memory.*` plus request metadata under `llama_shim.memory.*` | `/debug/capabilities.runtime.memory`, `runtime.memory` plugin, and storage/governance reports | focused memory tests plus `make v4-preflight-smoke`; see [V4 State And Session Memory](../v4-state-session-memory.md) |
 | Tune debug trace availability | `shim.debug_traces.*` or `SHIM_DEBUG_TRACES_*` | `/debug/capabilities.runtime.ops.debug_traces` and `/debug/traces` | `make v4-preflight-smoke` |
 
 Use these rules when adding a model or plugin:
@@ -333,6 +334,8 @@ Dry-run is the default. Use `-apply -confirm purge-all-local-state` only after
 reviewing the dry-run counts. In Postgres mode this purges the current
 Postgres-owned beta tables plus the configured SQLite sidecar, because file
 mirrors and code-interpreter runtime state remain sidecar-owned there.
+V4 memory notes are included in the same configured-store purge because they
+are shim-owned durable state.
 
 Run the isolated SQLite governance smoke before changing this workflow:
 

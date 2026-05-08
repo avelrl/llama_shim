@@ -14,6 +14,7 @@ import (
 	"llama_shim/internal/httpapi"
 	"llama_shim/internal/imagegen"
 	"llama_shim/internal/llama"
+	"llama_shim/internal/memory"
 	"llama_shim/internal/retrieval"
 	"llama_shim/internal/sandbox"
 	"llama_shim/internal/service"
@@ -70,6 +71,12 @@ type TestAppOptions struct {
 	ResponsesCompactionModel              string
 	ResponsesCompactionRetainedItems      int
 	ResponsesCompactionMaxInputRunes      int
+	ResponsesMemoryBackend                string
+	ResponsesMemoryInject                 bool
+	ResponsesMemoryMaxNotes               int
+	ResponsesMemoryMaxNoteBytes           int64
+	ResponsesMemoryMaxContextBytes        int64
+	ResponsesMemoryMetadataNamespace      string
 	ChatCompletionsStoreWhenOmitted       *bool
 	AuthMode                              string
 	BearerTokens                          []string
@@ -153,6 +160,16 @@ func NewTestAppWithOptions(t *testing.T, options TestAppOptions) *TestApp {
 		StoredLineageMaxItems:          options.ResponsesStoredLineageMaxItems,
 		LocalToolOutputSummaryMaxBytes: options.ResponsesLocalToolOutputSummaryBytes,
 	})
+	if err := responseService.SetMemory(store, memory.Config{
+		Backend:           options.ResponsesMemoryBackend,
+		Inject:            options.ResponsesMemoryInject,
+		MaxNotes:          options.ResponsesMemoryMaxNotes,
+		MaxNoteBytes:      int(options.ResponsesMemoryMaxNoteBytes),
+		MaxContextBytes:   int(options.ResponsesMemoryMaxContextBytes),
+		MetadataNamespace: options.ResponsesMemoryMetadataNamespace,
+	}); err != nil {
+		t.Fatalf("configure response memory: %v", err)
+	}
 	conversationService := service.NewConversationService(store)
 	testCtx, cancel := context.WithCancel(context.Background())
 
@@ -221,6 +238,12 @@ func NewTestAppWithOptions(t *testing.T, options TestAppOptions) *TestApp {
 		ResponsesCompactionModel:                 options.ResponsesCompactionModel,
 		ResponsesCompactionRetainedItems:         options.ResponsesCompactionRetainedItems,
 		ResponsesCompactionMaxInputRunes:         options.ResponsesCompactionMaxInputRunes,
+		ResponsesMemoryBackend:                   options.ResponsesMemoryBackend,
+		ResponsesMemoryInject:                    options.ResponsesMemoryInject,
+		ResponsesMemoryMaxNotes:                  options.ResponsesMemoryMaxNotes,
+		ResponsesMemoryMaxNoteBytes:              options.ResponsesMemoryMaxNoteBytes,
+		ResponsesMemoryMaxContextBytes:           options.ResponsesMemoryMaxContextBytes,
+		ResponsesMemoryMetadataNamespace:         options.ResponsesMemoryMetadataNamespace,
 		ResponsesWebSearchBackend:                capabilityWebSearchBackend(options),
 		ResponsesImageGenerationBackend:          capabilityImageGenerationBackend(options),
 		WebSearchProvider:                        options.WebSearchProvider,

@@ -12,6 +12,7 @@ var postgresGovernancePurgeTables = []string{
 	"response_replay_artifacts",
 	"conversation_items",
 	"chat_completion_messages",
+	"memory_notes",
 	"vector_store_chunks",
 	"vector_store_files",
 	"responses",

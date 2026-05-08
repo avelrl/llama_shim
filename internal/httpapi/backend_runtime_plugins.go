@@ -7,6 +7,7 @@ import (
 	"llama_shim/internal/compactor"
 	"llama_shim/internal/config"
 	"llama_shim/internal/imagegen"
+	"llama_shim/internal/memory"
 	"llama_shim/internal/plugincontract"
 	"llama_shim/internal/retrieval"
 	"llama_shim/internal/storage"
@@ -36,6 +37,8 @@ func runtimeBackendPlugins(deps RouterDeps, probes capabilityProbeSet) []pluginc
 	webSearchBackend := normalizedCapabilityBackend(deps.ResponsesWebSearchBackend, deps.WebSearchProvider != nil, websearch.BackendSearXNG)
 	imageBackend := normalizedCapabilityBackend(deps.ResponsesImageGenerationBackend, deps.ImageGenerationProvider != nil, imagegen.BackendFixture)
 	codeInterpreterBackend := localCodeInterpreterCapabilityBackend(deps.LocalCodeInterpreter)
+	memoryBackend := normalizedCapabilityBackend(deps.ResponsesMemoryBackend, strings.EqualFold(strings.TrimSpace(deps.ResponsesMemoryBackend), memory.BackendLocal), memory.BackendLocal)
+	memoryEnabled := strings.EqualFold(memoryBackend, memory.BackendLocal)
 
 	plugins := []plugincontract.CapabilityPlugin{
 		newRegisteredCapabilityPlugin(backendcap.Component{
@@ -122,6 +125,26 @@ func runtimeBackendPlugins(deps RouterDeps, probes capabilityProbeSet) []pluginc
 			Kind:               "runtime",
 			CIFixtureSafe:      normalizedCompactionBackend(deps.ResponsesCompactionBackend) == compactor.BackendHeuristic,
 			ProductionIntended: true,
+		}),
+		newRegisteredCapabilityPlugin(backendcap.Component{
+			ID:              "runtime.memory",
+			Category:        "runtime",
+			Kind:            "state_session_memory",
+			ConfigNamespace: "responses.memory",
+			Backend:         memoryBackend,
+			CapabilityClass: backendcap.ClassLocalSubset,
+			Enabled:         memoryEnabled,
+			Ready:           memoryEnabled && probeReady(probes.Storage),
+			ReadinessProbe:  "storage",
+			StateOwnership:  "shim_owned_memory",
+			PublicSurfaces:  []string{"responses.local_state_memory"},
+			RoutingModes:    standardRoutingModes(),
+			Evidence:        []string{"docs/v4-state-session-memory.md", "docs/v4-scope.md"},
+		}, capabilityPluginOptions{
+			Kind:               "runtime",
+			CIFixtureSafe:      true,
+			ProductionIntended: memoryEnabled,
+			Limits:             []string{"responses.memory.max_notes", "responses.memory.max_note_bytes", "responses.memory.max_context_bytes"},
 		}),
 		newRegisteredCapabilityPlugin(backendcap.Component{
 			ID:              "runtime.constrained_decoding",

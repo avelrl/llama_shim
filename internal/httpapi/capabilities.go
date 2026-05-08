@@ -11,6 +11,7 @@ import (
 	"llama_shim/internal/compactor"
 	"llama_shim/internal/config"
 	"llama_shim/internal/imagegen"
+	"llama_shim/internal/memory"
 	"llama_shim/internal/plugincontract"
 	"llama_shim/internal/retrieval"
 	"llama_shim/internal/storage"
@@ -91,6 +92,7 @@ type capabilityRuntimeConfig struct {
 	ChatCompletionsUpstreamCompatibility int                                 `json:"chat_completions_upstream_compatibility_rules"`
 	UpstreamToolCompatibilityRules       int                                 `json:"upstream_tool_compatibility_rules"`
 	Compaction                           capabilityCompactionConfig          `json:"compaction"`
+	Memory                               capabilityMemoryConfig              `json:"memory"`
 	ConstrainedDecoding                  capabilityConstrainedDecodingConfig `json:"constrained_decoding"`
 	Codex                                capabilityCodexConfig               `json:"codex"`
 	UpstreamProviderRouting              capabilityUpstreamProviderRouting   `json:"upstream_provider_routing"`
@@ -122,6 +124,19 @@ type capabilityCompactionConfig struct {
 	RetainedItems   int               `json:"retained_items,omitempty"`
 	MaxInputChars   int               `json:"max_input_chars,omitempty"`
 	Routing         capabilityRouting `json:"routing"`
+}
+
+type capabilityMemoryConfig struct {
+	Enabled           bool              `json:"enabled"`
+	Support           string            `json:"support"`
+	Backend           string            `json:"backend"`
+	CapabilityClass   string            `json:"capability_class"`
+	InjectByDefault   bool              `json:"inject_by_default"`
+	MaxNotes          int               `json:"max_notes"`
+	MaxNoteBytes      int64             `json:"max_note_bytes"`
+	MaxContextBytes   int64             `json:"max_context_bytes"`
+	MetadataNamespace string            `json:"metadata_namespace"`
+	Routing           capabilityRouting `json:"routing"`
 }
 
 type capabilityConstrainedDecodingConfig struct {
@@ -168,6 +183,7 @@ type capabilityPersistenceInfo struct {
 	FileStore            string `json:"file_store"`
 	VectorStore          string `json:"vector_store"`
 	CodeInterpreterStore string `json:"code_interpreter_store"`
+	MemoryStore          string `json:"memory_store"`
 	ExpectedDurable      bool   `json:"expected_durable"`
 }
 
@@ -342,6 +358,7 @@ func buildCapabilityManifest(ctx context.Context, deps RouterDeps) capabilityMan
 			ChatCompletionsUpstreamCompatibility: len(deps.ChatCompletionsUpstreamCompatibility),
 			UpstreamToolCompatibilityRules:       len(deps.ResponsesUpstreamToolCompatibility),
 			Compaction:                           compactionCapability(deps),
+			Memory:                               memoryCapability(deps),
 			ConstrainedDecoding:                  constrainedDecodingCapability(deps),
 			Codex: capabilityCodexConfig{
 				CompatibilityEnabled:            deps.ResponsesCodexEnableCompatibility,
@@ -519,6 +536,38 @@ func compactionCapability(deps RouterDeps) capabilityCompactionConfig {
 	}
 }
 
+func memoryCapability(deps RouterDeps) capabilityMemoryConfig {
+	cfg, _ := memory.NormalizeConfig(memory.Config{
+		Backend:           deps.ResponsesMemoryBackend,
+		Inject:            deps.ResponsesMemoryInject,
+		MaxNotes:          deps.ResponsesMemoryMaxNotes,
+		MaxNoteBytes:      int(deps.ResponsesMemoryMaxNoteBytes),
+		MaxContextBytes:   int(deps.ResponsesMemoryMaxContextBytes),
+		MetadataNamespace: deps.ResponsesMemoryMetadataNamespace,
+	})
+	enabled := cfg.Enabled()
+	class := "none"
+	if enabled {
+		class = "local_subset"
+	}
+	return capabilityMemoryConfig{
+		Enabled:           enabled,
+		Support:           "shim_owned_extension",
+		Backend:           cfg.Backend,
+		CapabilityClass:   class,
+		InjectByDefault:   cfg.Inject,
+		MaxNotes:          cfg.MaxNotes,
+		MaxNoteBytes:      int64(cfg.MaxNoteBytes),
+		MaxContextBytes:   int64(cfg.MaxContextBytes),
+		MetadataNamespace: cfg.MetadataNamespace,
+		Routing: capabilityRouting{
+			PreferLocal:    "local_extension",
+			PreferUpstream: "skipped_for_pure_proxy_or_shadow_store",
+			LocalOnly:      "local_extension",
+		},
+	}
+}
+
 func upstreamProviderRoutingCapability(deps RouterDeps) capabilityUpstreamProviderRouting {
 	if len(deps.LlamaProviders) == 0 {
 		return capabilityUpstreamProviderRouting{}
@@ -676,6 +725,7 @@ func capabilityPersistence(deps RouterDeps) capabilityPersistenceInfo {
 		FileStore:            persistenceStoreBackend(backend, "file"),
 		VectorStore:          persistenceStoreBackend(backend, "vector"),
 		CodeInterpreterStore: persistenceStoreBackend(backend, "code_interpreter"),
+		MemoryStore:          persistenceStoreBackend(backend, "memory"),
 		ExpectedDurable:      deps.Store != nil,
 	}
 }
@@ -685,7 +735,7 @@ func persistenceStoreBackend(backend, surface string) string {
 		return backend
 	}
 	switch surface {
-	case "response", "conversation", "chat_completion", "file", "vector":
+	case "response", "conversation", "chat_completion", "file", "vector", "memory":
 		return storage.BackendPostgres
 	default:
 		return storage.BackendSQLite + "_sidecar"

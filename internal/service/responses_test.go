@@ -11,6 +11,7 @@ import (
 
 	"llama_shim/internal/compactor"
 	"llama_shim/internal/domain"
+	"llama_shim/internal/memory"
 	"llama_shim/internal/service"
 )
 
@@ -28,6 +29,115 @@ func TestCreateResponseRejectsMutuallyExclusiveStateFields(t *testing.T) {
 	var validationErr *domain.ValidationError
 	require.ErrorAs(t, err, &validationErr)
 	require.Equal(t, "previous_response_id", validationErr.Param)
+}
+
+func TestCreateResponseInjectsSessionMemoryWithoutPersistingItAsInput(t *testing.T) {
+	t.Parallel()
+
+	responseStore := &recordingResponseStore{}
+	memoryStore := &recordingMemoryStore{
+		notes: []domain.MemoryNote{
+			{
+				ID:        "mem_session",
+				Scope:     "session",
+				SessionID: "session-1",
+				Text:      "my code = 123",
+				UpdatedAt: "2026-05-08T10:00:00Z",
+			},
+			{
+				ID:        "mem_global",
+				Scope:     "global",
+				Text:      "always answer tersely",
+				UpdatedAt: "2026-05-08T09:00:00Z",
+			},
+		},
+	}
+	generator := &recordingGenerator{}
+	svc := service.NewResponseService(responseStore, noopConversationStore{}, generator)
+	require.NoError(t, svc.SetMemory(memoryStore, memory.Config{
+		Backend:           memory.BackendLocal,
+		Inject:            true,
+		MaxNotes:          8,
+		MaxContextBytes:   4096,
+		MetadataNamespace: memory.DefaultMetadataNamespace,
+	}))
+
+	_, err := svc.Create(context.Background(), service.CreateResponseInput{
+		Model:       "test-model",
+		Input:       json.RawMessage(`"What was my code?"`),
+		Metadata:    json.RawMessage(`{"llama_shim.memory.session_id":"session-1"}`),
+		RequestJSON: `{"model":"test-model","input":"What was my code?","metadata":{"llama_shim.memory.session_id":"session-1"}}`,
+	})
+	require.NoError(t, err)
+
+	require.Len(t, generator.contexts, 1)
+	require.Len(t, generator.contexts[0], 2)
+	require.Equal(t, "developer", generator.contexts[0][0].Role)
+	require.Contains(t, domain.MessageText(generator.contexts[0][0]), "my code = 123")
+	require.Contains(t, domain.MessageText(generator.contexts[0][0]), "always answer tersely")
+	require.Equal(t, "What was my code?", domain.MessageText(generator.contexts[0][1]))
+	require.ElementsMatch(t, []string{"mem_session", "mem_global"}, memoryStore.touched)
+
+	require.Len(t, responseStore.saved, 1)
+	require.Len(t, responseStore.saved[0].EffectiveInputItems, 1)
+	require.Equal(t, "What was my code?", domain.MessageText(responseStore.saved[0].EffectiveInputItems[0]))
+}
+
+func TestCreateResponseCapturesMetadataMemoryNote(t *testing.T) {
+	t.Parallel()
+
+	memoryStore := &recordingMemoryStore{}
+	svc := service.NewResponseService(&recordingResponseStore{}, noopConversationStore{}, noopGenerator{})
+	require.NoError(t, svc.SetMemory(memoryStore, memory.Config{
+		Backend:           memory.BackendLocal,
+		MaxNoteBytes:      32,
+		MetadataNamespace: memory.DefaultMetadataNamespace,
+	}))
+
+	response, err := svc.Create(context.Background(), service.CreateResponseInput{
+		Model: "test-model",
+		Input: json.RawMessage(`"Reply OK"`),
+		Metadata: json.RawMessage(`{
+			"llama_shim.memory.session_id":"session-2",
+			"llama_shim.memory.remember":"my code = 123"
+		}`),
+		RequestJSON: `{"model":"test-model","input":"Reply OK"}`,
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, response.ID)
+
+	require.Len(t, memoryStore.saved, 1)
+	saved := memoryStore.saved[0]
+	require.Equal(t, "session", saved.Scope)
+	require.Equal(t, "session-2", saved.SessionID)
+	require.Equal(t, "my code = 123", saved.Text)
+	require.Equal(t, response.ID, saved.SourceResponseID)
+	require.Equal(t, "responses.metadata", saved.Source)
+}
+
+func TestPrepareCreateContextSkipsMemoryForShadowStore(t *testing.T) {
+	t.Parallel()
+
+	memoryStore := &recordingMemoryStore{
+		notes: []domain.MemoryNote{{ID: "mem_session", Scope: "session", SessionID: "session-1", Text: "my code = 123"}},
+	}
+	svc := service.NewResponseService(noopResponseStore{}, noopConversationStore{}, noopGenerator{})
+	require.NoError(t, svc.SetMemory(memoryStore, memory.Config{
+		Backend: memory.BackendLocal,
+		Inject:  true,
+	}))
+
+	prepared, err := svc.PrepareCreateContext(context.Background(), service.CreateResponseInput{
+		Model:            "test-model",
+		Input:            json.RawMessage(`"What was my code?"`),
+		Metadata:         json.RawMessage(`{"llama_shim.memory.session_id":"session-1"}`),
+		ForceShadowStore: true,
+		RequestJSON:      `{"model":"test-model","input":"What was my code?"}`,
+	})
+	require.NoError(t, err)
+	require.Len(t, prepared.ContextItems, 1)
+	require.Equal(t, "What was my code?", domain.MessageText(prepared.ContextItems[0]))
+	require.Empty(t, memoryStore.touched)
 }
 
 func TestCreateResponseAutomaticCompactionCompactsPriorHistoryBeforeGeneration(t *testing.T) {
@@ -779,6 +889,47 @@ func (s *recordingConversationStore) GetConversation(context.Context, string) (d
 }
 
 func (s *recordingConversationStore) SaveResponseAndAppendConversation(context.Context, domain.Conversation, domain.StoredResponse, []domain.Item, []domain.Item) error {
+	return nil
+}
+
+type recordingMemoryStore struct {
+	notes   []domain.MemoryNote
+	saved   []domain.MemoryNote
+	touched []string
+}
+
+func (s *recordingMemoryStore) SaveMemoryNote(_ context.Context, note domain.MemoryNote) error {
+	s.saved = append(s.saved, note)
+	s.notes = append(s.notes, note)
+	return nil
+}
+
+func (s *recordingMemoryStore) ListMemoryNotes(_ context.Context, query domain.ListMemoryNotesQuery) ([]domain.MemoryNote, error) {
+	limit := query.Limit
+	if limit <= 0 {
+		limit = len(s.notes)
+	}
+	out := make([]domain.MemoryNote, 0, len(s.notes))
+	for _, note := range s.notes {
+		switch note.Scope {
+		case "global":
+			if query.IncludeGlobal {
+				out = append(out, note)
+			}
+		case "session":
+			if strings.TrimSpace(query.SessionID) != "" && note.SessionID == query.SessionID {
+				out = append(out, note)
+			}
+		}
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+func (s *recordingMemoryStore) TouchMemoryNotes(_ context.Context, ids []string, _ string) error {
+	s.touched = append(s.touched, ids...)
 	return nil
 }
 

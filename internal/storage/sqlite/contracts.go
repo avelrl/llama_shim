@@ -19,6 +19,7 @@ var (
 	_ storage.RetrievalIndexReporter    = (*Store)(nil)
 	_ storage.ChatCompletionStore       = (*Store)(nil)
 	_ storage.CodeInterpreterStore      = (*Store)(nil)
+	_ storage.MemoryStore               = (*Store)(nil)
 	_ retrieval.Index[*sql.Tx, *Store]  = lexicalRetrievalBackend{}
 	_ retrieval.Index[*sql.Tx, *Store]  = sqliteFTS5RetrievalBackend{}
 	_ retrieval.Index[*sql.Tx, *Store]  = sqliteVecRetrievalBackend{}
