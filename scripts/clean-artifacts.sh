@@ -57,6 +57,7 @@ artifact_paths=(
   ".tmp/codex-task-matrix-smoke"
   ".tmp/governance-purge-smoke"
   ".tmp/v4-preflight-smoke"
+  ".tmp/v4-provider-config-doctor"
   ".tmp/v4-provider-matrix-smoke"
   ".tmp/v4-provider-matrix-curation"
   ".tmp/v3-computer-browser-harness-runs"

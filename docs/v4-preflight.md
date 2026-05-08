@@ -69,6 +69,11 @@ The current implementation slices are complete:
   `/debug/capabilities`, one Responses request plus its `/debug/traces`
   metadata, optional provider-routing smoke, optional `shimctl codex doctor`,
   and a JSON/Markdown artifact summary under `.tmp/v4-preflight-smoke`.
+- `make v4-provider-config-doctor` is the static provider-routing
+  configuration gate. It checks configured `llama.providers`, provider token
+  env references, public alias to `upstream_model` mappings, compatibility
+  rule targets, operator-matrix coverage, and Codex metadata before a live
+  upstream smoke spends tokens.
 - `make v4-provider-matrix-smoke` runs provider-routing smoke plus V4
   preflight across the current operator model/provider matrix and writes one
   aggregate report under `.tmp/v4-provider-matrix-smoke`.
@@ -708,6 +713,63 @@ Boundary:
   harness remains responsible for tool-mode and task-success evidence.
 - This is shim-owned developer tooling. It does not widen the OpenAI API
   compatibility claim.
+
+### 8.5 Provider Config Validation Hardening
+
+Classification: V4 preflight developer tooling.
+Status: implemented as `shimctl provider doctor` and
+`make v4-provider-config-doctor`.
+
+Goal:
+Catch static provider-routing drift before live provider smokes or Codex evals.
+
+Implemented command shape:
+
+```text
+shimctl provider doctor
+make v4-provider-config-doctor
+```
+
+The doctor reads the same shared config file as the shim and checks:
+
+- `llama.providers[]` exists when provider/model routing is expected
+- provider `base_url` values are absolute URLs
+- remote providers have explicit `bearer_token_env` references
+- `-strict-env` fails when a remote provider omits `bearer_token_env` or a
+  configured provider token env var is empty
+- public aliases are derived as `<provider-id>/<model>`
+- each public alias resolves to the configured `upstream_model`
+- compatibility rules under Chat Completions, Responses tool compatibility,
+  and Codex upstream-input compatibility target resolved `upstream_model`
+  values or upstream-model patterns, not public provider/model aliases
+- configured operator-matrix aliases exist, with `-require-matrix` promoting
+  missing rows from warnings to errors
+- Codex model metadata is unique and covers matrix aliases, with
+  `-strict-codex-metadata` promoting missing/incomplete metadata to errors
+
+The default command is intentionally static and does not call upstream
+providers. Live reachability and catalog checks stay with
+`upstream-provider-routing-smoke`, `v4-preflight-smoke`, and
+`v4-provider-matrix-smoke`.
+
+Useful strict gate:
+
+```bash
+V4_PROVIDER_CONFIG_DOCTOR_FLAGS="-strict-env -require-matrix -strict-codex-metadata" \
+  make v4-provider-config-doctor
+```
+
+Artifacts:
+
+- `.tmp/v4-provider-config-doctor/<run-id>/summary.json`
+- `.tmp/v4-provider-config-doctor/<run-id>/summary.md`
+
+Boundary:
+
+- This is shim-owned operator validation. It does not add OpenAI request or
+  response fields and does not make a public API parity claim.
+- It reports token env names and whether values are present; it never writes
+  bearer token values to artifacts.
 
 ### 9. Smoke Scenario Inventory
 

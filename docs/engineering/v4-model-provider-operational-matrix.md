@@ -53,6 +53,9 @@ auto-run facts after curation.
 Fast operator check for every current matrix row:
 
 ```bash
+V4_PROVIDER_CONFIG_DOCTOR_FLAGS="-strict-env -require-matrix -strict-codex-metadata" \
+  make v4-provider-config-doctor
+
 SHIM_BASE_URL=http://127.0.0.1:8080 \
   make v4-provider-matrix-smoke
 ```
@@ -124,6 +127,8 @@ Promote a model/provider row only when:
 
 - the public `provider/model` alias is configured in `llama.providers[]`
 - provider secrets are referenced by env names and not committed as values
+- `make v4-provider-config-doctor` passes for the intended operator matrix, or
+  the only remaining issues are explicitly accepted non-gating warnings
 - `make v4-provider-matrix-smoke` passes for the row, or a deliberately scoped
   single-model matrix run passes for that row
 - `make v4-provider-matrix-curate` classifies the latest row as

@@ -442,6 +442,132 @@ func TestRunCodexDoctorReportsActionableFailures(t *testing.T) {
 	require.FileExists(t, filepath.Join(outDir, "summary.md"))
 }
 
+func TestRunProviderDoctorPassesHealthyRoutedConfig(t *testing.T) {
+	disableSharedDotEnv(t)
+	t.Setenv("DEEPSEEK_API_KEY", "deepseek-secret")
+	configPath := writeShimctlConfig(t, `
+llama:
+  providers:
+    - id: deepseek
+      base_url: https://api.deepseek.com/v1
+      bearer_token_env: DEEPSEEK_API_KEY
+      models:
+        - model: deepseek-v4-pro
+          upstream_model: deepseek-chat
+chat_completions:
+  upstream_compatibility:
+    models:
+      - model: deepseek-chat
+        remap_developer_role: true
+responses:
+  upstream_transport: chat_completions
+  upstream_tool_compatibility:
+    models:
+      - model: deepseek-chat
+        disabled_tools: [image_generation]
+  codex:
+    enable_compatibility: true
+    upstream_input_compatibility:
+      models:
+        - model: deepseek-chat
+          mode: stringify
+    model_metadata:
+      models:
+        - model: deepseek/deepseek-v4-pro
+          context_window: 1000000
+          max_context_window: 1000000
+          shell_type: shell_command
+          apply_patch_tool_type: freeform
+`)
+
+	outDir := filepath.Join(t.TempDir(), "provider-doctor")
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	err := run([]string{
+		"-config", configPath,
+		"provider", "doctor",
+		"-strict-env",
+		"-require-matrix",
+		"-strict-codex-metadata",
+		"-matrix-models", "deepseek/deepseek-v4-pro",
+		"-out", outDir,
+	}, &stdout, &stderr)
+	require.NoError(t, err)
+
+	var report map[string]any
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &report))
+	require.Equal(t, "passed", report["status"])
+	summary := report["summary"].(map[string]any)
+	require.Equal(t, float64(1), summary["provider_count"])
+	require.Equal(t, float64(1), summary["model_count"])
+	require.Equal(t, float64(0), summary["errors"])
+	require.FileExists(t, filepath.Join(outDir, "summary.json"))
+	require.FileExists(t, filepath.Join(outDir, "summary.md"))
+	require.NotContains(t, stdout.String(), "deepseek-secret")
+	require.Contains(t, stdout.String(), `"target_kind": "resolved_upstream_model"`)
+}
+
+func TestRunProviderDoctorReportsConfigDrift(t *testing.T) {
+	disableSharedDotEnv(t)
+	configPath := writeShimctlConfig(t, `
+llama:
+  providers:
+    - id: qwen
+      base_url: not-a-url
+      bearer_token_env: QWEN_API_KEY
+      models:
+        - model: coder
+          upstream_model: Qwen3.6-Coder
+    - id: remote
+      base_url: https://remote.example/v1
+      models:
+        - model: coder
+chat_completions:
+  upstream_compatibility:
+    models:
+      - model: qwen/coder
+responses:
+  codex:
+    enable_compatibility: true
+    model_metadata:
+      models:
+        - model: qwen/coder
+          context_window: 0
+          max_context_window: 0
+          shell_type: disabled
+        - model: qwen/coder
+          context_window: 128000
+          max_context_window: 128000
+          shell_type: shell_command
+          apply_patch_tool_type: freeform
+`)
+
+	outDir := filepath.Join(t.TempDir(), "provider-doctor")
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	err := run([]string{
+		"-config", configPath,
+		"provider", "doctor",
+		"-strict-env",
+		"-strict-codex-metadata",
+		"-matrix-models", "qwen/coder",
+		"-out", outDir,
+	}, &stdout, &stderr)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "provider doctor failed")
+
+	var report map[string]any
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &report))
+	require.Equal(t, "failed", report["status"])
+	text := stdout.String()
+	require.Contains(t, text, `"code": "provider_base_url_invalid"`)
+	require.Contains(t, text, `"code": "provider_token_env_unset"`)
+	require.Contains(t, text, `"code": "provider_token_env_missing"`)
+	require.Contains(t, text, `"code": "compatibility_rule_uses_public_alias"`)
+	require.Contains(t, text, `"code": "codex_metadata_duplicate"`)
+	require.FileExists(t, filepath.Join(outDir, "summary.md"))
+}
+
 func TestRunGovernancePurgeDryRunAndApplyRequiresConfirmAndWritesAudit(t *testing.T) {
 	disableSharedDotEnv(t)
 	ctx := context.Background()

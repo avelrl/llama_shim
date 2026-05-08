@@ -57,6 +57,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return runVacuum(cfg, stdout)
 	case "probe":
 		return runProbe(cfg, rest[1:], stdout, stderr)
+	case "provider":
+		return runProvider(cfg, rest[1:], stdout, stderr)
 	case "backup":
 		return runBackup(cfg, rest[1:], stdout, stderr)
 	case "restore":
@@ -446,7 +448,7 @@ func retrievalNowUnix() int64 {
 }
 
 func printUsage(w io.Writer) {
-	_, _ = fmt.Fprintln(w, "usage: shimctl [-config path-to-config.yaml] <cleanup|codex|optimize|vacuum|probe|backup|restore|migrate|governance> [flags]")
+	_, _ = fmt.Fprintln(w, "usage: shimctl [-config path-to-config.yaml] <cleanup|codex|optimize|vacuum|probe|provider|backup|restore|migrate|governance> [flags]")
 }
 
 func writeGovernancePurgeReport(w io.Writer, report storage.GovernancePurgeReport) error {

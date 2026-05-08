@@ -150,9 +150,12 @@ V4_PREFLIGHT_RUN_CODEX_DOCTOR=1 \
 ```
 
 When validating all configured provider/model rows in the V4 operator matrix,
-use the aggregate smoke instead of launching one model at a time:
+first run the static config doctor, then use the aggregate smoke instead of
+launching one model at a time:
 
 ```bash
+V4_PROVIDER_CONFIG_DOCTOR_FLAGS="-strict-env -require-matrix -strict-codex-metadata" \
+  make v4-provider-config-doctor
 make v4-provider-matrix-smoke
 make v4-provider-matrix-curate
 ```
@@ -204,6 +207,11 @@ Common failure shapes:
 - capability validation fails: backend/plugin registry metadata drifted, a
   plugin cross-link is broken, or debug traces are disabled while
   `V4_PREFLIGHT_REQUIRE_DEBUG_TRACE` still requires them.
+- provider config doctor fails: fix static config before rerunning live
+  provider smokes. Common causes are missing provider token env values,
+  compatibility rules matching the public `provider/model` alias instead of
+  the resolved `upstream_model`, missing matrix aliases, or stale Codex model
+  metadata.
 - the direct Responses trace fails: the request path, selected backend, tool
   classifier, or trace capture path is broken before model-quality questions
   matter.
@@ -348,6 +356,7 @@ Default cleanup targets intentionally do not remove `.data`.
 | Diagnose devstack without failing on readiness | `make devstack-doctor-advisory` | No | Same report, but unavailable dependencies are warnings. Useful before starting or after stopping the stack. |
 | Run local preflight | `make preflight-local` | No | Runs local state report, strict devstack doctor, cleanup/reset dry-runs, build, lint, and `git diff --check`. |
 | Run V4 preflight smoke | `make v4-preflight-smoke` | No | Aggregates health/readiness, `/v1/models`, V4 capabilities/plugin contract validation, one Responses debug-trace/tool-classifier probe, optional provider-routing smoke, and optional Codex config doctor. Writes artifacts under `.tmp/v4-preflight-smoke`. |
+| Diagnose provider routing config | `make v4-provider-config-doctor` | No | Static `shimctl provider doctor` gate for `llama.providers`, provider token env references, public alias to `upstream_model` mappings, compatibility rule targets, operator-matrix coverage, and Codex metadata. Writes artifacts under `.tmp/v4-provider-config-doctor`. |
 | Run V4 provider matrix smoke | `make v4-provider-matrix-smoke` | No | Runs provider-routing smoke and V4 preflight for each configured matrix model, then writes one aggregate JSON/Markdown report under `.tmp/v4-provider-matrix-smoke`. |
 | Curate V4 provider matrix artifacts | `make v4-provider-matrix-curate` | No | Reads existing matrix-smoke artifacts, groups routing/preflight/Codex doctor/readiness failures, and writes a local operator verdict under `.tmp/v4-provider-matrix-curation`. |
 | Check live upstream provider routing | `make upstream-provider-routing-smoke` | No | Verifies one public `provider/model` alias through capabilities, live `/v1/models`, routed Responses, routed Chat Completions, derived endpoint probes, and fail-closed routing boundaries. Writes artifacts under `.tmp/upstream-provider-routing-smoke`. |

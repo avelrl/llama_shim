@@ -44,6 +44,13 @@ type ShimctlConfig struct {
 	RetrievalPGVectorANNHNSWM                  int
 	RetrievalPGVectorANNHNSWEFConstruction     int
 	RetrievalPGVectorANNIVFFlatLists           int
+	LlamaProviders                             []LlamaProvider
+	ChatCompletionsUpstreamCompatibility       []ChatCompletionsUpstreamCompatibilityRule
+	ResponsesUpstreamTransport                 string
+	ResponsesUpstreamToolCompatibility         []ResponsesUpstreamToolCompatibilityRule
+	ResponsesCodexEnableCompatibility          bool
+	ResponsesCodexUpstreamInputCompatibility   []ResponsesCodexUpstreamInputCompatibilityRule
+	ResponsesCodexModelMetadata                []ResponsesCodexModelMetadata
 	ConfigFile                                 string
 }
 
@@ -68,21 +75,48 @@ func LoadShimctl(configPath string) (ShimctlConfig, error) {
 	}
 
 	cfg := ShimctlConfig{
-		SQLitePath:                  strings.TrimSpace(v.GetString("sqlite.path")),
-		StorageBackend:              strings.TrimSpace(v.GetString("storage.backend")),
-		PostgresDSN:                 strings.TrimSpace(v.GetString("postgres.dsn")),
-		LlamaBaseURL:                strings.TrimRight(strings.TrimSpace(v.GetString("llama.base_url")), "/"),
-		ProbeBearerToken:            strings.TrimSpace(v.GetString("probe.bearer_token")),
-		ProbeModel:                  strings.TrimSpace(v.GetString("probe.model")),
-		RetrievalIndexBackend:       strings.TrimSpace(v.GetString("retrieval.index.backend")),
-		RetrievalEmbedderBackend:    strings.TrimSpace(v.GetString("retrieval.embedder.backend")),
-		RetrievalEmbedderBaseURL:    strings.TrimSpace(v.GetString("retrieval.embedder.base_url")),
-		RetrievalEmbedderModel:      strings.TrimSpace(v.GetString("retrieval.embedder.model")),
-		RetrievalPGVectorANNEnabled: v.GetBool("retrieval.index.pgvector.ann.enabled"),
-		RetrievalPGVectorANNMethod:  strings.TrimSpace(v.GetString("retrieval.index.pgvector.ann.method")),
-		RetrievalPGVectorANNMetric:  strings.TrimSpace(v.GetString("retrieval.index.pgvector.ann.metric")),
-		ConfigFile:                  v.ConfigFileUsed(),
+		SQLitePath:                        strings.TrimSpace(v.GetString("sqlite.path")),
+		StorageBackend:                    strings.TrimSpace(v.GetString("storage.backend")),
+		PostgresDSN:                       strings.TrimSpace(v.GetString("postgres.dsn")),
+		LlamaBaseURL:                      strings.TrimRight(strings.TrimSpace(v.GetString("llama.base_url")), "/"),
+		ProbeBearerToken:                  strings.TrimSpace(v.GetString("probe.bearer_token")),
+		ProbeModel:                        strings.TrimSpace(v.GetString("probe.model")),
+		RetrievalIndexBackend:             strings.TrimSpace(v.GetString("retrieval.index.backend")),
+		RetrievalEmbedderBackend:          strings.TrimSpace(v.GetString("retrieval.embedder.backend")),
+		RetrievalEmbedderBaseURL:          strings.TrimSpace(v.GetString("retrieval.embedder.base_url")),
+		RetrievalEmbedderModel:            strings.TrimSpace(v.GetString("retrieval.embedder.model")),
+		RetrievalPGVectorANNEnabled:       v.GetBool("retrieval.index.pgvector.ann.enabled"),
+		RetrievalPGVectorANNMethod:        strings.TrimSpace(v.GetString("retrieval.index.pgvector.ann.method")),
+		RetrievalPGVectorANNMetric:        strings.TrimSpace(v.GetString("retrieval.index.pgvector.ann.metric")),
+		ResponsesUpstreamTransport:        strings.ToLower(strings.TrimSpace(v.GetString("responses.upstream_transport"))),
+		ResponsesCodexEnableCompatibility: v.GetBool("responses.codex.enable_compatibility"),
+		ConfigFile:                        v.ConfigFileUsed(),
 	}
+	llamaProviders, err := parseLlamaProviders(v)
+	if err != nil {
+		return ShimctlConfig{}, err
+	}
+	cfg.LlamaProviders = llamaProviders
+	chatCompletionsUpstreamCompatibility, err := parseChatCompletionsUpstreamCompatibility(v)
+	if err != nil {
+		return ShimctlConfig{}, err
+	}
+	cfg.ChatCompletionsUpstreamCompatibility = chatCompletionsUpstreamCompatibility
+	upstreamToolCompatibility, err := parseResponsesUpstreamToolCompatibility(v)
+	if err != nil {
+		return ShimctlConfig{}, err
+	}
+	cfg.ResponsesUpstreamToolCompatibility = upstreamToolCompatibility
+	codexUpstreamInputCompatibility, err := parseResponsesCodexUpstreamInputCompatibility(v)
+	if err != nil {
+		return ShimctlConfig{}, err
+	}
+	cfg.ResponsesCodexUpstreamInputCompatibility = codexUpstreamInputCompatibility
+	codexModelMetadata, err := parseResponsesCodexModelMetadata(v)
+	if err != nil {
+		return ShimctlConfig{}, err
+	}
+	cfg.ResponsesCodexModelMetadata = codexModelMetadata
 	storageBackend, err := storage.NormalizeBackend(cfg.StorageBackend)
 	if err != nil {
 		return ShimctlConfig{}, fmt.Errorf("parse storage.backend: %w", err)
@@ -118,6 +152,9 @@ func LoadShimctl(configPath string) (ShimctlConfig, error) {
 	cfg.ProbeCount = probeCount
 	if err := parseDuration(v.GetString("probe.request_timeout"), &cfg.ProbeRequestTimeout); err != nil {
 		return ShimctlConfig{}, fmt.Errorf("parse probe.request_timeout: %w", err)
+	}
+	if err := parseResponsesUpstreamTransport(cfg.ResponsesUpstreamTransport); err != nil {
+		return ShimctlConfig{}, fmt.Errorf("parse responses.upstream_transport: %w", err)
 	}
 	llamaHTTPMaxIdleConns, err := parsePositiveInt(v.GetString("llama.http.max_idle_conns"))
 	if err != nil {
@@ -214,10 +251,17 @@ func setShimctlDefaults(v *viper.Viper) {
 	v.SetDefault("llama.http.keep_alive", "30s")
 	v.SetDefault("llama.http.tls_handshake_timeout", "10s")
 	v.SetDefault("llama.http.expect_continue_timeout", "1s")
+	v.SetDefault("llama.providers", []map[string]any{})
 	v.SetDefault("probe.count", "3")
 	v.SetDefault("probe.request_timeout", "8s")
 	v.SetDefault("probe.bearer_token", "")
 	v.SetDefault("probe.model", "")
+	v.SetDefault("chat_completions.upstream_compatibility.models", []map[string]any{})
+	v.SetDefault("responses.upstream_transport", ResponsesUpstreamTransportResponses)
+	v.SetDefault("responses.upstream_tool_compatibility.models", []map[string]any{})
+	v.SetDefault("responses.codex.enable_compatibility", false)
+	v.SetDefault("responses.codex.upstream_input_compatibility.models", []map[string]any{})
+	v.SetDefault("responses.codex.model_metadata.models", []map[string]any{})
 	v.SetDefault("retrieval.index.backend", retrieval.IndexBackendLexical)
 	v.SetDefault("retrieval.embedder.backend", retrieval.EmbedderBackendDisabled)
 	v.SetDefault("retrieval.embedder.base_url", "")

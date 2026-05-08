@@ -38,7 +38,11 @@ provider auth overrides, and configured Chat Completions projection cleanup
 are explicit plugin behavior rather than hidden request mutation.
 Codex-through-shim setup now has shim-owned
 `shimctl codex config` and `shimctl codex doctor` tooling so provider/model
-aliases can be validated before long eval runs.
+aliases can be validated before long eval runs. Provider-routing config also
+has `shimctl provider doctor` / `make v4-provider-config-doctor`, which
+statically checks provider aliases, provider token env references,
+compatibility-rule targets, operator-matrix coverage, and Codex model metadata
+before live upstream smokes.
 The current operator choices for those aliases are tracked in
 [V4 Model/Provider Operational Matrix](engineering/v4-model-provider-operational-matrix.md).
 
