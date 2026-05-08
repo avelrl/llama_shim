@@ -131,7 +131,11 @@ func (h *proxyHandler) routeContextForModel(ctx context.Context, publicModel str
 	if h == nil || h.upstreamProviderResolver == nil {
 		return ctx, nil, nil
 	}
-	return h.upstreamProviderResolver.ContextForModel(ctx, publicModel)
+	routedCtx, route, err := h.upstreamProviderResolver.ContextForModel(ctx, publicModel)
+	if err == nil && route != nil {
+		RecordDebugTraceUpstreamRoute(routedCtx, *route)
+	}
+	return routedCtx, route, err
 }
 
 func (r *upstreamProviderResolver) WriteModels(ctx context.Context, w http.ResponseWriter, client *llama.Client) {

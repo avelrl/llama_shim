@@ -87,7 +87,7 @@ func RecoverMiddleware(logger *slog.Logger) func(http.Handler) http.Handler {
 	}
 }
 
-func RequestLogMiddleware(logger *slog.Logger, metrics *Metrics) func(http.Handler) http.Handler {
+func RequestLogMiddleware(logger *slog.Logger, metrics *Metrics, debugTraceStore *DebugTraceStore) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
@@ -95,6 +95,9 @@ func RequestLogMiddleware(logger *slog.Logger, metrics *Metrics) func(http.Handl
 			requestBody := capturedBody{}
 			if captureBodies {
 				requestBody = captureRequestBody(r)
+			}
+			if shouldTraceRequest(r.URL.Path) {
+				r = r.WithContext(debugTraceStore.Begin(r.Context(), r, start))
 			}
 
 			recorder := &statusRecorder{
@@ -104,6 +107,9 @@ func RequestLogMiddleware(logger *slog.Logger, metrics *Metrics) func(http.Handl
 			}
 			next.ServeHTTP(recorder, r)
 			route := requestRouteLabel(r)
+			if shouldTraceRequest(r.URL.Path) {
+				debugTraceStore.Finish(r.Context(), recorder.status, route, recorder.Header().Get("Content-Type"), time.Since(start), time.Now())
+			}
 			if metrics != nil {
 				metrics.ObserveHTTPRequest(r.Method, route, recorder.status, time.Since(start))
 			}
@@ -207,6 +213,7 @@ func RateLimitMiddleware(cfg RateLimitConfig, metrics *Metrics, metricsPath stri
 			w.Header().Set("X-RateLimit-Remaining-Requests", strconv.Itoa(decision.Remaining))
 			w.Header().Set("X-RateLimit-Reset-Requests", formatRateLimitReset(decision.Reset))
 			ctx := setRequestRateLimit(r.Context(), decision)
+			RecordDebugTraceRateLimit(ctx, decision)
 			if !decision.Allowed {
 				if metrics != nil {
 					metrics.IncRateLimitReject("http_requests")

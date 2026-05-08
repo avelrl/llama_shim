@@ -736,6 +736,9 @@ Each scenario should specify:
 
 Classification: V4 preflight platform work.
 
+Status: implemented for bounded, metadata-only request traces exposed through
+shim-owned debug endpoints.
+
 Goal:
 Make routing, backend projection, classifier decisions, and fallback visible to
 operators without leaking user data or secrets.
@@ -768,8 +771,11 @@ The trace must not expose:
 - decrypted opaque state
 - private provider headers
 
-Public observability should stay summarized through `/debug/capabilities`,
-logs, and metrics. It must not add fake fields to OpenAI-shaped responses.
+Operator observability is exposed through `/debug/capabilities`, logs,
+metrics, and the shim-owned `/debug/traces` / `/debug/traces/{request_id}`
+endpoints. The trace store is in-memory, bounded by
+`shim.debug_traces.max_entries`, and metadata-only. It must not add fake
+fields to OpenAI-shaped responses.
 
 ### 11. Plugin Boundary Preparation
 
@@ -932,6 +938,23 @@ cleanup hooks remain future plugin/platform work.
 - map backend errors into the shared taxonomy
 - record fallback decisions in debug traces
 - expose degraded backend state in `/debug/capabilities`
+
+### Phase 5.5: Observability And Debug Trace Contract
+
+Status: implemented for bounded request traces and capability advertising.
+
+- `/debug/traces` lists the latest retained traces and
+  `/debug/traces/{request_id}` retrieves one trace by `X-Request-Id`
+- traces capture request metadata, response route/status, model/provider route,
+  Responses create-route selection, tool classifier decisions, Chat projection
+  transforms, backend failure policy decisions, rate-limit decisions, and
+  final status
+- traces are metadata-only and exclude raw prompts, bearer tokens, private
+  headers, tool outputs, and file contents
+- `shim.debug_traces.enabled` and `shim.debug_traces.max_entries` configure
+  the operator trace store
+- `/debug/capabilities.runtime.ops.debug_traces` reports the active retention
+  and endpoint contract
 
 ### Phase 6: Plugin Contracts
 

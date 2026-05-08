@@ -127,6 +127,9 @@ func (h *responseHandler) routeContextForResponseModel(ctx context.Context, mode
 	if err != nil {
 		return ctx, false, err
 	}
+	if route != nil {
+		RecordDebugTraceUpstreamRoute(routedCtx, *route)
+	}
 	return routedCtx, route != nil, nil
 }
 
@@ -173,6 +176,7 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 	if ctx != r.Context() {
 		r = r.WithContext(ctx)
 	}
+	recordDebugTraceDerivedResponse(r.Context(), request, "responses.input_tokens", h, "route_pending", "derived_response")
 
 	hasLocalState, err := h.hasLocalCreateState(r.Context(), request)
 	if err != nil {
@@ -184,6 +188,7 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 			h.writeError(w, r, service.ErrNotFound)
 			return
 		}
+		recordDebugTraceDerivedResponse(r.Context(), request, "responses.create", h, "proxy_previous_response", "native_responses_proxy")
 		if request.Stream != nil && *request.Stream {
 			h.proxyCreateStream(w, r, request, requestJSON, rawFields, streamOptions)
 			return
@@ -216,6 +221,7 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 	)
 	createInputs.NativeResponsesProxy = h.canProxyNativeResponses()
 	createRoute := selectResponsesCreateRoute(h.responsesMode, createInputs)
+	recordDebugTraceResponsesCreate(r.Context(), request, toolClassifications, createRoute, h)
 	generationOptions := buildGenerationOptions(rawFields)
 	if request.Stream != nil && *request.Stream {
 		switch createRoute {
@@ -224,7 +230,7 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 		case responsesCreateRouteLocalWebSearch:
 			response, err := h.createLocalWebSearchResponse(r.Context(), request, requestJSON, rawFields)
 			if err != nil {
-				if h.shouldFallbackLocalState(err) {
+				if h.shouldFallbackLocalStateWithTrace(r.Context(), err, "stream_upstream_or_proxy") {
 					if hasLocalState {
 						h.createStreamViaUpstream(w, r, request, requestJSON, rawFields, streamOptions)
 						return
@@ -250,7 +256,7 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 		case responsesCreateRouteLocalImageGeneration:
 			response, artifacts, err := h.createLocalImageGenerationResponse(r.Context(), request, requestJSON, rawFields)
 			if err != nil {
-				if h.shouldFallbackLocalState(err) {
+				if h.shouldFallbackLocalStateWithTrace(r.Context(), err, "stream_upstream_or_proxy") {
 					if hasLocalState {
 						h.createStreamViaUpstream(w, r, request, requestJSON, rawFields, streamOptions)
 						return
@@ -298,7 +304,7 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 		case responsesCreateRouteLocalMCP:
 			response, err := h.createLocalMCPResponse(r.Context(), request, requestJSON, rawFields)
 			if err != nil {
-				if h.shouldFallbackLocalState(err) {
+				if h.shouldFallbackLocalStateWithTrace(r.Context(), err, "stream_upstream_or_proxy") {
 					if hasLocalState {
 						h.createStreamViaUpstream(w, r, request, requestJSON, rawFields, streamOptions)
 						return
@@ -361,7 +367,7 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 				}
 				return
 			}
-			if h.shouldFallbackLocalState(err) {
+			if h.shouldFallbackLocalStateWithTrace(r.Context(), err, "stream_upstream_or_proxy") {
 				if hasLocalState {
 					h.createStreamViaUpstream(w, r, request, requestJSON, rawFields, streamOptions)
 					return
@@ -381,7 +387,7 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 			return
 		case responsesCreateRouteLocalState:
 			if err := h.createStream(w, r, request, requestJSON, generationOptions, streamOptions); err != nil {
-				if h.shouldFallbackLocalState(err) {
+				if h.shouldFallbackLocalStateWithTrace(r.Context(), err, "stream_upstream") {
 					h.createStreamViaUpstream(w, r, request, requestJSON, rawFields, streamOptions)
 					return
 				}
@@ -402,7 +408,7 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 	case responsesCreateRouteLocalWebSearch:
 		response, err := h.createLocalWebSearchResponse(r.Context(), request, requestJSON, rawFields)
 		if err != nil {
-			if h.shouldFallbackLocalState(err) {
+			if h.shouldFallbackLocalStateWithTrace(r.Context(), err, "upstream_or_proxy") {
 				var response domain.Response
 				var fallbackErr error
 				if hasLocalState {
@@ -424,7 +430,7 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 	case responsesCreateRouteLocalImageGeneration:
 		response, _, err := h.createLocalImageGenerationResponse(r.Context(), request, requestJSON, rawFields)
 		if err != nil {
-			if h.shouldFallbackLocalState(err) {
+			if h.shouldFallbackLocalStateWithTrace(r.Context(), err, "upstream_or_proxy") {
 				var response domain.Response
 				var fallbackErr error
 				if hasLocalState {
@@ -468,7 +474,7 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 	case responsesCreateRouteLocalMCP:
 		response, err := h.createLocalMCPResponse(r.Context(), request, requestJSON, rawFields)
 		if err != nil {
-			if h.shouldFallbackLocalState(err) {
+			if h.shouldFallbackLocalStateWithTrace(r.Context(), err, "upstream_or_proxy") {
 				var response domain.Response
 				var fallbackErr error
 				if hasLocalState {
@@ -509,7 +515,7 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 			WriteJSON(w, http.StatusOK, response)
 			return
 		}
-		if h.shouldFallbackLocalState(err) {
+		if h.shouldFallbackLocalStateWithTrace(r.Context(), err, "upstream_or_proxy") {
 			var response domain.Response
 			var fallbackErr error
 			if hasLocalState {
@@ -545,7 +551,7 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 			WriteJSON(w, http.StatusOK, response)
 			return
 		}
-		if h.shouldFallbackLocalState(err) {
+		if h.shouldFallbackLocalStateWithTrace(r.Context(), err, "upstream") {
 			response, fallbackErr := h.createLocalStateViaUpstream(r.Context(), request, requestJSON, rawFields)
 			if fallbackErr == nil {
 				WriteJSON(w, http.StatusOK, response)
@@ -601,6 +607,7 @@ func (h *responseHandler) inputTokens(w http.ResponseWriter, r *http.Request) {
 	if ctx != r.Context() {
 		r = r.WithContext(ctx)
 	}
+	recordDebugTraceDerivedResponse(r.Context(), request, "responses.compact", h, "route_pending", "derived_response")
 
 	hasLocalState, err := h.hasLocalCreateState(r.Context(), request)
 	if err != nil {
@@ -615,6 +622,7 @@ func (h *responseHandler) inputTokens(w http.ResponseWriter, r *http.Request) {
 		h.proxyBufferedJSONRequest(w, r, rawBody)
 		return
 	case localSupported:
+		RecordDebugTraceBackendProjection(r.Context(), "local_state", "derived_local_state")
 		response, err := h.service.CountInputTokens(r.Context(), service.CreateResponseInput{
 			Model:              request.Model,
 			Input:              request.Input,
@@ -629,7 +637,7 @@ func (h *responseHandler) inputTokens(w http.ResponseWriter, r *http.Request) {
 			WriteJSON(w, http.StatusOK, response)
 			return
 		}
-		if !hasLocalState && h.shouldFallbackLocalState(err) && nativeResponsesProxy {
+		if !hasLocalState && h.shouldFallbackLocalStateWithTrace(r.Context(), err, "proxy_derived_endpoint") && nativeResponsesProxy {
 			h.proxyBufferedJSONRequest(w, r, rawBody)
 			return
 		}
@@ -686,6 +694,7 @@ func (h *responseHandler) compact(w http.ResponseWriter, r *http.Request) {
 		h.proxyBufferedJSONRequest(w, r, rawBody)
 		return
 	case localSupported:
+		RecordDebugTraceBackendProjection(r.Context(), "local_state", "derived_local_state")
 		response, err := h.service.Compact(r.Context(), service.CreateResponseInput{
 			Model:              request.Model,
 			Input:              request.Input,
@@ -700,7 +709,7 @@ func (h *responseHandler) compact(w http.ResponseWriter, r *http.Request) {
 			WriteJSON(w, http.StatusOK, response)
 			return
 		}
-		if !hasLocalState && h.shouldFallbackLocalState(err) && nativeResponsesProxy {
+		if !hasLocalState && h.shouldFallbackLocalStateWithTrace(r.Context(), err, "proxy_derived_endpoint") && nativeResponsesProxy {
 			h.proxyBufferedJSONRequest(w, r, rawBody)
 			return
 		}
@@ -1338,6 +1347,7 @@ func (h *responseHandler) writeError(w http.ResponseWriter, r *http.Request, err
 }
 
 func (h *responseHandler) proxyBufferedJSONRequest(w http.ResponseWriter, r *http.Request, body []byte) {
+	RecordDebugTraceBackendProjection(r.Context(), "proxy", "native_responses_proxy")
 	resp, err := h.proxyResponseRequest(r, body)
 	if err != nil {
 		status, payload := MapError(r.Context(), h.logger, err)
@@ -1787,6 +1797,14 @@ func (h *responseHandler) canProxyNativeResponses() bool {
 
 func (h *responseHandler) shouldFallbackLocalState(err error) bool {
 	return h.canProxyNativeResponses() && shouldFallbackLocalState(h.responsesMode, err)
+}
+
+func (h *responseHandler) shouldFallbackLocalStateWithTrace(ctx context.Context, err error, target string) bool {
+	allowed := h.shouldFallbackLocalState(err)
+	if allowed {
+		RecordDebugTraceFallback(ctx, true, true, "local_state_error", target, "attempted")
+	}
+	return allowed
 }
 
 func newLocalOnlyUnsupportedFieldsError(rawFields map[string]json.RawMessage) error {

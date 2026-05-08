@@ -78,6 +78,8 @@ type TestAppOptions struct {
 	RateLimitBurst                        int
 	MetricsEnabled                        *bool
 	MetricsPath                           string
+	DebugTracesEnabled                    *bool
+	DebugTracesMaxEntries                 int
 	JSONBodyLimitBytes                    int64
 	RetrievalFileUploadMaxBytes           int64
 	ChatCompletionsShadowStoreMaxBytes    int64
@@ -175,6 +177,10 @@ func NewTestAppWithOptions(t *testing.T, options TestAppOptions) *TestApp {
 	if options.MetricsEnabled != nil {
 		metricsEnabled = *options.MetricsEnabled
 	}
+	debugTracesEnabled := true
+	if options.DebugTracesEnabled != nil {
+		debugTracesEnabled = *options.DebugTracesEnabled
+	}
 	httpapi.StartLocalCodeInterpreterCleanupLoop(testCtx, logger, localCodeInterpreter, store, store, options.CodeInterpreterCleanupInterval)
 
 	server := httptest.NewServer(httpapi.NewRouter(httpapi.RouterDeps{
@@ -187,6 +193,7 @@ func NewTestAppWithOptions(t *testing.T, options TestAppOptions) *TestApp {
 		Auth:                      httpapi.StaticBearerAuthConfig{Mode: options.AuthMode, BearerTokens: append([]string(nil), options.BearerTokens...)},
 		RateLimit:                 httpapi.RateLimitConfig{Enabled: options.RateLimitEnabled, RequestsPerMinute: options.RateLimitRequestsPerMinute, Burst: options.RateLimitBurst},
 		MetricsConfig:             httpapi.MetricsConfig{Enabled: metricsEnabled, Path: options.MetricsPath},
+		DebugTrace:                httpapi.DebugTraceConfig{Enabled: debugTracesEnabled, MaxEntries: options.DebugTracesMaxEntries},
 		Metrics:                   metrics,
 		StorageBackend:            config.StorageBackendSQLite,
 		ServiceLimits: httpapi.ServiceLimits{

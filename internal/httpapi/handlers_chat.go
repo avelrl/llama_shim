@@ -82,6 +82,15 @@ func (h *proxyHandler) forwardChatCompletions(w http.ResponseWriter, r *http.Req
 	} else {
 		shouldStore = shadowStore
 	}
+	recordDebugTraceChatCompletion(r.Context(), model, route, upstreamCompatibilityTraceSummary{
+		DeveloperRolesRemapped:            upstreamCompatibility.DeveloperRolesRemapped > 0,
+		DefaultThinkingDisabled:           upstreamCompatibility.DefaultThinkingDisabled,
+		DefaultMaxTokensApplied:           upstreamCompatibility.DefaultMaxTokensApplied,
+		JSONSchemaDowngraded:              upstreamCompatibility.JSONSchemaDowngraded,
+		ToolParameterPropertyTypesEnsured: upstreamCompatibility.ToolParameterPropertyTypesEnsured,
+		MoonshotToolSchemaSanitized:       upstreamCompatibility.MoonshotToolSchemaSanitized,
+		EmptyAssistantToolContentOmitted:  upstreamCompatibility.EmptyAssistantToolContentOmitted > 0,
+	}, shouldStore)
 	if profile, err := parseChatToolCompatRequest(upstreamBody); err == nil && shouldApplyChatToolCompat(profile) {
 		rawResponse, err := h.createChatCompletionWithToolCompat(r.Context(), upstreamBody, profile.Contract)
 		if err != nil {

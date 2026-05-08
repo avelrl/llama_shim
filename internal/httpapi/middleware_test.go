@@ -28,7 +28,7 @@ func TestRequestLogMiddlewareLogsBodiesAtDebug(t *testing.T) {
 			_, err = w.Write([]byte(`{"echo":` + string(body) + `}`))
 			require.NoError(t, err)
 		}),
-		httpapi.RequestLogMiddleware(logger, nil),
+		httpapi.RequestLogMiddleware(logger, nil, nil),
 		httpapi.RequestIDMiddleware,
 	)
 
@@ -62,7 +62,7 @@ func TestRequestLogMiddlewareMarksTruncatedBodies(t *testing.T) {
 			_, err = w.Write([]byte(large))
 			require.NoError(t, err)
 		}),
-		httpapi.RequestLogMiddleware(logger, nil),
+		httpapi.RequestLogMiddleware(logger, nil, nil),
 		httpapi.RequestIDMiddleware,
 	)
 
@@ -86,7 +86,7 @@ func TestRequestLogMiddlewareOmitsSSEBodiesAtDebug(t *testing.T) {
 			_, err := w.Write([]byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"secret\"}\n\n"))
 			require.NoError(t, err)
 		}),
-		httpapi.RequestLogMiddleware(logger, nil),
+		httpapi.RequestLogMiddleware(logger, nil, nil),
 		httpapi.RequestIDMiddleware,
 	)
 
@@ -116,7 +116,7 @@ func TestRequestLogMiddlewareBoundsRequestBodyRead(t *testing.T) {
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusAccepted)
 		}),
-		httpapi.RequestLogMiddleware(logger, nil),
+		httpapi.RequestLogMiddleware(logger, nil, nil),
 		httpapi.RequestIDMiddleware,
 	)
 

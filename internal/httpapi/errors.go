@@ -45,6 +45,7 @@ func MapError(ctx context.Context, logger *slog.Logger, err error) (int, apiErro
 
 	logDetailedError(ctx, logger, err)
 	if decision, ok := classifyBackendFailure(err); ok {
+		RecordDebugTraceBackendFailure(ctx, decision, "", 0)
 		switch decision.Class {
 		case backendFailureAuthFailure, backendFailurePermissionFailure, backendFailureQuotaExhausted, backendFailureRateLimitRetryable, backendFailureModelUnavailable, backendFailureTransportTimeout, backendFailureStreamIdleTimeout, backendFailureMalformedBackendResponse, backendFailureBackendCapabilityMismatch, backendFailureLocalRuntimeUnavailable, backendFailureTransportError:
 			return decision.ClientStatus, newAPIError(decision.ClientType, decision.ClientMessage, "", decision.ClientCode)

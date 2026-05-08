@@ -255,6 +255,82 @@ paths:
                   code: rate_limit_exceeded
         "405":
           $ref: "#/components/responses/ErrorResponse"
+  /debug/traces:
+    get:
+      tags: [ops]
+      summary: Shim-owned bounded debug trace list
+      x-shim-status: implemented
+      description: |
+        Returns the latest bounded in-memory request debug traces. This is
+        shim-owned operator/debug surface, not an OpenAI API parity claim.
+        Trace entries contain metadata-only routing, classifier, fallback,
+        failure-policy, rate-limit, and final-status decisions. They do not
+        include raw prompts, authorization headers, tool outputs, or file
+        contents.
+      parameters:
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+          description: Maximum number of latest traces to return.
+      responses:
+        "200":
+          description: Latest bounded debug traces
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShimDebugTraceListResponse"
+        "401":
+          description: Missing or invalid shim ingress bearer token when auth is enabled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Debug traces are disabled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "405":
+          $ref: "#/components/responses/ErrorResponse"
+  /debug/traces/{request_id}:
+    get:
+      tags: [ops]
+      summary: Shim-owned debug trace by request id
+      x-shim-status: implemented
+      description: |
+        Returns one bounded in-memory request debug trace by the shim-generated
+        `X-Request-Id`. This route is shim-owned operator/debug surface and
+        must not be treated as an OpenAI API response shape.
+      parameters:
+        - in: path
+          name: request_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Debug trace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShimDebugTrace"
+        "401":
+          description: Missing or invalid shim ingress bearer token when auth is enabled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Debug traces are disabled or the request id is no longer retained
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "405":
+          $ref: "#/components/responses/ErrorResponse"
   /v1/responses:
     get:
       tags: [responses]
@@ -2497,6 +2573,176 @@ components:
       properties:
         status:
           type: string
+    ShimDebugTraceListResponse:
+      type: object
+      required: [object, data]
+      properties:
+        object:
+          type: string
+          enum: [list]
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/ShimDebugTrace"
+    ShimDebugTrace:
+      type: object
+      required: [object, request_id, method, path, final_status, started_at, redaction_policy]
+      properties:
+        object:
+          type: string
+          enum: [shim.debug_trace]
+        request_id:
+          type: string
+        client_request_id:
+          type: string
+        method:
+          type: string
+        path:
+          type: string
+        route:
+          type: string
+        surface:
+          type: string
+        source_format:
+          type: string
+        model:
+          type: string
+        provider:
+          type: string
+        public_model:
+          type: string
+        upstream_model:
+          type: string
+        routing_mode:
+          type: string
+        upstream_transport:
+          type: string
+        selected_backend:
+          type: string
+        backend_projection_class:
+          type: string
+        persistence_decision:
+          type: string
+        replay_class:
+          type: string
+        stream_transformer_class:
+          type: string
+        tool_decisions:
+          type: array
+          items:
+            $ref: "#/components/schemas/ShimDebugTraceToolDecision"
+        transforms:
+          type: array
+          items:
+            $ref: "#/components/schemas/ShimDebugTraceTransform"
+        backend_failure:
+          $ref: "#/components/schemas/ShimDebugTraceBackendFailure"
+        fallback:
+          $ref: "#/components/schemas/ShimDebugTraceFallback"
+        rate_limit:
+          $ref: "#/components/schemas/ShimDebugTraceRateLimit"
+        final_status:
+          type: integer
+        started_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+        duration_ms:
+          type: integer
+          format: int64
+        response_content_type:
+          type: string
+        redaction_policy:
+          type: string
+          enum: [metadata_only_no_prompts_no_headers_no_file_contents]
+    ShimDebugTraceToolDecision:
+      type: object
+      required: [index, type, family, disposition, capability_class, local_supported, runtime_enabled]
+      properties:
+        index:
+          type: integer
+        type:
+          type: string
+        family:
+          type: string
+        disposition:
+          type: string
+        capability_class:
+          type: string
+        backend:
+          type: string
+        local_supported:
+          type: boolean
+        runtime_enabled:
+          type: boolean
+        reason:
+          type: string
+    ShimDebugTraceTransform:
+      type: object
+      required: [stage, class]
+      properties:
+        stage:
+          type: string
+        class:
+          type: string
+        fields:
+          type: array
+          items:
+            type: string
+        decision:
+          type: string
+    ShimDebugTraceBackendFailure:
+      type: object
+      required: [class, retryable, cooldown, fallback_allowed, client_status, client_type]
+      properties:
+        class:
+          type: string
+        retryable:
+          type: boolean
+        cooldown:
+          type: boolean
+        cooldown_hint_seconds:
+          type: integer
+        fallback_allowed:
+          type: boolean
+        client_status:
+          type: integer
+        client_type:
+          type: string
+        client_code:
+          type: string
+        operation:
+          type: string
+        upstream_status:
+          type: integer
+    ShimDebugTraceFallback:
+      type: object
+      required: [attempted, allowed]
+      properties:
+        attempted:
+          type: boolean
+        allowed:
+          type: boolean
+        reason:
+          type: string
+        target:
+          type: string
+        result:
+          type: string
+    ShimDebugTraceRateLimit:
+      type: object
+      required: [allowed]
+      properties:
+        allowed:
+          type: boolean
+        limit:
+          type: integer
+        remaining:
+          type: integer
+        reset:
+          type: string
     ShimCapabilitiesResponse:
       type: object
       required: [object, ready, surfaces, runtime, tools, backends, probes]
@@ -2796,7 +3042,7 @@ components:
           minimum: 1
     ShimCapabilityOpsConfig:
       type: object
-      required: [auth_mode, rate_limit, metrics, backend_failure_policy, health_public, readyz_public]
+      required: [auth_mode, rate_limit, metrics, debug_traces, backend_failure_policy, health_public, readyz_public]
       properties:
         auth_mode:
           type: string
@@ -2804,6 +3050,8 @@ components:
           $ref: "#/components/schemas/ShimCapabilityRateLimit"
         metrics:
           $ref: "#/components/schemas/ShimCapabilityMetrics"
+        debug_traces:
+          $ref: "#/components/schemas/ShimCapabilityDebugTraces"
         backend_failure_policy:
           type: array
           description: Static shim-owned backend failure decision table. It exposes retryability, cooldown hints, fallback eligibility, and client error mapping without live quota or secret state.
@@ -2831,6 +3079,25 @@ components:
           type: boolean
         path:
           type: string
+    ShimCapabilityDebugTraces:
+      type: object
+      required: [enabled, max_entries, list_endpoint, detail_endpoint, redaction, captures]
+      properties:
+        enabled:
+          type: boolean
+        max_entries:
+          type: integer
+        list_endpoint:
+          type: string
+        detail_endpoint:
+          type: string
+        redaction:
+          type: string
+          enum: [metadata_only_no_prompts_no_headers_no_file_contents]
+        captures:
+          type: array
+          items:
+            type: string
     ShimCapabilityBackendFailureRule:
       type: object
       required: [class, retryable, cooldown, fallback_allowed, client_status, client_type]

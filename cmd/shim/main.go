@@ -157,6 +157,7 @@ func main() {
 			Auth:                      httpapi.StaticBearerAuthConfig{Mode: cfg.ShimAuthMode, BearerTokens: cfg.ShimAuthBearerTokens},
 			RateLimit:                 httpapi.RateLimitConfig{Enabled: cfg.ShimRateLimitEnabled, RequestsPerMinute: cfg.ShimRateLimitRequestsPerMinute, Burst: cfg.ShimRateLimitBurst},
 			MetricsConfig:             httpapi.MetricsConfig{Enabled: cfg.ShimMetricsEnabled, Path: cfg.ShimMetricsPath},
+			DebugTrace:                httpapi.DebugTraceConfig{Enabled: cfg.ShimDebugTracesEnabled, MaxEntries: cfg.ShimDebugTracesMaxEntries},
 			Metrics:                   metrics,
 			StorageBackend:            cfg.StorageBackend,
 			ServiceLimits: httpapi.ServiceLimits{
@@ -234,6 +235,8 @@ func main() {
 		"shim_rate_limit_burst", cfg.ShimRateLimitBurst,
 		"shim_metrics_enabled", cfg.ShimMetricsEnabled,
 		"shim_metrics_path", cfg.ShimMetricsPath,
+		"shim_debug_traces_enabled", cfg.ShimDebugTracesEnabled,
+		"shim_debug_traces_max_entries", cfg.ShimDebugTracesMaxEntries,
 		"shim_json_body_limit_bytes", cfg.ShimJSONBodyLimitBytes,
 		"shim_retrieval_file_upload_max_bytes", cfg.RetrievalFileUploadMaxBytes,
 		"shim_chat_completions_shadow_store_max_bytes", cfg.ChatCompletionsShadowStoreMaxBytes,

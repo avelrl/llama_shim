@@ -190,6 +190,7 @@ type capabilityOpsConfig struct {
 	AuthMode             string                         `json:"auth_mode"`
 	RateLimit            capabilityRateLimit            `json:"rate_limit"`
 	Metrics              capabilityMetrics              `json:"metrics"`
+	DebugTraces          capabilityDebugTraces          `json:"debug_traces"`
 	BackendFailurePolicy []capabilityBackendFailureRule `json:"backend_failure_policy"`
 	HealthPublic         bool                           `json:"health_public"`
 	ReadyzPublic         bool                           `json:"readyz_public"`
@@ -204,6 +205,15 @@ type capabilityRateLimit struct {
 type capabilityMetrics struct {
 	Enabled bool   `json:"enabled"`
 	Path    string `json:"path"`
+}
+
+type capabilityDebugTraces struct {
+	Enabled        bool     `json:"enabled"`
+	MaxEntries     int      `json:"max_entries"`
+	ListEndpoint   string   `json:"list_endpoint"`
+	DetailEndpoint string   `json:"detail_endpoint"`
+	Redaction      string   `json:"redaction"`
+	Captures       []string `json:"captures"`
 }
 
 type capabilityBackendFailureRule struct {
@@ -347,6 +357,7 @@ func buildCapabilityManifest(ctx context.Context, deps RouterDeps) capabilityMan
 					Enabled: metricsConfig.Enabled,
 					Path:    metricsConfig.Path,
 				},
+				DebugTraces:          debugTraceCapability(deps.DebugTrace),
 				BackendFailurePolicy: capabilityBackendFailurePolicy(),
 				HealthPublic:         true,
 				ReadyzPublic:         true,
@@ -537,6 +548,32 @@ func upstreamProviderRoutingCapability(deps RouterDeps) capabilityUpstreamProvid
 		ProviderCount: len(providers),
 		ModelCount:    modelCount,
 		Providers:     providers,
+	}
+}
+
+func debugTraceCapability(cfg DebugTraceConfig) capabilityDebugTraces {
+	cfg = normalizeDebugTraceConfig(cfg)
+	return capabilityDebugTraces{
+		Enabled:        cfg.Enabled,
+		MaxEntries:     cfg.MaxEntries,
+		ListEndpoint:   "/debug/traces",
+		DetailEndpoint: "/debug/traces/{request_id}",
+		Redaction:      "metadata_only_no_prompts_no_headers_no_file_contents",
+		Captures: []string{
+			"request_id",
+			"route",
+			"surface",
+			"source_format",
+			"model",
+			"provider_route",
+			"routing_mode",
+			"selected_backend",
+			"tool_classifier_decisions",
+			"backend_failure_class",
+			"fallback_decision",
+			"rate_limit_decision",
+			"final_status",
+		},
 	}
 }
 

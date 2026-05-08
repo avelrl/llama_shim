@@ -639,6 +639,13 @@ func TestCapabilitiesEndpointReportsConfiguredRuntime(t *testing.T) {
 	require.Equal(t, config.ShimAuthModeDisabled, asStringAny(ops["auth_mode"]))
 	require.Equal(t, true, ops["health_public"])
 	require.Equal(t, true, ops["readyz_public"])
+	debugTraces := ops["debug_traces"].(map[string]any)
+	require.Equal(t, true, debugTraces["enabled"])
+	require.Equal(t, float64(256), debugTraces["max_entries"])
+	require.Equal(t, "/debug/traces", asStringAny(debugTraces["list_endpoint"]))
+	require.Equal(t, "/debug/traces/{request_id}", asStringAny(debugTraces["detail_endpoint"]))
+	require.Equal(t, "metadata_only_no_prompts_no_headers_no_file_contents", asStringAny(debugTraces["redaction"]))
+	require.Contains(t, debugTraces["captures"].([]any), "tool_classifier_decisions")
 
 	rateLimit := ops["rate_limit"].(map[string]any)
 	require.Equal(t, true, rateLimit["enabled"])
@@ -812,6 +819,58 @@ func TestCapabilitiesEndpointReportsVLLMConstrainedRuntime(t *testing.T) {
 	require.Equal(t, "grammar_native_or_regex_native_or_shim_validate_repair_or_upstream_fallback", asStringAny(constrainedRouting["prefer_local"]))
 	require.Equal(t, "proxy_first", asStringAny(constrainedRouting["prefer_upstream"]))
 	require.Equal(t, "grammar_native_or_regex_native_or_shim_validate_repair_or_validation_error", asStringAny(constrainedRouting["local_only"]))
+}
+
+func TestDebugTracesEndpointRecordsSanitizedResponsesTrace(t *testing.T) {
+	app := testutil.NewTestApp(t)
+	status, headers, payload := rawRequestWithHeaders(t, app, http.MethodPost, "/v1/responses", map[string]any{
+		"model": "test-model",
+		"input": "do not persist this prompt in the debug trace",
+		"tools": []map[string]any{
+			{
+				"type": "function",
+				"name": "lookup",
+				"parameters": map[string]any{
+					"type":       "object",
+					"properties": map[string]any{},
+				},
+			},
+		},
+	}, map[string]string{
+		"Authorization":       "Bearer local-secret-token",
+		"X-Client-Request-Id": "client-trace-1",
+	})
+	require.Equal(t, http.StatusOK, status)
+	require.NotEmpty(t, payload["id"])
+
+	requestID := headers.Get("X-Request-Id")
+	require.NotEmpty(t, requestID)
+	status, trace := rawRequest(t, app, http.MethodGet, "/debug/traces/"+requestID, nil)
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, "shim.debug_trace", asStringAny(trace["object"]))
+	require.Equal(t, requestID, asStringAny(trace["request_id"]))
+	require.Equal(t, "client-trace-1", asStringAny(trace["client_request_id"]))
+	require.Equal(t, http.MethodPost, asStringAny(trace["method"]))
+	require.Equal(t, "/v1/responses", asStringAny(trace["path"]))
+	require.Equal(t, "/v1/responses", asStringAny(trace["route"]))
+	require.Equal(t, "responses", asStringAny(trace["surface"]))
+	require.Equal(t, "responses.create", asStringAny(trace["source_format"]))
+	require.Equal(t, "test-model", asStringAny(trace["model"]))
+	require.Equal(t, config.ResponsesModePreferLocal, asStringAny(trace["routing_mode"]))
+	require.Equal(t, "local_tool_loop", asStringAny(trace["selected_backend"]))
+	require.Equal(t, "chat_completions_tool_loop", asStringAny(trace["backend_projection_class"]))
+	require.Equal(t, float64(http.StatusOK), trace["final_status"])
+	toolDecisions := trace["tool_decisions"].([]any)
+	require.Len(t, toolDecisions, 1)
+	toolDecision := toolDecisions[0].(map[string]any)
+	require.Equal(t, "function", asStringAny(toolDecision["type"]))
+	require.Equal(t, "chat_projection", asStringAny(toolDecision["disposition"]))
+
+	rawTrace, err := json.Marshal(trace)
+	require.NoError(t, err)
+	require.NotContains(t, string(rawTrace), "do not persist this prompt")
+	require.NotContains(t, string(rawTrace), "local-secret-token")
+	require.NotContains(t, string(rawTrace), "Authorization")
 }
 
 func TestCapabilitiesEndpointReportsDegradedProbesWithoutFailingRoute(t *testing.T) {

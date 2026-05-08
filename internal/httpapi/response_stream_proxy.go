@@ -478,7 +478,12 @@ func (h *responseHandler) proxyResponseRequest(r *http.Request, body []byte) (*h
 }
 
 func logResponsesUpstreamHTTPError(ctx context.Context, logger *slog.Logger, operation string, resp *http.Response, body []byte, bodyTruncated bool) {
-	if logger == nil || resp == nil || resp.StatusCode < http.StatusBadRequest {
+	if resp == nil || resp.StatusCode < http.StatusBadRequest {
+		return
+	}
+	decision := backendFailureDecisionFor(classifyBackendHTTPFailure(resp.StatusCode, string(body)))
+	RecordDebugTraceBackendFailure(ctx, decision, operation, resp.StatusCode)
+	if logger == nil {
 		return
 	}
 
@@ -493,7 +498,6 @@ func logResponsesUpstreamHTTPError(ctx context.Context, logger *slog.Logger, ope
 		"body_truncated", bodyTruncated || len(body) > responsesUpstreamErrorBodyLogLimit,
 		"body_preview", bodyPreviewForLog(body, responsesUpstreamErrorBodyLogLimit),
 	}
-	decision := backendFailureDecisionFor(classifyBackendHTTPFailure(resp.StatusCode, string(body)))
 	attrs = append(attrs, backendFailurePolicyLogAttrs(decision)...)
 	logger.WarnContext(ctx, "responses upstream returned error", attrs...)
 }

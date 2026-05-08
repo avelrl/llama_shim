@@ -50,6 +50,8 @@ type Config struct {
 	ShimRateLimitBurst                             int
 	ShimMetricsEnabled                             bool
 	ShimMetricsPath                                string
+	ShimDebugTracesEnabled                         bool
+	ShimDebugTracesMaxEntries                      int
 	ShimJSONBodyLimitBytes                         int64
 	RetrievalFileUploadMaxBytes                    int64
 	ChatCompletionsShadowStoreMaxBytes             int64
@@ -256,6 +258,7 @@ func Load(configPath string) (Config, error) {
 		ShimRateLimitEnabled:                           v.GetBool("shim.rate_limit.enabled"),
 		ShimMetricsEnabled:                             v.GetBool("shim.metrics.enabled"),
 		ShimMetricsPath:                                strings.TrimSpace(v.GetString("shim.metrics.path")),
+		ShimDebugTracesEnabled:                         v.GetBool("shim.debug_traces.enabled"),
 		LogLevel:                                       slog.LevelInfo,
 		LogFilePath:                                    strings.TrimSpace(v.GetString("log.file_path")),
 		RetrievalIndexBackend:                          strings.TrimSpace(v.GetString("retrieval.index.backend")),
@@ -554,6 +557,11 @@ func Load(configPath string) (Config, error) {
 		return Config{}, fmt.Errorf("parse shim.rate_limit.burst: %w", err)
 	}
 	cfg.ShimRateLimitBurst = rateLimitBurst
+	debugTracesMaxEntries, err := parseNonNegativeInt(v.GetString("shim.debug_traces.max_entries"))
+	if err != nil {
+		return Config{}, fmt.Errorf("parse shim.debug_traces.max_entries: %w", err)
+	}
+	cfg.ShimDebugTracesMaxEntries = debugTracesMaxEntries
 	if err := parseDuration(v.GetString("responses.code_interpreter.execution_timeout"), &cfg.ResponsesCodeInterpreterTimeout); err != nil {
 		return Config{}, fmt.Errorf("parse responses.code_interpreter.execution_timeout: %w", err)
 	}
@@ -712,6 +720,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("shim.rate_limit.burst", "60")
 	v.SetDefault("shim.metrics.enabled", true)
 	v.SetDefault("shim.metrics.path", "/metrics")
+	v.SetDefault("shim.debug_traces.enabled", true)
+	v.SetDefault("shim.debug_traces.max_entries", "256")
 	v.SetDefault("shim.limits.json_body_bytes", "1MiB")
 	v.SetDefault("shim.limits.retrieval_file_upload_bytes", "64MiB")
 	v.SetDefault("shim.limits.chat_completions_shadow_store_bytes", "64MiB")

@@ -116,7 +116,7 @@ flowchart TB
   client --> chat["/v1/chat/completions"]
   client --> conversations["/v1/conversations"]
   client --> files["/v1/files and /v1/vector_stores"]
-  client --> ops["/debug/capabilities, /readyz, /metrics"]
+  client --> ops["/debug/capabilities, /debug/traces, /readyz, /metrics"]
 
   responses --> shim
   chat --> shim
@@ -175,6 +175,12 @@ What exists today:
   `/debug/capabilities.runtime.ops.backend_failure_policy` exposes that static
   decision table, while live quota/cooldown state is not emitted as fake
   OpenAI response fields.
+- Debug traces are shim-owned operator state. `/debug/traces` retains a
+  bounded in-memory metadata-only view keyed by `X-Request-Id`; it records
+  route, surface/source format, provider/model route, classifier and backend
+  projection decisions, failure-policy/fallback/rate-limit decisions, and the
+  final public status. It deliberately excludes prompts, bearer tokens,
+  private provider headers, tool outputs, file contents, and decrypted state.
 - Codex-through-shim setup is covered by shim-owned `shimctl codex config` and
   `shimctl codex doctor` tooling. The generated TOML targets Codex's Responses
   provider shape, while the doctor checks local Codex presence, shim health,

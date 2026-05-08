@@ -49,6 +49,9 @@ shim:
   metrics:
     enabled: true
     path: /metrics
+  debug_traces:
+    enabled: true
+    max_entries: 64
   limits:
     json_body_bytes: 2MiB
     retrieval_file_upload_bytes: 32MiB
@@ -261,6 +264,8 @@ responses:
 	require.Equal(t, 40, cfg.ShimRateLimitBurst)
 	require.True(t, cfg.ShimMetricsEnabled)
 	require.Equal(t, "/metrics", cfg.ShimMetricsPath)
+	require.True(t, cfg.ShimDebugTracesEnabled)
+	require.Equal(t, 64, cfg.ShimDebugTracesMaxEntries)
 	require.EqualValues(t, 2<<20, cfg.ShimJSONBodyLimitBytes)
 	require.EqualValues(t, 32<<20, cfg.RetrievalFileUploadMaxBytes)
 	require.Equal(t, 3*time.Second, cfg.ChatCompletionsShadowStoreTimeout)
@@ -586,6 +591,8 @@ func TestLoadUsesCodexSafeDefaults(t *testing.T) {
 	require.Equal(t, 60, cfg.ShimRateLimitBurst)
 	require.True(t, cfg.ShimMetricsEnabled)
 	require.Equal(t, "/metrics", cfg.ShimMetricsPath)
+	require.True(t, cfg.ShimDebugTracesEnabled)
+	require.Equal(t, 256, cfg.ShimDebugTracesMaxEntries)
 	require.EqualValues(t, 1<<20, cfg.ShimJSONBodyLimitBytes)
 	require.EqualValues(t, 64<<20, cfg.RetrievalFileUploadMaxBytes)
 	require.EqualValues(t, 64<<20, cfg.ResponsesProxyBufferMaxBytes)

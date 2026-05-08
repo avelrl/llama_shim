@@ -23,9 +23,14 @@ Responses WebSocket warmup also share a stream/replay emitter interface with
 explicit replay classes and capability labels, while preserving the existing
 OpenAI-shaped event payloads. Backend failures also use a shared V4 policy
 classifier for retryability, cooldown hints, fallback eligibility, client error
-mapping, and operator diagnostics in `/debug/capabilities`. Codex-through-shim
-setup now has shim-owned `shimctl codex config` and `shimctl codex doctor`
-tooling so provider/model aliases can be validated before long eval runs.
+mapping, and operator diagnostics in `/debug/capabilities`. The shim also has
+a bounded metadata-only request trace contract through `/debug/traces` and
+`/debug/traces/{request_id}` so routing, backend projection, classifier,
+failure-policy, fallback, rate-limit, persistence, stream/replay, and final
+status decisions can be inspected by operators without adding fake fields to
+OpenAI-shaped responses. Codex-through-shim setup now has shim-owned
+`shimctl codex config` and `shimctl codex doctor` tooling so provider/model
+aliases can be validated before long eval runs.
 
 V2 is the broad compatibility facade.
 V3 is backend and runtime expansion around that facade.

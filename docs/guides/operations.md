@@ -75,6 +75,10 @@ make devstack-down
 - `/debug/capabilities`: shim-owned capability manifest for operators, testers,
   and autonomous agents; always returns a JSON manifest with current surfaces,
   routing classes, runtime config, and dependency probe state
+- `/debug/traces` and `/debug/traces/{request_id}`: shim-owned bounded
+  in-memory request traces for the latest requests; these are metadata-only
+  and intentionally omit prompts, bearer tokens, private provider headers,
+  tool outputs, and file contents
 - `/metrics`: Prometheus-style metrics endpoint when enabled
 
 Important distinction:
@@ -87,6 +91,11 @@ Important distinction:
 - `/debug/capabilities` remains a normal shim route, so it shares shim ingress
   auth and request rate limiting, and reports degraded dependencies inside
   `ready` and `probes.*` instead of failing the route itself
+- `/debug/traces` remains a normal shim route as well. Configure
+  `shim.debug_traces.enabled` / `SHIM_DEBUG_TRACES_ENABLED` and
+  `shim.debug_traces.max_entries` / `SHIM_DEBUG_TRACES_MAX_ENTRIES`.
+  Use `X-Request-Id` from a client response to retrieve one trace:
+  `curl "$SHIM_BASE_URL/debug/traces/$REQUEST_ID"`.
 - `shimctl probe` is separate from `/readyz`: it is recommendation-only,
   runs on demand from the shared `config.yaml`, can use the shared `.env` for
   `SHIMCTL_PROBE_*` overrides, prints per-request progress to `stderr`
