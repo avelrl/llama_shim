@@ -153,6 +153,55 @@ func TestBuildCurationReportFiltersByModelAndSince(t *testing.T) {
 	}
 }
 
+func TestBuildCurationReportNormalizesProviderModelAliases(t *testing.T) {
+	root := t.TempDir()
+	run := Summary{
+		RunID:     "kimi-run",
+		StartedAt: "2026-05-07T12:00:00Z",
+		Environment: Environment{
+			Model: "Kimi-K2.6",
+			Suite: "codex-real-upstream",
+		},
+		Counts: map[string]int{StatusPassed: 1},
+		Tasks:  []TaskResult{{ID: "boot", Status: StatusPassed, Attempts: []AttemptResult{{Attempt: 1, Status: StatusPassed}}}},
+	}
+	if err := writeJSON(filepath.Join(root, "runs", "kimi", "summary.json"), run); err != nil {
+		t.Fatalf("write run summary: %v", err)
+	}
+
+	report, err := BuildCurationReport(CurationOptions{
+		Paths: []string{filepath.Join(root, "runs")},
+		Model: "svgun/kimi-k2.6",
+		ModelAliases: map[string]string{
+			"Kimi-K2.6": "svgun/kimi-k2.6",
+		},
+	})
+	if err != nil {
+		t.Fatalf("build curation report: %v", err)
+	}
+	if len(report.ProfileResults) != 1 {
+		t.Fatalf("profile results = %d, want 1", len(report.ProfileResults))
+	}
+	result := report.ProfileResults[0]
+	if result.Model != "Kimi-K2.6" {
+		t.Fatalf("raw model = %q, want Kimi-K2.6", result.Model)
+	}
+	if result.PublicModel != "svgun/kimi-k2.6" || result.CanonicalModel != "svgun/kimi-k2.6" {
+		t.Fatalf("canonical/public = %q/%q, want svgun/kimi-k2.6", result.CanonicalModel, result.PublicModel)
+	}
+	if len(report.ModelSummaries) != 1 {
+		t.Fatalf("model summaries = %d, want 1", len(report.ModelSummaries))
+	}
+	summary := report.ModelSummaries[0]
+	if summary.Model != "svgun/kimi-k2.6" || summary.RawModels[0] != "Kimi-K2.6" {
+		t.Fatalf("summary = %#v, want canonical model with raw model", summary)
+	}
+	markdown := RenderCurationReportMarkdown(report)
+	if !strings.Contains(markdown, "Kimi-K2.6 -&gt; svgun/kimi-k2.6") && !strings.Contains(markdown, "Kimi-K2.6 -> svgun/kimi-k2.6") {
+		t.Fatalf("markdown missing model alias display:\n%s", markdown)
+	}
+}
+
 func hasRecommendation(report CurationReport, needle string) bool {
 	for _, recommendation := range report.Recommendations {
 		if strings.Contains(recommendation, needle) {

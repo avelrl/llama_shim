@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"llama_shim/internal/codexeval"
+	"llama_shim/internal/config"
 )
 
 func main() {
@@ -280,15 +281,23 @@ func runCurate(args []string) {
 	limit := flags.Int("limit", envInt("CODEX_EVAL_CURATE_LIMIT", 50), "maximum profile results to include after filtering; 0 means no limit")
 	model := flags.String("model", envString("CODEX_EVAL_CURATE_MODEL", ""), "optional exact model filter")
 	since := flags.String("since", envString("CODEX_EVAL_CURATE_SINCE", ""), "optional lower bound as RFC3339 or YYYY-MM-DD")
+	providerConfig := flags.String("provider-config", envString("CODEX_EVAL_CURATE_PROVIDER_CONFIG", ""), "optional shim config.yaml path used to normalize upstream model ids to provider/model aliases")
+	modelAliases := flags.String("model-aliases", envString("CODEX_EVAL_CURATE_MODEL_ALIASES", ""), "optional comma-separated raw=provider/model aliases")
 	if err := flags.Parse(args); err != nil {
 		fmt.Fprintf(os.Stderr, "codex eval curate failed: %v\n", err)
 		os.Exit(2)
 	}
+	aliases, err := loadCurationModelAliases(*providerConfig, *modelAliases)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "codex eval curate failed: %v\n", err)
+		os.Exit(1)
+	}
 	report, err := codexeval.BuildCurationReport(codexeval.CurationOptions{
-		Paths: flags.Args(),
-		Limit: *limit,
-		Model: *model,
-		Since: *since,
+		Paths:        flags.Args(),
+		Limit:        *limit,
+		Model:        *model,
+		Since:        *since,
+		ModelAliases: aliases,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "codex eval curate failed: %v\n", err)
@@ -316,6 +325,68 @@ func runCurate(args []string) {
 			os.Exit(1)
 		}
 		fmt.Printf("codex eval curation summary: %s\n", *jsonOut)
+	}
+}
+
+func loadCurationModelAliases(configPath string, inline string) (map[string]string, error) {
+	aliases := parseInlineCurationModelAliases(inline)
+	if strings.TrimSpace(configPath) == "" {
+		return aliases, nil
+	}
+	cfg, err := config.LoadShimctl(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("load provider config for curation aliases: %w", err)
+	}
+	for _, provider := range cfg.LlamaProviders {
+		providerID := strings.TrimSpace(provider.ID)
+		if providerID == "" {
+			continue
+		}
+		for _, model := range provider.Models {
+			publicModel := providerID + "/" + strings.TrimSpace(model.Model)
+			if publicModel == providerID+"/" {
+				continue
+			}
+			addCurationModelAlias(aliases, publicModel, publicModel)
+			addCurationModelAlias(aliases, model.Model, publicModel)
+			upstreamModel := strings.TrimSpace(model.UpstreamModel)
+			if upstreamModel == "" {
+				upstreamModel = strings.TrimSpace(model.Model)
+			}
+			addCurationModelAlias(aliases, upstreamModel, publicModel)
+		}
+	}
+	for _, metadata := range cfg.ResponsesCodexModelMetadata {
+		model := strings.TrimSpace(metadata.Model)
+		if strings.Contains(model, "/") {
+			addCurationModelAlias(aliases, model, model)
+		}
+	}
+	return aliases, nil
+}
+
+func parseInlineCurationModelAliases(value string) map[string]string {
+	aliases := map[string]string{}
+	for _, entry := range strings.FieldsFunc(value, func(r rune) bool {
+		return r == ',' || r == ';' || r == '\n' || r == '\r'
+	}) {
+		raw, canonical, ok := strings.Cut(entry, "=")
+		if !ok {
+			continue
+		}
+		addCurationModelAlias(aliases, raw, canonical)
+	}
+	return aliases
+}
+
+func addCurationModelAlias(aliases map[string]string, raw string, canonical string) {
+	raw = strings.TrimSpace(raw)
+	canonical = strings.TrimSpace(canonical)
+	if raw == "" || canonical == "" {
+		return
+	}
+	if _, exists := aliases[raw]; !exists {
+		aliases[raw] = canonical
 	}
 }
 

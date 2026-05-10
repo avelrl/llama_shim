@@ -22,10 +22,11 @@ const (
 )
 
 type CurationOptions struct {
-	Paths []string
-	Limit int
-	Model string
-	Since string
+	Paths        []string
+	Limit        int
+	Model        string
+	Since        string
+	ModelAliases map[string]string
 }
 
 type CurationReport struct {
@@ -42,9 +43,10 @@ type CurationReport struct {
 }
 
 type CurationFilters struct {
-	Limit int    `json:"limit,omitempty"`
-	Model string `json:"model,omitempty"`
-	Since string `json:"since,omitempty"`
+	Limit        int               `json:"limit,omitempty"`
+	Model        string            `json:"model,omitempty"`
+	Since        string            `json:"since,omitempty"`
+	ModelAliases map[string]string `json:"model_aliases,omitempty"`
 }
 
 type CurationProfileResult struct {
@@ -53,6 +55,8 @@ type CurationProfileResult struct {
 	Profile        string            `json:"profile"`
 	RunID          string            `json:"run_id"`
 	Model          string            `json:"model"`
+	PublicModel    string            `json:"public_model,omitempty"`
+	CanonicalModel string            `json:"canonical_model,omitempty"`
 	Suite          string            `json:"suite"`
 	StartedAt      string            `json:"started_at,omitempty"`
 	Status         string            `json:"status"`
@@ -70,6 +74,9 @@ type CurationProfileResult struct {
 
 type CurationModelSummary struct {
 	Model                string         `json:"model"`
+	PublicModel          string         `json:"public_model,omitempty"`
+	CanonicalModel       string         `json:"canonical_model,omitempty"`
+	RawModels            []string       `json:"raw_models,omitempty"`
 	Profile              string         `json:"profile"`
 	Runs                 int            `json:"runs"`
 	StrictCleanRuns      int            `json:"strict_clean_runs"`
@@ -88,6 +95,9 @@ type CurationModelSummary struct {
 
 type CurationTaskTrend struct {
 	Model          string         `json:"model"`
+	PublicModel    string         `json:"public_model,omitempty"`
+	CanonicalModel string         `json:"canonical_model,omitempty"`
+	RawModels      []string       `json:"raw_models,omitempty"`
 	Profile        string         `json:"profile"`
 	Task           string         `json:"task"`
 	Failed         int            `json:"failed"`
@@ -131,6 +141,8 @@ func BuildCurationReport(options CurationOptions) (CurationReport, error) {
 		}
 	}
 	results := expandCurationInputs(loaded)
+	modelAliases := normalizeCurationModelAliases(options.ModelAliases)
+	results = applyCurationModelAliases(results, modelAliases)
 	results = filterCurationResults(results, options.Model, since)
 	sort.SliceStable(results, func(i, j int) bool {
 		return curationSortTime(results[i]) > curationSortTime(results[j])
@@ -147,7 +159,7 @@ func BuildCurationReport(options CurationOptions) (CurationReport, error) {
 		GeneratedAt:     time.Now().UTC().Format(time.RFC3339),
 		Status:          CurationStatusOK,
 		Inputs:          append([]string(nil), options.Paths...),
-		Filters:         CurationFilters{Limit: options.Limit, Model: strings.TrimSpace(options.Model), Since: strings.TrimSpace(options.Since)},
+		Filters:         CurationFilters{Limit: options.Limit, Model: strings.TrimSpace(options.Model), Since: strings.TrimSpace(options.Since), ModelAliases: modelAliases},
 		ProfileResults:  results,
 		ModelSummaries:  modelSummaries,
 		TaskTrends:      taskTrends,
@@ -201,7 +213,7 @@ func RenderCurationReportMarkdown(report CurationReport) string {
 				markdownCell(curationShortTime(result.StartedAt)),
 				markdownCell(result.Kind),
 				markdownCell(result.Profile),
-				markdownCell(result.Model),
+				markdownCell(curationDisplayModel(result)),
 				markdownCell(result.Suite),
 				result.Passed,
 				result.Total,
@@ -265,6 +277,7 @@ func RenderCurationReportMarkdown(report CurationReport) string {
 
 	fmt.Fprintf(&b, "## Matrix Transfer Notes\n\n")
 	fmt.Fprintf(&b, "- Generated files own counts; the model matrix owns interpretation.\n")
+	fmt.Fprintf(&b, "- `public_model` and `canonical_model` fields are shim-owned curation metadata used to align raw upstream model ids with configured provider/model aliases.\n")
 	fmt.Fprintf(&b, "- Promote `baseline` only when the latest baseline is strict-clean, or explicitly note retry-dependent tasks.\n")
 	fmt.Fprintf(&b, "- Treat `expanded` and `bench-lite` as diagnostic/stability evidence unless the matrix scope is deliberately changed.\n")
 	fmt.Fprintf(&b, "- Inspect shim log diagnostics before classifying transport or raw-tool failures as model behavior.\n")
@@ -583,11 +596,95 @@ func curationFindingsForCandidate(findings []AutoTaskFinding, runID string) []Au
 	return result
 }
 
+func normalizeCurationModelAliases(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	aliases := make(map[string]string, len(values))
+	keys := make([]string, 0, len(values))
+	for raw, canonical := range values {
+		raw = strings.TrimSpace(raw)
+		canonical = strings.TrimSpace(canonical)
+		if raw == "" || canonical == "" {
+			continue
+		}
+		if _, exists := aliases[raw]; !exists {
+			aliases[raw] = canonical
+			keys = append(keys, raw)
+		}
+	}
+	if len(aliases) == 0 {
+		return nil
+	}
+	sort.Strings(keys)
+	ordered := make(map[string]string, len(aliases))
+	for _, key := range keys {
+		ordered[key] = aliases[key]
+	}
+	return ordered
+}
+
+func applyCurationModelAliases(results []CurationProfileResult, aliases map[string]string) []CurationProfileResult {
+	for i := range results {
+		canonical := curationCanonicalModelFor(results[i].Model, aliases)
+		if canonical == "" {
+			continue
+		}
+		results[i].CanonicalModel = canonical
+		if strings.Contains(canonical, "/") {
+			results[i].PublicModel = canonical
+		}
+	}
+	return results
+}
+
+func curationCanonicalModelFor(model string, aliases map[string]string) string {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return ""
+	}
+	if canonical := strings.TrimSpace(aliases[model]); canonical != "" {
+		return canonical
+	}
+	if strings.Contains(model, "/") {
+		return model
+	}
+	return ""
+}
+
+func curationModelKey(result CurationProfileResult) string {
+	if result.CanonicalModel != "" {
+		return result.CanonicalModel
+	}
+	return result.Model
+}
+
+func curationPublicModelFor(result CurationProfileResult) string {
+	if result.PublicModel != "" {
+		return result.PublicModel
+	}
+	if strings.Contains(result.CanonicalModel, "/") {
+		return result.CanonicalModel
+	}
+	if strings.Contains(result.Model, "/") {
+		return result.Model
+	}
+	return ""
+}
+
+func curationDisplayModel(result CurationProfileResult) string {
+	canonical := curationModelKey(result)
+	if canonical == "" || canonical == result.Model {
+		return result.Model
+	}
+	return result.Model + " -> " + canonical
+}
+
 func filterCurationResults(results []CurationProfileResult, model string, since *time.Time) []CurationProfileResult {
 	var filtered []CurationProfileResult
 	model = strings.TrimSpace(model)
 	for _, result := range results {
-		if model != "" && result.Model != model {
+		if model != "" && result.Model != model && result.CanonicalModel != model && result.PublicModel != model {
 			continue
 		}
 		if since != nil {
@@ -698,21 +795,35 @@ func buildCurationModelSummaries(results []CurationProfileResult) []CurationMode
 		summary CurationModelSummary
 		latest  CurationProfileResult
 		tasks   map[string]bool
+		raw     map[string]bool
 	}
 	aggregates := map[string]*aggregate{}
 	for _, result := range results {
-		key := result.Model + "\x00" + result.Profile
+		modelKey := curationModelKey(result)
+		key := modelKey + "\x00" + result.Profile
 		agg := aggregates[key]
 		if agg == nil {
 			agg = &aggregate{
 				summary: CurationModelSummary{
-					Model:           result.Model,
+					Model:           modelKey,
+					PublicModel:     curationPublicModelFor(result),
+					CanonicalModel:  result.CanonicalModel,
 					Profile:         result.Profile,
 					DiagnosisCounts: map[string]int{},
 				},
 				tasks: map[string]bool{},
+				raw:   map[string]bool{},
 			}
 			aggregates[key] = agg
+		}
+		if result.Model != "" {
+			agg.raw[result.Model] = true
+		}
+		if agg.summary.PublicModel == "" {
+			agg.summary.PublicModel = curationPublicModelFor(result)
+		}
+		if agg.summary.CanonicalModel == "" {
+			agg.summary.CanonicalModel = result.CanonicalModel
 		}
 		agg.summary.Runs++
 		if result.StrictClean {
@@ -751,6 +862,14 @@ func buildCurationModelSummaries(results []CurationProfileResult) []CurationMode
 			taskIDs = append(taskIDs, taskID)
 		}
 		sort.Strings(taskIDs)
+		rawModels := make([]string, 0, len(agg.raw))
+		for model := range agg.raw {
+			rawModels = append(rawModels, model)
+		}
+		sort.Strings(rawModels)
+		if len(rawModels) > 0 {
+			agg.summary.RawModels = rawModels
+		}
 		agg.summary.UnstableTasks = taskIDs
 		agg.summary.LatestSource = agg.latest.Source
 		agg.summary.LatestRunID = agg.latest.RunID
@@ -769,22 +888,36 @@ func buildCurationModelSummaries(results []CurationProfileResult) []CurationMode
 }
 
 func buildCurationTaskTrends(results []CurationProfileResult) []CurationTaskTrend {
-	trends := map[string]*CurationTaskTrend{}
+	type trendAggregate struct {
+		trend CurationTaskTrend
+		raw   map[string]bool
+	}
+	trends := map[string]*trendAggregate{}
 	addFinding := func(result CurationProfileResult, finding AutoTaskFinding, retry bool) {
 		if finding.Task == "" {
 			return
 		}
-		key := result.Model + "\x00" + result.Profile + "\x00" + finding.Task
-		trend := trends[key]
-		if trend == nil {
-			trend = &CurationTaskTrend{
-				Model:     result.Model,
-				Profile:   result.Profile,
-				Task:      finding.Task,
-				Diagnoses: map[string]int{},
+		modelKey := curationModelKey(result)
+		key := modelKey + "\x00" + result.Profile + "\x00" + finding.Task
+		agg := trends[key]
+		if agg == nil {
+			agg = &trendAggregate{
+				trend: CurationTaskTrend{
+					Model:          modelKey,
+					PublicModel:    curationPublicModelFor(result),
+					CanonicalModel: result.CanonicalModel,
+					Profile:        result.Profile,
+					Task:           finding.Task,
+					Diagnoses:      map[string]int{},
+				},
+				raw: map[string]bool{},
 			}
-			trends[key] = trend
+			trends[key] = agg
 		}
+		if result.Model != "" {
+			agg.raw[result.Model] = true
+		}
+		trend := &agg.trend
 		if retry {
 			trend.RetryDependent++
 		} else {
@@ -815,7 +948,16 @@ func buildCurationTaskTrends(results []CurationProfileResult) []CurationTaskTren
 	sort.Strings(keys)
 	result := make([]CurationTaskTrend, 0, len(keys))
 	for _, key := range keys {
-		result = append(result, *trends[key])
+		agg := trends[key]
+		rawModels := make([]string, 0, len(agg.raw))
+		for model := range agg.raw {
+			rawModels = append(rawModels, model)
+		}
+		sort.Strings(rawModels)
+		if len(rawModels) > 0 {
+			agg.trend.RawModels = rawModels
+		}
+		result = append(result, agg.trend)
 	}
 	sort.SliceStable(result, func(i, j int) bool {
 		left := result[i].Failed + result[i].RetryDependent
@@ -847,9 +989,10 @@ func buildCurationRecommendations(report CurationReport) []string {
 		if result.Profile != "baseline" {
 			continue
 		}
-		current, ok := latestBaseline[result.Model]
+		model := curationModelKey(result)
+		current, ok := latestBaseline[model]
 		if !ok || curationSortTime(result) > curationSortTime(current) {
-			latestBaseline[result.Model] = result
+			latestBaseline[model] = result
 		}
 	}
 	if len(latestBaseline) == 0 {

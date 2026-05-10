@@ -124,6 +124,7 @@ if ! jq -n \
   def doctor_models: as_array(doctor.models);
   def matrix_rows: as_array(matrix.latest_rows);
   def codex_summaries: as_array(codex.model_summaries);
+  def codex_key($row): (($row.canonical_model // $row.public_model // $row.model // "") | select(. != ""));
   def matrix_models:
     ((doctor.options.matrix_models // []) + [doctor_models[]?.public_model] + [matrix_rows[]?.model])
     | map(select(. != null and . != ""))
@@ -132,7 +133,7 @@ if ! jq -n \
     if $model_filter != "" then [matrix_models[] | select(. == $model_filter)] else matrix_models end;
   def doctor_model($model): ([doctor_models[]? | select(.public_model == $model)] | first);
   def matrix_row($model): ([matrix_rows[]? | select(.model == $model)] | first);
-  def codex_summary($model; $profile): ([codex_summaries[]? | select(.model == $model and .profile == $profile)] | first);
+  def codex_summary($model; $profile): ([codex_summaries[]? | select(codex_key(.) == $model and .profile == $profile)] | first);
   def issue_count($severity):
     ([doctor.issues[]? | select(.severity == $severity)] | length);
   def codex_status($model):
@@ -214,7 +215,7 @@ if ! jq -n \
   (selected_models | map(model_row(.))) as $rows |
   ([matrix_rows[]?.model] | unique) as $matrix_evidence_models |
   (matrix_models) as $configured_matrix_models |
-  ([codex_summaries[]?.model] | unique) as $codex_evidence_models |
+  ([codex_summaries[]? | codex_key(.)] | unique) as $codex_evidence_models |
   {
     object:"v4_provider_ops.summary",
     status:(

@@ -40,6 +40,8 @@ Assumptions:
 - [Operations](operations.md): running, probing, backing up, and maintaining the shim
 - [V4 Preflight Runbook](operations.md#v4-preflight-runbook): aggregate V4
   health, capability, debug-trace, provider-routing, and Codex config checks
+- [V4 Provider Ops Runbook](../v4-provider-ops-runbook.md): final
+  provider/model evidence workflow and ops verdict interpretation
 - [Postgres Backup and Restore](postgres-backup.md): cluster-native backup
   guidance for the Postgres beta backend
 - [Dev Stack](devstack.md): deterministic local stack and smoke path
@@ -61,6 +63,7 @@ Assumptions:
 - [V3 Computer Browser Harness](../v3-computer-browser-harness.md)
 - [V3 Ops and Deployment Expansion](../v3-ops-deployment.md)
 - [V4 Preflight](../v4-preflight.md)
+- [V4 Provider Ops Runbook](../v4-provider-ops-runbook.md)
 - [V4 Model/Provider Operational Matrix](../engineering/v4-model-provider-operational-matrix.md)
 - [V4 Extensions and Plugin Model](../v4-scope.md)
 - [V5 Hosted Parity and Advanced Transports](../v5-scope.md)

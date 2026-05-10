@@ -70,6 +70,7 @@ Useful filters:
 
 ```bash
 CODEX_EVAL_CURATE_MODEL=deepseek-v4-pro make codex-eval-curate
+CODEX_EVAL_CURATE_MODEL=deepseek/deepseek-v4-pro make codex-eval-curate
 CODEX_EVAL_CURATE_SINCE=2026-05-01 make codex-eval-curate
 CODEX_EVAL_CURATE_LIMIT=100 make codex-eval-curate
 ```
@@ -77,6 +78,13 @@ CODEX_EVAL_CURATE_LIMIT=100 make codex-eval-curate
 The curation report does not replace the source artifacts. It summarizes the
 latest profile results, per-model/profile trends, repeated failed or
 retry-dependent tasks, diagnosis counts, and matrix-transfer recommendations.
+When `config.yaml` is present, the wrapper passes it to the curation command
+so raw upstream model ids such as `Kimi-K2.6` can be grouped under the current
+public `provider/model` alias such as `svgun/kimi-k2.6`. The JSON report keeps
+the raw `model` and adds `public_model`, `canonical_model`, and `raw_models`
+where alias normalization applies.
+Set `CODEX_EVAL_CURATE_PROVIDER_CONFIG=disabled` only when you intentionally
+want historical raw-id grouping.
 
 ## First-Pass Review
 

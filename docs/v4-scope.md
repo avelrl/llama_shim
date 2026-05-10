@@ -55,7 +55,10 @@ console served by the Go binary under `/ui/`, backed by health/readiness,
 capability, evidence, and trace endpoints. Its Phase 2 operational evidence
 registry exposes bounded, read-only summaries from known `.tmp` smoke and
 curation artifact families through `/debug/evidence`; it does not read raw
-logs or mutate local state.
+logs or mutate local state. The provider/model ops loop is documented in
+[V4 Provider Ops Runbook](v4-provider-ops-runbook.md), with
+`make v4-provider-ops-report` as the final read-only verdict over provider
+doctor, provider matrix curation, and Codex eval curation evidence.
 The HTTP server now handles `SIGINT`/`SIGTERM` with shim-owned graceful shutdown:
 background cleanup loops are canceled and in-flight requests drain up to
 `shim.shutdown_timeout` before forced process exit.

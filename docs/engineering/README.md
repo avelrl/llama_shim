@@ -17,6 +17,8 @@ not practical user guides and are not release scope documents.
 - [V4 Model/Provider Operational Matrix](v4-model-provider-operational-matrix.md):
   current provider/model operating choices, promotion rules, and commands for
   V4 preflight, provider routing, and Codex auto runs.
+- [V4 Provider Ops Runbook](../v4-provider-ops-runbook.md): compact
+  provider/model evidence flow and final ops verdict interpretation.
 - [Codex Upstream Model Matrix](codex-upstream-model-matrix.md): practical
   historical DeepSeek, MiMo, Qwen, and Kimi comparison for
   Codex-through-shim smoke testing.

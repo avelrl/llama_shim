@@ -215,6 +215,8 @@ artifacts only, reports per-model decisions such as
 between configured aliases, latest matrix evidence, and Codex curation
 evidence. Set `V4_PROVIDER_OPS_REQUIRE_CODEX=1` when a missing or failed Codex
 baseline should fail the ops report instead of being recorded as a note.
+See [V4 Provider Ops Runbook](../v4-provider-ops-runbook.md) for the compact
+end-to-end workflow.
 4. `provider-routing/<model>/summary.json`: nested routed-provider result when
    `V4_PREFLIGHT_PROVIDER_MODEL` was set.
 5. `codex-doctor/summary.json`: Codex config doctor result when enabled.

@@ -267,6 +267,12 @@ function Evidence(props: {
   detail?: APIResult<EvidenceDetail | undefined>;
 }) {
   const latest = () => props.result?.data?.latest_by_kind || [];
+  const opsReport = () => latest().find((record) => record.kind === "v4_provider_ops");
+  const latestCards = () => {
+    const ops = opsReport();
+    const rest = latest().filter((record) => record.id !== ops?.id);
+    return ops ? [ops, ...rest].slice(0, 8) : rest.slice(0, 8);
+  };
   return (
     <section class="screen">
       <div class="section-head">
@@ -286,9 +292,19 @@ function Evidence(props: {
           </For>
         </Panel>
       </Show>
+      <Show when={opsReport()}>
+        {(record) => (
+          <Panel title="Provider Ops">
+            <KeyValue label="status" value={record().status || "-"} />
+            <KeyValue label="verdict" value={record().verdict || "-"} />
+            <KeyValue label="age" value={formatAge(record().age_seconds)} />
+            <KeyValue label="artifact" value={record().artifact_dir || "-"} />
+          </Panel>
+        )}
+      </Show>
       <Show when={latest().length > 0}>
         <div class="summary-grid">
-          <For each={latest().slice(0, 8)}>
+          <For each={latestCards()}>
             {(record) => (
               <Metric
                 title={shortEvidenceKind(record.kind)}

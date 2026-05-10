@@ -18,7 +18,9 @@ Use this matrix to decide which configured provider/model to test next and how
 to interpret the result. Use
 [Codex Upstream Model Matrix](codex-upstream-model-matrix.md) as the detailed
 evidence ledger and [V3 Codex Eval Curation](../v3-codex-eval-curation.md) as
-the promotion procedure.
+the historical Codex curation reference. Use
+[V4 Provider Ops Runbook](../v4-provider-ops-runbook.md) as the compact
+end-to-end provider/model operating procedure.
 
 Official docs checked on May 8, 2026:
 
