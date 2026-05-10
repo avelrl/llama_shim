@@ -44,6 +44,16 @@ export type CapabilityManifest = {
         redaction?: string;
         captures?: string[];
       };
+      evidence?: {
+        enabled?: boolean;
+        root?: string;
+        max_entries?: number;
+        stale_after_seconds?: number;
+        list_endpoint?: string;
+        detail_endpoint?: string;
+        redaction?: string;
+        support?: string;
+      };
       operator_ui?: {
         enabled?: boolean;
         base_path?: string;
@@ -97,4 +107,44 @@ export type DebugTrace = {
 export type DebugTraceList = {
   object: "list";
   data: DebugTrace[];
+};
+
+export type EvidenceRecord = {
+  id: string;
+  kind: string;
+  title?: string;
+  status?: string;
+  verdict?: string;
+  model?: string;
+  artifact_dir?: string;
+  summary_path?: string;
+  summary_md_path?: string;
+  generated_at?: string;
+  modified_at?: string;
+  age_seconds?: number;
+  stale?: boolean;
+  warning_count?: number;
+  failure_count?: number;
+  metrics?: Record<string, unknown>;
+  error?: string;
+};
+
+export type EvidenceList = {
+  object: "shim.evidence_list";
+  generated_at?: string;
+  root?: string;
+  max_entries?: number;
+  stale_after_seconds?: number;
+  redaction_policy?: string;
+  sources?: Array<{ kind?: string; title?: string; glob?: string }>;
+  latest_by_kind?: EvidenceRecord[];
+  data: EvidenceRecord[];
+  errors?: Array<{ kind?: string; path?: string; message?: string }>;
+};
+
+export type EvidenceDetail = {
+  object: "shim.evidence";
+  redaction_policy?: string;
+  evidence: EvidenceRecord;
+  summary?: Record<string, unknown>;
 };

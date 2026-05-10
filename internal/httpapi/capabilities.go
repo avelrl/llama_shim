@@ -210,6 +210,7 @@ type capabilityOpsConfig struct {
 	RateLimit            capabilityRateLimit            `json:"rate_limit"`
 	Metrics              capabilityMetrics              `json:"metrics"`
 	DebugTraces          capabilityDebugTraces          `json:"debug_traces"`
+	Evidence             capabilityEvidence             `json:"evidence"`
 	OperatorUI           capabilityOperatorUI           `json:"operator_ui"`
 	BackendFailurePolicy []capabilityBackendFailureRule `json:"backend_failure_policy"`
 	HealthPublic         bool                           `json:"health_public"`
@@ -234,6 +235,17 @@ type capabilityDebugTraces struct {
 	DetailEndpoint string   `json:"detail_endpoint"`
 	Redaction      string   `json:"redaction"`
 	Captures       []string `json:"captures"`
+}
+
+type capabilityEvidence struct {
+	Enabled           bool   `json:"enabled"`
+	Root              string `json:"root"`
+	MaxEntries        int    `json:"max_entries"`
+	StaleAfterSeconds int64  `json:"stale_after_seconds"`
+	ListEndpoint      string `json:"list_endpoint"`
+	DetailEndpoint    string `json:"detail_endpoint"`
+	Redaction         string `json:"redaction"`
+	Support           string `json:"support"`
 }
 
 type capabilityOperatorUI struct {
@@ -388,6 +400,7 @@ func buildCapabilityManifest(ctx context.Context, deps RouterDeps) capabilityMan
 					Path:    metricsConfig.Path,
 				},
 				DebugTraces:          debugTraceCapability(deps.DebugTrace),
+				Evidence:             evidenceCapability(deps.Evidence),
 				OperatorUI:           operatorUICapability(deps.UI),
 				BackendFailurePolicy: capabilityBackendFailurePolicy(),
 				HealthPublic:         true,
@@ -640,6 +653,20 @@ func debugTraceCapability(cfg DebugTraceConfig) capabilityDebugTraces {
 			"rate_limit_decision",
 			"final_status",
 		},
+	}
+}
+
+func evidenceCapability(cfg EvidenceConfig) capabilityEvidence {
+	cfg = normalizeEvidenceConfig(cfg)
+	return capabilityEvidence{
+		Enabled:           cfg.Enabled,
+		Root:              slashPath(cfg.Root),
+		MaxEntries:        cfg.MaxEntries,
+		StaleAfterSeconds: int64(cfg.StaleAfter.Seconds()),
+		ListEndpoint:      "/debug/evidence",
+		DetailEndpoint:    "/debug/evidence/{id}",
+		Redaction:         evidenceRedactionPolicy,
+		Support:           "read_only_summary_artifacts",
 	}
 }
 

@@ -7,6 +7,13 @@ export default defineConfig({
   build: {
     outDir: "../../internal/httpapi/operator_ui_dist",
     emptyOutDir: true,
-    sourcemap: false
+    sourcemap: false,
+    rollupOptions: {
+      output: {
+        entryFileNames: "assets/[name].js",
+        chunkFileNames: "assets/[name].js",
+        assetFileNames: "assets/[name][extname]"
+      }
+    }
   }
 });

@@ -419,6 +419,7 @@ The shim now has a shim-owned operational layer that is separate from route-cont
 - optional ingress bearer auth via `shim.auth.mode=static_bearer`
 - optional in-memory per-client request rate limiting via `shim.rate_limit.*`
 - optional shim-owned capability manifest at `/debug/capabilities`
+- optional read-only operational evidence registry at `/debug/evidence`
 - optional embedded read-only operator UI at `/ui/` via `ui.enabled=true`
 - optional on-demand upstream sizing probe via `shimctl probe` and `probe.*` in `config.yaml`
 - optional Prometheus-text metrics at `shim.metrics.path` (default `/metrics`)

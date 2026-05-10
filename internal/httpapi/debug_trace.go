@@ -543,6 +543,9 @@ func shouldTraceRequest(path string) bool {
 	if strings.HasPrefix(path, "/debug/traces") {
 		return false
 	}
+	if strings.HasPrefix(path, "/debug/evidence") {
+		return false
+	}
 	return true
 }
 

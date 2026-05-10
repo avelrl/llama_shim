@@ -1,8 +1,8 @@
 import { For, Match, Show, Switch, createMemo, createResource, createSignal } from "solid-js";
 import { asNumber, asText, compactJSON, fetchJSON } from "./api";
-import type { APIResult, CapabilityManifest, DebugTrace, DebugTraceList } from "./types";
+import type { APIResult, CapabilityManifest, DebugTrace, DebugTraceList, EvidenceDetail, EvidenceList, EvidenceRecord } from "./types";
 
-type View = "overview" | "capabilities" | "traces";
+type View = "overview" | "capabilities" | "evidence" | "traces";
 type StatusKind = "ready" | "warn" | "error" | "muted";
 
 const rememberedToken = sessionStorage.getItem("llama_shim_operator_token") || "";
@@ -12,20 +12,27 @@ export default function App() {
   const [rememberToken, setRememberToken] = createSignal(rememberedToken !== "");
   const [refresh, setRefresh] = createSignal(0);
   const [view, setView] = createSignal<View>("overview");
+  const [selectedEvidenceID, setSelectedEvidenceID] = createSignal<string>("");
   const [selectedTraceID, setSelectedTraceID] = createSignal<string>("");
 
   const source = () => ({ token: token(), refresh: refresh() });
   const [health] = createResource(source, ({ token }) => fetchJSON<Record<string, string>>("/healthz", token));
   const [ready] = createResource(source, ({ token }) => fetchJSON<Record<string, string>>("/readyz", token));
   const [capabilities] = createResource(source, ({ token }) => fetchJSON<CapabilityManifest>("/debug/capabilities", token));
+  const [evidence] = createResource(source, ({ token }) => fetchJSON<EvidenceList>("/debug/evidence", token));
   const [traces] = createResource(source, ({ token }) => fetchJSON<DebugTraceList>("/debug/traces?limit=25", token));
+  const [evidenceDetail] = createResource(
+    () => ({ token: token(), id: selectedEvidenceID(), refresh: refresh() }),
+    ({ token, id }) => (id === "" ? Promise.resolve({ ok: true, status: 204, data: undefined }) : fetchJSON<EvidenceDetail>(`/debug/evidence/${encodeURIComponent(id)}`, token))
+  );
   const [traceDetail] = createResource(
     () => ({ token: token(), id: selectedTraceID(), refresh: refresh() }),
     ({ token, id }) => (id === "" ? Promise.resolve({ ok: true, status: 204, data: undefined }) : fetchJSON<DebugTrace>(`/debug/traces/${encodeURIComponent(id)}`, token))
   );
 
-  const authNeeded = createMemo(() => capabilities()?.status === 401 || traces()?.status === 401);
+  const authNeeded = createMemo(() => capabilities()?.status === 401 || evidence()?.status === 401 || traces()?.status === 401);
   const caps = createMemo(() => capabilities()?.data);
+  const evidenceRows = createMemo(() => evidence()?.data?.data || []);
   const traceRows = createMemo(() => traces()?.data?.data || []);
 
   function updateToken(value: string) {
@@ -57,6 +64,7 @@ export default function App() {
         <nav class="nav">
           <button classList={{ active: view() === "overview" }} onClick={() => setView("overview")}>Overview</button>
           <button classList={{ active: view() === "capabilities" }} onClick={() => setView("capabilities")}>Capabilities</button>
+          <button classList={{ active: view() === "evidence" }} onClick={() => setView("evidence")}>Evidence</button>
           <button classList={{ active: view() === "traces" }} onClick={() => setView("traces")}>Traces</button>
         </nav>
         <div class="side-note">
@@ -80,10 +88,13 @@ export default function App() {
 
         <Switch>
           <Match when={view() === "overview"}>
-            <Overview caps={caps()} health={health()} ready={ready()} traces={traces()} />
+            <Overview caps={caps()} health={health()} ready={ready()} evidence={evidence()} traces={traces()} />
           </Match>
           <Match when={view() === "capabilities"}>
             <Capabilities caps={caps()} result={capabilities()} />
+          </Match>
+          <Match when={view() === "evidence"}>
+            <Evidence rows={evidenceRows()} result={evidence()} selected={selectedEvidenceID()} onSelect={setSelectedEvidenceID} detail={evidenceDetail()} />
           </Match>
           <Match when={view() === "traces"}>
             <Traces rows={traceRows()} result={traces()} selected={selectedTraceID()} onSelect={setSelectedTraceID} detail={traceDetail()} />
@@ -124,6 +135,7 @@ function Overview(props: {
   caps?: CapabilityManifest;
   health?: APIResult<Record<string, string>>;
   ready?: APIResult<Record<string, string>>;
+  evidence?: APIResult<EvidenceList>;
   traces?: APIResult<DebugTraceList>;
 }) {
   const runtime = () => props.caps?.runtime;
@@ -147,6 +159,7 @@ function Overview(props: {
         <Metric title="storage" value={asText(persistence()?.backend)} kind="muted" />
         <Metric title="retrieval" value={asText(retrieval()?.index_backend)} kind={retrieval()?.semantic_search ? "ready" : "muted"} />
         <Metric title="debug traces" value={ops()?.debug_traces?.enabled ? `${ops()?.debug_traces?.max_entries ?? 0} entries` : "disabled"} kind={ops()?.debug_traces?.enabled ? "ready" : "muted"} />
+        <Metric title="evidence" value={evidenceOverviewValue(props.evidence)} kind={evidenceOverviewKind(props.evidence)} />
         <Metric title="recent traces" value={String(props.traces?.data?.data?.length ?? 0)} kind={props.traces?.ok ? "ready" : "warn"} />
       </div>
 
@@ -169,6 +182,7 @@ function Overview(props: {
           <KeyValue label="auth" value={asText(ops()?.auth_mode)} />
           <KeyValue label="rate limit" value={ops()?.rate_limit?.enabled ? `${ops()?.rate_limit?.requests_per_minute}/min` : "disabled"} />
           <KeyValue label="metrics" value={ops()?.metrics?.enabled ? ops()?.metrics?.path || "/metrics" : "disabled"} />
+          <KeyValue label="evidence" value={ops()?.evidence?.enabled ? ops()?.evidence?.root || ".tmp" : "disabled"} />
           <KeyValue label="operator UI" value={ops()?.operator_ui?.enabled ? ops()?.operator_ui?.base_path || "/ui/" : "disabled"} />
         </Panel>
       </div>
@@ -242,6 +256,108 @@ function Capabilities(props: { caps?: CapabilityManifest; result?: APIResult<Cap
         </Panel>
       </Show>
     </section>
+  );
+}
+
+function Evidence(props: {
+  rows: EvidenceRecord[];
+  result?: APIResult<EvidenceList>;
+  selected: string;
+  onSelect: (id: string) => void;
+  detail?: APIResult<EvidenceDetail | undefined>;
+}) {
+  const latest = () => props.result?.data?.latest_by_kind || [];
+  return (
+    <section class="screen">
+      <div class="section-head">
+        <h2>Evidence</h2>
+        <p>Read-only operational summaries from known local artifact directories. Raw logs, prompts, headers, and file contents are not read.</p>
+      </div>
+      <Show when={!props.result?.ok && props.result?.status !== 404 && props.result?.error}>
+        <ErrorState result={props.result} />
+      </Show>
+      <Show when={props.result?.status === 404}>
+        <div class="empty">Operational evidence is disabled.</div>
+      </Show>
+      <Show when={props.result?.data?.errors && props.result.data.errors.length > 0}>
+        <Panel title="Scan warnings">
+          <For each={props.result?.data?.errors || []}>
+            {(error) => <KeyValue label={error.kind || error.path || "scan"} value={error.message || "scan error"} />}
+          </For>
+        </Panel>
+      </Show>
+      <Show when={latest().length > 0}>
+        <div class="summary-grid">
+          <For each={latest().slice(0, 8)}>
+            {(record) => (
+              <Metric
+                title={shortEvidenceKind(record.kind)}
+                value={record.status || "-"}
+                kind={evidenceStatusKind(record)}
+              />
+            )}
+          </For>
+        </div>
+      </Show>
+      <div class="trace-layout">
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>kind</th>
+                <th>status</th>
+                <th>model</th>
+                <th>age</th>
+                <th>artifact</th>
+              </tr>
+            </thead>
+            <tbody>
+              <For each={props.rows}>
+                {(record) => (
+                  <tr classList={{ selected: props.selected === record.id }} onClick={() => props.onSelect(record.id)}>
+                    <td>{shortEvidenceKind(record.kind)}</td>
+                    <td><StatusPill label="" kind={evidenceStatusKind(record)} value={record.status || "-"} /></td>
+                    <td>{record.model || "-"}</td>
+                    <td>{formatAge(record.age_seconds)}</td>
+                    <td class="mono">{record.artifact_dir || "-"}</td>
+                  </tr>
+                )}
+              </For>
+            </tbody>
+          </table>
+          <Show when={props.rows.length === 0 && props.result?.ok}>
+            <div class="empty">No evidence artifacts found under {props.result?.data?.root || ".tmp"}.</div>
+          </Show>
+        </div>
+        <aside class="inspector">
+          <Show when={props.selected !== ""} fallback={<div class="empty">Select an evidence row.</div>}>
+            <Show when={props.detail?.data} fallback={<ErrorState result={props.detail} />}>
+              <EvidenceDetailView detail={props.detail?.data} />
+            </Show>
+          </Show>
+        </aside>
+      </div>
+    </section>
+  );
+}
+
+function EvidenceDetailView(props: { detail?: EvidenceDetail }) {
+  const record = () => props.detail?.evidence;
+  return (
+    <div>
+      <h3>{record()?.title || record()?.id}</h3>
+      <KeyValue label="kind" value={record()?.kind || "-"} />
+      <KeyValue label="status" value={record()?.status || "-"} />
+      <KeyValue label="verdict" value={record()?.verdict || "-"} />
+      <KeyValue label="model" value={record()?.model || "-"} />
+      <KeyValue label="stale" value={record()?.stale ?? false} />
+      <KeyValue label="generated" value={record()?.generated_at || "-"} />
+      <KeyValue label="summary" value={record()?.summary_path || "-"} />
+      <KeyValue label="summary md" value={record()?.summary_md_path || "-"} />
+      <KeyValue label="redaction" value={props.detail?.redaction_policy || "-"} />
+      <DetailBlock title="metrics" value={record()?.metrics} />
+      <DetailBlock title="summary json" value={props.detail?.summary} />
+    </div>
   );
 }
 
@@ -500,6 +616,77 @@ function capabilitiesLabel(caps?: CapabilityManifest): string {
     return "loading";
   }
   return caps.ready ? "ready" : "degraded";
+}
+
+function evidenceOverviewValue(result?: APIResult<EvidenceList>): string {
+  if (!result) {
+    return "loading";
+  }
+  if (!result.ok) {
+    return result.status === 404 ? "disabled" : `HTTP ${result.status}`;
+  }
+  const rows = result.data?.data || [];
+  const stale = rows.filter((row) => row.stale).length;
+  return stale > 0 ? `${rows.length} runs, ${stale} stale` : `${rows.length} runs`;
+}
+
+function evidenceOverviewKind(result?: APIResult<EvidenceList>): StatusKind {
+  if (!result) {
+    return "muted";
+  }
+  if (!result.ok) {
+    return result.status === 404 ? "muted" : "warn";
+  }
+  const rows = result.data?.data || [];
+  if (rows.some((row) => evidenceStatusKind(row) === "error")) {
+    return "error";
+  }
+  if (rows.some((row) => row.stale || evidenceStatusKind(row) === "warn")) {
+    return "warn";
+  }
+  return rows.length > 0 ? "ready" : "muted";
+}
+
+function evidenceStatusKind(record: EvidenceRecord): StatusKind {
+  if (record.error) {
+    return "error";
+  }
+  const value = (record.status || record.verdict || "").toLowerCase();
+  if (value === "passed" || value === "release_gate_ok" || value === "ok") {
+    return record.stale ? "warn" : "ready";
+  }
+  if (value === "skipped" || value === "disabled" || value === "unknown") {
+    return "muted";
+  }
+  if (value === "failed" || value === "error" || value === "unreadable") {
+    return "error";
+  }
+  return record.stale ? "warn" : "muted";
+}
+
+function shortEvidenceKind(kind: string): string {
+  return kind
+    .replace(/^v[34]_/, "")
+    .replace(/_/g, " ")
+    .replace("provider matrix", "matrix")
+    .replace("upstream provider routing", "routing");
+}
+
+function formatAge(seconds?: number): string {
+  const value = asNumber(seconds);
+  if (value === undefined) {
+    return "-";
+  }
+  if (value < 60) {
+    return `${Math.max(0, Math.floor(value))}s`;
+  }
+  if (value < 3600) {
+    return `${Math.floor(value / 60)}m`;
+  }
+  if (value < 86400) {
+    return `${Math.floor(value / 3600)}h`;
+  }
+  return `${Math.floor(value / 86400)}d`;
 }
 
 function summarizeValue(label: string, value: unknown): unknown {

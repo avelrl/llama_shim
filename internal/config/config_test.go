@@ -53,6 +53,11 @@ shim:
   debug_traces:
     enabled: true
     max_entries: 64
+  evidence:
+    enabled: true
+    root: .tmp/custom-evidence
+    max_entries: 12
+    stale_after: 48h
   limits:
     json_body_bytes: 2MiB
     retrieval_file_upload_bytes: 32MiB
@@ -272,6 +277,10 @@ responses:
 	require.Equal(t, "/metrics", cfg.ShimMetricsPath)
 	require.True(t, cfg.ShimDebugTracesEnabled)
 	require.Equal(t, 64, cfg.ShimDebugTracesMaxEntries)
+	require.True(t, cfg.ShimEvidenceEnabled)
+	require.Equal(t, ".tmp/custom-evidence", cfg.ShimEvidenceRoot)
+	require.Equal(t, 12, cfg.ShimEvidenceMaxEntries)
+	require.Equal(t, 48*time.Hour, cfg.ShimEvidenceStaleAfter)
 	require.True(t, cfg.UIEnabled)
 	require.Equal(t, "/ops/", cfg.UIBasePath)
 	require.True(t, cfg.UIPublicStaticAssets)
@@ -434,6 +443,10 @@ responses:
 	t.Setenv("SHIM_METRICS_ENABLED", "false")
 	t.Setenv("SHIM_METRICS_PATH", "/internal/metrics")
 	t.Setenv("SHIM_SHUTDOWN_TIMEOUT", "13s")
+	t.Setenv("SHIM_EVIDENCE_ENABLED", "false")
+	t.Setenv("SHIM_EVIDENCE_ROOT", ".tmp/env-evidence")
+	t.Setenv("SHIM_EVIDENCE_MAX_ENTRIES", "9")
+	t.Setenv("SHIM_EVIDENCE_STALE_AFTER", "24h")
 	t.Setenv("UI_ENABLED", "true")
 	t.Setenv("UI_BASE_PATH", "/operator")
 	t.Setenv("UI_PUBLIC_STATIC_ASSETS", "false")
@@ -524,6 +537,10 @@ responses:
 	require.False(t, cfg.ShimMetricsEnabled)
 	require.Equal(t, "/internal/metrics", cfg.ShimMetricsPath)
 	require.Equal(t, 13*time.Second, cfg.ShutdownTimeout)
+	require.False(t, cfg.ShimEvidenceEnabled)
+	require.Equal(t, ".tmp/env-evidence", cfg.ShimEvidenceRoot)
+	require.Equal(t, 9, cfg.ShimEvidenceMaxEntries)
+	require.Equal(t, 24*time.Hour, cfg.ShimEvidenceStaleAfter)
 	require.True(t, cfg.UIEnabled)
 	require.Equal(t, "/operator/", cfg.UIBasePath)
 	require.False(t, cfg.UIPublicStaticAssets)
@@ -622,6 +639,10 @@ func TestLoadUsesCodexSafeDefaults(t *testing.T) {
 	require.Equal(t, "/metrics", cfg.ShimMetricsPath)
 	require.True(t, cfg.ShimDebugTracesEnabled)
 	require.Equal(t, 256, cfg.ShimDebugTracesMaxEntries)
+	require.True(t, cfg.ShimEvidenceEnabled)
+	require.Equal(t, ".tmp", cfg.ShimEvidenceRoot)
+	require.Equal(t, 50, cfg.ShimEvidenceMaxEntries)
+	require.Equal(t, 168*time.Hour, cfg.ShimEvidenceStaleAfter)
 	require.Equal(t, 30*time.Second, cfg.ShutdownTimeout)
 	require.EqualValues(t, 1<<20, cfg.ShimJSONBodyLimitBytes)
 	require.EqualValues(t, 64<<20, cfg.RetrievalFileUploadMaxBytes)

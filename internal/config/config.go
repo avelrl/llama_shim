@@ -55,6 +55,10 @@ type Config struct {
 	ShimMetricsPath                                string
 	ShimDebugTracesEnabled                         bool
 	ShimDebugTracesMaxEntries                      int
+	ShimEvidenceEnabled                            bool
+	ShimEvidenceRoot                               string
+	ShimEvidenceMaxEntries                         int
+	ShimEvidenceStaleAfter                         time.Duration
 	UIEnabled                                      bool
 	UIBasePath                                     string
 	UIPublicStaticAssets                           bool
@@ -271,6 +275,8 @@ func Load(configPath string) (Config, error) {
 		ShimMetricsEnabled:                             v.GetBool("shim.metrics.enabled"),
 		ShimMetricsPath:                                strings.TrimSpace(v.GetString("shim.metrics.path")),
 		ShimDebugTracesEnabled:                         v.GetBool("shim.debug_traces.enabled"),
+		ShimEvidenceEnabled:                            v.GetBool("shim.evidence.enabled"),
+		ShimEvidenceRoot:                               strings.TrimSpace(v.GetString("shim.evidence.root")),
 		UIEnabled:                                      v.GetBool("ui.enabled"),
 		UIPublicStaticAssets:                           v.GetBool("ui.public_static_assets"),
 		LogLevel:                                       slog.LevelInfo,
@@ -582,6 +588,14 @@ func Load(configPath string) (Config, error) {
 		return Config{}, fmt.Errorf("parse shim.debug_traces.max_entries: %w", err)
 	}
 	cfg.ShimDebugTracesMaxEntries = debugTracesMaxEntries
+	evidenceMaxEntries, err := parseNonNegativeInt(v.GetString("shim.evidence.max_entries"))
+	if err != nil {
+		return Config{}, fmt.Errorf("parse shim.evidence.max_entries: %w", err)
+	}
+	cfg.ShimEvidenceMaxEntries = evidenceMaxEntries
+	if err := parseDuration(v.GetString("shim.evidence.stale_after"), &cfg.ShimEvidenceStaleAfter); err != nil {
+		return Config{}, fmt.Errorf("parse shim.evidence.stale_after: %w", err)
+	}
 	uiBasePath, err := normalizeUIBasePath(v.GetString("ui.base_path"))
 	if err != nil {
 		return Config{}, fmt.Errorf("parse ui.base_path: %w", err)
@@ -777,6 +791,10 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("shim.metrics.path", "/metrics")
 	v.SetDefault("shim.debug_traces.enabled", true)
 	v.SetDefault("shim.debug_traces.max_entries", "256")
+	v.SetDefault("shim.evidence.enabled", true)
+	v.SetDefault("shim.evidence.root", ".tmp")
+	v.SetDefault("shim.evidence.max_entries", "50")
+	v.SetDefault("shim.evidence.stale_after", "168h")
 	v.SetDefault("ui.enabled", false)
 	v.SetDefault("ui.base_path", "/ui/")
 	v.SetDefault("ui.public_static_assets", true)

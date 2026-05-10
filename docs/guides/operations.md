@@ -255,6 +255,7 @@ Plugin, model, and capability settings map:
 | Enable or disable local tool/runtime backends | `responses.web_search`, `responses.image_generation`, `responses.computer`, `responses.code_interpreter`, `responses.compaction`, `retrieval.*` | backend components and plugin descriptors with enabled/ready state | the matching domain smoke, plus V4 preflight for registry consistency |
 | Enable explicit V4 state/session memory | `responses.memory.*` plus request metadata under `llama_shim.memory.*` | `/debug/capabilities.runtime.memory`, `runtime.memory` plugin, and storage/governance reports | focused memory tests plus `make v4-preflight-smoke`; see [V4 State And Session Memory](../v4-state-session-memory.md) |
 | Tune debug trace availability | `shim.debug_traces.*` or `SHIM_DEBUG_TRACES_*` | `/debug/capabilities.runtime.ops.debug_traces` and `/debug/traces` | `make v4-preflight-smoke` |
+| Tune operational evidence availability | `shim.evidence.*` or `SHIM_EVIDENCE_*` | `/debug/capabilities.runtime.ops.evidence`, `/debug/evidence`, and the Operator UI Evidence tab | `go test ./internal/httpapi -run Evidence`, then inspect `/debug/evidence` after a smoke or curation run |
 | Enable the read-only operator UI | `ui.*` or `UI_*` | `/debug/capabilities.runtime.ops.operator_ui` and `/ui/` | `make operator-ui-build`, then `go test ./internal/httpapi -run OperatorUI` |
 
 Use these rules when adding a model or plugin:
@@ -378,6 +379,7 @@ Default cleanup targets intentionally do not remove `.data`.
 | Check live upstream provider routing | `make upstream-provider-routing-smoke` | No | Verifies one public `provider/model` alias through capabilities, live `/v1/models`, routed Responses, routed Chat Completions, derived endpoint probes, and fail-closed routing boundaries. Writes artifacts under `.tmp/upstream-provider-routing-smoke`. |
 | Diagnose Codex provider config | `make codex-config-doctor` | No | Generates an isolated Codex config, checks the local Codex binary, verifies shim auth env, health/readiness, capabilities, `/v1/models`, and one direct `/v1/responses` smoke. Writes artifacts under `.tmp/shimctl-codex`. |
 | Curate Codex eval artifacts | `make codex-eval-curate` | No | Reads `.tmp/codex-eval-*` artifacts and writes a cross-run interpretation report under `.tmp/codex-eval-curation`. |
+| Inspect operator evidence summaries | `curl /debug/evidence` or the Operator UI Evidence tab | No | Read-only registry over known `.tmp/*/summary.json` artifact families. Does not read raw logs, prompts, request bodies, headers, generated files, or screenshots. |
 | Preview disposable run-artifact cleanup | `make clean-artifacts-dry-run` | No | Lists allowlisted `.tmp` artifact directories that would be removed. |
 | Remove disposable run artifacts | `make clean-artifacts` | No | Removes Codex eval runs, Codex smoke workdirs, browser harness runs, governance/V4 smoke runs, and Playwright daemon sockets/sessions under `.tmp`. |
 | Preview broader local dev cleanup | `make clean-dev-artifacts-dry-run` | No | Adds local tool caches to the artifact preview. |

@@ -87,6 +87,10 @@ type TestAppOptions struct {
 	MetricsPath                           string
 	DebugTracesEnabled                    *bool
 	DebugTracesMaxEntries                 int
+	EvidenceEnabled                       *bool
+	EvidenceRoot                          string
+	EvidenceMaxEntries                    int
+	EvidenceStaleAfter                    time.Duration
 	UIEnabled                             bool
 	UIBasePath                            string
 	UIPublicStaticAssets                  bool
@@ -201,6 +205,10 @@ func NewTestAppWithOptions(t *testing.T, options TestAppOptions) *TestApp {
 	if options.DebugTracesEnabled != nil {
 		debugTracesEnabled = *options.DebugTracesEnabled
 	}
+	evidenceEnabled := true
+	if options.EvidenceEnabled != nil {
+		evidenceEnabled = *options.EvidenceEnabled
+	}
 	httpapi.StartLocalCodeInterpreterCleanupLoop(testCtx, logger, localCodeInterpreter, store, store, options.CodeInterpreterCleanupInterval)
 
 	server := httptest.NewServer(httpapi.NewRouter(httpapi.RouterDeps{
@@ -214,6 +222,7 @@ func NewTestAppWithOptions(t *testing.T, options TestAppOptions) *TestApp {
 		RateLimit:                 httpapi.RateLimitConfig{Enabled: options.RateLimitEnabled, RequestsPerMinute: options.RateLimitRequestsPerMinute, Burst: options.RateLimitBurst},
 		MetricsConfig:             httpapi.MetricsConfig{Enabled: metricsEnabled, Path: options.MetricsPath},
 		DebugTrace:                httpapi.DebugTraceConfig{Enabled: debugTracesEnabled, MaxEntries: options.DebugTracesMaxEntries},
+		Evidence:                  httpapi.EvidenceConfig{Enabled: evidenceEnabled, Root: options.EvidenceRoot, MaxEntries: options.EvidenceMaxEntries, StaleAfter: options.EvidenceStaleAfter},
 		UI:                        httpapi.UIConfig{Enabled: options.UIEnabled, BasePath: options.UIBasePath, PublicStaticAssets: options.UIPublicStaticAssets},
 		Metrics:                   metrics,
 		StorageBackend:            config.StorageBackendSQLite,

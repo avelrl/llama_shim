@@ -1,6 +1,6 @@
 # V4 Extensions And Plugin Model
 
-Last updated: May 8, 2026.
+Last updated: May 10, 2026.
 
 This document is the parking lot for post-compatibility work that is useful in
 practice, but should not be confused with the shim's core OpenAI-compatibility
@@ -51,8 +51,11 @@ notes, SQLite/Postgres storage, hidden local developer-context injection,
 capability/plugin reporting, and governance purge coverage.
 The shim also has a first read-only embedded operator UI documented in
 [V4 Read-Only Operator UI](v4-operator-ui.md): a disabled-by-default Solid/Vite
-console served by the Go binary under `/ui/`, backed only by existing
-health/readiness/capability/trace endpoints.
+console served by the Go binary under `/ui/`, backed by health/readiness,
+capability, evidence, and trace endpoints. Its Phase 2 operational evidence
+registry exposes bounded, read-only summaries from known `.tmp` smoke and
+curation artifact families through `/debug/evidence`; it does not read raw
+logs or mutate local state.
 The HTTP server now handles `SIGINT`/`SIGTERM` with shim-owned graceful shutdown:
 background cleanup loops are canceled and in-flight requests drain up to
 `shim.shutdown_timeout` before forced process exit.

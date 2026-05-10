@@ -27,6 +27,7 @@ type RouterDeps struct {
 	RateLimit                                RateLimitConfig
 	MetricsConfig                            MetricsConfig
 	DebugTrace                               DebugTraceConfig
+	Evidence                                 EvidenceConfig
 	UI                                       UIConfig
 	Metrics                                  *Metrics
 	ServiceLimits                            ServiceLimits
@@ -80,9 +81,12 @@ func NewRouter(deps RouterDeps) http.Handler {
 	metricsConfig := normalizeMetricsConfig(deps.MetricsConfig)
 	debugTraceConfig := normalizeDebugTraceConfig(deps.DebugTrace)
 	deps.DebugTrace = debugTraceConfig
+	evidenceConfig := normalizeEvidenceConfig(deps.Evidence)
+	deps.Evidence = evidenceConfig
 	uiConfig := normalizeUIConfig(deps.UI)
 	deps.UI = uiConfig
 	debugTraceStore := newDebugTraceStoreForConfig(debugTraceConfig)
+	evidenceRegistry := NewEvidenceRegistry(evidenceConfig)
 	serviceLimits := normalizeServiceLimits(deps.ServiceLimits)
 	retrievalGate := newConcurrencyGate("retrieval_search", serviceLimits.RetrievalMaxConcurrentSearches, deps.Metrics)
 	codeInterpreterGate := newConcurrencyGate("local_code_interpreter", serviceLimits.CodeInterpreterMaxConcurrentRuns, deps.Metrics)
@@ -208,6 +212,8 @@ func NewRouter(deps RouterDeps) http.Handler {
 		WriteJSON(w, http.StatusOK, map[string]string{"status": "ready"})
 	})
 	mux.HandleFunc("/debug/capabilities", capabilityHandler(deps))
+	mux.HandleFunc("/debug/evidence", evidenceListHandler(evidenceRegistry))
+	mux.HandleFunc("/debug/evidence/", evidenceDetailHandler(evidenceRegistry))
 	mux.HandleFunc("/debug/traces", debugTraceListHandler(debugTraceStore))
 	mux.HandleFunc("/debug/traces/", debugTraceGetHandler(debugTraceStore))
 	mountOperatorUI(mux, uiConfig)

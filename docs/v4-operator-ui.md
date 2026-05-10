@@ -1,8 +1,9 @@
 # V4 Read-Only Operator UI
 
-Last updated: May 9, 2026.
+Last updated: May 10, 2026.
 
-Status: first implementation slice.
+Status: Phase 2 implemented: read-only operator workspace plus operational
+evidence registry.
 
 This document scopes a small read-only web UI for local and private operator
 use. It is a shim-owned V4 operational surface, not an OpenAI API compatibility
@@ -46,6 +47,8 @@ Provide a fast, pleasant, dependency-light way to inspect the running shim:
 - enabled local tools and proxy-only boundaries
 - provider/model routing configuration
 - storage, retrieval, compaction, memory, and ops capability state
+- recent operational evidence from smoke, preflight, matrix, and curation
+  artifacts
 - recent metadata-only debug traces
 
 The UI should reduce time spent jumping between logs, config, README sections,
@@ -112,20 +115,27 @@ flowchart LR
   ui["/ui/ static assets"]
   health["/healthz and /readyz"]
   caps["/debug/capabilities"]
+  evidence["/debug/evidence"]
+  evidenceDetail["/debug/evidence/{id}"]
   traces["/debug/traces"]
   trace["/debug/traces/{request_id}"]
   shim["shim HTTP server"]
   store["debug trace store"]
+  artifacts["allowlisted .tmp summary.json artifacts"]
   runtime["configured runtimes and providers"]
 
   browser --> ui
   browser --> health
   browser --> caps
+  browser --> evidence
+  browser --> evidenceDetail
   browser --> traces
   browser --> trace
   ui --> shim
   health --> shim
   caps --> runtime
+  evidence --> artifacts
+  evidenceDetail --> artifacts
   traces --> store
   trace --> store
 ```
@@ -137,6 +147,8 @@ The UI should fetch existing shim-owned endpoints:
 | `/healthz` | process liveness |
 | `/readyz` | storage, upstream, retrieval, web search, image backend readiness |
 | `/debug/capabilities` | main manifest for surface, runtime, tool, backend, plugin, and probe state |
+| `/debug/evidence` | read-only summary registry for known local smoke/curation artifact families |
+| `/debug/evidence/{id}` | one bounded `summary.json` detail for a selected evidence row |
 | `/debug/traces?limit=N` | recent metadata-only request list |
 | `/debug/traces/{request_id}` | detailed metadata-only routing trace |
 | `/metrics` | optional link-out only; do not parse Prometheus text in the first slice |
@@ -171,13 +183,22 @@ ui:
   enabled: false
   base_path: /ui/
   public_static_assets: true
+
+shim:
+  evidence:
+    enabled: true
+    root: .tmp
+    max_entries: 50
+    stale_after: 168h
 ```
 
 Defaults should be conservative:
 
 - disabled by default for production-style deployments
 - enabled by devstack or explicit local config
-- no effect on `/v1/*`, `/debug/*`, `/healthz`, `/readyz`, or `/metrics`
+- evidence registry enabled by default but still protected by normal `/debug/*`
+  auth and rate-limit behavior
+- no effect on `/v1/*`, `/healthz`, `/readyz`, or `/metrics`
 
 ## Information Architecture
 
@@ -194,6 +215,7 @@ Show the highest-value state in one dense screen:
 - provider/model count
 - enabled local runtimes
 - debug traces enabled/disabled
+- operational evidence count and stale marker
 - rate limit enabled/disabled
 - metrics path if enabled
 
@@ -222,6 +244,40 @@ Render `/debug/capabilities` as structured operator state, not raw JSON first:
 Every compatibility badge should link back to
 [compatibility-matrix.md](compatibility-matrix.md) or show a local note that
 the UI is only reflecting runtime capability state.
+
+### Evidence
+
+Render `/debug/evidence` as an operational evidence registry, not as a file
+browser. The registry is shim-owned and only scans known `summary.json`
+families under `shim.evidence.root`:
+
+- `.tmp/v4-preflight-smoke/*/summary.json`
+- `.tmp/v4-provider-config-doctor/*/summary.json`
+- `.tmp/v4-provider-matrix-smoke/*/summary.json`
+- `.tmp/v4-provider-matrix-curation/*/summary.json`
+- `.tmp/upstream-provider-routing-smoke/*/summary.json`
+- `.tmp/codex-eval-auto/*/summary.json`
+- `.tmp/codex-eval-curation/*/summary.json`
+- `.tmp/v3-computer-browser-harness-runs/*/summary.json`
+
+The evidence screen shows:
+
+- latest row by evidence kind
+- status/verdict/model where available
+- artifact and summary paths
+- stale marker from `shim.evidence.stale_after`
+- compact metrics from `totals`, `counts`, `statuses`, and `settings`
+- scan warnings when a known artifact summary cannot be parsed
+
+Selecting a row fetches `/debug/evidence/{id}` and displays only the bounded
+`summary.json` payload. The registry caps each summary read at 1 MiB and does
+not read raw logs, request/response bodies, headers, prompts, generated files,
+screenshots, or model outputs. It also does not run commands, delete
+artifacts, mutate config, or update docs.
+
+Treat evidence as operator-local proof of recent checks, not as a release
+claim by itself. Release wording still comes from reviewed docs, checked
+artifacts, and the curation reports.
 
 ### Traces
 
