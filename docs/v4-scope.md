@@ -53,6 +53,9 @@ The shim also has a first read-only embedded operator UI documented in
 [V4 Read-Only Operator UI](v4-operator-ui.md): a disabled-by-default Solid/Vite
 console served by the Go binary under `/ui/`, backed only by existing
 health/readiness/capability/trace endpoints.
+The HTTP server now handles `SIGINT`/`SIGTERM` with shim-owned graceful shutdown:
+background cleanup loops are canceled and in-flight requests drain up to
+`shim.shutdown_timeout` before forced process exit.
 
 V2 is the broad compatibility facade.
 V3 is backend and runtime expansion around that facade.

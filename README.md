@@ -143,6 +143,7 @@ shim:
   read_timeout: 15s
   write_timeout: 90s
   idle_timeout: 60s
+  shutdown_timeout: 30s
   auth:
     mode: disabled
     bearer_tokens: []
@@ -276,6 +277,7 @@ Supported environment overrides:
 - `SHIM_READ_TIMEOUT` default `15s`
 - `SHIM_WRITE_TIMEOUT` default `90s`
 - `SHIM_IDLE_TIMEOUT` default `60s`
+- `SHIM_SHUTDOWN_TIMEOUT` default `30s`; drain timeout for graceful shutdown after `SIGINT`/`SIGTERM`
 - `LOG_LEVEL` default `info`; set `debug` to emit an additional debug log line with request and response bodies
 - `LOG_FILE_PATH` overrides `log.file_path`; when set, logs are duplicated to stdout and the configured file
 - `LLAMA_BASE_URL` overrides `llama.base_url`

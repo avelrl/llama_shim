@@ -87,6 +87,10 @@ make devstack-down
 
 Important distinction:
 
+- `SIGINT`/`SIGTERM` starts graceful HTTP shutdown: the shim stops accepting new
+  connections, cancels background cleanup loops, drains in-flight requests up
+  to `shim.shutdown_timeout` / `SHIM_SHUTDOWN_TIMEOUT` (default `30s`), then
+  logs completion or timeout before process exit
 - `/readyz` is a terse public probe and returns `503` when a required
   dependency is unavailable
 - if the upstream `/v1/models` readiness check requires auth, configure

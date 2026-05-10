@@ -8,7 +8,10 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
+	"time"
 
 	"llama_shim/internal/compactor"
 	"llama_shim/internal/config"
@@ -48,6 +51,8 @@ func main() {
 	logger := slog.New(slog.NewJSONHandler(logWriter, &slog.HandlerOptions{
 		Level: cfg.LogLevel,
 	}))
+	signalCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
 	processCtx, processCancel := context.WithCancel(context.Background())
 	defer processCancel()
 	metrics := httpapi.NewMetrics()
@@ -256,6 +261,7 @@ func main() {
 		"shim_metrics_path", cfg.ShimMetricsPath,
 		"shim_debug_traces_enabled", cfg.ShimDebugTracesEnabled,
 		"shim_debug_traces_max_entries", cfg.ShimDebugTracesMaxEntries,
+		"shim_shutdown_timeout", cfg.ShutdownTimeout,
 		"shim_json_body_limit_bytes", cfg.ShimJSONBodyLimitBytes,
 		"shim_retrieval_file_upload_max_bytes", cfg.RetrievalFileUploadMaxBytes,
 		"shim_chat_completions_shadow_store_max_bytes", cfg.ChatCompletionsShadowStoreMaxBytes,
@@ -324,10 +330,66 @@ func main() {
 		"responses_code_interpreter_generated_total_bytes_limit", cfg.ResponsesCodeInterpreterGeneratedTotalBytes,
 		"responses_code_interpreter_remote_input_file_bytes_limit", cfg.ResponsesCodeInterpreterRemoteInputFileBytes,
 	)
-	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+	if err := runServerWithGracefulShutdown(signalCtx, serverLifecycle{
+		serve:    server.ListenAndServe,
+		shutdown: server.Shutdown,
+		close:    server.Close,
+	}, cfg.ShutdownTimeout, processCancel, logger); err != nil {
 		logger.Error("server stopped", "err", err)
 		os.Exit(1)
 	}
+}
+
+type serverLifecycle struct {
+	serve    func() error
+	shutdown func(context.Context) error
+	close    func() error
+}
+
+func runServerWithGracefulShutdown(ctx context.Context, lifecycle serverLifecycle, shutdownTimeout time.Duration, cancelBackground context.CancelFunc, logger *slog.Logger) error {
+	if shutdownTimeout <= 0 {
+		shutdownTimeout = 30 * time.Second
+	}
+	if logger == nil {
+		logger = slog.Default()
+	}
+
+	serveErr := make(chan error, 1)
+	go func() {
+		err := lifecycle.serve()
+		if err == http.ErrServerClosed {
+			err = nil
+		}
+		serveErr <- err
+	}()
+
+	select {
+	case err := <-serveErr:
+		return err
+	case <-ctx.Done():
+	}
+
+	logger.Info("shutdown signal received", "shutdown_timeout", shutdownTimeout)
+	if cancelBackground != nil {
+		cancelBackground()
+	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+	if err := lifecycle.shutdown(shutdownCtx); err != nil {
+		logger.Error("graceful shutdown failed", "err", err)
+		if lifecycle.close != nil {
+			if closeErr := lifecycle.close(); closeErr != nil {
+				logger.Error("force close after graceful shutdown failure failed", "err", closeErr)
+			}
+		}
+		return err
+	}
+	if err := <-serveErr; err != nil {
+		return err
+	}
+	logger.Info("shutdown complete")
+	return nil
 }
 
 func storageMaintenanceStore(store storage.Store) storage.MaintenanceStore {

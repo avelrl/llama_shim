@@ -45,6 +45,7 @@ type Config struct {
 	ReadTimeout                                    time.Duration
 	WriteTimeout                                   time.Duration
 	IdleTimeout                                    time.Duration
+	ShutdownTimeout                                time.Duration
 	ShimAuthMode                                   string
 	ShimAuthBearerTokens                           []string
 	ShimRateLimitEnabled                           bool
@@ -413,6 +414,9 @@ func Load(configPath string) (Config, error) {
 	if err := parseDuration(v.GetString("shim.idle_timeout"), &cfg.IdleTimeout); err != nil {
 		return Config{}, fmt.Errorf("parse shim.idle_timeout: %w", err)
 	}
+	if err := parseDuration(v.GetString("shim.shutdown_timeout"), &cfg.ShutdownTimeout); err != nil {
+		return Config{}, fmt.Errorf("parse shim.shutdown_timeout: %w", err)
+	}
 	if err := parseLogLevel(v.GetString("log.level"), &cfg.LogLevel); err != nil {
 		return Config{}, fmt.Errorf("parse log.level: %w", err)
 	}
@@ -763,6 +767,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("shim.read_timeout", "15s")
 	v.SetDefault("shim.write_timeout", "90s")
 	v.SetDefault("shim.idle_timeout", "60s")
+	v.SetDefault("shim.shutdown_timeout", "30s")
 	v.SetDefault("shim.auth.mode", ShimAuthModeDisabled)
 	v.SetDefault("shim.auth.bearer_tokens", []string{})
 	v.SetDefault("shim.rate_limit.enabled", false)

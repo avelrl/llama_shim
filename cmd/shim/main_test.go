@@ -1,7 +1,11 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"io"
+	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
@@ -41,6 +45,80 @@ func TestBuildLogWriterCreatesLogFile(t *testing.T) {
 	data, err := os.ReadFile(logPath)
 	require.NoError(t, err)
 	require.Contains(t, string(data), "shim-test-line")
+}
+
+func TestRunServerWithGracefulShutdownStopsBackgroundAndDrainsServer(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	serveDone := make(chan struct{})
+	shutdownCalled := make(chan struct{})
+	backgroundCanceled := make(chan struct{})
+	forceCloseCalled := make(chan struct{})
+
+	err := make(chan error, 1)
+	go func() {
+		err <- runServerWithGracefulShutdown(ctx, serverLifecycle{
+			serve: func() error {
+				<-serveDone
+				return http.ErrServerClosed
+			},
+			shutdown: func(ctx context.Context) error {
+				deadline, ok := ctx.Deadline()
+				require.True(t, ok)
+				require.WithinDuration(t, time.Now().Add(75*time.Millisecond), deadline, 75*time.Millisecond)
+				close(shutdownCalled)
+				close(serveDone)
+				return nil
+			},
+			close: func() error {
+				close(forceCloseCalled)
+				return nil
+			},
+		}, 75*time.Millisecond, func() {
+			close(backgroundCanceled)
+		}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	}()
+
+	cancel()
+	require.NoError(t, <-err)
+	requireClosed(t, shutdownCalled)
+	requireClosed(t, backgroundCanceled)
+	requireNotClosed(t, forceCloseCalled)
+}
+
+func TestRunServerWithGracefulShutdownReturnsUnexpectedServeError(t *testing.T) {
+	t.Parallel()
+
+	serveErr := errors.New("bind failed")
+	err := runServerWithGracefulShutdown(context.Background(), serverLifecycle{
+		serve: func() error {
+			return serveErr
+		},
+		shutdown: func(context.Context) error {
+			t.Fatal("shutdown should not run when serve fails before a signal")
+			return nil
+		},
+	}, time.Second, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	require.ErrorIs(t, err, serveErr)
+}
+
+func requireClosed(t *testing.T, ch <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-ch:
+	case <-time.After(time.Second):
+		t.Fatal("channel was not closed")
+	}
+}
+
+func requireNotClosed(t *testing.T, ch <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-ch:
+		t.Fatal("channel was closed")
+	default:
+	}
 }
 
 func TestBuildLocalCodeInterpreterRuntimeConfigDocker(t *testing.T) {

@@ -37,6 +37,7 @@ shim:
   read_timeout: 5s
   write_timeout: 30s
   idle_timeout: 45s
+  shutdown_timeout: 12s
   auth:
     mode: static_bearer
     bearer_tokens:
@@ -261,6 +262,7 @@ responses:
 	require.Equal(t, 5*time.Second, cfg.ReadTimeout)
 	require.Equal(t, 30*time.Second, cfg.WriteTimeout)
 	require.Equal(t, 45*time.Second, cfg.IdleTimeout)
+	require.Equal(t, 12*time.Second, cfg.ShutdownTimeout)
 	require.Equal(t, config.ShimAuthModeStaticBearer, cfg.ShimAuthMode)
 	require.Equal(t, []string{"token-a", "token-b"}, cfg.ShimAuthBearerTokens)
 	require.True(t, cfg.ShimRateLimitEnabled)
@@ -431,6 +433,7 @@ responses:
 	t.Setenv("SHIM_RATE_LIMIT_BURST", "30")
 	t.Setenv("SHIM_METRICS_ENABLED", "false")
 	t.Setenv("SHIM_METRICS_PATH", "/internal/metrics")
+	t.Setenv("SHIM_SHUTDOWN_TIMEOUT", "13s")
 	t.Setenv("UI_ENABLED", "true")
 	t.Setenv("UI_BASE_PATH", "/operator")
 	t.Setenv("UI_PUBLIC_STATIC_ASSETS", "false")
@@ -520,6 +523,7 @@ responses:
 	require.Equal(t, 30, cfg.ShimRateLimitBurst)
 	require.False(t, cfg.ShimMetricsEnabled)
 	require.Equal(t, "/internal/metrics", cfg.ShimMetricsPath)
+	require.Equal(t, 13*time.Second, cfg.ShutdownTimeout)
 	require.True(t, cfg.UIEnabled)
 	require.Equal(t, "/operator/", cfg.UIBasePath)
 	require.False(t, cfg.UIPublicStaticAssets)
@@ -618,6 +622,7 @@ func TestLoadUsesCodexSafeDefaults(t *testing.T) {
 	require.Equal(t, "/metrics", cfg.ShimMetricsPath)
 	require.True(t, cfg.ShimDebugTracesEnabled)
 	require.Equal(t, 256, cfg.ShimDebugTracesMaxEntries)
+	require.Equal(t, 30*time.Second, cfg.ShutdownTimeout)
 	require.EqualValues(t, 1<<20, cfg.ShimJSONBodyLimitBytes)
 	require.EqualValues(t, 64<<20, cfg.RetrievalFileUploadMaxBytes)
 	require.EqualValues(t, 64<<20, cfg.ResponsesProxyBufferMaxBytes)

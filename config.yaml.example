@@ -9,6 +9,9 @@ shim:
   write_timeout: 90s
   # Idle timeout for keep-alive connections.
   idle_timeout: 60s
+  # Maximum time to drain in-flight requests after SIGINT/SIGTERM before the
+  # shim returns a shutdown error and force-closes remaining connections.
+  shutdown_timeout: 30s
   auth:
     # disabled: no shim-owned ingress auth
     # static_bearer: require one of the configured bearer tokens on non-health routes
