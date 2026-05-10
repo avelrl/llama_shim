@@ -132,6 +132,9 @@ When updating [`docs/v2-scope.md`](docs/v2-scope.md):
 - Keep [`docs/work-queue.md`](docs/work-queue.md) as the live next-work index.
   When a task starts, finishes, is parked, or materially changes priority,
   update the queue in the same change or explicitly say why it was not updated.
+- Do not create git commits unless the user explicitly asks to commit in the
+  current turn. After editing and verification, show the changed files,
+  verification result, and suggested commit message, then wait for approval.
 - Do not use the work queue as a compatibility matrix, evidence report, or
   design document. Keep rows short and link to the detailed scope, runbook, or
   engineering document.
