@@ -60,6 +60,7 @@ artifact_paths=(
   ".tmp/v4-provider-config-doctor"
   ".tmp/v4-provider-matrix-smoke"
   ".tmp/v4-provider-matrix-curation"
+  ".tmp/v4-provider-ops"
   ".tmp/v3-computer-browser-harness-runs"
   ".tmp/playwright-daemon-sessions"
   ".tmp/playwright-daemon-sockets"

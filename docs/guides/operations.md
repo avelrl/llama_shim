@@ -170,6 +170,7 @@ V4_PROVIDER_CONFIG_DOCTOR_FLAGS="-strict-env -require-matrix -strict-codex-metad
   make v4-provider-config-doctor
 make v4-provider-matrix-smoke
 make v4-provider-matrix-curate
+make v4-provider-ops-report
 ```
 
 Limit the smoke during iteration, or focus the curation report on one model:
@@ -179,6 +180,8 @@ V4_PROVIDER_MATRIX_MODELS="deepseek/deepseek-v4-pro xiaomi/mimo-v2.5-pro" \
   make v4-provider-matrix-smoke
 V4_PROVIDER_MATRIX_CURATE_MODEL=deepseek/deepseek-v4-pro \
   make v4-provider-matrix-curate
+V4_PROVIDER_OPS_MODEL=deepseek/deepseek-v4-pro \
+  make v4-provider-ops-report
 ```
 
 What a passing run means:
@@ -203,6 +206,15 @@ Read artifacts in this order:
 2. `summary.md`: human-readable short report.
 3. `responses_trace_debug_trace.response.json`: selected backend, projection,
    plugin id, tool-classifier decision, and request-cleanup transform metadata.
+
+Use `make v4-provider-ops-report` after provider doctor, matrix curation, and
+Codex curation when you need one local operator verdict. It reads existing
+artifacts only, reports per-model decisions such as
+`release_gate_strict_clean`, `release_gate_retry_dependent`,
+`release_gate_matrix_only`, and `missing_matrix_evidence`, and flags drift
+between configured aliases, latest matrix evidence, and Codex curation
+evidence. Set `V4_PROVIDER_OPS_REQUIRE_CODEX=1` when a missing or failed Codex
+baseline should fail the ops report instead of being recorded as a note.
 4. `provider-routing/<model>/summary.json`: nested routed-provider result when
    `V4_PREFLIGHT_PROVIDER_MODEL` was set.
 5. `codex-doctor/summary.json`: Codex config doctor result when enabled.
@@ -376,6 +388,7 @@ Default cleanup targets intentionally do not remove `.data`.
 | Diagnose provider routing config | `make v4-provider-config-doctor` | No | Static `shimctl provider doctor` gate for `llama.providers`, provider token env references, public alias to `upstream_model` mappings, compatibility rule targets, operator-matrix coverage, and Codex metadata. Writes artifacts under `.tmp/v4-provider-config-doctor`. |
 | Run V4 provider matrix smoke | `make v4-provider-matrix-smoke` | No | Runs provider-routing smoke and V4 preflight for each configured matrix model, then writes one aggregate JSON/Markdown report under `.tmp/v4-provider-matrix-smoke`. |
 | Curate V4 provider matrix artifacts | `make v4-provider-matrix-curate` | No | Reads existing matrix-smoke artifacts, groups routing/preflight/Codex doctor/readiness failures, and writes a local operator verdict under `.tmp/v4-provider-matrix-curation`. |
+| Summarize provider/model ops state | `make v4-provider-ops-report` | No | Reads provider doctor, provider matrix curation, and Codex eval curation artifacts into one per-model decision table with drift checks. Writes artifacts under `.tmp/v4-provider-ops`. |
 | Check live upstream provider routing | `make upstream-provider-routing-smoke` | No | Verifies one public `provider/model` alias through capabilities, live `/v1/models`, routed Responses, routed Chat Completions, derived endpoint probes, and fail-closed routing boundaries. Writes artifacts under `.tmp/upstream-provider-routing-smoke`. |
 | Diagnose Codex provider config | `make codex-config-doctor` | No | Generates an isolated Codex config, checks the local Codex binary, verifies shim auth env, health/readiness, capabilities, `/v1/models`, and one direct `/v1/responses` smoke. Writes artifacts under `.tmp/shimctl-codex`. |
 | Curate Codex eval artifacts | `make codex-eval-curate` | No | Reads `.tmp/codex-eval-*` artifacts and writes a cross-run interpretation report under `.tmp/codex-eval-curation`. |

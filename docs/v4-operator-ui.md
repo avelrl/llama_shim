@@ -255,6 +255,7 @@ families under `shim.evidence.root`:
 - `.tmp/v4-provider-config-doctor/*/summary.json`
 - `.tmp/v4-provider-matrix-smoke/*/summary.json`
 - `.tmp/v4-provider-matrix-curation/*/summary.json`
+- `.tmp/v4-provider-ops/*/summary.json`
 - `.tmp/upstream-provider-routing-smoke/*/summary.json`
 - `.tmp/codex-eval-auto/*/summary.json`
 - `.tmp/codex-eval-curation/*/summary.json`

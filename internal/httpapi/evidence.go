@@ -121,6 +121,7 @@ var evidenceSources = []evidenceSource{
 	{kind: "v4_provider_config_doctor", title: "V4 provider config doctor", glob: "v4-provider-config-doctor/*/summary.json"},
 	{kind: "v4_provider_matrix_smoke", title: "V4 provider matrix smoke", glob: "v4-provider-matrix-smoke/*/summary.json"},
 	{kind: "v4_provider_matrix_curation", title: "V4 provider matrix curation", glob: "v4-provider-matrix-curation/*/summary.json"},
+	{kind: "v4_provider_ops", title: "V4 provider ops report", glob: "v4-provider-ops/*/summary.json"},
 	{kind: "upstream_provider_routing_smoke", title: "Upstream provider routing smoke", glob: "upstream-provider-routing-smoke/*/summary.json"},
 	{kind: "codex_eval_auto", title: "Codex eval auto", glob: "codex-eval-auto/*/summary.json"},
 	{kind: "codex_eval_curation", title: "Codex eval curation", glob: "codex-eval-curation/*/summary.json"},

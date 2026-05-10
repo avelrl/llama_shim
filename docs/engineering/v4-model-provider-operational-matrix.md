@@ -64,6 +64,7 @@ Then curate the local artifacts into a short operator verdict:
 
 ```bash
 make v4-provider-matrix-curate
+make v4-provider-ops-report
 ```
 
 Limit it to one or more aliases when iterating:
@@ -79,6 +80,8 @@ Focus the curation report on one model:
 ```bash
 V4_PROVIDER_MATRIX_CURATE_MODEL=deepseek/deepseek-v4-pro \
   make v4-provider-matrix-curate
+V4_PROVIDER_OPS_MODEL=deepseek/deepseek-v4-pro \
+  make v4-provider-ops-report
 ```
 
 Set `V4_PROVIDER_MATRIX_RUN_CODEX_DOCTOR=1` when the same pass should also
@@ -87,6 +90,10 @@ single report under `.tmp/v4-provider-matrix-smoke/` and nests the per-model
 provider-routing and V4-preflight artifacts below it. The curation report reads
 those artifacts without calling upstream providers and writes
 `.tmp/v4-provider-matrix-curation/<curation-id>/summary.md` plus `summary.json`.
+The ops report reads provider doctor, provider matrix curation, and Codex eval
+curation artifacts without calling upstream providers. It writes
+`.tmp/v4-provider-ops/<ops-id>/summary.md` plus `summary.json` and is the
+preferred final read-only operator view before updating this document.
 
 Provider-routing smoke for one public alias:
 
@@ -143,6 +150,8 @@ Promote a model/provider row only when:
 - `make codex-eval-auto` has a green baseline, with retry-dependent tasks
   called out explicitly
 - `make codex-eval-curate` agrees with the interpretation
+- `make v4-provider-ops-report` has no config, matrix, or required-Codex drift
+  for the promoted alias
 
 `expanded` and `bench-lite` are diagnostic stability profiles. They should be
 green before using a model as a broad gate, but a retry-dependent diagnostic
