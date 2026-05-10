@@ -1,9 +1,11 @@
 # V5 Hosted Parity And Advanced Transports
 
-Last updated: April 28, 2026.
+Last updated: May 10, 2026.
 
 This document is the parking lot for compatibility work that should not be
 folded into V3 and should not be mixed into V4 extension/plugin/security work.
+Use [Work Queue](work-queue.md) for the current priority list; this document
+only parks exact hosted-parity and advanced transport tracks.
 
 V2 is the broad compatibility facade.
 V3 is practical runtime and transport expansion around the shim-local facade.

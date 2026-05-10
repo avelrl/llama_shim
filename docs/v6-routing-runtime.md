@@ -1,6 +1,6 @@
 # V6 Model Routing Runtime
 
-Last updated: April 28, 2026.
+Last updated: May 10, 2026.
 
 This document stages a future shim-owned runtime for routing work across
 multiple internal model roles behind one public OpenAI-compatible request.
@@ -9,6 +9,8 @@ This is a design and scope document. It does not change the current V2/V3
 compatibility matrix, does not claim OpenAI hosted parity, and does not change
 the current `/v1/responses`, `/v1/conversations`, or Codex CLI behavior until
 code, tests, OpenAPI wording, and compatibility docs are updated together.
+Use [Work Queue](work-queue.md) to decide when this design should move from
+parked/future work into an implementation slice.
 
 Official references checked for this plan:
 

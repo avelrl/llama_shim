@@ -67,6 +67,8 @@ V2 is the broad compatibility facade.
 V3 is backend and runtime expansion around that facade.
 V4 is where the shim can grow opinionated memory, retrieval, and plugin
 capabilities without pretending they are first-party OpenAI API contracts.
+Use [Work Queue](work-queue.md) for current priority decisions across the
+scope documents.
 
 ## Why V4 Exists
 

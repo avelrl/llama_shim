@@ -38,6 +38,9 @@ Assumptions:
 ## Operations
 
 - [Operations](operations.md): running, probing, backing up, and maintaining the shim
+- [Work Queue](../work-queue.md): current next-work list and parked items
+- [Script Inventory](../script-inventory.md): short map of Make targets and
+  script-owned artifact families
 - [V4 Preflight Runbook](operations.md#v4-preflight-runbook): aggregate V4
   health, capability, debug-trace, provider-routing, and Codex config checks
 - [V4 Provider Ops Runbook](../v4-provider-ops-runbook.md): final
@@ -54,6 +57,8 @@ Assumptions:
 - [OpenAI API Choreography Atlas](../engineering/openai-api-choreography-atlas.md)
 - [V2 Scope](../v2-scope.md)
 - [Compatibility Matrix](../compatibility-matrix.md)
+- [Work Queue](../work-queue.md)
+- [Script Inventory](../script-inventory.md)
 - [V3 Preflight](../v3-preflight.md)
 - [V3 Scope](../v3-scope.md)
 - [V3 Codex Eval Curation](../v3-codex-eval-curation.md)

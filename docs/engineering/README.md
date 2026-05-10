@@ -6,6 +6,10 @@ not practical user guides and are not release scope documents.
 - [Runtime Hardening](runtime-hardening.md): storage, replay, pagination, and
   runtime resource-bound work that must not silently change the public
   OpenAI-compatible contract.
+- [Work Queue](../work-queue.md): current practical implementation queue,
+  parked tracks, and model-candidate backlog.
+- [Script Inventory](../script-inventory.md): short operator map for Make
+  targets, script entrypoints, and artifact families.
 - [OpenAI API Choreography Atlas](openai-api-choreography-atlas.md):
   diagram-first map of Responses, state, SSE, WebSocket, tools, Codex, and the
   current shim-local boundaries.

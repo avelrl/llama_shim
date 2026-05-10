@@ -1,6 +1,6 @@
 # V3 Expansion Staging
 
-Last updated: May 6, 2026.
+Last updated: May 10, 2026.
 
 This document is the parking lot for work that did not make the V2 ship bar
 and should not be reintroduced into the frozen V2 scope.
@@ -28,6 +28,10 @@ architecture, or hardening, see [v4-scope.md](v4-scope.md).
 
 For exact hosted-parity and advanced transport behavior that should not slow
 down practical V3 rollout, see [v5-scope.md](v5-scope.md).
+
+For current next-work selection across V3/V4/V5/V6, use
+[Work Queue](work-queue.md). This scope document remains the detailed V3
+boundary, not the day-to-day priority list.
 
 ## V3 Entry Criteria
 
