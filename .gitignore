@@ -5,4 +5,5 @@ config.yaml
 .playwright-cli/
 .tmp/
 .data/
+web/operator-ui/node_modules/
 .DS_Store

@@ -22,6 +22,11 @@ shim:
     retrieval_max_grounding_chunks: 20
     code_interpreter_max_concurrent_runs: 2
 
+ui:
+  enabled: true
+  base_path: /ui/
+  public_static_assets: true
+
 sqlite:
   path: ./.data/devstack/shim.db
   maintenance:

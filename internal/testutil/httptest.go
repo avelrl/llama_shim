@@ -87,6 +87,9 @@ type TestAppOptions struct {
 	MetricsPath                           string
 	DebugTracesEnabled                    *bool
 	DebugTracesMaxEntries                 int
+	UIEnabled                             bool
+	UIBasePath                            string
+	UIPublicStaticAssets                  bool
 	JSONBodyLimitBytes                    int64
 	RetrievalFileUploadMaxBytes           int64
 	ChatCompletionsShadowStoreMaxBytes    int64
@@ -211,6 +214,7 @@ func NewTestAppWithOptions(t *testing.T, options TestAppOptions) *TestApp {
 		RateLimit:                 httpapi.RateLimitConfig{Enabled: options.RateLimitEnabled, RequestsPerMinute: options.RateLimitRequestsPerMinute, Burst: options.RateLimitBurst},
 		MetricsConfig:             httpapi.MetricsConfig{Enabled: metricsEnabled, Path: options.MetricsPath},
 		DebugTrace:                httpapi.DebugTraceConfig{Enabled: debugTracesEnabled, MaxEntries: options.DebugTracesMaxEntries},
+		UI:                        httpapi.UIConfig{Enabled: options.UIEnabled, BasePath: options.UIBasePath, PublicStaticAssets: options.UIPublicStaticAssets},
 		Metrics:                   metrics,
 		StorageBackend:            config.StorageBackendSQLite,
 		ServiceLimits: httpapi.ServiceLimits{

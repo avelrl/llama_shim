@@ -210,6 +210,7 @@ type capabilityOpsConfig struct {
 	RateLimit            capabilityRateLimit            `json:"rate_limit"`
 	Metrics              capabilityMetrics              `json:"metrics"`
 	DebugTraces          capabilityDebugTraces          `json:"debug_traces"`
+	OperatorUI           capabilityOperatorUI           `json:"operator_ui"`
 	BackendFailurePolicy []capabilityBackendFailureRule `json:"backend_failure_policy"`
 	HealthPublic         bool                           `json:"health_public"`
 	ReadyzPublic         bool                           `json:"readyz_public"`
@@ -233,6 +234,13 @@ type capabilityDebugTraces struct {
 	DetailEndpoint string   `json:"detail_endpoint"`
 	Redaction      string   `json:"redaction"`
 	Captures       []string `json:"captures"`
+}
+
+type capabilityOperatorUI struct {
+	Enabled            bool   `json:"enabled"`
+	BasePath           string `json:"base_path"`
+	PublicStaticAssets bool   `json:"public_static_assets"`
+	Support            string `json:"support"`
 }
 
 type capabilityBackendFailureRule struct {
@@ -380,6 +388,7 @@ func buildCapabilityManifest(ctx context.Context, deps RouterDeps) capabilityMan
 					Path:    metricsConfig.Path,
 				},
 				DebugTraces:          debugTraceCapability(deps.DebugTrace),
+				OperatorUI:           operatorUICapability(deps.UI),
 				BackendFailurePolicy: capabilityBackendFailurePolicy(),
 				HealthPublic:         true,
 				ReadyzPublic:         true,
@@ -631,6 +640,16 @@ func debugTraceCapability(cfg DebugTraceConfig) capabilityDebugTraces {
 			"rate_limit_decision",
 			"final_status",
 		},
+	}
+}
+
+func operatorUICapability(cfg UIConfig) capabilityOperatorUI {
+	cfg = normalizeUIConfig(cfg)
+	return capabilityOperatorUI{
+		Enabled:            cfg.Enabled,
+		BasePath:           cfg.BasePath,
+		PublicStaticAssets: cfg.PublicStaticAssets,
+		Support:            "shim_owned_read_only_operator_console",
 	}
 }
 
@@ -898,10 +917,15 @@ func collectCapabilityProbes(ctx context.Context, deps RouterDeps) capabilityPro
 	}
 
 	if deps.LlamaClient != nil {
-		upstreamCtx, cancel := context.WithTimeout(ctx, readyzUpstreamTimeout)
+		upstreamTimeout := readyzUpstreamTimeout
+		resolver := newUpstreamProviderResolver(deps.LlamaProviders)
+		if resolver.Enabled() {
+			upstreamTimeout = readyzProviderTimeout
+		}
+		upstreamCtx, cancel := context.WithTimeout(ctx, upstreamTimeout)
 		probeStart := time.Now()
 		var err error
-		if resolver := newUpstreamProviderResolver(deps.LlamaProviders); resolver.Enabled() {
+		if resolver.Enabled() {
 			err = resolver.CheckReady(upstreamCtx, deps.LlamaClient)
 		} else {
 			err = deps.LlamaClient.CheckReadyWithBearerToken(upstreamCtx, deps.LlamaReadinessBearerToken)

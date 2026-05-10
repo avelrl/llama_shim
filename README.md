@@ -291,6 +291,9 @@ Supported environment overrides:
 - `SHIM_RATE_LIMIT_BURST` overrides `shim.rate_limit.burst`
 - `SHIM_METRICS_ENABLED` overrides `shim.metrics.enabled`
 - `SHIM_METRICS_PATH` overrides `shim.metrics.path`
+- `UI_ENABLED` overrides `ui.enabled`
+- `UI_BASE_PATH` overrides `ui.base_path`
+- `UI_PUBLIC_STATIC_ASSETS` overrides `ui.public_static_assets`
 - `SHIM_LIMITS_JSON_BODY_BYTES` overrides `shim.limits.json_body_bytes`
 - `SHIM_LIMITS_RETRIEVAL_FILE_UPLOAD_BYTES` overrides `shim.limits.retrieval_file_upload_bytes`
 - `SHIM_LIMITS_CHAT_COMPLETIONS_SHADOW_STORE_TIMEOUT` overrides `shim.limits.chat_completions_shadow_store_timeout`
@@ -414,6 +417,7 @@ The shim now has a shim-owned operational layer that is separate from route-cont
 - optional ingress bearer auth via `shim.auth.mode=static_bearer`
 - optional in-memory per-client request rate limiting via `shim.rate_limit.*`
 - optional shim-owned capability manifest at `/debug/capabilities`
+- optional embedded read-only operator UI at `/ui/` via `ui.enabled=true`
 - optional on-demand upstream sizing probe via `shimctl probe` and `probe.*` in `config.yaml`
 - optional Prometheus-text metrics at `shim.metrics.path` (default `/metrics`)
 - configurable request, upload, retrieval, and local `code_interpreter` limits
@@ -423,6 +427,7 @@ Important behavior:
 
 - `/healthz` and `/readyz` stay unauthenticated and unthrottled so external probes keep working
 - `/debug/capabilities` is a shim-owned operator/debug route that reports current surfaces, routing classes, runtime config, and dependency probe state; it returns `200` even when some dependencies are degraded, and shares normal shim auth and request rate limiting
+- `/ui/` is disabled by default and serves only a read-only operator console when enabled; it fetches `/debug/capabilities` and `/debug/traces` with the same auth/rate-limit behavior as direct JSON clients
 - `shimctl probe` remains shim-owned and separate from the running HTTP server: it reads `probe.*` from the shared `config.yaml`, probes documented upstream `/v1/models` and `/v1/chat/completions` endpoints on demand, and prints a structured JSON snapshot with conservative sizing guidance
 - `llama.readiness_bearer_token` is scoped only to `/readyz` upstream `/v1/models` checks; normal request handling, proxy/backend traffic, and `/debug/capabilities` do not borrow it
 - the optional calibration token is scoped only to `shimctl probe`; `/readyz`, normal request handling, proxy/backend traffic, and `/debug/capabilities` never borrow it

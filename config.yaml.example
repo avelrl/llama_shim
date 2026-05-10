@@ -65,6 +65,14 @@ shim:
     # Maximum concurrent shim-local code_interpreter executions.
     code_interpreter_max_concurrent_runs: 2
 
+# Shim-owned read-only operator UI. Static assets are served by the Go binary;
+# JSON data still comes from /healthz, /readyz, /debug/capabilities, and
+# /debug/traces.
+ui:
+  enabled: false
+  base_path: /ui/
+  public_static_assets: true
+
 # Storage backend selector. Only sqlite is implemented today; this key exists
 # so future Postgres/pgvector storage can be introduced without changing the
 # OpenAI-facing route contract.

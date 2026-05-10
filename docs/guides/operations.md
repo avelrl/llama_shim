@@ -80,6 +80,9 @@ make devstack-down
   in-memory request traces for the latest requests; these are metadata-only
   and intentionally omit prompts, bearer tokens, private provider headers,
   tool outputs, and file contents
+- `/ui/`: optional embedded read-only operator console when `ui.enabled=true`;
+  it renders health, readiness, capabilities, and trace metadata from the
+  existing endpoints without adding write actions
 - `/metrics`: Prometheus-style metrics endpoint when enabled
 
 Important distinction:
@@ -105,6 +108,11 @@ Important distinction:
   Request cleanup appears only as metadata-only `transforms[]` entries with
   `stage=request_cleanup`; traces do not include prompts, bearer tokens, or
   provider header values.
+- `/ui/` static assets are disabled by default. Configure `ui.enabled=true` and
+  open `$SHIM_BASE_URL/ui/`. If `shim.auth.mode=static_bearer`, JSON data
+  fetches still require a bearer token. The UI can keep the token in memory or
+  in `sessionStorage` for the current tab; it does not use cookies or
+  localStorage.
 - `shimctl probe` is separate from `/readyz`: it is recommendation-only,
   runs on demand from the shared `config.yaml`, can use the shared `.env` for
   `SHIMCTL_PROBE_*` overrides, prints per-request progress to `stderr`
@@ -243,6 +251,7 @@ Plugin, model, and capability settings map:
 | Enable or disable local tool/runtime backends | `responses.web_search`, `responses.image_generation`, `responses.computer`, `responses.code_interpreter`, `responses.compaction`, `retrieval.*` | backend components and plugin descriptors with enabled/ready state | the matching domain smoke, plus V4 preflight for registry consistency |
 | Enable explicit V4 state/session memory | `responses.memory.*` plus request metadata under `llama_shim.memory.*` | `/debug/capabilities.runtime.memory`, `runtime.memory` plugin, and storage/governance reports | focused memory tests plus `make v4-preflight-smoke`; see [V4 State And Session Memory](../v4-state-session-memory.md) |
 | Tune debug trace availability | `shim.debug_traces.*` or `SHIM_DEBUG_TRACES_*` | `/debug/capabilities.runtime.ops.debug_traces` and `/debug/traces` | `make v4-preflight-smoke` |
+| Enable the read-only operator UI | `ui.*` or `UI_*` | `/debug/capabilities.runtime.ops.operator_ui` and `/ui/` | `make operator-ui-build`, then `go test ./internal/httpapi -run OperatorUI` |
 
 Use these rules when adding a model or plugin:
 

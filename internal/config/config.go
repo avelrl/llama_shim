@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -53,6 +54,9 @@ type Config struct {
 	ShimMetricsPath                                string
 	ShimDebugTracesEnabled                         bool
 	ShimDebugTracesMaxEntries                      int
+	UIEnabled                                      bool
+	UIBasePath                                     string
+	UIPublicStaticAssets                           bool
 	ShimJSONBodyLimitBytes                         int64
 	RetrievalFileUploadMaxBytes                    int64
 	ChatCompletionsShadowStoreMaxBytes             int64
@@ -266,6 +270,8 @@ func Load(configPath string) (Config, error) {
 		ShimMetricsEnabled:                             v.GetBool("shim.metrics.enabled"),
 		ShimMetricsPath:                                strings.TrimSpace(v.GetString("shim.metrics.path")),
 		ShimDebugTracesEnabled:                         v.GetBool("shim.debug_traces.enabled"),
+		UIEnabled:                                      v.GetBool("ui.enabled"),
+		UIPublicStaticAssets:                           v.GetBool("ui.public_static_assets"),
 		LogLevel:                                       slog.LevelInfo,
 		LogFilePath:                                    strings.TrimSpace(v.GetString("log.file_path")),
 		RetrievalIndexBackend:                          strings.TrimSpace(v.GetString("retrieval.index.backend")),
@@ -572,6 +578,11 @@ func Load(configPath string) (Config, error) {
 		return Config{}, fmt.Errorf("parse shim.debug_traces.max_entries: %w", err)
 	}
 	cfg.ShimDebugTracesMaxEntries = debugTracesMaxEntries
+	uiBasePath, err := normalizeUIBasePath(v.GetString("ui.base_path"))
+	if err != nil {
+		return Config{}, fmt.Errorf("parse ui.base_path: %w", err)
+	}
+	cfg.UIBasePath = uiBasePath
 	if err := parseDuration(v.GetString("responses.code_interpreter.execution_timeout"), &cfg.ResponsesCodeInterpreterTimeout); err != nil {
 		return Config{}, fmt.Errorf("parse responses.code_interpreter.execution_timeout: %w", err)
 	}
@@ -761,6 +772,9 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("shim.metrics.path", "/metrics")
 	v.SetDefault("shim.debug_traces.enabled", true)
 	v.SetDefault("shim.debug_traces.max_entries", "256")
+	v.SetDefault("ui.enabled", false)
+	v.SetDefault("ui.base_path", "/ui/")
+	v.SetDefault("ui.public_static_assets", true)
 	v.SetDefault("shim.limits.json_body_bytes", "1MiB")
 	v.SetDefault("shim.limits.retrieval_file_upload_bytes", "64MiB")
 	v.SetDefault("shim.limits.chat_completions_shadow_store_bytes", "64MiB")
@@ -1296,6 +1310,31 @@ func parseShimAuthMode(value string) error {
 	default:
 		return strconv.ErrSyntax
 	}
+}
+
+func normalizeUIBasePath(value string) (string, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		trimmed = "/ui/"
+	}
+	if !strings.HasPrefix(trimmed, "/") || strings.ContainsAny(trimmed, "?#\\") || strings.Contains(trimmed, "..") {
+		return "", strconv.ErrSyntax
+	}
+	cleaned := path.Clean(trimmed)
+	if cleaned == "/" || strings.Contains(cleaned, "/../") || strings.HasSuffix(cleaned, "/..") || reservedUIBasePath(cleaned) {
+		return "", strconv.ErrSyntax
+	}
+	return strings.TrimRight(cleaned, "/") + "/", nil
+}
+
+func reservedUIBasePath(cleaned string) bool {
+	reserved := []string{"/v1", "/debug", "/healthz", "/readyz", "/metrics", "/api"}
+	for _, prefix := range reserved {
+		if cleaned == prefix || strings.HasPrefix(cleaned, prefix+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 func parseCodeInterpreterBackend(value string) error {

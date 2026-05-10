@@ -170,6 +170,7 @@ func main() {
 			RateLimit:                 httpapi.RateLimitConfig{Enabled: cfg.ShimRateLimitEnabled, RequestsPerMinute: cfg.ShimRateLimitRequestsPerMinute, Burst: cfg.ShimRateLimitBurst},
 			MetricsConfig:             httpapi.MetricsConfig{Enabled: cfg.ShimMetricsEnabled, Path: cfg.ShimMetricsPath},
 			DebugTrace:                httpapi.DebugTraceConfig{Enabled: cfg.ShimDebugTracesEnabled, MaxEntries: cfg.ShimDebugTracesMaxEntries},
+			UI:                        httpapi.UIConfig{Enabled: cfg.UIEnabled, BasePath: cfg.UIBasePath, PublicStaticAssets: cfg.UIPublicStaticAssets},
 			Metrics:                   metrics,
 			StorageBackend:            cfg.StorageBackend,
 			ServiceLimits: httpapi.ServiceLimits{

@@ -665,6 +665,12 @@ func TestCapabilitiesEndpointReportsConfiguredRuntime(t *testing.T) {
 	require.Equal(t, "metadata_only_no_prompts_no_headers_no_file_contents", asStringAny(debugTraces["redaction"]))
 	require.Contains(t, debugTraces["captures"].([]any), "tool_classifier_decisions")
 
+	operatorUI := ops["operator_ui"].(map[string]any)
+	require.Equal(t, false, operatorUI["enabled"])
+	require.Equal(t, "/ui/", asStringAny(operatorUI["base_path"]))
+	require.Equal(t, false, operatorUI["public_static_assets"])
+	require.Equal(t, "shim_owned_read_only_operator_console", asStringAny(operatorUI["support"]))
+
 	rateLimit := ops["rate_limit"].(map[string]any)
 	require.Equal(t, true, rateLimit["enabled"])
 	require.Equal(t, float64(90), rateLimit["requests_per_minute"])
@@ -1042,6 +1048,78 @@ func TestShimStaticBearerAuthProtectsAPISurfaceButSkipsHealthChecks(t *testing.T
 	})
 	require.Equal(t, http.StatusOK, status)
 	require.Equal(t, "response", asStringAny(authorized["object"]))
+}
+
+func TestOperatorUIDisabledDoesNotServeStaticApp(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	req, err := http.NewRequest(http.MethodGet, app.Server.URL+"/ui/", nil)
+	require.NoError(t, err)
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+
+	require.Equal(t, http.StatusNotFound, resp.StatusCode)
+	require.NotContains(t, string(body), "llama_shim operator")
+}
+
+func TestOperatorUIStaticAssetsCanBePublicWhileDebugDataStaysProtected(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		AuthMode:             config.ShimAuthModeStaticBearer,
+		BearerTokens:         []string{"shim-secret"},
+		UIEnabled:            true,
+		UIPublicStaticAssets: true,
+	})
+
+	req, err := http.NewRequest(http.MethodGet, app.Server.URL+"/ui/", nil)
+	require.NoError(t, err)
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Contains(t, resp.Header.Get("Content-Type"), "text/html")
+	require.Contains(t, string(body), "llama_shim operator")
+
+	status, _, unauthorized := rawRequestWithHeaders(t, app, http.MethodGet, "/debug/capabilities", nil, nil)
+	require.Equal(t, http.StatusUnauthorized, status)
+	require.Equal(t, "authentication_error", asStringAny(unauthorized["error"].(map[string]any)["type"]))
+
+	status, _, authorized := rawRequestWithHeaders(t, app, http.MethodGet, "/debug/capabilities", nil, map[string]string{
+		"Authorization": "Bearer shim-secret",
+	})
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, "shim.capabilities", asStringAny(authorized["object"]))
+}
+
+func TestOperatorUIStaticAssetsCanRequireIngressAuth(t *testing.T) {
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		AuthMode:             config.ShimAuthModeStaticBearer,
+		BearerTokens:         []string{"shim-secret"},
+		UIEnabled:            true,
+		UIPublicStaticAssets: false,
+	})
+
+	req, err := http.NewRequest(http.MethodGet, app.Server.URL+"/ui/", nil)
+	require.NoError(t, err)
+	resp, err := app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+
+	req, err = http.NewRequest(http.MethodGet, app.Server.URL+"/ui/", nil)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer shim-secret")
+	resp, err = app.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Contains(t, string(body), "llama_shim operator")
 }
 
 func TestCapabilitiesEndpointSharesIngressAuthAndRateLimit(t *testing.T) {

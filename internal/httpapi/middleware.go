@@ -158,10 +158,10 @@ func JSONBodyLimitMiddleware(limit int64) func(http.Handler) http.Handler {
 	}
 }
 
-func StaticBearerAuthMiddleware(cfg StaticBearerAuthConfig, metrics *Metrics) func(http.Handler) http.Handler {
+func StaticBearerAuthMiddleware(cfg StaticBearerAuthConfig, metrics *Metrics, publicPath func(string) bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !cfg.Enabled() || isHealthPath(r.URL.Path) {
+			if !cfg.Enabled() || isHealthPath(r.URL.Path) || (publicPath != nil && publicPath(r.URL.Path)) {
 				next.ServeHTTP(w, r)
 				return
 			}

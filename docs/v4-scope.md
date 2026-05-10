@@ -49,6 +49,10 @@ State/session memory now has a first local implementation documented in
 [V4 State And Session Memory](v4-state-session-memory.md): explicit metadata
 notes, SQLite/Postgres storage, hidden local developer-context injection,
 capability/plugin reporting, and governance purge coverage.
+The shim also has a first read-only embedded operator UI documented in
+[V4 Read-Only Operator UI](v4-operator-ui.md): a disabled-by-default Solid/Vite
+console served by the Go binary under `/ui/`, backed only by existing
+health/readiness/capability/trace endpoints.
 
 V2 is the broad compatibility facade.
 V3 is backend and runtime expansion around that facade.

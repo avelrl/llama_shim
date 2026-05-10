@@ -65,6 +65,10 @@ shim:
     retrieval_max_search_queries: 3
     retrieval_max_grounding_chunks: 12
     code_interpreter_max_concurrent_runs: 4
+ui:
+  enabled: true
+  base_path: /ops/
+  public_static_assets: true
 sqlite:
   path: ./tmp/test.db
   maintenance:
@@ -266,6 +270,9 @@ responses:
 	require.Equal(t, "/metrics", cfg.ShimMetricsPath)
 	require.True(t, cfg.ShimDebugTracesEnabled)
 	require.Equal(t, 64, cfg.ShimDebugTracesMaxEntries)
+	require.True(t, cfg.UIEnabled)
+	require.Equal(t, "/ops/", cfg.UIBasePath)
+	require.True(t, cfg.UIPublicStaticAssets)
 	require.EqualValues(t, 2<<20, cfg.ShimJSONBodyLimitBytes)
 	require.EqualValues(t, 32<<20, cfg.RetrievalFileUploadMaxBytes)
 	require.Equal(t, 3*time.Second, cfg.ChatCompletionsShadowStoreTimeout)
@@ -424,6 +431,9 @@ responses:
 	t.Setenv("SHIM_RATE_LIMIT_BURST", "30")
 	t.Setenv("SHIM_METRICS_ENABLED", "false")
 	t.Setenv("SHIM_METRICS_PATH", "/internal/metrics")
+	t.Setenv("UI_ENABLED", "true")
+	t.Setenv("UI_BASE_PATH", "/operator")
+	t.Setenv("UI_PUBLIC_STATIC_ASSETS", "false")
 	t.Setenv("STORAGE_BACKEND", "sqlite")
 	t.Setenv("SHIM_LIMITS_JSON_BODY_BYTES", "3MiB")
 	t.Setenv("SHIM_LIMITS_RETRIEVAL_FILE_UPLOAD_BYTES", "48MiB")
@@ -510,6 +520,9 @@ responses:
 	require.Equal(t, 30, cfg.ShimRateLimitBurst)
 	require.False(t, cfg.ShimMetricsEnabled)
 	require.Equal(t, "/internal/metrics", cfg.ShimMetricsPath)
+	require.True(t, cfg.UIEnabled)
+	require.Equal(t, "/operator/", cfg.UIBasePath)
+	require.False(t, cfg.UIPublicStaticAssets)
 	require.EqualValues(t, 3<<20, cfg.ShimJSONBodyLimitBytes)
 	require.EqualValues(t, 48<<20, cfg.RetrievalFileUploadMaxBytes)
 	require.Equal(t, 4*time.Second, cfg.ChatCompletionsShadowStoreTimeout)
@@ -619,6 +632,9 @@ func TestLoadUsesCodexSafeDefaults(t *testing.T) {
 	require.Equal(t, 15*time.Minute, cfg.SQLiteMaintenanceCleanupInterval)
 	require.Equal(t, 0*time.Second, cfg.StorageResponseReplayArtifactsMaxAge)
 	require.Equal(t, 0, cfg.StorageResponseReplayArtifactsMaxResponses)
+	require.False(t, cfg.UIEnabled)
+	require.Equal(t, "/ui/", cfg.UIBasePath)
+	require.True(t, cfg.UIPublicStaticAssets)
 	require.Equal(t, "lexical", cfg.RetrievalIndexBackend)
 	require.Equal(t, "disabled", cfg.RetrievalEmbedderBackend)
 	require.Empty(t, cfg.RetrievalEmbedderBaseURL)
@@ -682,6 +698,24 @@ responses:
 	_, err := config.Load(configPath)
 	require.Error(t, err)
 	require.ErrorContains(t, err, "parse responses.code_interpreter.enable_unsafe_host_executor")
+}
+
+func TestLoadRejectsInvalidUIBasePath(t *testing.T) {
+	for _, basePath := range []string{"relative", "/v1/ui", "/debug/ui"} {
+		t.Run(basePath, func(t *testing.T) {
+			disableDotEnv(t)
+			configPath := filepath.Join(t.TempDir(), "config.yaml")
+			writeFile(t, configPath, `
+ui:
+  enabled: true
+  base_path: `+basePath+`
+`)
+
+			_, err := config.Load(configPath)
+			require.Error(t, err)
+			require.ErrorContains(t, err, "parse ui.base_path")
+		})
+	}
 }
 
 func TestLoadReadsDotEnvWhenEnvUnset(t *testing.T) {

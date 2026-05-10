@@ -27,6 +27,7 @@ type RouterDeps struct {
 	RateLimit                                RateLimitConfig
 	MetricsConfig                            MetricsConfig
 	DebugTrace                               DebugTraceConfig
+	UI                                       UIConfig
 	Metrics                                  *Metrics
 	ServiceLimits                            ServiceLimits
 	StorageBackend                           string
@@ -79,6 +80,8 @@ func NewRouter(deps RouterDeps) http.Handler {
 	metricsConfig := normalizeMetricsConfig(deps.MetricsConfig)
 	debugTraceConfig := normalizeDebugTraceConfig(deps.DebugTrace)
 	deps.DebugTrace = debugTraceConfig
+	uiConfig := normalizeUIConfig(deps.UI)
+	deps.UI = uiConfig
 	debugTraceStore := newDebugTraceStoreForConfig(debugTraceConfig)
 	serviceLimits := normalizeServiceLimits(deps.ServiceLimits)
 	retrievalGate := newConcurrencyGate("retrieval_search", serviceLimits.RetrievalMaxConcurrentSearches, deps.Metrics)
@@ -207,6 +210,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 	mux.HandleFunc("/debug/capabilities", capabilityHandler(deps))
 	mux.HandleFunc("/debug/traces", debugTraceListHandler(debugTraceStore))
 	mux.HandleFunc("/debug/traces/", debugTraceGetHandler(debugTraceStore))
+	mountOperatorUI(mux, uiConfig)
 	if metricsConfig.Enabled && deps.Metrics != nil {
 		mux.Handle(metricsConfig.Path, deps.Metrics.Handler())
 	}
@@ -481,7 +485,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 		RequestLogMiddleware(deps.Logger, deps.Metrics, debugTraceStore),
 		RecoverMiddleware(deps.Logger),
 		JSONBodyLimitMiddleware(serviceLimits.JSONBodyBytes),
-		StaticBearerAuthMiddleware(authConfig, deps.Metrics),
+		StaticBearerAuthMiddleware(authConfig, deps.Metrics, uiConfig.publicStaticPath),
 		RateLimitMiddleware(rateLimitConfig, deps.Metrics, metricsConfig.Path),
 		ForwardHeadersMiddleware,
 	)
