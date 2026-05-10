@@ -14,6 +14,10 @@ ready for local shim work, Codex eval work, or release-gate use.
 The final answer should come from `make v4-provider-ops-report`. Earlier steps
 produce the evidence that report consumes.
 
+To add a new alias, first follow
+[Add Provider/Model Alias](guides/add-provider-model.md). This runbook assumes
+the alias already exists in `config.yaml`.
+
 ## Full Flow
 
 ```bash

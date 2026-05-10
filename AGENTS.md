@@ -127,6 +127,21 @@ When updating [`docs/v2-scope.md`](docs/v2-scope.md):
 - Use [`docs/v4-scope.md`](docs/v4-scope.md) for shim-owned extensions and
   plugin/backend architecture that should not be framed as OpenAI API parity.
 
+## Work queue and planning hygiene
+
+- Keep [`docs/work-queue.md`](docs/work-queue.md) as the live next-work index.
+  When a task starts, finishes, is parked, or materially changes priority,
+  update the queue in the same change or explicitly say why it was not updated.
+- Do not use the work queue as a compatibility matrix, evidence report, or
+  design document. Keep rows short and link to the detailed scope, runbook, or
+  engineering document.
+- When adding, removing, or changing operator entrypoints, update
+  [`docs/script-inventory.md`](docs/script-inventory.md) or the relevant guide
+  in the same change.
+- When a new practical workflow emerges, prefer a guide under
+  [`docs/guides/`](docs/guides/) over repeating command blocks across many
+  scope documents.
+
 ## Implementation rules for this repo
 
 - For Responses and Conversations work, check both guide pages and API reference pages.
@@ -155,6 +170,22 @@ When updating [`docs/v2-scope.md`](docs/v2-scope.md):
   local shadow-store ownership,
   streamed shadow-store reconstruction,
   and optional upstream history merge/bridge behavior.
+
+## Provider/model operations
+
+- New provider/model aliases must follow
+  [`docs/guides/add-provider-model.md`](docs/guides/add-provider-model.md).
+- Keep `llama.providers`, `.env.example`, Codex metadata, compatibility hooks,
+  provider matrix docs, ops evidence, and [`docs/work-queue.md`](docs/work-queue.md)
+  aligned when an alias changes status.
+- Distinguish server-side upstream provider tokens
+  (`llama.providers[].bearer_token_env`) from shim ingress auth used by clients,
+  Codex eval, and external testers.
+- Use the public `provider/model` alias in operator-facing docs and evidence.
+  Record raw upstream model ids only as implementation detail.
+- Do not promote a model candidate from memory, marketing names, or old logs.
+  Verify the exact live provider/local-runtime model id and keep evidence
+  attached to the promotion decision.
 
 ## Mandatory security and regression guardrails
 
@@ -286,6 +317,11 @@ Before merging work in these areas, explicitly ask and answer:
 - Are docs, OpenAPI, config defaults, and tests aligned with that answer?
 
 ## Before calling a task done
+
+For docs-only or process-only changes that do not modify implementation,
+OpenAPI, public compatibility claims, or operator behavior, narrow verification
+to path hygiene, docs/backlog alignment, `git diff --check`, and `make lint`.
+Explicitly say that no runtime code path changed.
 
 Confirm all of the following:
 

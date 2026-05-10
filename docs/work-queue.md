@@ -31,7 +31,8 @@ Recommended order:
    guardrails.
 4. Documentation/script consolidation only where it removes operator confusion.
 
-The model-candidate expansion should stay evidence-driven: add config and
+The model-candidate expansion should stay evidence-driven. Use
+[Add Provider/Model Alias](guides/add-provider-model.md): add config and
 metadata first, run provider-matrix smokes, then decide whether each model is
 worth a Codex auto run.
 
@@ -40,7 +41,7 @@ worth a Codex auto run.
 | Item | Status | Why it matters | Next slice | Validation |
 | --- | --- | --- | --- | --- |
 | V4 local access boundaries | Not started | The shim now has useful operator surfaces: `/debug/capabilities`, `/debug/traces`, `/debug/evidence`, and `/ui/`. Even for local use, these need a clear access model before more control-plane features grow. | Add a focused design/update for static bearer/local-only policy, then implement route grouping, config, tests, and guide updates. | `go test ./internal/httpapi ./internal/config`, `make v4-preflight-smoke`, `make lint` |
-| Provider/model candidate expansion | Not started | The existing matrix is useful, but adding candidate rows will show whether DeepSeek Flash, MiMo non-Pro, or a local Gemma-family model should become practical gates. | Add provider/model aliases, Codex metadata, `.env.example` placeholders if needed, and matrix docs. Start with provider-routing smoke before Codex eval. | `make v4-provider-config-doctor`, `make v4-provider-matrix-smoke`, `make v4-provider-matrix-curate`, `make v4-provider-ops-report` |
+| Provider/model candidate expansion | Not started | The existing matrix is useful, but adding candidate rows will show whether DeepSeek Flash, MiMo non-Pro, or a local Gemma-family model should become practical gates. | Follow [Add Provider/Model Alias](guides/add-provider-model.md): add provider/model aliases, Codex metadata, `.env.example` placeholders if needed, and matrix docs. Start with provider-routing smoke before Codex eval. | `make v4-provider-config-doctor`, `make v4-provider-matrix-smoke`, `make v4-provider-matrix-curate`, `make v4-provider-ops-report` |
 | Documentation and script inventory | Baseline implemented | There are many scripts and scope docs. Operators need a small map so new work does not require rediscovering the repo every time. | Keep this queue plus [Script Inventory](script-inventory.md) current. Consolidate script docs only after repeated confusion. | `git diff --check`; docs-only review |
 | V4 memory hardening | Not started | The memory baseline exists, but durable state gets more useful after explicit promotion, deduplication, conflict, and redaction rules. | Implement promotion rules from session to global memory plus deterministic dedup/conflict behavior. Keep it shim-owned metadata, not an OpenAI memory claim. | focused memory tests, `go test ./...`, `make v4-preflight-smoke` |
 
@@ -99,6 +100,7 @@ Useful cleanup rules:
 - [V5 Scope](v5-scope.md)
 - [V6 Model Routing Runtime](v6-routing-runtime.md)
 - [V4 Provider Ops Runbook](v4-provider-ops-runbook.md)
+- [Add Provider/Model Alias](guides/add-provider-model.md)
 - [V4 Model/Provider Operational Matrix](engineering/v4-model-provider-operational-matrix.md)
 - [Operations Guide](guides/operations.md)
 - [Script Inventory](script-inventory.md)
