@@ -1,6 +1,6 @@
 # V4 Extensions And Plugin Model
 
-Last updated: May 10, 2026.
+Last updated: May 12, 2026.
 
 This document is the parking lot for post-compatibility work that is useful in
 practice, but should not be confused with the shim's core OpenAI-compatibility
@@ -62,6 +62,11 @@ doctor, provider matrix curation, and Codex eval curation evidence.
 The HTTP server now handles `SIGINT`/`SIGTERM` with shim-owned graceful shutdown:
 background cleanup loops are canceled and in-flight requests drain up to
 `shim.shutdown_timeout` before forced process exit.
+Observability now has a backend-neutral OpenTelemetry trace export foundation:
+`shim.telemetry.*` can emit metadata-only OTLP spans to an OTel Collector or a
+local Phoenix pilot backend without changing OpenAI-compatible responses or
+exporting prompts, tool outputs, bearer tokens, provider tokens, or file
+contents.
 
 V2 is the broad compatibility facade.
 V3 is backend and runtime expansion around that facade.

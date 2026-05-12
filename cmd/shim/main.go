@@ -25,6 +25,7 @@ import (
 	"llama_shim/internal/storage"
 	"llama_shim/internal/storage/postgres"
 	"llama_shim/internal/storage/sqlite"
+	"llama_shim/internal/telemetry"
 	"llama_shim/internal/upstreamcompat"
 	"llama_shim/internal/websearch"
 )
@@ -56,6 +57,29 @@ func main() {
 	processCtx, processCancel := context.WithCancel(context.Background())
 	defer processCancel()
 	metrics := httpapi.NewMetrics()
+	telemetryShutdown, err := telemetry.Start(processCtx, telemetry.Config{
+		Enabled:               cfg.ShimTelemetryEnabled,
+		Protocol:              cfg.ShimTelemetryProtocol,
+		Endpoint:              cfg.ShimTelemetryEndpoint,
+		ServiceName:           cfg.ShimTelemetryServiceName,
+		ServiceVersion:        cfg.ShimTelemetryServiceVersion,
+		DeploymentEnvironment: cfg.ShimTelemetryDeploymentEnvironment,
+		Headers:               cfg.ShimTelemetryHeaders,
+		SampleRatio:           cfg.ShimTelemetrySampleRatio,
+		BatchTimeout:          cfg.ShimTelemetryBatchTimeout,
+		ExportTimeout:         cfg.ShimTelemetryExportTimeout,
+	})
+	if err != nil {
+		logger.Error("start telemetry", "err", err)
+		os.Exit(1)
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShimTelemetryExportTimeout)
+		defer cancel()
+		if err := telemetryShutdown(shutdownCtx); err != nil {
+			logger.Error("shutdown telemetry", "err", err)
+		}
+	}()
 
 	retrievalEmbedder, err := retrieval.NewEmbedder(retrieval.EmbedderConfig{
 		Backend: cfg.RetrievalEmbedderBackend,
@@ -260,6 +284,15 @@ func main() {
 		"shim_rate_limit_burst", cfg.ShimRateLimitBurst,
 		"shim_metrics_enabled", cfg.ShimMetricsEnabled,
 		"shim_metrics_path", cfg.ShimMetricsPath,
+		"shim_telemetry_enabled", cfg.ShimTelemetryEnabled,
+		"shim_telemetry_protocol", cfg.ShimTelemetryProtocol,
+		"shim_telemetry_endpoint_configured", cfg.ShimTelemetryEndpoint != "",
+		"shim_telemetry_service_name", cfg.ShimTelemetryServiceName,
+		"shim_telemetry_deployment_environment", cfg.ShimTelemetryDeploymentEnvironment,
+		"shim_telemetry_header_count", len(cfg.ShimTelemetryHeaders),
+		"shim_telemetry_sample_ratio", cfg.ShimTelemetrySampleRatio,
+		"shim_telemetry_batch_timeout", cfg.ShimTelemetryBatchTimeout,
+		"shim_telemetry_export_timeout", cfg.ShimTelemetryExportTimeout,
 		"shim_debug_traces_enabled", cfg.ShimDebugTracesEnabled,
 		"shim_debug_traces_max_entries", cfg.ShimDebugTracesMaxEntries,
 		"shim_evidence_enabled", cfg.ShimEvidenceEnabled,

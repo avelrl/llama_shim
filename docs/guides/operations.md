@@ -85,6 +85,151 @@ make devstack-down
   existing endpoints without adding write actions
 - `/metrics`: Prometheus-style metrics endpoint when enabled
 
+## OpenTelemetry Trace Export
+
+`shim.telemetry.*` is an optional shim-owned observability layer. It exports
+metadata-only HTTP server spans through OTLP and does not change any
+OpenAI-compatible request or response contract.
+
+The safest first deployment is a local Phoenix instance or an OTel Collector.
+Phoenix is the recommended pilot backend because it accepts OTLP directly,
+works well as a local trace UI, and does not require putting vendor-specific
+auth headers in the shim config.
+
+### Enable Trace Export In The Shim
+
+For a backend that accepts OTLP HTTP directly:
+
+```yaml
+shim:
+  telemetry:
+    enabled: true
+    protocol: otlp_http
+    endpoint: http://127.0.0.1:6006/v1/traces
+```
+
+For a local OTel Collector:
+
+```yaml
+shim:
+  telemetry:
+    enabled: true
+    protocol: otlp_http
+    endpoint: http://127.0.0.1:4318/v1/traces
+```
+
+`endpoint` must be a full `http://` or `https://` OTLP endpoint URL when set.
+Leave it empty only when you want the OpenTelemetry exporter environment or
+default endpoint behavior.
+
+### Phoenix Local Backend
+
+Start Phoenix locally:
+
+```sh
+docker pull arizephoenix/phoenix
+docker run --rm -p 6006:6006 -p 4317:4317 -i -t arizephoenix/phoenix:latest
+```
+
+Open the Phoenix UI at `http://localhost:6006`.
+
+Use OTLP HTTP from the shim:
+
+```yaml
+shim:
+  telemetry:
+    enabled: true
+    protocol: otlp_http
+    endpoint: http://127.0.0.1:6006/v1/traces
+    service_name: llama_shim
+    deployment_environment: local
+```
+
+Phoenix also exposes OTLP gRPC on `4317`; HTTP is the simplest local pilot
+path because it shares the same port as the UI and collector endpoint.
+
+### Laminar Local Backend
+
+Start the self-hosted Laminar stack:
+
+```sh
+git clone https://github.com/lmnr-ai/lmnr
+cd lmnr
+docker compose up -d
+```
+
+Open the Laminar UI at `http://localhost:5667`, finish onboarding, create a
+project, and copy the project API key from project settings. The local backend
+listens on `8000` for OTLP HTTP and `8001` for OTLP gRPC.
+
+Preferred path: send shim traces to a local OTel Collector and let the
+collector own the Laminar authorization header. This keeps Laminar project keys
+out of shim config and makes backend switching a Collector-only change.
+
+Example Collector config for local Laminar over OTLP HTTP:
+
+```yaml
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+
+exporters:
+  otlphttp/laminar:
+    endpoint: http://host.docker.internal:8000/v1/traces
+    headers:
+      authorization: "Bearer <LMNR_PROJECT_API_KEY>"
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      exporters: [otlphttp/laminar]
+```
+
+Save that Collector config as `otel-collector-laminar.yaml`, then run it:
+
+```sh
+docker run --rm -p 4318:4318 \
+  -v "$PWD/otel-collector-laminar.yaml:/etc/otelcol-contrib/config.yaml" \
+  otel/opentelemetry-collector-contrib:latest
+```
+
+Then point the shim at the Collector:
+
+```yaml
+shim:
+  telemetry:
+    enabled: true
+    protocol: otlp_http
+    endpoint: http://127.0.0.1:4318/v1/traces
+```
+
+Direct Laminar export is useful for quick local smoke tests, but keep it out
+of committed config:
+
+```yaml
+shim:
+  telemetry:
+    enabled: true
+    protocol: otlp_http
+    endpoint: http://127.0.0.1:8000/v1/traces
+    headers:
+      authorization: "Bearer <LMNR_PROJECT_API_KEY>"
+```
+
+Laminar also supports OTLP gRPC and recommends it for performance and
+reliability. If using gRPC directly, keep the header key lowercase:
+`authorization`.
+
+### Exported Span Contents
+
+Current span contents are intentionally narrow: method, path, route, HTTP
+status, duration, request id, client request id when provided, surface, and
+source-format metadata. Prompts, response bodies, bearer tokens, upstream
+provider tokens, tool outputs, and file contents are not exported.
+
 Important distinction:
 
 - `SIGINT`/`SIGTERM` starts graceful HTTP shutdown: the shim stops accepting new

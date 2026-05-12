@@ -92,6 +92,14 @@ Implemented first slice:
 - Existing upstream admission, queue wait, in-flight, queued, retrieval search,
   code-interpreter, auth, rate-limit, and HTTP metrics remain unchanged.
 
+V4 follow-on implemented on May 12, 2026:
+
+- Optional metadata-only OpenTelemetry trace export via `shim.telemetry.*`.
+  The exporter is backend-neutral OTLP and is intended for an OTel Collector or
+  local Phoenix pilot. It is not an OpenAI API parity surface and does not
+  export prompts, response bodies, bearer tokens, tool outputs, or file
+  contents.
+
 Potential future work:
 
 - richer metrics labels for routing mode, upstream transport, tool family, and

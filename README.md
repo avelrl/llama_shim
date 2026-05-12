@@ -154,6 +154,17 @@ shim:
   metrics:
     enabled: true
     path: /metrics
+  telemetry:
+    enabled: false
+    protocol: otlp_http
+    endpoint: ""
+    service_name: llama_shim
+    service_version: ""
+    deployment_environment: ""
+    headers: {}
+    sample_ratio: 1
+    batch_timeout: 5s
+    export_timeout: 5s
   limits:
     json_body_bytes: 1MiB
     retrieval_file_upload_bytes: 64MiB
@@ -293,6 +304,15 @@ Supported environment overrides:
 - `SHIM_RATE_LIMIT_BURST` overrides `shim.rate_limit.burst`
 - `SHIM_METRICS_ENABLED` overrides `shim.metrics.enabled`
 - `SHIM_METRICS_PATH` overrides `shim.metrics.path`
+- `SHIM_TELEMETRY_ENABLED` overrides `shim.telemetry.enabled`
+- `SHIM_TELEMETRY_PROTOCOL` overrides `shim.telemetry.protocol`; supported values: `otlp_http`, `http/protobuf`, `otlp_grpc`, `grpc`
+- `SHIM_TELEMETRY_ENDPOINT` overrides `shim.telemetry.endpoint`; when set, use a full `http://` or `https://` OTLP endpoint URL
+- `SHIM_TELEMETRY_SERVICE_NAME` overrides `shim.telemetry.service_name`
+- `SHIM_TELEMETRY_SERVICE_VERSION` overrides `shim.telemetry.service_version`
+- `SHIM_TELEMETRY_DEPLOYMENT_ENVIRONMENT` overrides `shim.telemetry.deployment_environment`
+- `SHIM_TELEMETRY_SAMPLE_RATIO` overrides `shim.telemetry.sample_ratio`
+- `SHIM_TELEMETRY_BATCH_TIMEOUT` overrides `shim.telemetry.batch_timeout`
+- `SHIM_TELEMETRY_EXPORT_TIMEOUT` overrides `shim.telemetry.export_timeout`
 - `UI_ENABLED` overrides `ui.enabled`
 - `UI_BASE_PATH` overrides `ui.base_path`
 - `UI_PUBLIC_STATIC_ASSETS` overrides `ui.public_static_assets`
@@ -423,6 +443,7 @@ The shim now has a shim-owned operational layer that is separate from route-cont
 - optional embedded read-only operator UI at `/ui/` via `ui.enabled=true`
 - optional on-demand upstream sizing probe via `shimctl probe` and `probe.*` in `config.yaml`
 - optional Prometheus-text metrics at `shim.metrics.path` (default `/metrics`)
+- optional OpenTelemetry trace export via `shim.telemetry.*`; exported spans are metadata-only by default and are intended for an OTel Collector or a local backend such as Phoenix
 - configurable request, upload, retrieval, and local `code_interpreter` limits
 - structured JSON logs with `request_id`, optional `client_request_id`, stable route labels, auth subject fingerprints, and retrieval/runtime events
 

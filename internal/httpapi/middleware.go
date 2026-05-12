@@ -13,6 +13,12 @@ import (
 
 	"llama_shim/internal/domain"
 	"llama_shim/internal/llama"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type contextKey string
@@ -23,6 +29,7 @@ const authSubjectKey contextKey = "auth_subject"
 const requestRateLimitKeyCtx contextKey = "request_rate_limit"
 const maxDebugLogBodyBytes = 16 << 10
 const omittedSSEBodyLog = "[text/event-stream body omitted]"
+const httpServerTracerName = "llama_shim/internal/httpapi"
 
 type capturedBody struct {
 	text          string
@@ -96,8 +103,10 @@ func RequestLogMiddleware(logger *slog.Logger, metrics *Metrics, debugTraceStore
 			if captureBodies {
 				requestBody = captureRequestBody(r)
 			}
+			finishSpan := func(string, int, string, time.Duration) {}
 			if shouldTraceRequest(r.URL.Path) {
 				r = r.WithContext(debugTraceStore.Begin(r.Context(), r, start))
+				r, finishSpan = beginHTTPServerSpan(r)
 			}
 
 			recorder := &statusRecorder{
@@ -109,6 +118,7 @@ func RequestLogMiddleware(logger *slog.Logger, metrics *Metrics, debugTraceStore
 			route := requestRouteLabel(r)
 			if shouldTraceRequest(r.URL.Path) {
 				debugTraceStore.Finish(r.Context(), recorder.status, route, recorder.Header().Get("Content-Type"), time.Since(start), time.Now())
+				finishSpan(route, recorder.status, recorder.Header().Get("Content-Type"), time.Since(start))
 			}
 			if metrics != nil {
 				metrics.ObserveHTTPRequest(r.Method, route, recorder.status, time.Since(start))
@@ -136,6 +146,47 @@ func RequestLogMiddleware(logger *slog.Logger, metrics *Metrics, debugTraceStore
 				logger.DebugContext(r.Context(), "http request/response bodies", attrs...)
 			}
 		})
+	}
+}
+
+func beginHTTPServerSpan(r *http.Request) (*http.Request, func(string, int, string, time.Duration)) {
+	finish := func(string, int, string, time.Duration) {}
+	if r == nil || r.URL == nil {
+		return r, finish
+	}
+	ctx := otel.GetTextMapPropagator().Extract(r.Context(), propagation.HeaderCarrier(r.Header))
+	ctx, span := otel.Tracer(httpServerTracerName).Start(
+		ctx,
+		strings.TrimSpace(r.Method+" "+r.URL.Path),
+		trace.WithSpanKind(trace.SpanKindServer),
+		trace.WithAttributes(
+			attribute.String("http.request.method", r.Method),
+			attribute.String("url.path", r.URL.Path),
+			attribute.String("llama_shim.request_id", RequestIDFromContext(r.Context())),
+			attribute.String("llama_shim.surface", inferDebugTraceSurface(r.URL.Path)),
+			attribute.String("llama_shim.source_format", inferDebugTraceSourceFormat(r.Method, r.URL.Path)),
+		),
+	)
+	if clientRequestID := ClientRequestIDFromContext(r.Context()); clientRequestID != "" {
+		span.SetAttributes(attribute.String("llama_shim.client_request_id", clientRequestID))
+	}
+	return r.WithContext(ctx), func(route string, status int, contentType string, duration time.Duration) {
+		route = strings.TrimSpace(route)
+		if route != "" {
+			span.SetName(strings.TrimSpace(r.Method + " " + route))
+			span.SetAttributes(attribute.String("http.route", route))
+		}
+		if contentType != "" {
+			span.SetAttributes(attribute.String("http.response.header.content_type", contentType))
+		}
+		span.SetAttributes(
+			attribute.Int("http.response.status_code", status),
+			attribute.Int64("llama_shim.duration_ms", duration.Milliseconds()),
+		)
+		if status >= http.StatusInternalServerError {
+			span.SetStatus(codes.Error, http.StatusText(status))
+		}
+		span.End()
 	}
 }
 

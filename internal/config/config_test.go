@@ -50,6 +50,18 @@ shim:
   metrics:
     enabled: true
     path: /metrics
+  telemetry:
+    enabled: true
+    protocol: grpc
+    endpoint: http://127.0.0.1:4317
+    service_name: llama-shim-test
+    service_version: test-version
+    deployment_environment: test
+    headers:
+      x-test-header: test-value
+    sample_ratio: 0.25
+    batch_timeout: 2s
+    export_timeout: 3s
   debug_traces:
     enabled: true
     max_entries: 64
@@ -275,6 +287,16 @@ responses:
 	require.Equal(t, 40, cfg.ShimRateLimitBurst)
 	require.True(t, cfg.ShimMetricsEnabled)
 	require.Equal(t, "/metrics", cfg.ShimMetricsPath)
+	require.True(t, cfg.ShimTelemetryEnabled)
+	require.Equal(t, "grpc", cfg.ShimTelemetryProtocol)
+	require.Equal(t, "http://127.0.0.1:4317", cfg.ShimTelemetryEndpoint)
+	require.Equal(t, "llama-shim-test", cfg.ShimTelemetryServiceName)
+	require.Equal(t, "test-version", cfg.ShimTelemetryServiceVersion)
+	require.Equal(t, "test", cfg.ShimTelemetryDeploymentEnvironment)
+	require.Equal(t, map[string]string{"x-test-header": "test-value"}, cfg.ShimTelemetryHeaders)
+	require.Equal(t, 0.25, cfg.ShimTelemetrySampleRatio)
+	require.Equal(t, 2*time.Second, cfg.ShimTelemetryBatchTimeout)
+	require.Equal(t, 3*time.Second, cfg.ShimTelemetryExportTimeout)
 	require.True(t, cfg.ShimDebugTracesEnabled)
 	require.Equal(t, 64, cfg.ShimDebugTracesMaxEntries)
 	require.True(t, cfg.ShimEvidenceEnabled)
@@ -442,6 +464,15 @@ responses:
 	t.Setenv("SHIM_RATE_LIMIT_BURST", "30")
 	t.Setenv("SHIM_METRICS_ENABLED", "false")
 	t.Setenv("SHIM_METRICS_PATH", "/internal/metrics")
+	t.Setenv("SHIM_TELEMETRY_ENABLED", "true")
+	t.Setenv("SHIM_TELEMETRY_PROTOCOL", "otlp_grpc")
+	t.Setenv("SHIM_TELEMETRY_ENDPOINT", "http://127.0.0.1:4317")
+	t.Setenv("SHIM_TELEMETRY_SERVICE_NAME", "llama-shim-env")
+	t.Setenv("SHIM_TELEMETRY_SERVICE_VERSION", "env-version")
+	t.Setenv("SHIM_TELEMETRY_DEPLOYMENT_ENVIRONMENT", "env-test")
+	t.Setenv("SHIM_TELEMETRY_SAMPLE_RATIO", "0.5")
+	t.Setenv("SHIM_TELEMETRY_BATCH_TIMEOUT", "1500ms")
+	t.Setenv("SHIM_TELEMETRY_EXPORT_TIMEOUT", "2500ms")
 	t.Setenv("SHIM_SHUTDOWN_TIMEOUT", "13s")
 	t.Setenv("SHIM_EVIDENCE_ENABLED", "false")
 	t.Setenv("SHIM_EVIDENCE_ROOT", ".tmp/env-evidence")
@@ -536,6 +567,15 @@ responses:
 	require.Equal(t, 30, cfg.ShimRateLimitBurst)
 	require.False(t, cfg.ShimMetricsEnabled)
 	require.Equal(t, "/internal/metrics", cfg.ShimMetricsPath)
+	require.True(t, cfg.ShimTelemetryEnabled)
+	require.Equal(t, "otlp_grpc", cfg.ShimTelemetryProtocol)
+	require.Equal(t, "http://127.0.0.1:4317", cfg.ShimTelemetryEndpoint)
+	require.Equal(t, "llama-shim-env", cfg.ShimTelemetryServiceName)
+	require.Equal(t, "env-version", cfg.ShimTelemetryServiceVersion)
+	require.Equal(t, "env-test", cfg.ShimTelemetryDeploymentEnvironment)
+	require.Equal(t, 0.5, cfg.ShimTelemetrySampleRatio)
+	require.Equal(t, 1500*time.Millisecond, cfg.ShimTelemetryBatchTimeout)
+	require.Equal(t, 2500*time.Millisecond, cfg.ShimTelemetryExportTimeout)
 	require.Equal(t, 13*time.Second, cfg.ShutdownTimeout)
 	require.False(t, cfg.ShimEvidenceEnabled)
 	require.Equal(t, ".tmp/env-evidence", cfg.ShimEvidenceRoot)
@@ -637,6 +677,16 @@ func TestLoadUsesCodexSafeDefaults(t *testing.T) {
 	require.Equal(t, 60, cfg.ShimRateLimitBurst)
 	require.True(t, cfg.ShimMetricsEnabled)
 	require.Equal(t, "/metrics", cfg.ShimMetricsPath)
+	require.False(t, cfg.ShimTelemetryEnabled)
+	require.Equal(t, config.ShimTelemetryProtocolOTLPHTTP, cfg.ShimTelemetryProtocol)
+	require.Empty(t, cfg.ShimTelemetryEndpoint)
+	require.Equal(t, "llama_shim", cfg.ShimTelemetryServiceName)
+	require.Empty(t, cfg.ShimTelemetryServiceVersion)
+	require.Empty(t, cfg.ShimTelemetryDeploymentEnvironment)
+	require.Empty(t, cfg.ShimTelemetryHeaders)
+	require.Equal(t, 1.0, cfg.ShimTelemetrySampleRatio)
+	require.Equal(t, 5*time.Second, cfg.ShimTelemetryBatchTimeout)
+	require.Equal(t, 5*time.Second, cfg.ShimTelemetryExportTimeout)
 	require.True(t, cfg.ShimDebugTracesEnabled)
 	require.Equal(t, 256, cfg.ShimDebugTracesMaxEntries)
 	require.True(t, cfg.ShimEvidenceEnabled)
@@ -740,6 +790,43 @@ ui:
 			_, err := config.Load(configPath)
 			require.Error(t, err)
 			require.ErrorContains(t, err, "parse ui.base_path")
+		})
+	}
+}
+
+func TestLoadRejectsInvalidTelemetryConfig(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		config        string
+		errorContains string
+	}{
+		{
+			name: "protocol",
+			config: `
+shim:
+  telemetry:
+    protocol: zipkin
+`,
+			errorContains: "parse shim.telemetry.protocol",
+		},
+		{
+			name: "sample-ratio",
+			config: `
+shim:
+  telemetry:
+    sample_ratio: 1.5
+`,
+			errorContains: "parse shim.telemetry.sample_ratio",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			disableDotEnv(t)
+			configPath := filepath.Join(t.TempDir(), "config.yaml")
+			writeFile(t, configPath, tc.config)
+
+			_, err := config.Load(configPath)
+			require.Error(t, err)
+			require.ErrorContains(t, err, tc.errorContains)
 		})
 	}
 }

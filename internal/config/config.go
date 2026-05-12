@@ -53,6 +53,16 @@ type Config struct {
 	ShimRateLimitBurst                             int
 	ShimMetricsEnabled                             bool
 	ShimMetricsPath                                string
+	ShimTelemetryEnabled                           bool
+	ShimTelemetryProtocol                          string
+	ShimTelemetryEndpoint                          string
+	ShimTelemetryServiceName                       string
+	ShimTelemetryServiceVersion                    string
+	ShimTelemetryDeploymentEnvironment             string
+	ShimTelemetryHeaders                           map[string]string
+	ShimTelemetrySampleRatio                       float64
+	ShimTelemetryBatchTimeout                      time.Duration
+	ShimTelemetryExportTimeout                     time.Duration
 	ShimDebugTracesEnabled                         bool
 	ShimDebugTracesMaxEntries                      int
 	ShimEvidenceEnabled                            bool
@@ -234,6 +244,8 @@ const (
 	ResponsesCodeInterpreterInputFileURLPolicyUnsafeAllowHTTPHTTPS = "unsafe_allow_http_https"
 	ResponsesConstrainedDecodingBackendShimValidateRepair          = "shim_validate_repair"
 	ResponsesConstrainedDecodingBackendVLLM                        = "vllm"
+	ShimTelemetryProtocolOTLPHTTP                                  = "otlp_http"
+	ShimTelemetryProtocolOTLPGRPC                                  = "otlp_grpc"
 	StorageBackendSQLite                                           = storage.BackendSQLite
 	StorageBackendPostgres                                         = storage.BackendPostgres
 )
@@ -274,6 +286,13 @@ func Load(configPath string) (Config, error) {
 		ShimRateLimitEnabled:                           v.GetBool("shim.rate_limit.enabled"),
 		ShimMetricsEnabled:                             v.GetBool("shim.metrics.enabled"),
 		ShimMetricsPath:                                strings.TrimSpace(v.GetString("shim.metrics.path")),
+		ShimTelemetryEnabled:                           v.GetBool("shim.telemetry.enabled"),
+		ShimTelemetryProtocol:                          strings.ToLower(strings.TrimSpace(v.GetString("shim.telemetry.protocol"))),
+		ShimTelemetryEndpoint:                          strings.TrimSpace(v.GetString("shim.telemetry.endpoint")),
+		ShimTelemetryServiceName:                       strings.TrimSpace(v.GetString("shim.telemetry.service_name")),
+		ShimTelemetryServiceVersion:                    strings.TrimSpace(v.GetString("shim.telemetry.service_version")),
+		ShimTelemetryDeploymentEnvironment:             strings.TrimSpace(v.GetString("shim.telemetry.deployment_environment")),
+		ShimTelemetryHeaders:                           parseStringMap(v, "shim.telemetry.headers"),
 		ShimDebugTracesEnabled:                         v.GetBool("shim.debug_traces.enabled"),
 		ShimEvidenceEnabled:                            v.GetBool("shim.evidence.enabled"),
 		ShimEvidenceRoot:                               strings.TrimSpace(v.GetString("shim.evidence.root")),
@@ -422,6 +441,20 @@ func Load(configPath string) (Config, error) {
 	}
 	if err := parseDuration(v.GetString("shim.shutdown_timeout"), &cfg.ShutdownTimeout); err != nil {
 		return Config{}, fmt.Errorf("parse shim.shutdown_timeout: %w", err)
+	}
+	if err := parseTelemetryProtocol(cfg.ShimTelemetryProtocol); err != nil {
+		return Config{}, fmt.Errorf("parse shim.telemetry.protocol: %w", err)
+	}
+	telemetrySampleRatio, err := parseRatio(v.GetString("shim.telemetry.sample_ratio"))
+	if err != nil {
+		return Config{}, fmt.Errorf("parse shim.telemetry.sample_ratio: %w", err)
+	}
+	cfg.ShimTelemetrySampleRatio = telemetrySampleRatio
+	if err := parseDuration(v.GetString("shim.telemetry.batch_timeout"), &cfg.ShimTelemetryBatchTimeout); err != nil {
+		return Config{}, fmt.Errorf("parse shim.telemetry.batch_timeout: %w", err)
+	}
+	if err := parseDuration(v.GetString("shim.telemetry.export_timeout"), &cfg.ShimTelemetryExportTimeout); err != nil {
+		return Config{}, fmt.Errorf("parse shim.telemetry.export_timeout: %w", err)
 	}
 	if err := parseLogLevel(v.GetString("log.level"), &cfg.LogLevel); err != nil {
 		return Config{}, fmt.Errorf("parse log.level: %w", err)
@@ -789,6 +822,16 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("shim.rate_limit.burst", "60")
 	v.SetDefault("shim.metrics.enabled", true)
 	v.SetDefault("shim.metrics.path", "/metrics")
+	v.SetDefault("shim.telemetry.enabled", false)
+	v.SetDefault("shim.telemetry.protocol", "otlp_http")
+	v.SetDefault("shim.telemetry.endpoint", "")
+	v.SetDefault("shim.telemetry.service_name", "llama_shim")
+	v.SetDefault("shim.telemetry.service_version", "")
+	v.SetDefault("shim.telemetry.deployment_environment", "")
+	v.SetDefault("shim.telemetry.headers", map[string]string{})
+	v.SetDefault("shim.telemetry.sample_ratio", "1")
+	v.SetDefault("shim.telemetry.batch_timeout", "5s")
+	v.SetDefault("shim.telemetry.export_timeout", "5s")
 	v.SetDefault("shim.debug_traces.enabled", true)
 	v.SetDefault("shim.debug_traces.max_entries", "256")
 	v.SetDefault("shim.evidence.enabled", true)
@@ -1389,6 +1432,17 @@ func parseCodeInterpreterInputFileURLPolicy(value string) error {
 	}
 }
 
+func parseTelemetryProtocol(value string) error {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case ShimTelemetryProtocolOTLPHTTP, "http/protobuf":
+		return nil
+	case ShimTelemetryProtocolOTLPGRPC, "grpc":
+		return nil
+	default:
+		return strconv.ErrSyntax
+	}
+}
+
 func parsePositiveInt(value string) (int, error) {
 	parsed, err := strconv.Atoi(strings.TrimSpace(value))
 	if err != nil {
@@ -1406,6 +1460,17 @@ func parseNonNegativeInt(value string) (int, error) {
 		return 0, err
 	}
 	if parsed < 0 {
+		return 0, strconv.ErrSyntax
+	}
+	return parsed, nil
+}
+
+func parseRatio(value string) (float64, error) {
+	parsed, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+	if err != nil {
+		return 0, err
+	}
+	if parsed < 0 || parsed > 1 {
 		return 0, strconv.ErrSyntax
 	}
 	return parsed, nil
@@ -1472,6 +1537,23 @@ func parseStringList(v *viper.Viper, key string) []string {
 		}
 		seen[normalized] = struct{}{}
 		out = append(out, trimmed)
+	}
+	return out
+}
+
+func parseStringMap(v *viper.Viper, key string) map[string]string {
+	raw := normalizeConfigMap(v.Get(key))
+	if len(raw) == 0 {
+		return map[string]string{}
+	}
+	out := make(map[string]string, len(raw))
+	for key, value := range raw {
+		trimmedKey := strings.TrimSpace(key)
+		trimmedValue := strings.TrimSpace(configString(value))
+		if trimmedKey == "" || trimmedValue == "" {
+			continue
+		}
+		out[trimmedKey] = trimmedValue
 	}
 	return out
 }

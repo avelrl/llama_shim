@@ -30,6 +30,25 @@ shim:
     # Enables a shim-owned Prometheus-text metrics endpoint.
     enabled: true
     path: /metrics
+  telemetry:
+    # Enables optional OpenTelemetry trace export. This is a shim-owned ops
+    # surface and does not change OpenAI-compatible response semantics.
+    enabled: false
+    # Supported values: otlp_http/http/protobuf or otlp_grpc/grpc.
+    protocol: otlp_http
+    # Empty uses the OpenTelemetry exporter environment/default endpoint.
+    # When set, use a full http:// or https:// OTLP endpoint URL. For a local
+    # OTel Collector over HTTP, use http://127.0.0.1:4318/v1/traces.
+    endpoint: ""
+    service_name: llama_shim
+    service_version: ""
+    deployment_environment: ""
+    # Prefer collector-side auth or OTEL_EXPORTER_OTLP_HEADERS for secrets.
+    headers: {}
+    # 0 disables sampling, 1 samples every trace.
+    sample_ratio: 1
+    batch_timeout: 5s
+    export_timeout: 5s
   limits:
     # Maximum JSON request body for non-multipart routes.
     json_body_bytes: 1MiB

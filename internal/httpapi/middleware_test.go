@@ -2,7 +2,9 @@ package httpapi_test
 
 import (
 	"bytes"
+	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -11,6 +13,10 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
 	"llama_shim/internal/httpapi"
 )
@@ -131,6 +137,88 @@ func TestRequestLogMiddlewareBoundsRequestBodyRead(t *testing.T) {
 	require.Contains(t, output, `"request_body_truncated":true`)
 	require.Contains(t, output, `"request_body_bytes":16448`)
 	require.Contains(t, output, `"request_body_captured_bytes":16384`)
+}
+
+func TestRequestLogMiddlewareTelemetryOmitsSensitiveRequestData(t *testing.T) {
+	spanRecorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spanRecorder))
+	previousProvider := otel.GetTracerProvider()
+	previousPropagator := otel.GetTextMapPropagator()
+	otel.SetTracerProvider(provider)
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+	t.Cleanup(func() {
+		require.NoError(t, provider.Shutdown(context.Background()))
+		otel.SetTracerProvider(previousProvider)
+		otel.SetTextMapPropagator(previousPropagator)
+	})
+
+	logger := slog.New(slog.NewJSONHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	debugTraces := httpapi.NewDebugTraceStore(4)
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1/responses", func(w http.ResponseWriter, r *http.Request) {
+		_, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, err = w.Write([]byte(`{"output":"TOOL_OUTPUT_SECRET_otel_regression"}`))
+		require.NoError(t, err)
+	})
+	handler := httpapi.Chain(
+		mux,
+		httpapi.RequestIDMiddleware,
+		httpapi.RequestLogMiddleware(logger, nil, debugTraces),
+	)
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/responses?api_key=QUERY_SECRET_otel_regression",
+		strings.NewReader(`{"input":"PROMPT_SECRET_otel_regression","tool_output":"TOOL_INPUT_SECRET_otel_regression"}`),
+	)
+	req.Header.Set("Authorization", "Bearer AUTH_SECRET_otel_regression")
+	req.Header.Set("X-Provider-Authorization", "Bearer PROVIDER_SECRET_otel_regression")
+	req.Header.Set("X-Client-Request-Id", "client-req-otel-test")
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, req)
+
+	require.Equal(t, http.StatusCreated, recorder.Code)
+	spans := spanRecorder.Ended()
+	require.Len(t, spans, 1)
+	spanText := telemetrySpanText(spans[0])
+	require.Contains(t, spanText, "http.request.method=POST")
+	require.Contains(t, spanText, "url.path=/v1/responses")
+	require.Contains(t, spanText, "http.route=")
+	require.Contains(t, spanText, "llama_shim.client_request_id=client-req-otel-test")
+
+	for _, secret := range []string{
+		"AUTH_SECRET_otel_regression",
+		"PROVIDER_SECRET_otel_regression",
+		"QUERY_SECRET_otel_regression",
+		"PROMPT_SECRET_otel_regression",
+		"TOOL_INPUT_SECRET_otel_regression",
+		"TOOL_OUTPUT_SECRET_otel_regression",
+	} {
+		require.NotContains(t, spanText, secret)
+	}
+}
+
+func telemetrySpanText(span sdktrace.ReadOnlySpan) string {
+	var out strings.Builder
+	out.WriteString(span.Name())
+	status := span.Status()
+	out.WriteString(status.Code.String())
+	out.WriteString(status.Description)
+	for _, attr := range span.Attributes() {
+		_, _ = fmt.Fprintf(&out, "\n%s=%v", attr.Key, attr.Value.AsInterface())
+	}
+	for _, event := range span.Events() {
+		out.WriteString("\n")
+		out.WriteString(event.Name)
+		for _, attr := range event.Attributes {
+			_, _ = fmt.Fprintf(&out, "\n%s=%v", attr.Key, attr.Value.AsInterface())
+		}
+	}
+	return out.String()
 }
 
 type errorAfterNReadCloser struct {

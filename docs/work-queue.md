@@ -1,6 +1,6 @@
 # Work Queue
 
-Last updated: May 10, 2026.
+Last updated: May 12, 2026.
 
 Status: operator-maintained queue for choosing the next practical work item.
 This is not a compatibility matrix and not an OpenAI API parity claim. Detailed
@@ -35,6 +35,13 @@ The model-candidate expansion should stay evidence-driven. Use
 [Add Provider/Model Alias](guides/add-provider-model.md): add config and
 metadata first, run provider-matrix smokes, then decide whether each model is
 worth a Codex auto run.
+
+Recently completed:
+
+- V4 OpenTelemetry foundation: optional metadata-only OTLP trace export via
+  `shim.telemetry.*`, with Phoenix as the recommended first local pilot backend.
+  The guide includes local Phoenix and Laminar backend startup paths. See
+  [Operations](guides/operations.md#opentelemetry-trace-export).
 
 ## Now
 
