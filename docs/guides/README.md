@@ -40,6 +40,9 @@ Assumptions:
 - [Operations](operations.md): running, probing, backing up, and maintaining the shim
 - [Add Provider/Model Alias](add-provider-model.md): add and validate a new
   routed upstream model without swapping endpoints by hand
+- [Model Certification Runner](model-certification.md): batch-certify
+  provider/model candidates through isolated shim, external tester, and Codex
+  phases
 - [Work Queue](../work-queue.md): current next-work list and parked items
 - [Script Inventory](../script-inventory.md): short map of Make targets and
   script-owned artifact families
@@ -71,6 +74,7 @@ Assumptions:
 - [V3 Ops and Deployment Expansion](../v3-ops-deployment.md)
 - [V4 Preflight](../v4-preflight.md)
 - [V4 Provider Ops Runbook](../v4-provider-ops-runbook.md)
+- [Model Certification Runner](model-certification.md)
 - [Add Provider/Model Alias](add-provider-model.md)
 - [V4 Model/Provider Operational Matrix](../engineering/v4-model-provider-operational-matrix.md)
 - [V4 Extensions and Plugin Model](../v4-scope.md)

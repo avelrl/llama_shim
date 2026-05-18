@@ -8,6 +8,9 @@ This document defines a V4 operator workflow for automatically certifying
 provider/model aliases through the shim. It is shim-owned automation and does
 not widen any OpenAI API compatibility claim.
 
+For command-oriented usage, see
+[Model Certification Runner](guides/model-certification.md).
+
 ## Goal
 
 The runner should replace the current manual loop of editing provider config,
