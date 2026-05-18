@@ -2,7 +2,7 @@
 
 Last updated: May 18, 2026.
 
-Status: designed, not implemented.
+Status: first runner implemented as `make model-certify`.
 
 This document defines a V4 operator workflow for automatically certifying
 provider/model aliases through the shim. It is shim-owned automation and does
@@ -83,7 +83,7 @@ across many models, not for every small config edit.
 
 ## Manifest
 
-Add a repo-owned manifest at `configs/model-certification.yaml`.
+The repo-owned manifest lives at `configs/model-certification.yaml`.
 
 The manifest should be the source of truth for candidates that are not yet
 release gates. It should not store secrets. It should refer to token env vars
@@ -344,44 +344,90 @@ headers in diagnostic summaries.
 
 ## Implementation Plan
 
-Implement in this order:
+Implemented first slice:
 
-1. Add manifest parser and validation.
-2. Add temporary shim config rendering.
-3. Add shim process lifecycle and readiness waits.
-4. Add external tester invocation and report parsing.
-5. Add Codex phase orchestration through existing scripts.
-6. Add failure classification and summary generation.
-7. Add `make model-certify`.
-8. Add docs and runbook examples.
+- manifest parser and validation
+- temporary isolated shim config rendering
+- shim process lifecycle and readiness waits
+- external tester invocation by explicit command or configured tester checkout
+- Codex phase orchestration through existing `codex-eval-auto` and
+  `codex-eval-curate` scripts
+- debug trace, shim-log diagnostic, failure-note, summary, and fix-candidate
+  artifacts
+- `make model-certify`
+
+Future refinements can add richer tester report parsing and durable trace
+storage if the current artifact snapshots are not enough.
 
 Do not implement automatic code fixes. The runner should produce evidence and
 fix-candidate notes only.
 
+## Running
+
+Use a single model first:
+
+```bash
+MODEL_CERT_MODELS="gpu/qwen3-coder-30b" \
+MODEL_CERT_TESTER_CMD='cd "$MODEL_CERT_EXTERNAL_TESTER_DIR" && go run . --no-tui --models "$MODELS_CONFIG" --suite "$SUITE_CONFIG" --capabilities "$CAPABILITIES_CONFIG" --profile "$PROFILE" --mode compat --out-dir "$MODEL_ARTIFACT_DIR/external-tester" --json' \
+MODEL_CERT_EXTERNAL_TESTER_DIR=<path-to-openai-compatible-tester> \
+make model-certify
+```
+
+The exact tester command is operator-owned because tester config filenames can
+vary by checkout. The runner exports:
+
+- `OPENAI_BASE_URL`
+- `OPENAI_API_KEY`
+- `SHIM_BASE_URL`
+- `MODEL_CERT_MODEL`
+- `TESTER_MODEL`
+- `MODEL_CERT_ARTIFACT_DIR`
+- `MODEL_ARTIFACT_DIR`
+- `MODEL_CERT_EXTERNAL_TESTER_DIR`
+
+For a dry artifact/config check without live upstream calls:
+
+```bash
+MODEL_CERT_MODELS="gpu/qwen3-coder-30b" \
+MODEL_CERT_SKIP_SHIM=1 \
+MODEL_CERT_SKIP_TESTER=1 \
+MODEL_CERT_SKIP_CODEX=1 \
+make model-certify
+```
+
+Artifacts are written under `.tmp/model-certification/<run-id>/`.
+
 ## Validation Plan
 
-Unit tests:
+Focused tests:
 
 - manifest parsing and validation
 - secret redaction in rendered reports
 - generated config contains one provider/model alias
 - tester failure skips Codex
 - green tester starts Codex phase
-- verdict calculation preserves retry-dependent Codex results
 - failure classification for fixture snippets
-
-Integration-style tests with fake local commands:
-
-- shim never becomes ready
-- tester exits non-zero
-- tester passes and Codex passes
-- Codex baseline fails while later profiles are configured
 - artifacts are written in the documented layout
 
-Manual first-run command after implementation:
+Manual live validation still owns the real shim process lifecycle and upstream
+network behavior because those depend on local ports, provider credentials, and
+the operator's external tester checkout.
+
+Manual dry-run command:
+
+```bash
+MODEL_CERT_MODELS="gpu/qwen3-coder-30b" \
+MODEL_CERT_SKIP_SHIM=1 \
+MODEL_CERT_SKIP_TESTER=1 \
+MODEL_CERT_SKIP_CODEX=1 \
+make model-certify
+```
+
+Manual live first-run command:
 
 ```bash
 MODEL_CERT_MODELS="deepseek/deepseek-v4-pro" \
+MODEL_CERT_TESTER_CMD='<external tester command>' \
 MODEL_CERT_EXTERNAL_TESTER_DIR=<path-to-openai-compatible-tester> \
 make model-certify
 ```

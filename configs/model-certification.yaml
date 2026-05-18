@@ -1,0 +1,115 @@
+# V4 model certification candidate queue.
+#
+# This file contains public provider/model aliases only. Provider endpoints and
+# token env vars are read from config.yaml when omitted here. Keep real tokens
+# in the environment, never in this manifest.
+models:
+  - model: deepseek/deepseek-v4-pro
+    tester:
+      mode: compat
+      gate: compat
+    codex:
+      profiles: [baseline, expanded, bench-lite]
+      attempts: 2
+      context_window: 1000000
+      apply_patch_tool_type: freeform
+
+  - model: xiaomi/mimo-v2.5-pro
+    tester:
+      mode: compat
+      gate: compat
+    codex:
+      profiles: [baseline, expanded, bench-lite]
+      attempts: 2
+      context_window: 1048576
+      apply_patch_tool_type: freeform
+
+  - model: svgun/kimi-k2.6
+    tester:
+      mode: compat
+      gate: compat
+    codex:
+      profiles: [baseline, expanded, bench-lite]
+      attempts: 2
+      context_window: 262144
+      apply_patch_tool_type: freeform
+
+  - model: svgun/qwen-3.6
+    tester:
+      mode: compat
+      gate: compat
+    codex:
+      profiles: [baseline]
+      attempts: 2
+      context_window: 262144
+      apply_patch_tool_type: freeform
+
+  - model: gpu/qwen3-coder-30b
+    tester:
+      mode: compat
+      gate: compat
+    codex:
+      profiles: [baseline]
+      attempts: 2
+      context_window: 32768
+      apply_patch_tool_type: freeform
+
+  - model: gpu/gemma4-e4b
+    tester:
+      mode: compat
+      gate: compat
+    codex:
+      profiles: [baseline]
+      attempts: 2
+      context_window: 32768
+      apply_patch_tool_type: freeform
+
+  - model: gpu/qwen3_6-35b-a3b
+    tester:
+      mode: compat
+      gate: compat
+    codex:
+      profiles: [baseline]
+      attempts: 2
+      context_window: 262144
+      apply_patch_tool_type: freeform
+
+  - model: gpu/glm4_7-flash
+    tester:
+      mode: compat
+      gate: compat
+    codex:
+      profiles: [baseline]
+      attempts: 2
+      context_window: 32768
+      apply_patch_tool_type: freeform
+
+  - model: gpu/qwen3-coder-next
+    tester:
+      mode: compat
+      gate: compat
+    codex:
+      profiles: [baseline]
+      attempts: 2
+      context_window: 32768
+      apply_patch_tool_type: freeform
+
+  - model: gpu/qwen3-30b-instruct
+    tester:
+      mode: compat
+      gate: compat
+    codex:
+      profiles: [baseline]
+      attempts: 2
+      context_window: 32768
+      apply_patch_tool_type: freeform
+
+  - model: gpu/qwen3-next-instruct
+    tester:
+      mode: compat
+      gate: compat
+    codex:
+      profiles: [baseline]
+      attempts: 2
+      context_window: 32768
+      apply_patch_tool_type: freeform

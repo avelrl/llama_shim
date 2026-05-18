@@ -19,14 +19,14 @@ scope/runbook document instead of expanding this queue.
 
 ## Current Recommendation
 
-The best next implementation slice is V4 model certification automation. The
-provider/model surface now has enough routing, preflight, Codex eval, curation,
-and evidence tooling that the manual model loop should be replaced by one
-repeatable runner before adding more candidate rows.
+The best next implementation slice is to exercise and harden V4 model
+certification automation against real candidate models. The first runner now
+exists; the next value is using it to replace the manual model loop and then
+tightening only the gaps exposed by evidence.
 
 Recommended order:
 
-1. V4 model certification runner for external tester plus Codex eval batches.
+1. Run V4 model certification on one real candidate, then on a small batch.
 2. V4 local access boundaries for `/debug/*`, `/ui/`, and operator-only data.
 3. Provider/model candidate expansion through the certification runner.
 4. V4 state/session memory hardening: promotion, deduplication, and redaction
@@ -50,7 +50,7 @@ Recently completed:
 
 | Item | Status | Why it matters | Next slice | Validation |
 | --- | --- | --- | --- | --- |
-| V4 model certification runner | Designed, not started | Model testing is still too manual: endpoints, tokens, shim restarts, external tester reports, Codex profiles, and log interpretation are spread across separate commands. | Implement [V4 Model Certification Runner](v4-model-certification-runner.md): manifest, isolated shim lifecycle, external tester compat gate, Codex phase, artifacts, and fix-candidate summaries. | focused runner tests, `go test ./...`, `make lint`, single-model dry run |
+| V4 model certification runner | Implemented first slice | Model testing was too manual: endpoints, tokens, shim restarts, external tester reports, Codex profiles, and log interpretation were spread across separate commands. | Use [V4 Model Certification Runner](v4-model-certification-runner.md) on one real candidate, then harden only evidence-backed gaps in tester parsing, trace summaries, or retry policy. | `make model-certify` single-model run, focused runner tests, `go test ./...`, `make lint` |
 | V4 local access boundaries | Not started | The shim now has useful operator surfaces: `/debug/capabilities`, `/debug/traces`, `/debug/evidence`, and `/ui/`. Even for local use, these need a clear access model before more control-plane features grow. | Add a focused design/update for static bearer/local-only policy, then implement route grouping, config, tests, and guide updates. | `go test ./internal/httpapi ./internal/config`, `make v4-preflight-smoke`, `make lint` |
 | Provider/model candidate expansion | Blocked on runner | The existing matrix is useful, but candidate rows are noisy to evaluate by hand. | Use the certification manifest as the candidate queue, then promote models only after external tester and Codex evidence exist. | `make model-certify`, then existing provider ops reports |
 | Documentation and script inventory | Baseline implemented | There are many scripts and scope docs. Operators need a small map so new work does not require rediscovering the repo every time. | Keep this queue plus [Script Inventory](script-inventory.md) current. Consolidate script docs only after repeated confusion. | `git diff --check`; docs-only review |

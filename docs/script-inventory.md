@@ -43,6 +43,7 @@ the make target intentionally does not expose.
 | `make v4-provider-matrix-smoke` | Run provider-routing and V4 preflight over configured matrix aliases. | `.tmp/v4-provider-matrix-smoke/` |
 | `make v4-provider-matrix-curate` | Summarize provider-matrix smoke artifacts. | `.tmp/v4-provider-matrix-curation/` |
 | `make v4-provider-ops-report` | Final read-only provider/model ops verdict. | `.tmp/v4-provider-ops/` |
+| `make model-certify` | Heavy candidate-model certification runner: isolated shim, external tester gate, Codex profiles, diagnostics, and fix candidates. | `.tmp/model-certification/` |
 | `make codex-config` | Generate Codex config for the current shim/provider/model settings. | stdout |
 | `make codex-config-doctor` | Diagnose Codex config, local Codex binary, shim health, and one Responses smoke. | `.tmp/shimctl-codex/` |
 

@@ -79,6 +79,7 @@ print_path_row "v4 provider config doctor" ".tmp/v4-provider-config-doctor" "dis
 print_path_row "v4 provider matrix smoke" ".tmp/v4-provider-matrix-smoke" "disposable"
 print_path_row "v4 provider matrix curation" ".tmp/v4-provider-matrix-curation" "disposable"
 print_path_row "v4 provider ops report" ".tmp/v4-provider-ops" "disposable"
+print_path_row "model certification" ".tmp/model-certification" "disposable"
 print_path_row "computer browser harness" ".tmp/v3-computer-browser-harness-runs" "disposable"
 print_path_row "governance smoke runs" ".tmp/governance-purge-smoke" "disposable"
 print_path_row "go build cache" ".tmp/go-build" "cache"

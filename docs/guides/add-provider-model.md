@@ -152,9 +152,9 @@ Use the external Responses compatibility tester against one stable alias, not
 against every candidate model. That tester is for shim compatibility; Codex and
 provider matrix runs are for model/provider behavior.
 
-When [V4 Model Certification Runner](../v4-model-certification-runner.md) is
-implemented, use it for batch candidate evaluation. That runner will own the
-heavier loop of starting isolated shim instances, running
+Use [V4 Model Certification Runner](../v4-model-certification-runner.md) for
+batch candidate evaluation. That runner owns the heavier loop of starting
+isolated shim instances, running
 `openai-compatible-tester` as a compat gate for each model, then running Codex
 profiles only for models that pass the gate.
 
