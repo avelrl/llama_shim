@@ -276,7 +276,8 @@ Implemented focused coverage:
 - repeated `response.create` works on the same socket
 - `previous_response_id` continuation works with stored local responses
 - `store=false` continuation works for the most recent response on the same
-  socket
+  socket, does not survive reconnect, and is evicted after a failed
+  continuation turn
 - `/debug/capabilities` reports the WebSocket local subset
 - HTTP/SSE behavior remains unchanged
 

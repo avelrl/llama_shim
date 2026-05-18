@@ -232,6 +232,18 @@ Current tested metadata starts:
 - `mimo-v2.5-pro`: `context_window: 1048576`, `max_context_window: 1048576`.
 - `Qwen3.6-35B-A3B`: `context_window: 262144`, `max_context_window: 262144`.
 
+Additional configured candidate metadata:
+
+- `deepseek/deepseek-v4-flash`: `context_window: 1000000`, `max_context_window: 1000000`.
+- `xiaomi/mimo-v2.5`: `context_window: 1048576`, `max_context_window: 1048576`.
+- `gpu/qwen3-coder-30b`: resolves to upstream runtime id `coder30b`, `context_window: 32768`, `max_context_window: 32768`.
+- `gpu/gemma4-e4b`: configured local GPU candidate, conservative `context_window: 32768`.
+- `gpu/qwen3_6-35b-a3b`: configured local GPU candidate, `context_window: 262144`.
+- `gpu/glm4_7-flash`: configured local GPU candidate, conservative `context_window: 32768`.
+- `gpu/qwen3-coder-next`: configured local GPU candidate, conservative `context_window: 32768`.
+- `gpu/qwen3-30b-instruct`: configured local GPU candidate, conservative `context_window: 32768`.
+- `gpu/qwen3-next-instruct`: configured local GPU candidate, conservative `context_window: 32768`.
+
 The MiMo value follows the
 [Hugging Face model card](https://huggingface.co/XiaomiMiMo/MiMo-V2.5-Pro)'s
 1M context claim and its deployment example's `context-length 1048576`. The

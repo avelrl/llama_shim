@@ -363,6 +363,11 @@ paths:
         `generate:false` warmups stay local but still store the public model
         alias.
 
+        `store:false` WebSocket responses can be continued by
+        `previous_response_id` only on the same active connection. The transient
+        shadow state is removed when the socket closes and is evicted after a
+        failed continuation turn.
+
         This is not exact hosted transport parity: upstream WebSocket proxying,
         exact hosted close codes, exact connection quota semantics, and
         Realtime API WebSocket behavior are out of scope.

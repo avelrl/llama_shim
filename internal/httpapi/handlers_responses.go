@@ -1667,7 +1667,7 @@ func supportsLocalShimState(rawFields map[string]json.RawMessage) bool {
 		if _, ok := shimLocalGenerationFields[key]; ok {
 			continue
 		}
-		if key == "include" && isEmptyJSONArray(rawFields[key]) {
+		if isEmptyNoopLocalField(key, rawFields[key]) {
 			continue
 		}
 		return false
@@ -1683,7 +1683,7 @@ func supportsLocalDerivedResponsesState(rawFields map[string]json.RawMessage) bo
 		if _, ok := shimLocalGenerationFields[key]; ok {
 			continue
 		}
-		if key == "include" && isEmptyJSONArray(rawFields[key]) {
+		if isEmptyNoopLocalField(key, rawFields[key]) {
 			continue
 		}
 		return false
@@ -1709,7 +1709,7 @@ func unsupportedLocalShimFields(rawFields map[string]json.RawMessage) []string {
 		if _, ok := shimLocalGenerationFields[key]; ok {
 			continue
 		}
-		if key == "include" && isEmptyJSONArray(rawFields[key]) {
+		if isEmptyNoopLocalField(key, rawFields[key]) {
 			continue
 		}
 		unsupported = append(unsupported, key)
@@ -1727,13 +1727,22 @@ func unsupportedLocalDerivedFields(rawFields map[string]json.RawMessage) []strin
 		if _, ok := shimLocalGenerationFields[key]; ok {
 			continue
 		}
-		if key == "include" && isEmptyJSONArray(rawFields[key]) {
+		if isEmptyNoopLocalField(key, rawFields[key]) {
 			continue
 		}
 		unsupported = append(unsupported, key)
 	}
 	sort.Strings(unsupported)
 	return unsupported
+}
+
+func isEmptyNoopLocalField(key string, raw json.RawMessage) bool {
+	switch key {
+	case "include", "tools":
+		return isEmptyJSONArray(raw)
+	default:
+		return false
+	}
 }
 
 func shouldFallbackLocalState(responsesMode string, err error) bool {

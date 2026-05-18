@@ -1,6 +1,6 @@
 # Add A Provider/Model Alias
 
-Last updated: May 10, 2026.
+Last updated: May 18, 2026.
 
 Status: operator guide for adding and testing a shim-owned `provider/model`
 alias. This is not an OpenAI API parity claim.
@@ -152,6 +152,12 @@ Use the external Responses compatibility tester against one stable alias, not
 against every candidate model. That tester is for shim compatibility; Codex and
 provider matrix runs are for model/provider behavior.
 
+When [V4 Model Certification Runner](../v4-model-certification-runner.md) is
+implemented, use it for batch candidate evaluation. That runner will own the
+heavier loop of starting isolated shim instances, running
+`openai-compatible-tester` as a compat gate for each model, then running Codex
+profiles only for models that pass the gate.
+
 ## Promotion Levels
 
 | Level | Required evidence |
@@ -183,6 +189,8 @@ Update these files when the alias changes status:
 - [Work Queue](../work-queue.md)
 - [V4 Model/Provider Operational Matrix](../engineering/v4-model-provider-operational-matrix.md)
 - [V4 Provider Ops Runbook](../v4-provider-ops-runbook.md), only if the workflow changes
+- [V4 Model Certification Runner](../v4-model-certification-runner.md), if the
+  candidate should enter the automated batch manifest after implementation
 - [Codex Upstream Model Matrix](../engineering/codex-upstream-model-matrix.md), after Codex evidence exists
 
 Keep generated run artifacts out of committed docs unless they are sanitized

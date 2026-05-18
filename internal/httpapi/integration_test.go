@@ -513,8 +513,8 @@ func TestChatCompletionsProxyAppliesConfiguredUpstreamCompatibility(t *testing.T
 	messages := captured["messages"].([]any)
 	require.Equal(t, "system", messages[0].(map[string]any)["role"])
 	require.Contains(t, messages[0].(map[string]any)["content"], "JSON Schema")
-	require.Equal(t, "system", messages[1].(map[string]any)["role"])
-	require.Equal(t, "user", messages[2].(map[string]any)["role"])
+	require.Contains(t, messages[0].(map[string]any)["content"], "Return JSON only.")
+	require.Equal(t, "user", messages[1].(map[string]any)["role"])
 }
 
 func TestCapabilitiesEndpointReportsConfiguredRuntime(t *testing.T) {
@@ -8349,6 +8349,130 @@ func TestResponsesWebSocketGenerateFalseCanBeContinuedWithStoreFalse(t *testing.
 	followUpResponse := followUpCompleted["response"].(map[string]any)
 	require.Equal(t, warmupID, asStringAny(followUpResponse["previous_response_id"]))
 	require.Equal(t, false, followUpResponse["store"])
+}
+
+func TestResponsesWebSocketStoreFalseGeneratedCacheIsConnectionLocal(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn := dialResponsesWebSocket(t, ctx, app)
+
+	firstEvents := sendWebSocketCreate(t, ctx, conn, map[string]any{
+		"model": "test-model",
+		"store": false,
+		"input": "Remember websocket-local code ember. Reply OK.",
+	})
+	require.Contains(t, eventTypes(firstEvents), "response.completed")
+	firstCompleted := findEvent(t, firstEvents, "response.completed").Data
+	firstResponse := firstCompleted["response"].(map[string]any)
+	firstID := asStringAny(firstResponse["id"])
+	require.NotEmpty(t, firstID)
+	require.Equal(t, false, firstResponse["store"])
+
+	followUpEvents := sendWebSocketCreate(t, ctx, conn, map[string]any{
+		"model":                "test-model",
+		"store":                false,
+		"previous_response_id": firstID,
+		"input":                "Continue on the same socket.",
+	})
+	require.Contains(t, eventTypes(followUpEvents), "response.completed")
+	followUpCompleted := findEvent(t, followUpEvents, "response.completed").Data
+	followUpResponse := followUpCompleted["response"].(map[string]any)
+	require.Equal(t, firstID, asStringAny(followUpResponse["previous_response_id"]))
+
+	require.NoError(t, conn.Close(websocket.StatusNormalClosure, ""))
+	require.Eventually(t, func() bool {
+		_, err := app.Store.GetResponse(context.Background(), firstID)
+		return errors.Is(err, storage.ErrNotFound)
+	}, time.Second, 10*time.Millisecond)
+
+	reconnect := dialResponsesWebSocket(t, ctx, app)
+	defer reconnect.Close(websocket.StatusNormalClosure, "")
+	reconnectEvents := sendWebSocketCreate(t, ctx, reconnect, map[string]any{
+		"model":                "test-model",
+		"store":                false,
+		"previous_response_id": firstID,
+		"input":                "This should not recover across a new socket.",
+	})
+	require.Equal(t, "error", reconnectEvents[len(reconnectEvents)-1].Event)
+	errorPayload := reconnectEvents[len(reconnectEvents)-1].Data["error"].(map[string]any)
+	require.Equal(t, "previous_response_not_found", asStringAny(errorPayload["code"]))
+}
+
+func TestResponsesWebSocketFailedToolOutputContinuationEvictsStoreFalseCache(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn := dialResponsesWebSocket(t, ctx, app)
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	firstEvents := sendWebSocketCreate(t, ctx, conn, map[string]any{
+		"model": "test-model",
+		"store": false,
+		"input": "Remember websocket-local code slate. Reply OK.",
+	})
+	require.Contains(t, eventTypes(firstEvents), "response.completed")
+	firstCompleted := findEvent(t, firstEvents, "response.completed").Data
+	firstID := asStringAny(firstCompleted["response"].(map[string]any)["id"])
+	require.NotEmpty(t, firstID)
+
+	badEvents := sendWebSocketCreate(t, ctx, conn, map[string]any{
+		"model":                "test-model",
+		"store":                false,
+		"previous_response_id": firstID,
+		"input": []map[string]any{
+			{
+				"type":    "function_call_output",
+				"call_id": "call_missing",
+				"output":  "No matching function_call exists in the previous response.",
+			},
+		},
+	})
+	require.Equal(t, "error", badEvents[len(badEvents)-1].Event)
+	badError := badEvents[len(badEvents)-1].Data["error"].(map[string]any)
+	require.Equal(t, "input", asStringAny(badError["param"]))
+
+	staleEvents := sendWebSocketCreate(t, ctx, conn, map[string]any{
+		"model":                "test-model",
+		"store":                false,
+		"previous_response_id": firstID,
+		"input":                "Try to continue after a failed continuation.",
+	})
+	require.Equal(t, "error", staleEvents[len(staleEvents)-1].Event)
+	staleError := staleEvents[len(staleEvents)-1].Data["error"].(map[string]any)
+	require.Equal(t, "previous_response_not_found", asStringAny(staleError["code"]))
+}
+
+func TestResponsesWebSocketLocalCompactWithEmptyToolsArray(t *testing.T) {
+	app := testutil.NewTestApp(t)
+
+	compactionItem, err := domain.NewSyntheticCompactionItem("Prior compacted websocket state.", 2)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn := dialResponsesWebSocket(t, ctx, app)
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	events := sendWebSocketCreate(t, ctx, conn, map[string]any{
+		"model": "test-model",
+		"store": false,
+		"tools": []any{},
+		"input": []any{
+			compactionItem,
+			map[string]any{
+				"type":    "message",
+				"role":    "user",
+				"content": "Continue from compaction.",
+			},
+		},
+	})
+	require.Contains(t, eventTypes(events), "response.completed")
+	completed := findEvent(t, events, "response.completed").Data
+	response := completed["response"].(map[string]any)
+	require.Equal(t, false, response["store"])
 }
 
 func TestResponsesWebSocketLocalShellAndApplyPatchReplayEvents(t *testing.T) {

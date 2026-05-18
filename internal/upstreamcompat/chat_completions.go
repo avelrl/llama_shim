@@ -421,6 +421,23 @@ func prependSystemInstruction(rawMessages json.RawMessage, instruction string) (
 	if err != nil {
 		return nil, err
 	}
+	if len(messages) > 0 {
+		var role string
+		if err := json.Unmarshal(messages[0]["role"], &role); err == nil && role == "system" {
+			var content string
+			if rawContent, ok := messages[0]["content"]; !ok || len(bytes.TrimSpace(rawContent)) == 0 || bytes.Equal(bytes.TrimSpace(rawContent), []byte("null")) {
+				messages[0]["content"] = rawInstruction
+				return json.Marshal(messages)
+			} else if err := json.Unmarshal(rawContent, &content); err == nil {
+				mergedContent, err := json.Marshal(instruction + "\n\n" + content)
+				if err != nil {
+					return nil, err
+				}
+				messages[0]["content"] = mergedContent
+				return json.Marshal(messages)
+			}
+		}
+	}
 	instructionMessage := map[string]json.RawMessage{
 		"role":    json.RawMessage(`"system"`),
 		"content": rawInstruction,

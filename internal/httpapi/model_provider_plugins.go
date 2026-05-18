@@ -24,7 +24,7 @@ func (p modelProviderPlugin) CapabilityComponent() backendcap.Component {
 	return p.component
 }
 
-func modelProviderPlugins(deps RouterDeps, llamaProbe capabilityProbe, responsesTransport string) []plugincontract.CapabilityPlugin {
+func modelProviderPlugins(deps RouterDeps, probes capabilityProbeSet, responsesTransport string) []plugincontract.CapabilityPlugin {
 	wireModes := []string{"chat_completions", "raw_proxy"}
 	if responsesTransport == config.ResponsesUpstreamTransportChatCompletions {
 		wireModes = append(wireModes, "responses_over_chat")
@@ -80,7 +80,7 @@ func modelProviderPlugins(deps RouterDeps, llamaProbe capabilityProbe, responses
 			ConfigNamespace: "llama",
 			CapabilityClass: class,
 			Enabled:         deps.LlamaClient != nil,
-			Ready:           deps.LlamaClient != nil && probeReady(llamaProbe),
+			Ready:           deps.LlamaClient != nil && probeReady(probes.Llama),
 			ReadinessProbe:  "llama",
 			Auth:            "single_upstream_config",
 			WireModes:       wireModes,
@@ -117,6 +117,13 @@ func modelProviderPlugins(deps RouterDeps, llamaProbe capabilityProbe, responses
 		}
 		requestCleanupHooks = append(requestCleanupHooks, upstreamcompat.RequestCleanupHookNamesForChatModels(deps.ChatCompletionsUpstreamCompatibility, upstreamModels...)...)
 		pluginID := upstreamProviderPluginID(providerID)
+		readinessProbeID := "provider." + providerID
+		providerProbe := probes.Llama
+		if probes.Providers != nil {
+			if probe, ok := probes.Providers[providerID]; ok {
+				providerProbe = probe
+			}
+		}
 		descriptor := plugincontract.Descriptor{
 			ID:                    pluginID,
 			Version:               modelProviderPluginVersion,
@@ -124,7 +131,7 @@ func modelProviderPlugins(deps RouterDeps, llamaProbe capabilityProbe, responses
 			DisplayName:           providerID,
 			ConfigNamespace:       "llama.providers." + providerID,
 			RequiredSecrets:       providerSecretRefs(provider),
-			ReadinessProbe:        "llama",
+			ReadinessProbe:        readinessProbeID,
 			CapabilityComponentID: "provider." + providerID,
 			PublicSurfaces:        publicSurfaces,
 			BackendProjections:    projections,
@@ -142,8 +149,8 @@ func modelProviderPlugins(deps RouterDeps, llamaProbe capabilityProbe, responses
 			ConfigNamespace: "llama.providers." + providerID,
 			CapabilityClass: class,
 			Enabled:         true,
-			Ready:           probeReady(llamaProbe),
-			ReadinessProbe:  "llama",
+			Ready:           probeReady(providerProbe),
+			ReadinessProbe:  readinessProbeID,
 			Auth:            providerAuthSummary(provider),
 			SecretRefs:      providerSecretRefs(provider),
 			StateOwnership:  "stateless_backend_with_shim_state",

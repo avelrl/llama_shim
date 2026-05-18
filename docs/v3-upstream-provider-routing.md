@@ -197,8 +197,12 @@ provider status by provider ID only.
 
 Provider readiness probes run concurrently and use a dedicated remote-provider
 timeout budget so several configured remote providers do not consume one short
-local-backend timeout sequentially. Any unready provider still makes `/readyz`
-return `503` in this slice.
+local-backend timeout sequentially. In provider-routing mode, `/readyz`
+requires at least one configured provider to answer `/v1/models` and list at
+least one configured upstream model. `/debug/capabilities.probes.providers`
+reports per-provider readiness, and `backends.components[]` uses those
+provider-specific probes instead of one aggregate llama probe for every
+provider row.
 
 ## Operator Environment Roles
 
@@ -367,11 +371,14 @@ checks `/debug/capabilities`, live `GET /v1/models`, routed Responses, routed
 Chat Completions, derived Responses endpoints, fail-closed unknown model
 behavior, and model-less derived request boundaries.
 
-By default, `/readyz` is strict and derived endpoint provider failures are
-warnings. This matches the practical split: provider readiness should be
-stable, while third-party OpenAI-compatible providers may not implement
-`/v1/responses/input_tokens` or `/v1/responses/compact`. To make derived
-endpoints strict for providers that claim support:
+By default, `/readyz` is strict for the selected provider matrix only when no
+configured provider is usable; unrelated provider degradation is captured in
+`/debug/capabilities.probes.providers` and the backend registry. Derived
+endpoint provider failures are warnings. This matches the practical split:
+provider availability should be visible without making one unrelated transient
+block every route, while third-party OpenAI-compatible providers may not
+implement `/v1/responses/input_tokens` or `/v1/responses/compact`. To make
+derived endpoints strict for providers that claim support:
 
 ```bash
 UPSTREAM_PROVIDER_ROUTING_REQUIRE_DERIVED=1 make upstream-provider-routing-smoke

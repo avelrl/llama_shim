@@ -1,6 +1,6 @@
 # V4 Extensions And Plugin Model
 
-Last updated: May 12, 2026.
+Last updated: May 18, 2026.
 
 This document is the parking lot for post-compatibility work that is useful in
 practice, but should not be confused with the shim's core OpenAI-compatibility
@@ -45,6 +45,12 @@ compatibility-rule targets, operator-matrix coverage, and Codex model metadata
 before live upstream smokes.
 The current operator choices for those aliases are tracked in
 [V4 Model/Provider Operational Matrix](engineering/v4-model-provider-operational-matrix.md).
+The planned batch automation for candidate models is tracked in
+[V4 Model Certification Runner](v4-model-certification-runner.md): a
+self-managed operator runner that will start isolated shim instances, run the
+external OpenAI-compatible tester as a compat gate, then run Codex eval
+profiles only for models that clear that gate. It is evidence automation, not
+an OpenAI API parity claim.
 State/session memory now has a first local implementation documented in
 [V4 State And Session Memory](v4-state-session-memory.md): explicit metadata
 notes, SQLite/Postgres storage, hidden local developer-context injection,

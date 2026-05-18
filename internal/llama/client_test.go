@@ -259,8 +259,8 @@ func TestCreateChatCompletionNormalizesDeepSeekRequestForUpstream(t *testing.T) 
 	messages := captured["messages"].([]any)
 	require.Equal(t, "system", messages[0].(map[string]any)["role"])
 	require.Contains(t, messages[0].(map[string]any)["content"], "JSON Schema")
-	require.Equal(t, "system", messages[1].(map[string]any)["role"])
-	require.Equal(t, "user", messages[2].(map[string]any)["role"])
+	require.Contains(t, messages[0].(map[string]any)["content"], "Be precise.")
+	require.Equal(t, "user", messages[1].(map[string]any)["role"])
 }
 
 func TestGenerateStreamNormalizesDeepSeekRequestForUpstream(t *testing.T) {
@@ -428,6 +428,29 @@ func TestCheckReady(t *testing.T) {
 
 		client := NewClient(server.URL, time.Second)
 		require.NoError(t, client.CheckReady(context.Background()))
+	})
+
+	t.Run("llamacpp models array", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			require.Equal(t, http.MethodGet, r.Method)
+			require.Equal(t, "/v1/models", r.URL.Path)
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+				"object": "list",
+				"models": []map[string]any{
+					{
+						"name":    "qwen3_6-35b-a3b",
+						"model":   "qwen3_6-35b-a3b",
+						"aliases": []string{"Qwen3.6-35B-A3B"},
+					},
+				},
+			}))
+		}))
+		defer server.Close()
+
+		client := NewClient(server.URL, time.Second)
+		models, err := client.ListModels(context.Background())
+		require.NoError(t, err)
+		require.Equal(t, []string{"qwen3_6-35b-a3b", "Qwen3.6-35B-A3B"}, models)
 	})
 
 	t.Run("upstream error", func(t *testing.T) {

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"llama_shim/internal/domain"
@@ -40,6 +41,8 @@ func (h *responseHandler) websocket(w http.ResponseWriter, r *http.Request) {
 	conn.SetReadLimit(h.serviceLimits.JSONBodyBytes)
 	ctx, cancel := context.WithTimeout(r.Context(), responsesWebSocketMaxLifetime)
 	defer cancel()
+	sessionCache := newWebSocketSessionCache()
+	defer sessionCache.Cleanup(h.service, h.logger)
 
 	for {
 		messageType, payload, err := conn.Read(ctx)
@@ -63,7 +66,7 @@ func (h *responseHandler) websocket(w http.ResponseWriter, r *http.Request) {
 			}
 			continue
 		}
-		if err := h.handleWebSocketMessage(ctx, conn, r, payload); err != nil {
+		if err := h.handleWebSocketMessage(ctx, conn, r, payload, sessionCache); err != nil {
 			if shouldIgnoreWebSocketError(err) {
 				return
 			}
@@ -87,7 +90,81 @@ func shouldIgnoreWebSocketError(err error) bool {
 		status == websocket.StatusNoStatusRcvd
 }
 
-func (h *responseHandler) handleWebSocketMessage(ctx context.Context, conn *websocket.Conn, original *http.Request, raw []byte) error {
+type webSocketSessionCache struct {
+	mu  sync.Mutex
+	ids map[string]struct{}
+}
+
+func newWebSocketSessionCache() *webSocketSessionCache {
+	return &webSocketSessionCache{ids: make(map[string]struct{})}
+}
+
+func (c *webSocketSessionCache) Add(id string) {
+	id = strings.TrimSpace(id)
+	if c == nil || id == "" {
+		return
+	}
+	c.mu.Lock()
+	c.ids[id] = struct{}{}
+	c.mu.Unlock()
+}
+
+func (c *webSocketSessionCache) Remove(id string) {
+	id = strings.TrimSpace(id)
+	if c == nil || id == "" {
+		return
+	}
+	c.mu.Lock()
+	delete(c.ids, id)
+	c.mu.Unlock()
+}
+
+func (c *webSocketSessionCache) Contains(id string) bool {
+	id = strings.TrimSpace(id)
+	if c == nil || id == "" {
+		return false
+	}
+	c.mu.Lock()
+	_, ok := c.ids[id]
+	c.mu.Unlock()
+	return ok
+}
+
+func (c *webSocketSessionCache) Cleanup(service *service.ResponseService, logger *slog.Logger) {
+	if c == nil || service == nil {
+		return
+	}
+	c.mu.Lock()
+	ids := make([]string, 0, len(c.ids))
+	for id := range c.ids {
+		ids = append(ids, id)
+	}
+	c.ids = make(map[string]struct{})
+	c.mu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	for _, id := range ids {
+		if err := service.DeleteShadowResponse(ctx, id); err != nil && logger != nil {
+			logger.WarnContext(ctx, "responses websocket shadow cache cleanup failed", "response_id", id, "err", err)
+		}
+	}
+}
+
+func (c *webSocketSessionCache) Forget(service *service.ResponseService, logger *slog.Logger, id string) {
+	id = strings.TrimSpace(id)
+	if c == nil || service == nil || id == "" || !c.Contains(id) {
+		return
+	}
+	c.Remove(id)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := service.DeleteShadowResponse(ctx, id); err != nil && logger != nil {
+		logger.WarnContext(ctx, "responses websocket shadow cache eviction failed", "response_id", id, "err", err)
+	}
+}
+
+func (h *responseHandler) handleWebSocketMessage(ctx context.Context, conn *websocket.Conn, original *http.Request, raw []byte, sessionCache *webSocketSessionCache) error {
 	fields, err := decodeRawFields(raw)
 	if err != nil {
 		return writeWebSocketError(ctx, conn, http.StatusBadRequest, newAPIError("invalid_request_error", "malformed JSON message", "", ""))
@@ -130,8 +207,12 @@ func (h *responseHandler) handleWebSocketMessage(ctx context.Context, conn *webs
 	if !generate {
 		response, err := h.service.CreateWarmup(ctx, createResponseInputFromRequest(request, requestJSON, rawFields, true))
 		if err != nil {
+			evictWebSocketPreviousResponseOnFailure(body, sessionCache, h.service, h.logger)
 			status, payload := MapError(ctx, h.logger, err)
 			return writeWebSocketError(ctx, conn, status, payload)
+		}
+		if request.Store != nil && !*request.Store && strings.TrimSpace(request.PreviousResponseID) == "" && strings.TrimSpace(request.Conversation) == "" {
+			sessionCache.Add(response.ID)
 		}
 		rawResponse, err := json.Marshal(response)
 		if err != nil {
@@ -140,7 +221,7 @@ func (h *responseHandler) handleWebSocketMessage(ctx context.Context, conn *webs
 		return writeCompletedResponseAsWebSocket(ctx, h.logger, conn, rawResponse)
 	}
 
-	return h.createResponseViaWebSocketStream(ctx, conn, original, body)
+	return h.createResponseViaWebSocketStream(ctx, conn, original, body, sessionCache)
 }
 
 func buildWebSocketCreateBody(fields map[string]json.RawMessage) ([]byte, bool, error) {
@@ -204,14 +285,14 @@ func (h *responseHandler) validateWebSocketPreviousResponse(ctx context.Context,
 	return err
 }
 
-func (h *responseHandler) createResponseViaWebSocketStream(ctx context.Context, conn *websocket.Conn, original *http.Request, body []byte) error {
+func (h *responseHandler) createResponseViaWebSocketStream(ctx context.Context, conn *websocket.Conn, original *http.Request, body []byte, sessionCache *webSocketSessionCache) error {
 	streamBody, err := buildWebSocketStreamCreateBody(body)
 	if err != nil {
 		return writeWebSocketError(ctx, conn, http.StatusBadRequest, newAPIError("invalid_request_error", "malformed JSON message", "", ""))
 	}
 
 	writer := newWebSocketResponseStreamWriter(ctx, h.logger, conn, h.serviceLimits.JSONBodyBytes, func(rawResponse []byte) error {
-		return h.cacheWebSocketResponse(ctx, body, rawResponse)
+		return h.cacheWebSocketResponse(ctx, body, rawResponse, sessionCache)
 	})
 	req := original.Clone(ctx)
 	req.Method = http.MethodPost
@@ -245,9 +326,10 @@ func (h *responseHandler) createResponseViaWebSocketStream(ctx context.Context, 
 		return writeWebSocketError(ctx, conn, http.StatusBadGateway, newAPIError("upstream_error", "response body exceeded websocket bridge buffer", "", ""))
 	}
 	if status < 200 || status >= 300 {
+		evictWebSocketPreviousResponseOnFailure(body, sessionCache, h.service, h.logger)
 		return writeWebSocketHTTPError(ctx, conn, status, responseBody)
 	}
-	if err := h.cacheWebSocketResponse(ctx, body, responseBody); err != nil && h.logger != nil {
+	if err := h.cacheWebSocketResponse(ctx, body, responseBody, sessionCache); err != nil && h.logger != nil {
 		h.logger.WarnContext(ctx, "responses websocket shadow cache failed", "request_id", RequestIDFromContext(ctx), "err", err)
 	}
 	return writeCompletedResponseAsWebSocket(ctx, h.logger, conn, responseBody)
@@ -262,7 +344,18 @@ func buildWebSocketStreamCreateBody(body []byte) ([]byte, error) {
 	return json.Marshal(fields)
 }
 
-func (h *responseHandler) cacheWebSocketResponse(ctx context.Context, requestBody []byte, responseBody []byte) error {
+func evictWebSocketPreviousResponseOnFailure(requestBody []byte, sessionCache *webSocketSessionCache, service *service.ResponseService, logger *slog.Logger) {
+	if sessionCache == nil {
+		return
+	}
+	request, _, _, err := decodeCreateResponseRequestBody(requestBody, false)
+	if err != nil {
+		return
+	}
+	sessionCache.Forget(service, logger, request.PreviousResponseID)
+}
+
+func (h *responseHandler) cacheWebSocketResponse(ctx context.Context, requestBody []byte, responseBody []byte, sessionCache *webSocketSessionCache) error {
 	request, rawFields, requestJSON, err := decodeCreateResponseRequestBody(requestBody, false)
 	if err != nil {
 		return err
@@ -279,7 +372,10 @@ func (h *responseHandler) cacheWebSocketResponse(ctx context.Context, requestBod
 	if err != nil {
 		return err
 	}
-	_, err = h.service.SaveExternalResponse(ctx, prepared, createResponseInputFromRequest(request, requestJSON, rawFields, true), response)
+	stored, err := h.service.SaveExternalResponse(ctx, prepared, createResponseInputFromRequest(request, requestJSON, rawFields, true), response)
+	if err == nil && sessionCache != nil {
+		sessionCache.Add(stored.ID)
+	}
 	return err
 }
 

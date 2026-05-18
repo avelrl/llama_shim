@@ -71,7 +71,10 @@ make devstack-down
 
 - `/healthz`: process liveness
 - `/readyz`: readiness of SQLite, upstream text backend, and any configured
-  local retrieval or tool backends
+  local retrieval or tool backends. In multi-provider routing mode, upstream
+  text readiness requires at least one configured provider to answer
+  `/v1/models` and list a configured upstream model; per-provider degradation
+  is reported under `/debug/capabilities.probes.providers`.
 - `/debug/capabilities`: shim-owned capability manifest for operators, testers,
   and autonomous agents; always returns a JSON manifest with current surfaces,
   routing classes, runtime config, backend/plugin registries, and dependency
@@ -237,7 +240,10 @@ Important distinction:
   to `shim.shutdown_timeout` / `SHIM_SHUTDOWN_TIMEOUT` (default `30s`), then
   logs completion or timeout before process exit
 - `/readyz` is a terse public probe and returns `503` when a required
-  dependency is unavailable
+  dependency is unavailable. For multi-provider routing, one degraded provider
+  does not make `/readyz` fail while another configured provider remains
+  usable; inspect `/debug/capabilities.probes.providers` for the per-provider
+  state.
 - if the upstream `/v1/models` readiness check requires auth, configure
   `llama.readiness_bearer_token` or `LLAMA_READINESS_BEARER_TOKEN`; this token
   is used only for the `/readyz` upstream probe

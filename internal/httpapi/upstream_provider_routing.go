@@ -174,14 +174,14 @@ func (r *upstreamProviderResolver) WriteModels(ctx context.Context, w http.Respo
 }
 
 func (r *upstreamProviderResolver) CheckReady(ctx context.Context, client *llama.Client) error {
+	return providerReadinessAggregateError(r.ProviderReadiness(ctx, client))
+}
+
+func (r *upstreamProviderResolver) ProviderReadiness(ctx context.Context, client *llama.Client) map[string]error {
 	if !r.Enabled() || client == nil {
 		return nil
 	}
-	providerIDs := make([]string, 0, len(r.providersByID))
-	for providerID := range r.providersByID {
-		providerIDs = append(providerIDs, providerID)
-	}
-	sort.Strings(providerIDs)
+	providerIDs := r.providerIDs()
 
 	type result struct {
 		providerID string
@@ -201,7 +201,10 @@ func (r *upstreamProviderResolver) CheckReady(ctx context.Context, client *llama
 				BaseURL:       provider.BaseURL,
 				BearerToken:   provider.BearerToken,
 			}
-			err := client.CheckReady(llama.ContextWithUpstreamRoute(ctx, route))
+			models, err := client.ListModels(llama.ContextWithUpstreamRoute(ctx, route))
+			if err == nil {
+				err = providerModelCatalogReadyError(provider, models)
+			}
 			if err != nil {
 				err = fmt.Errorf("provider %q is not ready: %w", provider.ID, err)
 			}
@@ -211,29 +214,78 @@ func (r *upstreamProviderResolver) CheckReady(ctx context.Context, client *llama
 	wg.Wait()
 	close(results)
 
-	errorsByProvider := make(map[string]error)
+	readiness := make(map[string]error, len(providerIDs))
 	for result := range results {
-		if result.err != nil {
-			errorsByProvider[result.providerID] = result.err
-		}
+		readiness[result.providerID] = result.err
 	}
-	for _, providerID := range providerIDs {
-		if err := errorsByProvider[providerID]; err != nil {
-			return err
-		}
-	}
-	return nil
+	return readiness
 }
 
-func (r *upstreamProviderResolver) LiveProviderModelCatalogs(ctx context.Context, client *llama.Client) (map[string]map[string]struct{}, error) {
-	if !r.Enabled() || client == nil {
-		return nil, fmt.Errorf("upstream provider routing is not enabled")
+func (r *upstreamProviderResolver) providerIDs() []string {
+	if !r.Enabled() {
+		return nil
 	}
 	providerIDs := make([]string, 0, len(r.providersByID))
 	for providerID := range r.providersByID {
 		providerIDs = append(providerIDs, providerID)
 	}
 	sort.Strings(providerIDs)
+	return providerIDs
+}
+
+func providerReadinessAggregateError(readiness map[string]error) error {
+	if len(readiness) == 0 {
+		return nil
+	}
+	providerIDs := make([]string, 0, len(readiness))
+	for providerID := range readiness {
+		providerIDs = append(providerIDs, providerID)
+	}
+	sort.Strings(providerIDs)
+	var firstErr error
+	for _, providerID := range providerIDs {
+		err := readiness[providerID]
+		if err == nil {
+			return nil
+		}
+		if firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+func providerModelCatalogReadyError(provider upstreamProviderConfig, models []string) error {
+	if len(provider.modelsByID) == 0 {
+		return nil
+	}
+	catalog := make(map[string]struct{}, len(models))
+	for _, model := range models {
+		model = strings.TrimSpace(model)
+		if model != "" {
+			catalog[model] = struct{}{}
+		}
+	}
+	configured := make([]string, 0, len(provider.modelsByID))
+	for _, model := range provider.modelsByID {
+		upstreamModel := strings.TrimSpace(model.UpstreamModel)
+		if upstreamModel == "" {
+			continue
+		}
+		configured = append(configured, upstreamModel)
+		if _, ok := catalog[upstreamModel]; ok {
+			return nil
+		}
+	}
+	sort.Strings(configured)
+	return fmt.Errorf("model catalog does not contain any configured upstream models: %s", strings.Join(configured, ", "))
+}
+
+func (r *upstreamProviderResolver) LiveProviderModelCatalogs(ctx context.Context, client *llama.Client) (map[string]map[string]struct{}, error) {
+	if !r.Enabled() || client == nil {
+		return nil, fmt.Errorf("upstream provider routing is not enabled")
+	}
+	providerIDs := r.providerIDs()
 
 	type result struct {
 		providerID string

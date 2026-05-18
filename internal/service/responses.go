@@ -295,6 +295,11 @@ func (s *ResponseService) prepareResponseContext(ctx context.Context, input Crea
 		return PreparedResponseContext{}, err
 	}
 	toolCallRefs = domain.CollectToolCallReferences(baseItems)
+	if input.PreviousResponseID != "" {
+		if err := validateContinuationToolOutputs(normalizedInput, baseItems); err != nil {
+			return PreparedResponseContext{}, err
+		}
+	}
 	normalizedInput, err = domain.CanonicalizeToolOutputs(normalizedInput, toolCallRefs)
 	if err != nil {
 		return PreparedResponseContext{}, err
@@ -323,6 +328,61 @@ func (s *ResponseService) prepareResponseContext(ctx context.Context, input Crea
 		Conversation:    conversation,
 		ToolCallRefs:    toolCallRefs,
 	}, nil
+}
+
+func validateContinuationToolOutputs(items []domain.Item, baseItems []domain.Item) error {
+	if len(items) == 0 {
+		return nil
+	}
+	callIDs := collectContinuationToolCallIDs(baseItems)
+	for callID := range collectContinuationToolCallIDs(items) {
+		callIDs[callID] = struct{}{}
+	}
+	for _, item := range items {
+		if !isToolOutputItemType(item.Type) {
+			continue
+		}
+		callID := strings.TrimSpace(item.CallID())
+		if callID == "" {
+			return domain.NewValidationError("input", item.Type+" item must include call_id")
+		}
+		if _, ok := callIDs[callID]; !ok {
+			return domain.NewValidationError("input", item.Type+" item references unknown call_id '"+callID+"'")
+		}
+	}
+	return nil
+}
+
+func collectContinuationToolCallIDs(items []domain.Item) map[string]struct{} {
+	callIDs := make(map[string]struct{})
+	for _, item := range items {
+		if !isToolCallItemType(item.Type) {
+			continue
+		}
+		callID := strings.TrimSpace(item.CallID())
+		if callID != "" {
+			callIDs[callID] = struct{}{}
+		}
+	}
+	return callIDs
+}
+
+func isToolCallItemType(itemType string) bool {
+	switch itemType {
+	case "function_call", "custom_tool_call", "shell_call", "apply_patch_call", "computer_call", "code_interpreter_call":
+		return true
+	default:
+		return false
+	}
+}
+
+func isToolOutputItemType(itemType string) bool {
+	switch itemType {
+	case "function_call_output", "custom_tool_call_output", "shell_call_output", "apply_patch_call_output", "computer_call_output", "code_interpreter_call_output":
+		return true
+	default:
+		return false
+	}
 }
 
 func hasRequestInput(raw json.RawMessage) bool {
@@ -1016,6 +1076,32 @@ func (s *ResponseService) Delete(ctx context.Context, id string) (domain.Respons
 		Object:  "response",
 		Deleted: true,
 	}, nil
+}
+
+func (s *ResponseService) DeleteShadowResponse(ctx context.Context, id string) error {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil
+	}
+	stored, err := s.responses.GetResponse(ctx, id)
+	if err != nil {
+		mapped := MapStorageError(err)
+		if errors.Is(mapped, ErrNotFound) {
+			return nil
+		}
+		return err
+	}
+	if stored.Store {
+		return nil
+	}
+	if err := s.responses.DeleteResponse(ctx, id); err != nil {
+		mapped := MapStorageError(err)
+		if errors.Is(mapped, ErrNotFound) {
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 func (s *ResponseService) Refresh(ctx context.Context, response domain.Response) (domain.Response, error) {

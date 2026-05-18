@@ -11,6 +11,7 @@ Use this order every time:
 1. Start with the local docs index at [`openapi/llms.txt`](openapi/llms.txt).
    Use it as a map of relevant official pages only.
    It is not the source of truth for exact request or response contracts.
+   https://developers.openai.com/api/docs/llms.txt chech update if needed.
 2. Use OpenAI Docs MCP tools against `developers.openai.com` and `platform.openai.com`.
    Search first, then fetch the exact page or section you need.
 3. Do a final spot-check on the official site directly for the exact page or endpoint you are validating.

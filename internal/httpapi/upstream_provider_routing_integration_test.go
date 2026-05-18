@@ -527,6 +527,141 @@ func TestUpstreamProviderRoutingModelsAndReadyz(t *testing.T) {
 	seenMu.Unlock()
 }
 
+func TestUpstreamProviderRoutingModelsAcceptsLlamaCppCatalogShape(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/v1/models", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"object": "list",
+			"models": []map[string]any{
+				{
+					"name":  "qwen3_6-35b-a3b",
+					"model": "qwen3_6-35b-a3b",
+				},
+			},
+		}))
+	}))
+	defer upstream.Close()
+
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		LlamaProviders: []config.LlamaProvider{
+			{
+				ID:      "gpu",
+				BaseURL: upstream.URL,
+				Models: []config.LlamaProviderModel{
+					{Model: "qwen3_6-35b-a3b", UpstreamModel: "qwen3_6-35b-a3b"},
+				},
+			},
+		},
+	})
+
+	status, payload := rawRequest(t, app, http.MethodGet, "/v1/models", nil)
+	require.Equal(t, http.StatusOK, status)
+	data, ok := payload["data"].([]any)
+	require.True(t, ok)
+	require.Len(t, data, 1)
+	model := data[0].(map[string]any)
+	require.Equal(t, "gpu/qwen3_6-35b-a3b", asStringAny(model["id"]))
+	require.Equal(t, "provider:gpu", asStringAny(model["owned_by"]))
+}
+
+func TestUpstreamProviderRoutingReadyzPassesWhenOneProviderIsReady(t *testing.T) {
+	readyUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/v1/models", r.URL.Path)
+		writeModelsList(t, w, "ready-model")
+	}))
+	defer readyUpstream.Close()
+	unreadyUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "backend unavailable", http.StatusBadGateway)
+	}))
+	defer unreadyUpstream.Close()
+
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		LlamaProviders: []config.LlamaProvider{
+			{
+				ID:      "ready",
+				BaseURL: readyUpstream.URL,
+				Models: []config.LlamaProviderModel{
+					{Model: "coder", UpstreamModel: "ready-model"},
+				},
+			},
+			{
+				ID:      "unready",
+				BaseURL: unreadyUpstream.URL,
+				Models: []config.LlamaProviderModel{
+					{Model: "coder", UpstreamModel: "unready-model"},
+				},
+			},
+		},
+	})
+
+	readyStatus, _ := rawRequest(t, app, http.MethodGet, "/readyz", nil)
+	require.Equal(t, http.StatusOK, readyStatus)
+
+	status, payload := rawRequest(t, app, http.MethodGet, "/v1/models", nil)
+	require.Equal(t, http.StatusOK, status)
+	data, ok := payload["data"].([]any)
+	require.True(t, ok)
+	require.Len(t, data, 1)
+	model := data[0].(map[string]any)
+	require.Equal(t, "ready/coder", asStringAny(model["id"]))
+
+	status, payload = rawRequest(t, app, http.MethodGet, "/debug/capabilities", nil)
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, true, payload["ready"])
+
+	probes := payload["probes"].(map[string]any)
+	providers := probes["providers"].(map[string]any)
+	readyProbe := providers["ready"].(map[string]any)
+	require.Equal(t, true, readyProbe["checked"])
+	require.Equal(t, true, readyProbe["ready"])
+	unreadyProbe := providers["unready"].(map[string]any)
+	require.Equal(t, true, unreadyProbe["checked"])
+	require.Equal(t, false, unreadyProbe["ready"])
+	require.Equal(t, "provider backend is not ready", asStringAny(unreadyProbe["error"]))
+
+	backends := payload["backends"].(map[string]any)
+	components := backendComponentsByID(t, backends)
+	require.Equal(t, true, components["provider.ready"]["ready"])
+	require.Equal(t, "provider.ready", asStringAny(components["provider.ready"]["readiness_probe"]))
+	require.Equal(t, false, components["provider.unready"]["ready"])
+	require.Equal(t, "provider.unready", asStringAny(components["provider.unready"]["readiness_probe"]))
+}
+
+func TestUpstreamProviderRoutingReadyzFailsWhenNoProviderIsReady(t *testing.T) {
+	unreadyUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "backend unavailable", http.StatusBadGateway)
+	}))
+	defer unreadyUpstream.Close()
+
+	app := testutil.NewTestAppWithOptions(t, testutil.TestAppOptions{
+		LlamaProviders: []config.LlamaProvider{
+			{
+				ID:      "unready",
+				BaseURL: unreadyUpstream.URL,
+				Models: []config.LlamaProviderModel{
+					{Model: "coder", UpstreamModel: "unready-model"},
+				},
+			},
+		},
+	})
+
+	readyStatus, readyPayload := rawRequest(t, app, http.MethodGet, "/readyz", nil)
+	require.Equal(t, http.StatusServiceUnavailable, readyStatus)
+	errorPayload, ok := readyPayload["error"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "service_unavailable", asStringAny(errorPayload["type"]))
+
+	status, payload := rawRequest(t, app, http.MethodGet, "/debug/capabilities", nil)
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, false, payload["ready"])
+	probes := payload["probes"].(map[string]any)
+	providers := probes["providers"].(map[string]any)
+	unreadyProbe := providers["unready"].(map[string]any)
+	require.Equal(t, true, unreadyProbe["checked"])
+	require.Equal(t, false, unreadyProbe["ready"])
+}
+
 func TestUpstreamProviderRoutingReadyzUsesProviderTimeout(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "/v1/models", r.URL.Path)

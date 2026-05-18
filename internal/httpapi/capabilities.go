@@ -295,14 +295,15 @@ type capabilityRouting struct {
 }
 
 type capabilityProbeSet struct {
-	Storage                capabilityProbe `json:"storage"`
-	SQLite                 capabilityProbe `json:"sqlite"`
-	Postgres               capabilityProbe `json:"postgres"`
-	Llama                  capabilityProbe `json:"llama"`
-	RetrievalEmbedder      capabilityProbe `json:"retrieval_embedder"`
-	WebSearchBackend       capabilityProbe `json:"web_search_backend"`
-	ImageGenerationBackend capabilityProbe `json:"image_generation_backend"`
-	ComputerRuntime        capabilityProbe `json:"computer_runtime"`
+	Storage                capabilityProbe            `json:"storage"`
+	SQLite                 capabilityProbe            `json:"sqlite"`
+	Postgres               capabilityProbe            `json:"postgres"`
+	Llama                  capabilityProbe            `json:"llama"`
+	Providers              map[string]capabilityProbe `json:"providers,omitempty"`
+	RetrievalEmbedder      capabilityProbe            `json:"retrieval_embedder"`
+	WebSearchBackend       capabilityProbe            `json:"web_search_backend"`
+	ImageGenerationBackend capabilityProbe            `json:"image_generation_backend"`
+	ComputerRuntime        capabilityProbe            `json:"computer_runtime"`
 }
 
 type capabilityProbe struct {
@@ -692,7 +693,7 @@ func capabilityPluginRegistry(deps RouterDeps, probes capabilityProbeSet, respon
 
 func capabilityPlugins(deps RouterDeps, probes capabilityProbeSet, responsesTransport string) []plugincontract.CapabilityPlugin {
 	plugins := runtimeBackendPlugins(deps, probes)
-	plugins = append(plugins, modelProviderPlugins(deps, probes.Llama, responsesTransport)...)
+	plugins = append(plugins, modelProviderPlugins(deps, probes, responsesTransport)...)
 	return plugins
 }
 
@@ -953,7 +954,9 @@ func collectCapabilityProbes(ctx context.Context, deps RouterDeps) capabilityPro
 		probeStart := time.Now()
 		var err error
 		if resolver.Enabled() {
-			err = resolver.CheckReady(upstreamCtx, deps.LlamaClient)
+			readiness := resolver.ProviderReadiness(upstreamCtx, deps.LlamaClient)
+			probes.Providers = providerCapabilityProbes(deps.LlamaProviders, readiness)
+			err = providerReadinessAggregateError(readiness)
 		} else {
 			err = deps.LlamaClient.CheckReadyWithBearerToken(upstreamCtx, deps.LlamaReadinessBearerToken)
 		}
@@ -1035,6 +1038,43 @@ func collectCapabilityProbes(ctx context.Context, deps RouterDeps) capabilityPro
 	}
 
 	return probes
+}
+
+func providerCapabilityProbes(providers []config.LlamaProvider, readiness map[string]error) map[string]capabilityProbe {
+	if len(providers) == 0 {
+		return nil
+	}
+	providerIDs := make([]string, 0, len(providers))
+	seen := make(map[string]struct{}, len(providers))
+	for _, provider := range providers {
+		providerID := strings.TrimSpace(provider.ID)
+		if providerID == "" {
+			continue
+		}
+		if _, ok := seen[providerID]; ok {
+			continue
+		}
+		seen[providerID] = struct{}{}
+		providerIDs = append(providerIDs, providerID)
+	}
+	sort.Strings(providerIDs)
+	if len(providerIDs) == 0 {
+		return nil
+	}
+	out := make(map[string]capabilityProbe, len(providerIDs))
+	for _, providerID := range providerIDs {
+		err, checked := readiness[providerID]
+		probe := capabilityProbe{
+			Enabled: true,
+			Checked: checked,
+			Ready:   checked && err == nil,
+		}
+		if checked && err != nil {
+			probe.Error = "provider backend is not ready"
+		}
+		out[providerID] = probe
+	}
+	return out
 }
 
 func (p capabilityProbeSet) ready() bool {

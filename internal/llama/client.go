@@ -232,10 +232,9 @@ func (c *Client) listModelsDetailedWithBearerToken(ctx context.Context, bearerTo
 	}
 
 	var payload struct {
-		Object string `json:"object"`
-		Data   []struct {
-			ID string `json:"id"`
-		} `json:"data"`
+		Object string             `json:"object"`
+		Data   []upstreamModelRef `json:"data"`
+		Models []upstreamModelRef `json:"models"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return result, fmt.Errorf("decode llama response: %w", err)
@@ -243,15 +242,45 @@ func (c *Client) listModelsDetailedWithBearerToken(ctx context.Context, bearerTo
 	if payload.Object != "" && payload.Object != "list" {
 		return result, &InvalidResponseError{Message: "llama models response did not contain a list object"}
 	}
-	if payload.Data == nil {
+	if payload.Data == nil && payload.Models == nil {
 		return result, &InvalidResponseError{Message: "llama models response did not contain data"}
 	}
-	modelIDs := make([]string, 0, len(payload.Data))
-	for _, model := range payload.Data {
-		modelIDs = append(modelIDs, strings.TrimSpace(model.ID))
-	}
-	result.ModelIDs = modelIDs
+	result.ModelIDs = collectUpstreamModelIDs(payload.Data, payload.Models)
 	return result, nil
+}
+
+type upstreamModelRef struct {
+	ID      string   `json:"id"`
+	Model   string   `json:"model"`
+	Name    string   `json:"name"`
+	Aliases []string `json:"aliases"`
+}
+
+func collectUpstreamModelIDs(groups ...[]upstreamModelRef) []string {
+	var modelIDs []string
+	seen := make(map[string]struct{})
+	add := func(modelID string) {
+		modelID = strings.TrimSpace(modelID)
+		if modelID == "" {
+			return
+		}
+		if _, ok := seen[modelID]; ok {
+			return
+		}
+		seen[modelID] = struct{}{}
+		modelIDs = append(modelIDs, modelID)
+	}
+	for _, group := range groups {
+		for _, model := range group {
+			add(model.ID)
+			add(model.Model)
+			add(model.Name)
+			for _, alias := range model.Aliases {
+				add(alias)
+			}
+		}
+	}
+	return modelIDs
 }
 
 func (c *Client) Generate(ctx context.Context, model string, items []domain.Item, options map[string]json.RawMessage) (string, error) {

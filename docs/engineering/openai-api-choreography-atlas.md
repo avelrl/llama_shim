@@ -455,7 +455,8 @@ What exists in the shim:
   through the internal HTTP/SSE Responses create path.
 - JSON `data:` payloads from SSE are bridged as WebSocket text frames.
 - `store=false` continuation works for the most recent response on the same
-  socket via connection-local cache.
+  socket via connection-local cache; reconnects and failed continuation turns
+  do not keep that transient cache alive.
 - Exact hosted close codes, quota semantics, 60-minute enforcement, and upstream
   WebSocket proxying are deferred to V5.
 

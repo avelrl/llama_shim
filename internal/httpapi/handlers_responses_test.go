@@ -776,6 +776,17 @@ func TestSupportsLocalDerivedResponsesStateAcceptsPromptCacheMetadata(t *testing
 	require.Empty(t, unsupportedLocalDerivedFields(rawFields))
 }
 
+func TestSupportsLocalDerivedResponsesStateTreatsEmptyToolsAsNoop(t *testing.T) {
+	rawFields := map[string]json.RawMessage{
+		"model": json.RawMessage(`"test-model"`),
+		"input": json.RawMessage(`"hello"`),
+		"tools": json.RawMessage(`[]`),
+	}
+
+	require.True(t, supportsLocalDerivedResponsesState(rawFields))
+	require.Empty(t, unsupportedLocalDerivedFields(rawFields))
+}
+
 func TestSupportsLocalToolLoopAcceptsCodexNoopRequestMetadata(t *testing.T) {
 	rawFields := map[string]json.RawMessage{
 		"model":               json.RawMessage(`"test-model"`),

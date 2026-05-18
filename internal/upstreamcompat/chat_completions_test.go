@@ -83,7 +83,8 @@ func TestNormalizeChatCompletionRequestAppliesDeepSeekCompatibility(t *testing.T
 	require.Equal(t, "system", first["role"])
 	require.Contains(t, first["content"], "JSON Schema")
 	require.Contains(t, first["content"], `"status"`)
-	require.Equal(t, "system", messages[1].(map[string]any)["role"])
+	require.Contains(t, first["content"], "Return JSON strictly.")
+	require.Equal(t, "user", messages[1].(map[string]any)["role"])
 }
 
 func TestNormalizeChatCompletionRequestDowngradesTopLevelSchemaEnvelope(t *testing.T) {
@@ -119,6 +120,46 @@ func TestNormalizeChatCompletionRequestDowngradesTopLevelSchemaEnvelope(t *testi
 	require.Equal(t, "system", first["role"])
 	require.Contains(t, first["content"], "JSON Schema")
 	require.Contains(t, first["content"], `"selection"`)
+}
+
+func TestNormalizeChatCompletionRequestMergesSchemaInstructionIntoLeadingSystem(t *testing.T) {
+	upstreamBody, compatibility, err := NormalizeChatCompletionRequest([]byte(`{
+		"model":"Qwen3.6-35B-A3B",
+		"messages":[
+			{"role":"system","content":"Return raw JSON strictly according to the schema."},
+			{"role":"user","content":"Generate status and value."}
+		],
+		"response_format":{
+			"type":"json_schema",
+			"json_schema":{
+				"name":"simple_status",
+				"strict":true,
+				"schema":{
+					"type":"object",
+					"properties":{"status":{"type":"string"},"value":{"type":"integer"}},
+					"required":["status","value"],
+					"additionalProperties":false
+				}
+			}
+		}
+	}`), ChatCompletionOptions{Rules: []ChatCompletionRule{{
+		Model:          "Qwen*",
+		JSONSchemaMode: JSONSchemaModeObjectInstruction,
+	}}})
+	require.NoError(t, err)
+	require.True(t, compatibility.JSONSchemaDowngraded)
+
+	var request map[string]any
+	require.NoError(t, json.Unmarshal(upstreamBody, &request))
+	messages := request["messages"].([]any)
+	require.Len(t, messages, 2)
+
+	first := messages[0].(map[string]any)
+	require.Equal(t, "system", first["role"])
+	require.Contains(t, first["content"], "JSON Schema")
+	require.Contains(t, first["content"], `"status"`)
+	require.Contains(t, first["content"], "Return raw JSON strictly according to the schema.")
+	require.Equal(t, "user", messages[1].(map[string]any)["role"])
 }
 
 func TestNormalizeChatCompletionRequestPreservesExplicitDeepSeekThinking(t *testing.T) {
