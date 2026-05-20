@@ -51,11 +51,8 @@ func (r *Runner) Run(ctx context.Context) (Summary, error) {
 	if strings.TrimSpace(opts.ShimCommand) == "" {
 		opts.ShimCommand = "go run ./cmd/shim"
 	}
-	if strings.TrimSpace(opts.CodexAutoCommand) == "" {
-		opts.CodexAutoCommand = "bash ./scripts/codex-eval-auto.sh"
-	}
-	if strings.TrimSpace(opts.CodexCurateCommand) == "" {
-		opts.CodexCurateCommand = "bash ./scripts/codex-eval-curate.sh"
+	if strings.TrimSpace(opts.CodexRunnerCommand) == "" {
+		opts.CodexRunnerCommand = "bash ./scripts/codex-eval-runner.sh"
 	}
 
 	manifest, err := LoadManifest(opts.ManifestPath)
@@ -84,6 +81,9 @@ func (r *Runner) Run(ctx context.Context) (Summary, error) {
 	var runFailed bool
 	for _, entry := range selected {
 		completed, err := CompleteModelFromBase(entry, baseConfig)
+		if len(opts.CodexProfiles) > 0 {
+			completed.Codex.Profiles = append([]string(nil), opts.CodexProfiles...)
+		}
 		modelSummary := r.runModel(ctx, opts, baseConfig, completed, err)
 		if isAttentionVerdict(modelSummary.Verdict) {
 			runFailed = true
@@ -257,7 +257,7 @@ func (r *Runner) runModel(ctx context.Context, opts RunOptions, baseConfig confi
 	summary.Codex = codexStatus
 	if codexStatus.Status != "passed" {
 		summary.Verdict = VerdictCodexFailed
-	} else if codexLooksRetryDependent(filepath.Join(artifactDir, "codex", "auto", "summary.json")) {
+	} else if codexLooksRetryDependent(filepath.Join(artifactDir, "codex", "summary.json")) {
 		summary.Verdict = VerdictCodexRetryDependent
 	} else {
 		summary.Verdict = VerdictCodexClean
@@ -281,6 +281,7 @@ func (r *Runner) startShim(ctx context.Context, shimCommand string, configPath s
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Env = isolatedShimEnv(os.Environ(), shimDir)
 	if err := cmd.Start(); err != nil {
 		_ = stdout.Close()
 		_ = stderr.Close()
@@ -294,25 +295,41 @@ func (r *Runner) startShim(ctx context.Context, shimCommand string, configPath s
 func (r *Runner) runTester(ctx context.Context, opts RunOptions, entry ModelEntry, artifactDir string, shimBaseURL string) StageSummary {
 	testerDir := filepath.Join(artifactDir, "external-tester")
 	_ = os.MkdirAll(testerDir, 0o755)
+	testerOutDir := testerDir
+	if abs, err := filepath.Abs(testerOutDir); err == nil {
+		testerOutDir = abs
+	}
 	command := strings.TrimSpace(opts.TesterCommand)
 	if command == "" {
 		command = strings.TrimSpace(entry.Tester.Command)
 	}
 	if command == "" && opts.ExternalTesterDir != "" {
-		if entry.Tester.ModelsConfig == "" || entry.Tester.SuiteConfig == "" || entry.Tester.CapabilitiesConfig == "" {
-			if opts.RequireTester {
-				return StageSummary{Status: "failed", Path: testerDir, Error: "external tester config paths are required when using MODEL_CERT_EXTERNAL_TESTER_DIR without MODEL_CERT_TESTER_CMD"}
+		modelsConfig := firstNonEmpty(opts.TesterModelsConfig, entry.Tester.ModelsConfig, "configs/models_llama_shim.yaml")
+		suiteConfig := firstNonEmpty(opts.TesterSuiteConfig, entry.Tester.SuiteConfig, "configs/suite_llama_shim.yaml")
+		capabilitiesConfig := firstNonEmpty(opts.TesterCapabilities, entry.Tester.CapabilitiesConfig, "configs/capabilities_llama_shim.yaml")
+		profile := firstNonEmpty(opts.TesterProfile, entry.Tester.Profile)
+		if profile == "" {
+			profile = "model-cert-" + Slugify(entry.Model)
+			modelsConfig = filepath.Join(testerDir, "models.generated.yaml")
+			if abs, err := filepath.Abs(modelsConfig); err == nil {
+				modelsConfig = abs
 			}
-			return StageSummary{Status: "skipped", Path: testerDir}
+			if err := writeGeneratedTesterModelsConfig(modelsConfig, profile, entry.Model); err != nil {
+				if opts.RequireTester {
+					return StageSummary{Status: "failed", Path: testerDir, Error: err.Error()}
+				}
+				return StageSummary{Status: "skipped", Path: testerDir}
+			}
 		}
-		command = fmt.Sprintf("cd %s && go run . --no-tui --models %s --suite %s --capabilities %s --profile %s --mode %s --out-dir %s --json",
+		command = fmt.Sprintf("cd %s && go run . --no-tui --base-url %s --models %s --suite %s --capabilities %s --profile %s --mode %s --out-dir %s --json",
 			shellQuote(opts.ExternalTesterDir),
-			shellQuote(entry.Tester.ModelsConfig),
-			shellQuote(entry.Tester.SuiteConfig),
-			shellQuote(entry.Tester.CapabilitiesConfig),
-			shellQuote(defaultString(entry.Tester.Profile, "compat")),
+			shellQuote(shimBaseURL),
+			shellQuote(modelsConfig),
+			shellQuote(suiteConfig),
+			shellQuote(capabilitiesConfig),
+			shellQuote(profile),
 			shellQuote(defaultString(entry.Tester.Mode, "compat")),
-			shellQuote(testerDir),
+			shellQuote(testerOutDir),
 		)
 	}
 	if command == "" {
@@ -322,6 +339,7 @@ func (r *Runner) runTester(ctx context.Context, opts RunOptions, entry ModelEntr
 		return StageSummary{Status: "skipped", Path: testerDir}
 	}
 	env := []string{
+		"BASE_URL=" + shimBaseURL,
 		"OPENAI_BASE_URL=" + shimBaseURL + "/v1",
 		"OPENAI_API_KEY=shim-dev-key",
 		"SHIM_BASE_URL=" + shimBaseURL,
@@ -336,43 +354,129 @@ func (r *Runner) runTester(ctx context.Context, opts RunOptions, entry ModelEntr
 	return status
 }
 
+func writeGeneratedTesterModelsConfig(path string, profile string, model string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	raw := fmt.Sprintf("profiles:\n  - name: %q\n    chat_model: %q\n    responses_model: %q\n    reasoning_effort: %q\n    temperature: 0\n    extra: {}\n",
+		profile,
+		model,
+		model,
+		"minimal",
+	)
+	return os.WriteFile(path, []byte(raw), 0o644)
+}
+
 func (r *Runner) runCodex(ctx context.Context, opts RunOptions, entry ModelEntry, artifactDir string, shimBaseURL string, configPath string) StageSummary {
 	codexDir := filepath.Join(artifactDir, "codex")
-	autoDir := filepath.Join(codexDir, "auto")
-	curateDir := filepath.Join(codexDir, "curation")
 	_ = os.MkdirAll(codexDir, 0o755)
-	profiles := strings.Join(entry.Codex.Profiles, ",")
-	env := []string{
-		"SHIM_BASE_URL=" + shimBaseURL,
-		"CODEX_PROVIDER=gateway-shim",
-		"CODEX_API_KEY_ENV=GW_API_KEY",
-		"GW_API_KEY=shim-dev-key",
-		"CODEX_MODEL=" + entry.Model,
-		"CODEX_EVAL_MODELS=" + entry.Model,
-		"CODEX_EVAL_AUTO_OUT=" + autoDir,
-		"CODEX_EVAL_AUTO_PROFILES=" + profiles,
-		"CODEX_EVAL_ATTEMPTS=" + strconv.Itoa(entry.Codex.Attempts),
-		"CODEX_EVAL_REASONING_EFFORT=" + defaultString(entry.Codex.ReasoningEffort, "minimal"),
-		"CODEX_EVAL_APPLY_PATCH_TOOL_TYPE=" + defaultString(entry.Codex.ApplyPatchToolType, "freeform"),
-		"CONFIG=" + configPath,
+
+	directSummary := codexDirectSummary{
+		Object: "modelcert.codex_summary",
+		Status: "passed",
+		Model:  entry.Model,
 	}
-	status := runShell(ctx, opts.CodexAutoCommand, codexDir, env)
-	status.Path = codexDir
-	if status.Status != "passed" {
-		return status
+	finalStatus := StageSummary{Status: "passed", Path: codexDir}
+	attempts := entry.Codex.Attempts
+	if attempts <= 0 {
+		attempts = 1
 	}
-	curateEnv := []string{
-		"CODEX_EVAL_CURATE_OUT_DIR=" + curateDir,
-		"CODEX_EVAL_CURATE_MODEL=" + entry.Model,
-		"CODEX_EVAL_CURATE_PROVIDER_CONFIG=" + configPath,
+	for _, profile := range entry.Codex.Profiles {
+		suite, err := codexSuiteForCertificationProfile(profile)
+		profileDir := filepath.Join(codexDir, "profiles", Slugify(profile))
+		profileSummary := codexDirectProfile{
+			Profile: profile,
+			Suite:   suite,
+			Path:    profileDir,
+		}
+		if err != nil {
+			profileSummary.Status = "failed"
+			profileSummary.Error = err.Error()
+			directSummary.Status = "failed"
+			finalStatus = StageSummary{Status: "failed", Path: codexDir, Error: err.Error()}
+			directSummary.Profiles = append(directSummary.Profiles, profileSummary)
+			continue
+		}
+		env := []string{
+			"SHIM_BASE_URL=" + shimBaseURL,
+			"CODEX_BASE_URL=" + strings.TrimRight(shimBaseURL, "/") + "/v1",
+			"CODEX_PROVIDER=gateway-shim",
+			"CODEX_API_KEY_ENV=GW_API_KEY",
+			"CODEX_API_KEY=shim-dev-key",
+			"GW_API_KEY=shim-dev-key",
+			"CODEX_MODEL=" + entry.Model,
+			"CODEX_EVAL_SUITE=" + suite,
+			"CODEX_EVAL_OUT=" + profileDir,
+			"CODEX_EVAL_ATTEMPTS=" + strconv.Itoa(attempts),
+			"CODEX_EVAL_REASONING_EFFORT=" + defaultString(entry.Codex.ReasoningEffort, "minimal"),
+			"CODEX_EVAL_APPLY_PATCH_TOOL_TYPE=" + defaultString(entry.Codex.ApplyPatchToolType, "freeform"),
+			"CONFIG=" + configPath,
+		}
+		status := runShell(ctx, opts.CodexRunnerCommand, profileDir, env)
+		profileSummary.Status = status.Status
+		profileSummary.ExitCode = status.ExitCode
+		profileSummary.Error = status.Error
+		directSummary.Profiles = append(directSummary.Profiles, profileSummary)
+		if status.Status != "passed" {
+			directSummary.Status = "failed"
+			finalStatus.Status = "failed"
+			finalStatus.ExitCode = status.ExitCode
+			finalStatus.Error = fmt.Sprintf("codex profile %q failed: %s", profile, status.Error)
+		}
 	}
-	curateStatus := runShell(ctx, opts.CodexCurateCommand+" "+shellQuote(autoDir), curateDir, curateEnv)
-	if curateStatus.Status != "passed" {
-		status.Status = "failed"
-		status.ExitCode = curateStatus.ExitCode
-		status.Error = "codex curation failed"
+	_ = writeJSONFile(filepath.Join(codexDir, "summary.json"), directSummary)
+	_ = os.WriteFile(filepath.Join(codexDir, "summary.md"), []byte(renderCodexDirectMarkdown(directSummary)), 0o644)
+	return finalStatus
+}
+
+type codexDirectSummary struct {
+	Object   string               `json:"object"`
+	Status   string               `json:"status"`
+	Model    string               `json:"model"`
+	Profiles []codexDirectProfile `json:"profiles"`
+}
+
+type codexDirectProfile struct {
+	Profile  string `json:"profile"`
+	Suite    string `json:"suite"`
+	Status   string `json:"status"`
+	ExitCode int    `json:"exit_code,omitempty"`
+	Path     string `json:"path"`
+	Error    string `json:"error,omitempty"`
+}
+
+func codexSuiteForCertificationProfile(profile string) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(profile))
+	switch normalized {
+	case "baseline", "real-upstream":
+		return "codex-real-upstream", nil
+	case "expanded", "real-upstream-expanded":
+		return "codex-real-upstream-expanded", nil
+	case "bench-lite", "bench_lite", "benchlite":
+		return "codex-bench-lite", nil
+	default:
+		if strings.HasPrefix(normalized, "codex-") {
+			return normalized, nil
+		}
+		return "", fmt.Errorf("unknown Codex certification profile %q", profile)
 	}
-	return status
+}
+
+func renderCodexDirectMarkdown(summary codexDirectSummary) string {
+	var b strings.Builder
+	b.WriteString("# Codex Certification\n\n")
+	b.WriteString("- model: `" + summary.Model + "`\n")
+	b.WriteString("- status: `" + summary.Status + "`\n\n")
+	b.WriteString("| Profile | Suite | Status | Exit | Path |\n")
+	b.WriteString("| --- | --- | --- | --- | --- |\n")
+	for _, profile := range summary.Profiles {
+		exit := ""
+		if profile.ExitCode != 0 {
+			exit = strconv.Itoa(profile.ExitCode)
+		}
+		b.WriteString("| `" + profile.Profile + "` | `" + profile.Suite + "` | `" + profile.Status + "` | `" + exit + "` | `" + profile.Path + "` |\n")
+	}
+	return b.String()
 }
 
 func (r *Runner) finalizeDiagnostics(summary ModelSummary, extraSignals []string) ModelSummary {
@@ -387,6 +491,7 @@ func (r *Runner) finalizeDiagnostics(summary ModelSummary, extraSignals []string
 	signals := detectSignals(logMatches, traces)
 	signals = append(signals, extraSignals...)
 	summary.Signals = compactStrings(signals)
+	summary = applyDiagnosticVerdict(summary, traces)
 	summary.PossibleOwner = inferOwner(summary.Signals)
 	if summary.PossibleOwner == "" && isAttentionVerdict(summary.Verdict) {
 		summary.PossibleOwner = "unknown"
@@ -498,6 +603,46 @@ func runShell(ctx context.Context, command string, outDir string, extraEnv []str
 		return StageSummary{Status: "failed", ExitCode: exitCode, Error: err.Error()}
 	}
 	return StageSummary{Status: "passed"}
+}
+
+func isolatedShimEnv(baseEnv []string, shimDir string) []string {
+	out := make([]string, 0, len(baseEnv)+1)
+	for _, item := range baseEnv {
+		key, _, ok := strings.Cut(item, "=")
+		if !ok || shouldDropIsolatedShimEnv(key) {
+			continue
+		}
+		out = append(out, item)
+	}
+	out = append(out, "SHIM_DOTENV="+filepath.ToSlash(filepath.Join(shimDir, "missing.env")))
+	return out
+}
+
+func shouldDropIsolatedShimEnv(key string) bool {
+	key = strings.ToUpper(strings.TrimSpace(key))
+	if key == "" {
+		return true
+	}
+	if key == "CONFIG" {
+		return true
+	}
+	for _, prefix := range []string{
+		"SHIM_",
+		"SQLITE_",
+		"STORAGE_",
+		"POSTGRES_",
+		"LLAMA_",
+		"LOG_",
+		"CHAT_COMPLETIONS_",
+		"RESPONSES_",
+		"RETRIEVAL_",
+		"UI_",
+	} {
+		if strings.HasPrefix(key, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func writeModelEnv(path string, entry ModelEntry, shimBaseURL string) error {

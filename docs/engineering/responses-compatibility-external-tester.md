@@ -1,6 +1,6 @@
 # Responses Compatibility External Tester
 
-Last updated: May 3, 2026.
+Last updated: May 20, 2026.
 
 Status: repo-owned runner and Broad subset profile are in place. This is an
 engineering runbook, not a stronger hosted-parity claim.
@@ -56,6 +56,32 @@ The docs-backed baseline is:
   `response.output_text.delta`, and `response.completed`.
 - `/v1/responses/{response_id}/input_items` is the API surface for listing the
   items used to generate a stored response.
+
+## Follow-Up: Chat-First Coding Agents
+
+Codex-through-Responses is not enough coverage for the broader coding-agent
+ecosystem. Aider, Cline, Qwen Code, OpenCode/OpenCoder-style clients, and many
+local IDE integrations primarily exercise OpenAI-compatible
+`/v1/chat/completions`, often with streaming and tool-call follow-up rather than
+the shim's Responses tool loop.
+
+Use [V4 Chat Agent Smoke](../v4-chat-agent-smoke.md) before using local models
+as general Chat-first coding recommendations. The first slice covers:
+
+- streamed Chat text with exact short-answer assertions
+- assistant tool-call message plus `role=tool` follow-up
+- file reads, single-file edits, multi-file edits, and a Go bugfix loop
+- command execution through an allowlisted local test command
+- patch/diff instruction following over Chat, without Codex's native
+  `apply_patch` tool contract
+
+Future slices can add required/forced tool-call variants and JSON mode/schema
+downgrade checks if the first smoke starts catching useful model differences.
+
+Keep this separate from Codex certification. A model can be useful for
+chat-first coding clients while failing Codex's Responses-native tool loop, and
+the reverse can also happen when the shim-owned Responses bridge is stronger
+than native Chat streaming.
 
 ## Latest Real-Upstream Ledger
 

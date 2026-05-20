@@ -46,13 +46,14 @@ type CodexUpstreamInputCompatibilityRule struct {
 }
 
 type customToolTransportPlan struct {
-	Mode                   customToolsMode
-	Bridge                 customToolBridge
-	PassthroughCustomTools customToolBridge
-	BridgeFallbackSafe     bool
-	DroppedBuiltinTools    []string
-	DisabledToolTypes      []string
-	ToolChoiceContract     toolChoiceContract
+	Mode                                  customToolsMode
+	Bridge                                customToolBridge
+	PassthroughCustomTools                customToolBridge
+	BridgeFallbackSafe                    bool
+	SuppressAssistantContentWithToolCalls bool
+	DroppedBuiltinTools                   []string
+	DisabledToolTypes                     []string
+	ToolChoiceContract                    toolChoiceContract
 }
 
 func (b customToolBridge) Active() bool {

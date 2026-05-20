@@ -253,6 +253,75 @@ func TestParseLocalToolLoopChatCompletionRepairsApplyPatchRepeatedEnvelopes(t *t
 	require.Equal(t, "*** Begin Patch\n*** Update File: app/config.txt\n@@\n mode=matrix\n-feature=disabled\n+feature=enabled\n*** Update File: app/status.txt\n@@\n-status=todo\n+status=updated\n*** End Patch", response.Output[0].Input())
 }
 
+func TestParseLocalToolLoopChatCompletionRepairsApplyPatchUnifiedDiffHunkHeaders(t *testing.T) {
+	descriptor := customToolDescriptor{
+		Name:          "apply_patch",
+		SyntheticName: syntheticCustomToolName("", "apply_patch"),
+		Constraint:    mustApplyPatchCustomToolConstraint(t),
+		Transport:     customToolTransportLocalConstrained,
+	}
+	plan := customToolTransportPlan{
+		Mode: customToolsModeBridge,
+		Bridge: customToolBridge{
+			ByModelName: map[string]customToolDescriptor{
+				"apply_patch": descriptor,
+			},
+			BySynthetic: map[string]customToolDescriptor{
+				descriptor.SyntheticName: descriptor,
+			},
+			ByCanonical: map[string]customToolDescriptor{
+				canonicalCustomToolKey("", "apply_patch"): descriptor,
+			},
+		},
+	}
+
+	raw := []byte(`{
+		"choices": [{
+			"message": {
+				"tool_calls": [{
+					"id": "call_patch",
+					"type": "function",
+					"function": {
+						"name": "apply_patch",
+						"arguments": "{\"input\":\"*** Begin Patch\\n*** Update File: mathutil.go\\n@@ -1,5 +1,5 @@\\n package codexsmoke\\n\\n func Add(a, b int) int {\\n-\\treturn a - b\\n+\\treturn a + b\\n }\\n*** End Patch\"}"
+					}
+				}]
+			}
+		}]
+	}`)
+
+	response, err := parseLocalToolLoopChatCompletion(raw, "resp_test", "test-model", "", "", plan)
+	require.NoError(t, err)
+	require.Len(t, response.Output, 1)
+	require.Equal(t, "*** Begin Patch\n*** Update File: mathutil.go\n@@\n package codexsmoke\n \n func Add(a, b int) int {\n-\treturn a - b\n+\treturn a + b\n }\n*** End Patch", response.Output[0].Input())
+}
+
+func TestBuildLocalCustomToolLoopInstructionsAddsApplyPatchFormatHint(t *testing.T) {
+	descriptor := customToolDescriptor{
+		Name:       "apply_patch",
+		Constraint: mustApplyPatchCustomToolConstraint(t),
+	}
+
+	instructions := buildLocalCustomToolLoopInstructions([]customToolDescriptor{descriptor})
+
+	require.Contains(t, instructions, "Do not place a whole replacement file directly")
+}
+
+func TestBuildConstrainedCustomToolRepairPromptAddsApplyPatchFormatHint(t *testing.T) {
+	descriptor := customToolDescriptor{
+		Name:       "apply_patch",
+		Constraint: mustApplyPatchCustomToolConstraint(t),
+	}
+
+	prompt := buildConstrainedCustomToolRepairPrompt(&constrainedCustomToolValidationError{
+		Descriptor: descriptor,
+		Input:      "*** Begin Patch\n*** Update File: mathutil.go\npackage codexsmoke\n*** End Patch",
+	})
+
+	require.Contains(t, prompt, "Retry by emitting the same tool call again")
+	require.Contains(t, prompt, "Do not place a whole replacement file directly")
+}
+
 func TestContainsRawToolCallMarkupCatchesDeepSeekPseudoTools(t *testing.T) {
 	cases := []string{
 		"<\uFF5C\uFF5CDSML\uFF5C\uFF5Ctool_calls><\uFF5C\uFF5CDSML\uFF5C\uFF5Cinvoke name=\"read\">README.md</\uFF5C\uFF5CDSML\uFF5C\uFF5Cinvoke></\uFF5C\uFF5CDSML\uFF5C\uFF5Ctool_calls>",

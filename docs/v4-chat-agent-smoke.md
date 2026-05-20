@@ -1,0 +1,109 @@
+# V4 Chat Agent Smoke
+
+Last updated: May 20, 2026.
+
+Status: implemented first slice. This is a shim-owned operator smoke for
+OpenAI-compatible `/v1/chat/completions`; it is not an OpenAI parity claim and
+not a replacement for Codex eval.
+
+## Purpose
+
+Many practical coding agents are Chat-first rather than Responses-first. Aider,
+Cline, Qwen Code, OpenCode/OpenCoder-style clients, and local IDE integrations
+usually exercise `/v1/chat/completions` with streaming, function tool calls, and
+`role=tool` follow-up messages.
+
+Codex certification is still the right gate for Codex compatibility, but it
+does not answer whether a model is usable for Chat-first coding tools. This
+smoke covers that separate workflow.
+
+## What It Checks
+
+`make v4-chat-agent-smoke` runs a small local harness against a live shim:
+
+- `stream_text`: streamed Chat response must reconstruct exactly `HELLO`.
+- `read_file`: the model must call `read_file`, consume the tool result, and
+  finish with the expected marker.
+- `basic_patch`: the model must edit one file through Chat function tools.
+- `bugfix_go`: the model must inspect Go files, fix a failing test, run
+  `go test ./...`, and finish only after the test passes.
+- `multi_file`: the model must coordinate edits across two files.
+
+The harness executes only its local allowlisted tools:
+
+- `read_file`
+- `write_file`
+- `replace_text`
+- `run_command` for `go test ./...` and `go test ./... -v`
+
+## Run
+
+Start the shim first, then run:
+
+```bash
+SHIM_BASE_URL=http://127.0.0.1:8080 \
+  MODEL=gpu/qwen3-30b-instruct \
+  SHIM_AUTH_HEADER="Authorization: Bearer $GW_API_KEY" \
+  make v4-chat-agent-smoke
+```
+
+To run a smaller set:
+
+```bash
+CHAT_AGENT_SMOKE_SCENARIOS=stream_text,read_file,basic_patch \
+  MODEL=gpu/qwen3-30b-instruct \
+  make v4-chat-agent-smoke
+```
+
+## Inputs
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `SHIM_BASE_URL` | `http://127.0.0.1:8080` | Live shim base URL. |
+| `MODEL` / `CHAT_AGENT_MODEL` | `devstack-model` | Public model alias sent to Chat Completions. |
+| `SHIM_AUTH_HEADER` | unset | Full ingress auth header, if the shim requires one. |
+| `GW_API_KEY` / `OPENAI_API_KEY` | unset | Fallback bearer token sources when `SHIM_AUTH_HEADER` is unset. |
+| `CHAT_AGENT_SMOKE_SCENARIOS` | `all` | Comma-separated scenario list or `all`. |
+| `CHAT_AGENT_SMOKE_ARTIFACT_DIR` | `.tmp/v4-chat-agent-smoke` | Artifact root. |
+| `CHAT_AGENT_SMOKE_RUN_ID` | UTC timestamp | Optional deterministic run id. |
+
+## Artifacts
+
+Each run writes:
+
+```text
+.tmp/v4-chat-agent-smoke/<model>_<timestamp>/
+```
+
+The directory contains request and response JSON for each turn, tool outputs,
+scenario workspaces, final text markers, and `summary.json`.
+
+## Interpretation
+
+A pass means the model and shim can complete a small Chat-first coding-agent
+tool loop. It does not mean the model is Codex-ready; Codex uses the
+Responses-native tool loop and stricter patch behavior.
+
+Common failures:
+
+- `stream_text` mismatch: native Chat streaming or exact short-answer behavior
+  is not stable enough for this smoke.
+- final text instead of a tool call: the model is weak for Chat-first coding
+  tools, even if plain chat works.
+- malformed tool arguments: the model or compatibility cleanup needs
+  provider/model-specific hardening before it should be recommended.
+- `bugfix_go` command failure: inspect the scenario workspace and
+  `turn-*.tool-*.json` artifacts to distinguish a bad edit from a bad command
+  call.
+
+## Relationship To Other Gates
+
+- External OpenAI-compatible tester: validates API surface behavior. It can be
+  green while this smoke fails on real coding-agent workflow.
+- Codex eval and model certification: validate Codex/Responses suitability.
+  A model can pass this Chat smoke and still fail Codex tool-loop requirements.
+- Provider matrix smoke: validates configured provider aliases and operator
+  readiness. It does not test coding-agent file editing.
+
+Use this smoke when deciding whether a model is worth trying in Chat-first
+coding clients before spending time on heavier Codex certification.

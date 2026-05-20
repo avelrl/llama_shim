@@ -251,7 +251,7 @@ const (
 )
 
 func Load(configPath string) (Config, error) {
-	if err := loadDotEnv(resolveDotEnvPath()); err != nil {
+	if err := LoadDotEnv(); err != nil {
 		return Config{}, err
 	}
 
@@ -800,6 +800,10 @@ func Load(configPath string) (Config, error) {
 	}
 	cfg.ResponsesWebSearchMaxResults = webSearchMaxResults
 	return cfg, nil
+}
+
+func LoadDotEnv() error {
+	return loadDotEnv(resolveDotEnvPath())
 }
 
 func (c Config) MaintenanceCleanupPolicy() storage.MaintenanceCleanupPolicy {

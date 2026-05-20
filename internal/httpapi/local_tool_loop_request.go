@@ -40,7 +40,8 @@ func buildLocalChatCompletionRequest(rawFields map[string]json.RawMessage, conte
 
 	rawTools := decodeToolList(rawFields)
 	effectiveTools := rawTools
-	if shouldApplyCodexCompatibility(rawFields, rawTools, codexCompatibilityEnabled) {
+	codexCompatibility := shouldApplyCodexCompatibility(rawFields, rawTools, codexCompatibilityEnabled)
+	if codexCompatibility {
 		contextItems = injectCodexCompatibilityContext(contextItems, len(currentInput))
 		effectiveTools = augmentCodexToolDescriptions(rawTools)
 	}
@@ -49,6 +50,7 @@ func buildLocalChatCompletionRequest(rawFields map[string]json.RawMessage, conte
 	if err != nil {
 		return nil, customToolTransportPlan{}, err
 	}
+	plan.SuppressAssistantContentWithToolCalls = codexCompatibility
 	if extraInstructions != "" {
 		contextItems = insertLocalToolLoopInstructions(contextItems, len(currentInput), extraInstructions)
 	}
@@ -417,6 +419,9 @@ func buildLocalCustomToolLoopInstructions(descriptors []customToolDescriptor) st
 			label = descriptor.Namespace + "." + descriptor.Name
 		}
 		parts = append(parts, "For custom tool `"+label+"`, the raw `input` string must fully satisfy this "+descriptor.Constraint.Syntax+" constraint: "+descriptor.Constraint.Definition)
+		if hint := applyPatchRawInputHintForDescriptor(descriptor); hint != "" {
+			parts = append(parts, hint)
+		}
 	}
 	return strings.Join(parts, " ")
 }
@@ -495,6 +500,10 @@ func buildConstrainedCustomToolRepairPrompt(err *constrainedCustomToolValidation
 		builder.WriteString(" definition: ")
 		builder.WriteString(constraintDefinition)
 		builder.WriteString(".")
+	}
+	if hint := applyPatchRawInputHintForDescriptor(err.Descriptor); hint != "" {
+		builder.WriteString(" ")
+		builder.WriteString(hint)
 	}
 	return builder.String()
 }

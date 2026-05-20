@@ -11,7 +11,7 @@ import (
 	"strings"
 )
 
-var highSignalLogPattern = regexp.MustCompile(`(?i)"level":"(WARN|ERROR)"|"status":(4|5)[0-9][0-9]|upstream[_ ]timeout|transport[_ ]error|raw_tool_markup|failed_raw_tool_markup|invalid tool|tool arguments|json_schema|schema|unsupported input shape|readiness|catalog|401|403|404|408|409|422|429|500|502|503|504|panic|context deadline|empty reply|rate[_ ]limit|quota`)
+var highSignalLogPattern = regexp.MustCompile(`(?i)"level":"(WARN|ERROR)"|"status":(4|5)[0-9][0-9]|"status_code":(4|5)[0-9][0-9]|"upstream_status":(4|5)[0-9][0-9]|upstream[_ ]timeout|transport[_ ]error|raw[_ -]tool[_ -]call[_ -]markup|raw_tool_markup|failed_raw_tool_markup|invalid tool|tool arguments|failed to satisfy its constraint|apply_patch failed to satisfy|json_schema|schema|unsupported input shape|readiness|catalog|authentication|unauthorized|forbidden|permission_denied|panic|context deadline|empty reply|rate[_ ]limit|quota`)
 
 func WriteTraceArtifacts(dir string, traces []DebugTrace) (string, string, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -90,6 +90,9 @@ func WriteLogDiagnostics(logPath string, outPath string) ([]string, error) {
 	lines := strings.Split(string(raw), "\n")
 	matches := make([]string, 0)
 	for idx, line := range lines {
+		if isNoisySuccessfulLogLine(line) {
+			continue
+		}
 		if highSignalLogPattern.MatchString(line) {
 			matches = append(matches, fmt.Sprintf("%d:%s", idx+1, Redact(line)))
 		}
@@ -120,6 +123,9 @@ func WriteLogDiagnostics(logPath string, outPath string) ([]string, error) {
 }
 
 func BuildFixCandidates(model ModelSummary, logMatches []string, traces []DebugTrace) []FixCandidate {
+	if firstFailingStage(model) == "none" && !hasFailedOrSlowTrace(traces) {
+		return nil
+	}
 	signals := detectSignals(logMatches, traces)
 	if len(signals) == 0 {
 		return nil
@@ -220,6 +226,61 @@ func WriteFailureNotes(model ModelSummary, logMatches []string, traces []DebugTr
 	return os.WriteFile(outPath, []byte(b.String()), 0o644)
 }
 
+func isNoisySuccessfulLogLine(line string) bool {
+	lower := strings.ToLower(line)
+	if strings.Contains(lower, `"level":"warn"`) || strings.Contains(lower, `"level":"error"`) {
+		return false
+	}
+	if strings.Contains(lower, `"status":4`) || strings.Contains(lower, `"status":5`) {
+		return false
+	}
+	if strings.Contains(lower, `"backend_failure"`) {
+		return false
+	}
+	if strings.Contains(lower, `"level":"debug"`) && strings.Contains(lower, `"msg":"http request/response bodies"`) {
+		return !strings.Contains(lower, `"response_body":"{\"error`) &&
+			!strings.Contains(lower, `"response_body":"{\\\"error`)
+	}
+	if strings.Contains(lower, `"level":"debug"`) &&
+		strings.Contains(lower, `"msg":"normalized chat completion request for upstream compatibility"`) {
+		return true
+	}
+	if strings.Contains(lower, `"status":200`) &&
+		(strings.Contains(lower, `"path":"/healthz"`) ||
+			strings.Contains(lower, `"path":"/readyz"`) ||
+			strings.Contains(lower, `"path":"/v1/models"`)) {
+		return true
+	}
+	return strings.Contains(lower, `"msg":"shim listening"`) ||
+		strings.Contains(lower, `"path":"/debug/capabilities"`) ||
+		strings.Contains(lower, `"route":"/debug/capabilities"`)
+}
+
+func hasFailedOrSlowTrace(traces []DebugTrace) bool {
+	for _, trace := range traces {
+		if trace.FinalStatus >= 400 || trace.BackendFailure != nil || trace.DurationMS >= 30000 {
+			return true
+		}
+	}
+	return false
+}
+
+func hasFailedTrace(traces []DebugTrace) bool {
+	for _, trace := range traces {
+		if trace.FinalStatus >= 400 || trace.BackendFailure != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func applyDiagnosticVerdict(summary ModelSummary, traces []DebugTrace) ModelSummary {
+	if summary.Verdict == VerdictCodexClean && hasFailedTrace(traces) {
+		summary.Verdict = VerdictCodexRetryDependent
+	}
+	return summary
+}
+
 func detectSignals(logMatches []string, traces []DebugTrace) []string {
 	seen := map[string]struct{}{}
 	add := func(signal string) {
@@ -229,12 +290,14 @@ func detectSignals(logMatches []string, traces []DebugTrace) []string {
 		seen[signal] = struct{}{}
 	}
 	for _, match := range logMatches {
-		lower := strings.ToLower(match)
+		lower := diagnosticSignalText(match)
 		switch {
-		case strings.Contains(lower, "raw_tool_markup"):
+		case containsRawToolMarkupSignal(lower):
 			add("raw_tool_markup")
 		case strings.Contains(lower, "invalid tool") || strings.Contains(lower, "tool arguments"):
 			add("invalid_tool_arguments")
+		case strings.Contains(lower, "failed to satisfy its constraint") || strings.Contains(lower, "apply_patch failed to satisfy"):
+			add("model_tool_use_failure")
 		case strings.Contains(lower, "json_schema") || strings.Contains(lower, "schema"):
 			add("json_schema_or_structured_output")
 		case strings.Contains(lower, "unsupported input shape"):
@@ -245,12 +308,18 @@ func detectSignals(logMatches []string, traces []DebugTrace) []string {
 			add("transport_error")
 		case strings.Contains(lower, "readiness") || strings.Contains(lower, "catalog"):
 			add("readiness_catalog_mismatch")
-		case strings.Contains(lower, "401") || strings.Contains(lower, "403"):
+		case containsDiagnosticHTTPStatus(lower, 401) || containsDiagnosticHTTPStatus(lower, 403) ||
+			strings.Contains(lower, "authentication") ||
+			strings.Contains(lower, "unauthorized") ||
+			strings.Contains(lower, "forbidden") ||
+			strings.Contains(lower, "permission_denied"):
 			add("provider_auth_failure")
-		case strings.Contains(lower, "429") || strings.Contains(lower, "rate") || strings.Contains(lower, "quota"):
+		case containsDiagnosticHTTPStatus(lower, 429) || strings.Contains(lower, "rate") || strings.Contains(lower, "quota"):
 			add("rate_limit_or_quota")
 		case strings.Contains(lower, "panic"):
 			add("shim_panic")
+		case strings.Contains(lower, "failed to initialize samplers"):
+			add("upstream_sampler_error")
 		}
 	}
 	for _, trace := range traces {
@@ -282,7 +351,9 @@ func inferOwner(signals []string) string {
 		switch signal {
 		case "shim_panic", "request_shape_incompatibility", "raw_tool_markup", "invalid_tool_arguments", "json_schema_or_structured_output":
 			return "shim"
-		case "provider_auth_failure", "rate_limit_or_quota", "readiness_catalog_mismatch", "transport_error", "upstream_timeout":
+		case "model_tool_use_failure", "malformed_backend_response":
+			return "model"
+		case "provider_auth_failure", "rate_limit_or_quota", "readiness_catalog_mismatch", "transport_error", "upstream_timeout", "upstream_sampler_error":
 			return "provider"
 		}
 	}
@@ -297,9 +368,11 @@ func inferCategory(signals []string) string {
 		"request_shape_incompatibility",
 		"raw_tool_markup",
 		"invalid_tool_arguments",
+		"model_tool_use_failure",
 		"json_schema_or_structured_output",
 		"upstream_timeout",
 		"transport_error",
+		"upstream_sampler_error",
 		"readiness_catalog_mismatch",
 	} {
 		if slices.Contains(signals, preferred) {
@@ -310,6 +383,45 @@ func inferCategory(signals []string) string {
 		return signals[0]
 	}
 	return "unknown"
+}
+
+func diagnosticSignalText(match string) string {
+	lower := strings.ToLower(match)
+	if !strings.Contains(lower, `"msg":"http request/response bodies"`) {
+		return lower
+	}
+	if idx := strings.Index(lower, `"response_body"`); idx >= 0 {
+		return lower[idx:]
+	}
+	return lower
+}
+
+func containsRawToolMarkupSignal(text string) bool {
+	return strings.Contains(text, "raw_tool_markup") ||
+		strings.Contains(text, "raw tool-call markup") ||
+		strings.Contains(text, "raw tool call markup") ||
+		strings.Contains(text, "raw-tool-call-markup")
+}
+
+func containsDiagnosticHTTPStatus(text string, code int) bool {
+	codeText := strconv.Itoa(code)
+	for _, marker := range []string{
+		`"status":` + codeText,
+		`"status":"` + codeText + `"`,
+		`"status_code":` + codeText,
+		`"status_code":"` + codeText + `"`,
+		`"upstream_status":` + codeText,
+		`"upstream_status":"` + codeText + `"`,
+		`"http_status":` + codeText,
+		`"http_status":"` + codeText + `"`,
+		`status=` + codeText,
+		`http ` + codeText,
+	} {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func firstFailingStage(model ModelSummary) string {

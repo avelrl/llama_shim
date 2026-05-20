@@ -54,6 +54,39 @@ func TestSanitizeChatCompletionSSELineStripsNonOpenAIFields(t *testing.T) {
 	require.Equal(t, "data: {\"choices\":[{\"delta\":{\"content\":\"OK\"}}]}\n", sanitized)
 }
 
+func TestSanitizeChatCompletionSSELineSuppressesReasoningOnlyDelta(t *testing.T) {
+	line := "data: {\"id\":\"chatcmpl_test\",\"choices\":[{\"index\":0,\"delta\":{\"content\":null,\"reasoning_content\":\"hidden\"}}]}\n"
+
+	sanitized, err := sanitizeChatCompletionSSELine(line)
+	require.NoError(t, err)
+	require.Empty(t, sanitized)
+}
+
+func TestSanitizeChatCompletionSSELineSuppressesNoOpDelta(t *testing.T) {
+	line := "data: {\"id\":\"chatcmpl_test\",\"choices\":[{\"index\":0,\"delta\":{},\"stop_reason\":200012,\"token_ids\":[1,2]}]}\n"
+
+	sanitized, err := sanitizeChatCompletionSSELine(line)
+	require.NoError(t, err)
+	require.Empty(t, sanitized)
+}
+
+func TestSanitizeChatCompletionSSELineKeepsTerminalAndUsefulDeltas(t *testing.T) {
+	tests := []string{
+		"data: {\"choices\":[{\"delta\":{\"content\":\"OK\",\"reasoning_content\":\"hidden\"}}]}\n",
+		"data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\"}]}}]}\n",
+		"data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"\"}}]}\n",
+		"data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n",
+		"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":1,\"total_tokens\":2}}\n",
+		"data: [DONE]\n",
+	}
+
+	for _, line := range tests {
+		sanitized, err := sanitizeChatCompletionSSELine(line)
+		require.NoError(t, err)
+		require.NotEmpty(t, sanitized)
+	}
+}
+
 func TestSanitizeChatCompletionJSONToWriterStripsNestedNonOpenAIFields(t *testing.T) {
 	body := `{"id":"chatcmpl_ok","provider_specific_fields":{"trace":true},"choices":[{"message":{"content":"OK","reasoning_content":"hidden","tool_calls":[{"function":{"arguments":"{}","provider_specific_fields":{"trace":true}}}]}}]}`
 	var out bytes.Buffer

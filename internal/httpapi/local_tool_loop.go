@@ -786,7 +786,7 @@ func parseLocalToolLoopChatCompletion(raw []byte, responseID string, model strin
 		return domain.Response{}, &rawToolCallMarkupError{Content: content}
 	}
 	toolCalls := make([]domain.Item, 0, len(message.ToolCalls)+1)
-	if len(message.ToolCalls) > 0 && strings.TrimSpace(content) != "" {
+	if len(message.ToolCalls) > 0 && strings.TrimSpace(content) != "" && !plan.SuppressAssistantContentWithToolCalls {
 		reasoning, err := newLocalReasoningItem(content)
 		if err != nil {
 			return domain.Response{}, err

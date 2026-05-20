@@ -595,14 +595,18 @@ func buildLocalConstrainedCustomToolRuntimeItems(items []domain.Item, currentInp
 	if descriptor.Namespace != "" {
 		label = descriptor.Namespace + "." + descriptor.Name
 	}
-	prompt := strings.Join([]string{
+	parts := []string{
 		"You are the shim-local constrained custom tool generator.",
 		"Generate raw input for the required custom tool `" + label + "`.",
 		"Return JSON only with a single required string key named `input`.",
 		"Do not emit assistant prose.",
 		"Do not emit a tool wrapper.",
 		"The `input` value must fully satisfy this " + descriptor.Constraint.Syntax + " constraint: " + descriptor.Constraint.Definition,
-	}, " ")
+	}
+	if hint := applyPatchRawInputHintForDescriptor(descriptor); hint != "" {
+		parts = append(parts, hint)
+	}
+	prompt := strings.Join(parts, " ")
 	return insertLocalToolLoopInstructions(items, currentInputLen, prompt), nil
 }
 
@@ -648,7 +652,7 @@ func buildVLLMRawConstrainedCustomToolRuntimeItems(items []domain.Item, currentI
 	if descriptor.Namespace != "" {
 		label = descriptor.Namespace + "." + descriptor.Name
 	}
-	prompt := strings.Join([]string{
+	parts := []string{
 		"You are the shim-local constrained custom tool generator.",
 		"Generate raw input for the required custom tool `" + label + "`.",
 		"Return only the raw input string.",
@@ -656,7 +660,11 @@ func buildVLLMRawConstrainedCustomToolRuntimeItems(items []domain.Item, currentI
 		"Do not emit assistant prose.",
 		"Do not emit a tool wrapper.",
 		"The complete response must fully satisfy this " + descriptor.Constraint.Syntax + " constraint: " + descriptor.Constraint.Definition,
-	}, " ")
+	}
+	if hint := applyPatchRawInputHintForDescriptor(descriptor); hint != "" {
+		parts = append(parts, hint)
+	}
+	prompt := strings.Join(parts, " ")
 	return insertLocalToolLoopInstructions(items, currentInputLen, prompt), nil
 }
 

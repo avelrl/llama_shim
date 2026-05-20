@@ -61,9 +61,8 @@ The runner should use this order for each selected model:
 6. If the tester compat verdict is not green, skip Codex for that model.
 7. If the tester is green, run Codex eval profiles in order:
    `baseline`, `expanded`, then `bench-lite`.
-8. Run Codex curation for produced Codex artifacts.
-9. Slice shim logs, collect debug traces, and write model-level notes.
-10. Add any actionable shim-fix candidates to the run-level fix file.
+8. Slice shim logs, collect debug traces, and write model-level notes.
+9. Add any actionable shim-fix candidates to the run-level fix file.
 
 The runner should continue to the next model after a model fails. A single bad
 model must not stop the whole batch unless the runner itself cannot proceed.
@@ -76,9 +75,9 @@ semantics:
 - `v4-provider-config-doctor` remains the static config/env/metadata check.
 - `v4-provider-matrix-smoke` remains the fast live routing and preflight smoke.
 - `openai-compatible-tester` remains the cheap first API-compatibility gate.
-- `codex-eval-auto` remains the Codex behavior/stability runner.
-- `codex-eval-curate` and `v4-provider-ops-report` remain the curation and
-  promotion views.
+- `codex-eval-runner` remains the candidate-only Codex task runner.
+- `codex-eval-auto`, `codex-eval-curate`, and `v4-provider-ops-report` remain
+  the broader comparison, curation, and promotion views.
 
 The certification runner is the heavy batch workflow for candidate models. It
 should be used when the operator wants an apples-to-apples package of evidence
@@ -169,10 +168,10 @@ Default command shape:
 cd "$MODEL_CERT_EXTERNAL_TESTER_DIR"
 go run . \
   --no-tui \
-  --models "$MODELS_CONFIG" \
-  --suite "$SUITE_CONFIG" \
-  --capabilities "$CAPABILITIES_CONFIG" \
-  --profile "$PROFILE" \
+  --models configs/models_llama_shim.yaml \
+  --suite configs/suite_llama_shim.yaml \
+  --capabilities configs/capabilities_llama_shim.yaml \
+  --profile "$MODEL_CERT_TESTER_PROFILE" \
   --mode compat \
   --out-dir "$MODEL_ARTIFACT_DIR/external-tester" \
   --json
@@ -204,8 +203,8 @@ the output without parsing prose:
 | `shim_start_failed` | The isolated shim failed to start or never reached required readiness. |
 | `api_compat_passed` | External tester compat gate passed. |
 | `api_compat_failed` | External tester compat gate failed; Codex was skipped. |
-| `codex_clean` | Codex profiles selected by policy passed without retry-dependent interpretation. |
-| `codex_retry_dependent` | Codex passed, but retries or curation notes must remain visible. |
+| `codex_clean` | Codex profiles selected by policy passed without retry-dependent interpretation or failed shim debug traces. |
+| `codex_retry_dependent` | Codex passed, but retries, failed shim debug traces, or curation notes must remain visible. |
 | `codex_failed` | One or more required Codex profiles failed. |
 | `needs_operator_review` | Evidence exists but automated classification is inconclusive. |
 
@@ -219,12 +218,13 @@ Codex should run only after the external tester gate is green.
 
 Default profiles:
 
-- `baseline`: `codex-core` control vs `codex-real-upstream`
-- `expanded`: `codex-core` control vs `codex-real-upstream-expanded`
-- `bench-lite`: `codex-bench-lite` control vs `codex-bench-lite`
+- `baseline`: candidate-only `codex-real-upstream`
+- `expanded`: candidate-only `codex-real-upstream-expanded`
+- `bench-lite`: candidate-only `codex-bench-lite`
 
-The runner should reuse the existing `codex-eval-auto` and
-`codex-eval-curate` machinery instead of reimplementing Codex eval semantics.
+The runner should call `codex-eval-runner` directly for certification. It
+should not require the devstack control shim on `127.0.0.1:18080`; comparison
+and cross-run curation stay in `codex-eval-auto` and `codex-eval-curate`.
 
 Codex environment should use the public `provider/model` alias:
 
@@ -353,8 +353,7 @@ Implemented first slice:
 - temporary isolated shim config rendering
 - shim process lifecycle and readiness waits
 - external tester invocation by explicit command or configured tester checkout
-- Codex phase orchestration through existing `codex-eval-auto` and
-  `codex-eval-curate` scripts
+- Codex phase orchestration through candidate-only `codex-eval-runner`
 - debug trace, shim-log diagnostic, failure-note, summary, and fix-candidate
   artifacts
 - `make model-certify`
@@ -370,14 +369,25 @@ fix-candidate notes only.
 Use a single model first:
 
 ```bash
-MODEL_CERT_MODELS="gpu/qwen3-coder-30b" \
-MODEL_CERT_TESTER_CMD='cd "$MODEL_CERT_EXTERNAL_TESTER_DIR" && go run . --no-tui --models "$MODELS_CONFIG" --suite "$SUITE_CONFIG" --capabilities "$CAPABILITIES_CONFIG" --profile "$PROFILE" --mode compat --out-dir "$MODEL_ARTIFACT_DIR/external-tester" --json' \
-MODEL_CERT_EXTERNAL_TESTER_DIR=<path-to-openai-compatible-tester> \
-make model-certify
+MODEL=gpu/qwen3-coder-30b make model-certify-api
+MODEL=gpu/qwen3-coder-30b make model-certify-codex
 ```
 
-The exact tester command is operator-owned because tester config filenames can
-vary by checkout. The runner exports:
+Codex profiles are read from `configs/model-certification.yaml` unless the run
+sets `MODEL_CERT_CODEX_PROFILES`. Use that override for one-off stronger runs,
+for example:
+
+```bash
+MODEL=gpu/qwen3-coder-30b MODEL_CERT_CODEX_PROFILES=expanded make model-certify-codex
+```
+
+The common external tester layout is encoded as defaults:
+`../openai-compatible-tester`, `configs/models_llama_shim.yaml`,
+`configs/suite_llama_shim.yaml`, and
+`configs/capabilities_llama_shim.yaml`. Use `MODEL_CERT_TESTER_CMD` only for an
+unusual local tester checkout.
+
+The runner exports:
 
 - `OPENAI_BASE_URL`
 - `OPENAI_API_KEY`
@@ -391,11 +401,7 @@ vary by checkout. The runner exports:
 For a dry artifact/config check without live upstream calls:
 
 ```bash
-MODEL_CERT_MODELS="gpu/qwen3-coder-30b" \
-MODEL_CERT_SKIP_SHIM=1 \
-MODEL_CERT_SKIP_TESTER=1 \
-MODEL_CERT_SKIP_CODEX=1 \
-make model-certify
+MODEL=gpu/qwen3-coder-30b make model-certify-dry-run
 ```
 
 Artifacts are written under `.tmp/model-certification/<run-id>/`.
@@ -419,20 +425,13 @@ the operator's external tester checkout.
 Manual dry-run command:
 
 ```bash
-MODEL_CERT_MODELS="gpu/qwen3-coder-30b" \
-MODEL_CERT_SKIP_SHIM=1 \
-MODEL_CERT_SKIP_TESTER=1 \
-MODEL_CERT_SKIP_CODEX=1 \
-make model-certify
+MODEL=gpu/qwen3-coder-30b make model-certify-dry-run
 ```
 
 Manual live first-run command:
 
 ```bash
-MODEL_CERT_MODELS="deepseek/deepseek-v4-pro" \
-MODEL_CERT_TESTER_CMD='<external tester command>' \
-MODEL_CERT_EXTERNAL_TESTER_DIR=<path-to-openai-compatible-tester> \
-make model-certify
+MODEL=deepseek/deepseek-v4-pro make model-certify-api
 ```
 
 Final repo checks:

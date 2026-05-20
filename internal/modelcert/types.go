@@ -63,9 +63,13 @@ type RunOptions struct {
 	Models             []string
 	ExternalTesterDir  string
 	TesterCommand      string
+	TesterModelsConfig string
+	TesterSuiteConfig  string
+	TesterCapabilities string
+	TesterProfile      string
+	CodexProfiles      []string
 	ShimCommand        string
-	CodexAutoCommand   string
-	CodexCurateCommand string
+	CodexRunnerCommand string
 	SkipShim           bool
 	SkipTester         bool
 	SkipCodex          bool

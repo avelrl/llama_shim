@@ -74,6 +74,12 @@ func TestClassifyBackendFailurePolicyDecisions(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, backendFailureTransportTimeout, decision.Class)
 
+	decision, ok = classifyBackendFailure(&rawToolCallMarkupError{Content: "<read_file path=service.txt>"})
+	require.True(t, ok)
+	require.Equal(t, backendFailureMalformedBackendResponse, decision.Class)
+	require.Equal(t, http.StatusBadGateway, decision.ClientStatus)
+	require.Equal(t, "malformed_backend_response", decision.ClientCode)
+
 	_, ok = classifyBackendFailure(errors.New("ordinary validation failure"))
 	require.False(t, ok)
 }

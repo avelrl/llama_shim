@@ -35,8 +35,8 @@ Before a live run:
 - `config.yaml` contains the provider, model alias, upstream model id, token env
   name, and Codex metadata.
 - `configs/model-certification.yaml` contains the candidate model.
-- Provider token environment variables are set in the shell that starts the
-  runner.
+- Provider token environment variables are present in repo-local `.env` or in
+  the shell that starts the runner.
 - The external tester checkout exists if you are running the API compatibility
   gate.
 - Codex eval dependencies work if you are running the Codex phase.
@@ -44,17 +44,37 @@ Before a live run:
 Do not put real tokens into `configs/model-certification.yaml` or committed
 docs. Keep tokens in environment variables.
 
+The runner loads the same repo-local `.env` as the shim before parsing
+`MODEL_CERT_*` options. With the common sibling checkout layout, no tester
+command needs to be supplied:
+
+For the isolated shim process itself, runner keeps provider tokens from the
+environment but strips shim-local config overrides such as `SHIM_ADDR`,
+`SQLITE_PATH`, and `LOG_FILE_PATH`; the generated per-model config owns those
+values.
+
+```text
+../openai-compatible-tester/
+  configs/models_llama_shim.yaml
+  configs/suite_llama_shim.yaml
+  configs/capabilities_llama_shim.yaml
+  configs/suite_responses_extended.yaml
+  configs/capabilities_responses_extended.yaml
+```
+
+If the tester checkout lives elsewhere, set this once in `.env`:
+
+```bash
+MODEL_CERT_EXTERNAL_TESTER_DIR=../openai-compatible-tester
+```
+
 ## Quick Dry Run
 
 Use this first after editing config or the manifest. It renders artifacts and
 generated config, but does not start a shim or call upstreams:
 
 ```bash
-MODEL_CERT_MODELS="gpu/qwen3-coder-30b" \
-MODEL_CERT_SKIP_SHIM=1 \
-MODEL_CERT_SKIP_TESTER=1 \
-MODEL_CERT_SKIP_CODEX=1 \
-make model-certify
+MODEL=gpu/qwen3-coder-30b make model-certify-dry-run
 ```
 
 Expected result:
@@ -72,20 +92,23 @@ Use this when adding a new model or debugging API compatibility. Codex is
 skipped until the simpler compatibility surface is green.
 
 ```bash
-MODEL_CERT_MODELS="gpu/qwen3-coder-30b" \
-MODEL_CERT_EXTERNAL_TESTER_DIR="../openai-compatible-tester" \
-MODELS_CONFIG="configs/models.yaml" \
-SUITE_CONFIG="configs/suite.yaml" \
-CAPABILITIES_CONFIG="configs/capabilities.yaml" \
-PROFILE="compat" \
-MODEL_CERT_TESTER_CMD='cd "$MODEL_CERT_EXTERNAL_TESTER_DIR" && go run . --no-tui --models "$MODELS_CONFIG" --suite "$SUITE_CONFIG" --capabilities "$CAPABILITIES_CONFIG" --profile "$PROFILE" --mode compat --out-dir "$MODEL_ARTIFACT_DIR/external-tester" --json' \
-MODEL_CERT_SKIP_CODEX=1 \
-make model-certify
+MODEL=gpu/qwen3-coder-30b make model-certify-api
 ```
 
-Adjust `MODELS_CONFIG`, `SUITE_CONFIG`, and `CAPABILITIES_CONFIG` to match the
-external tester checkout. The runner intentionally does not patch or relax the
-tester per model; the shim should adapt where adaptation is shim-owned.
+This uses `configs/models_llama_shim.yaml`, `configs/suite_llama_shim.yaml`,
+and `configs/capabilities_llama_shim.yaml` from the external tester checkout.
+The runner intentionally does not patch or relax the tester per model; the shim
+should adapt where adaptation is shim-owned.
+
+To run the optional Responses extended block:
+
+```bash
+MODEL=gpu/qwen3-coder-30b make model-certify-api-extended
+```
+
+That target swaps the tester suite and capabilities to
+`configs/suite_responses_extended.yaml` and
+`configs/capabilities_responses_extended.yaml`.
 
 If this gate fails, inspect the model artifact before running Codex:
 
@@ -97,36 +120,37 @@ If this gate fails, inspect the model artifact before running Codex:
 
 ## Full Single-Model Run
 
-After the external tester gate is green, run the same model with Codex enabled:
+After the external tester gate is green, run Codex without repeating the
+external tester:
 
 ```bash
-MODEL_CERT_MODELS="gpu/qwen3-coder-30b" \
-MODEL_CERT_EXTERNAL_TESTER_DIR="../openai-compatible-tester" \
-MODELS_CONFIG="configs/models.yaml" \
-SUITE_CONFIG="configs/suite.yaml" \
-CAPABILITIES_CONFIG="configs/capabilities.yaml" \
-PROFILE="compat" \
-MODEL_CERT_TESTER_CMD='cd "$MODEL_CERT_EXTERNAL_TESTER_DIR" && go run . --no-tui --models "$MODELS_CONFIG" --suite "$SUITE_CONFIG" --capabilities "$CAPABILITIES_CONFIG" --profile "$PROFILE" --mode compat --out-dir "$MODEL_ARTIFACT_DIR/external-tester" --json' \
-make model-certify
+MODEL=gpu/qwen3-coder-30b make model-certify-codex
 ```
 
-Codex profiles come from `configs/model-certification.yaml`. Use a narrow
-profile list such as `[baseline]` for new local candidates, and broader
-profiles for stronger hosted models.
+Codex profiles come from `configs/model-certification.yaml` by default. Use a
+narrow profile list such as `[baseline]` for new local candidates, and broader
+profiles for stronger hosted models. To force a one-off profile without editing
+the manifest, set `MODEL_CERT_CODEX_PROFILES`, for example:
+
+```bash
+MODEL=gpu/qwen3-coder-30b MODEL_CERT_CODEX_PROFILES=expanded make model-certify-codex
+```
+
+Certification runs these profiles as candidate-only Codex suites against the
+isolated shim; it does not require a separate devstack control shim.
+
+For a full single command that runs the tester gate and then Codex:
+
+```bash
+MODEL=gpu/qwen3-coder-30b make model-certify
+```
 
 ## Batch Run
 
 Use a comma-separated or space-separated model list:
 
 ```bash
-MODEL_CERT_MODELS="deepseek/deepseek-v4-pro,xiaomi/mimo-v2.5-pro" \
-MODEL_CERT_EXTERNAL_TESTER_DIR="../openai-compatible-tester" \
-MODELS_CONFIG="configs/models.yaml" \
-SUITE_CONFIG="configs/suite.yaml" \
-CAPABILITIES_CONFIG="configs/capabilities.yaml" \
-PROFILE="compat" \
-MODEL_CERT_TESTER_CMD='cd "$MODEL_CERT_EXTERNAL_TESTER_DIR" && go run . --no-tui --models "$MODELS_CONFIG" --suite "$SUITE_CONFIG" --capabilities "$CAPABILITIES_CONFIG" --profile "$PROFILE" --mode compat --out-dir "$MODEL_ARTIFACT_DIR/external-tester" --json' \
-make model-certify
+MODEL_CERT_MODELS="deepseek/deepseek-v4-pro,xiaomi/mimo-v2.5-pro" make model-certify-api
 ```
 
 Empty `MODEL_CERT_MODELS` means every model in
@@ -137,19 +161,24 @@ known to work.
 
 | Option | Purpose |
 | --- | --- |
+| `MODEL` | Makefile shortcut for one public `provider/model` alias. |
 | `MODEL_CERT_MODELS` | Selected public `provider/model` aliases. Empty means all manifest models. |
+| `MODEL_CERT_PHASE` | `full`, `dry-run`, `api`, or `codex`. Usually set by the Make targets. |
 | `MODEL_CERT_MANIFEST` | Manifest path. Default: `configs/model-certification.yaml`. |
 | `CONFIG` | Base shim config used to fill provider and Codex metadata. Default: `config.yaml`. |
 | `MODEL_CERT_OUT` | Artifact output directory. Default: `.tmp/model-certification/cert-<timestamp>`. |
 | `MODEL_CERT_RUN_ID` | Stable run id for reproducible artifact paths. |
-| `MODEL_CERT_EXTERNAL_TESTER_DIR` | External tester checkout used by `MODEL_CERT_TESTER_CMD`. |
-| `MODEL_CERT_TESTER_CMD` | Exact shell command for the external tester. |
+| `MODEL_CERT_EXTERNAL_TESTER_DIR` | External tester checkout. Default: `../openai-compatible-tester`. |
+| `MODEL_CERT_TESTER_MODELS_CONFIG` | Tester models config relative to the checkout. Default: `configs/models_llama_shim.yaml`. |
+| `MODEL_CERT_TESTER_SUITE_CONFIG` | Tester suite config relative to the checkout. Default: `configs/suite_llama_shim.yaml`. |
+| `MODEL_CERT_TESTER_CAPABILITIES_CONFIG` | Tester capabilities config relative to the checkout. Default: `configs/capabilities_llama_shim.yaml`. |
+| `MODEL_CERT_TESTER_CMD` | Optional exact shell command for unusual tester layouts. |
+| `MODEL_CERT_CODEX_PROFILES` | Comma- or space-separated Codex profiles overriding the manifest for this run. |
+| `MODEL_CERT_CODEX_RUNNER_CMD` | Override the candidate-only Codex runner command. Default: `bash ./scripts/codex-eval-runner.sh`. |
 | `MODEL_CERT_SKIP_SHIM` | Render artifacts without starting a shim. |
 | `MODEL_CERT_SKIP_TESTER` | Skip the external API compatibility gate. |
 | `MODEL_CERT_SKIP_CODEX` | Skip Codex profiles. |
 | `MODEL_CERT_REQUIRE_TESTER` | Fail the model if no tester command is configured. Default: `true`. |
-| `MODEL_CERT_CODEX_AUTO_CMD` | Override the Codex auto runner command. |
-| `MODEL_CERT_CODEX_CURATE_CMD` | Override the Codex curation command. |
 
 ## Artifact Map
 
@@ -192,8 +221,8 @@ open the model-level `failure-notes.md` and `fix-candidates.md`.
 | `shim_start_failed` | The isolated shim did not start or did not satisfy readiness. |
 | `api_compat_passed` | External tester passed, and Codex was skipped or not configured. |
 | `api_compat_failed` | External tester failed; Codex was intentionally skipped. |
-| `codex_clean` | Selected Codex profiles passed without retry-dependent classification. |
-| `codex_retry_dependent` | Codex passed, but retry dependence should stay visible. |
+| `codex_clean` | Selected Codex profiles passed without retry-dependent classification or failed shim debug traces. |
+| `codex_retry_dependent` | Codex passed, but retry dependence, internal failed traces, or curation notes should stay visible. |
 | `codex_failed` | One or more required Codex profiles failed. |
 | `needs_operator_review` | Evidence exists, but automated ownership is inconclusive. |
 
@@ -202,7 +231,7 @@ Recommended interpretation:
 - `configured`: dry-run only, not a certification result.
 - `api_compat_failed`: fix API compatibility first; do not spend time on Codex.
 - `codex_retry_dependent`: usable signal, but do not promote as a strict-clean
-  model without an explicit operator decision.
+  model until the retry reason or internal failed trace is understood.
 - `codex_clean`: good candidate for provider matrix or release-gate promotion.
 
 ## Troubleshooting
@@ -224,7 +253,8 @@ If the external tester fails:
 
 If Codex fails:
 
-- inspect `models/<model-slug>/codex/auto/summary.md`
+- inspect `models/<model-slug>/codex/summary.md`
+- inspect `models/<model-slug>/codex/profiles/<profile>/summary.json`
 - run `make codex-eval-curate` separately if you need cross-run context
 - treat raw tool markup, invalid tool args, and transport errors differently;
   those may have different owners
@@ -247,4 +277,3 @@ make clean-artifacts
 
 Do not commit `.tmp/model-certification/` artifacts. Commit only manifest,
 config, code, and docs changes.
-

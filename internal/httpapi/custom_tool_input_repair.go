@@ -20,6 +20,10 @@ func repairConstrainedCustomToolInput(descriptor customToolDescriptor, input str
 		repaired = next
 		changed = true
 	}
+	if next, ok := repairApplyPatchUnifiedDiffHunkHeaders(repaired); ok {
+		repaired = next
+		changed = true
+	}
 	if next, ok := repairApplyPatchUnprefixedContextLines(repaired); ok {
 		repaired = next
 		changed = true
@@ -98,6 +102,60 @@ func repairApplyPatchEmptyHunkHeaders(input string) (string, bool) {
 		return "", false
 	}
 	return strings.Join(lines, "\n"), true
+}
+
+func repairApplyPatchUnifiedDiffHunkHeaders(input string) (string, bool) {
+	lines := strings.Split(input, "\n")
+	changed := false
+	for index, line := range lines {
+		rewritten, ok := rewriteUnifiedDiffHunkHeader(line)
+		if !ok {
+			continue
+		}
+		lines[index] = rewritten
+		changed = true
+	}
+	if !changed {
+		return "", false
+	}
+	return strings.Join(lines, "\n"), true
+}
+
+func rewriteUnifiedDiffHunkHeader(line string) (string, bool) {
+	trimmed := strings.TrimSpace(line)
+	if !strings.HasPrefix(trimmed, "@@ ") {
+		return "", false
+	}
+	fields := strings.Fields(strings.TrimPrefix(trimmed, "@@ "))
+	if len(fields) < 3 || fields[2] != "@@" {
+		return "", false
+	}
+	if !isUnifiedDiffRange(fields[0], '-') || !isUnifiedDiffRange(fields[1], '+') {
+		return "", false
+	}
+	if len(fields) == 3 {
+		return "@@", true
+	}
+	return "@@ " + strings.Join(fields[3:], " "), true
+}
+
+func isUnifiedDiffRange(value string, prefix byte) bool {
+	if len(value) < 2 || value[0] != prefix {
+		return false
+	}
+	seenComma := false
+	for index := 1; index < len(value); index++ {
+		ch := value[index]
+		switch {
+		case ch >= '0' && ch <= '9':
+			continue
+		case ch == ',' && !seenComma && index > 1 && index < len(value)-1:
+			seenComma = true
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func repairApplyPatchUnprefixedContextLines(input string) (string, bool) {

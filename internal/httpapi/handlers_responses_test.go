@@ -1402,6 +1402,56 @@ func TestParseLocalToolLoopChatCompletionUnwrapsNestedCustomToolInput(t *testing
 	require.Equal(t, `print("hello world")`, asString(response.Output[0].Map()["input"]))
 }
 
+func TestParseLocalToolLoopChatCompletionSuppressesCodexAssistantContentWithToolCalls(t *testing.T) {
+	raw := []byte(`{
+		"choices": [{
+			"message": {
+				"content": "I'll inspect the file first.",
+				"tool_calls": [{
+					"id": "call_123",
+					"type": "function",
+					"function": {
+						"name": "__llama_shim_builtin_shell",
+						"arguments": "{\"action\":{\"commands\":[\"cat status.txt\"]}}"
+					}
+				}]
+			}
+		}]
+	}`)
+
+	response, err := parseLocalToolLoopChatCompletion(raw, "resp_test", "test-model", "", "", customToolTransportPlan{
+		SuppressAssistantContentWithToolCalls: true,
+	})
+	require.NoError(t, err)
+	require.Len(t, response.Output, 1)
+	require.Equal(t, localBuiltinShellCallType, response.Output[0].Type)
+	require.Empty(t, response.OutputText)
+}
+
+func TestParseLocalToolLoopChatCompletionKeepsAssistantContentWithToolCallsByDefault(t *testing.T) {
+	raw := []byte(`{
+		"choices": [{
+			"message": {
+				"content": "I need to inspect the file first.",
+				"tool_calls": [{
+					"id": "call_123",
+					"type": "function",
+					"function": {
+						"name": "__llama_shim_builtin_shell",
+						"arguments": "{\"action\":{\"commands\":[\"cat status.txt\"]}}"
+					}
+				}]
+			}
+		}]
+	}`)
+
+	response, err := parseLocalToolLoopChatCompletion(raw, "resp_test", "test-model", "", "", customToolTransportPlan{})
+	require.NoError(t, err)
+	require.Len(t, response.Output, 2)
+	require.Equal(t, "reasoning", response.Output[0].Type)
+	require.Equal(t, localBuiltinShellCallType, response.Output[1].Type)
+}
+
 func TestParseLocalToolLoopChatCompletionRemapsLocalBuiltinShellTool(t *testing.T) {
 	raw := []byte(`{
 		"choices": [{
@@ -1623,6 +1673,7 @@ func TestRemapCustomToolsPayloadAppendsCodexCompatibilityHint(t *testing.T) {
 	applyPatch, ok := tools[1].(map[string]any)
 	require.True(t, ok)
 	require.Contains(t, applyPatch["description"], "use this tool directly")
+	require.Contains(t, applyPatch["description"], "Do not place a whole replacement file directly")
 }
 
 func TestRemapCustomToolsPayloadDetectsCodexCompatibilityFromInput(t *testing.T) {

@@ -238,11 +238,16 @@ Additional configured candidate metadata:
 - `xiaomi/mimo-v2.5`: `context_window: 1048576`, `max_context_window: 1048576`.
 - `gpu/qwen3-coder-30b`: resolves to upstream runtime id `coder30b`, `context_window: 32768`, `max_context_window: 32768`.
 - `gpu/gemma4-e4b`: configured local GPU candidate, conservative `context_window: 32768`.
+- `gpu/omnicoder-9b`: configured local GPU candidate, conservative `context_window: 32768`; keep experimental because May 20, 2026 partial API evidence showed `previous_response_id` follow-ups failing through upstream `context canceled`.
 - `gpu/qwen3_6-35b-a3b`: configured local GPU candidate, `context_window: 262144`.
 - `gpu/glm4_7-flash`: configured local GPU candidate, conservative `context_window: 32768`.
+- `gpu/glm47-flash-opus-reasoning`: configured local GPU candidate, conservative `context_window: 32768`.
+- `gpu/qwen35-27b-opus-reasoning`: configured local GPU candidate, conservative `context_window: 32768`.
 - `gpu/qwen3-coder-next`: configured local GPU candidate, conservative `context_window: 32768`.
 - `gpu/qwen3-30b-instruct`: configured local GPU candidate, conservative `context_window: 32768`.
 - `gpu/qwen3-next-instruct`: configured local GPU candidate, conservative `context_window: 32768`.
+- `gpu/gpt-oss-20b`: configured local GPU candidate, conservative `context_window: 32768`.
+- `gpu/gpt-oss-120b`: configured local GPU candidate, conservative `context_window: 32768`.
 
 The MiMo value follows the
 [Hugging Face model card](https://huggingface.co/XiaomiMiMo/MiMo-V2.5-Pro)'s
@@ -1009,3 +1014,6 @@ If `previous_response_id` fails:
   WebSocket connection
 - treat `previous_response_not_found` as a signal to start a new chain or resend
   the required context
+- if the failure is `502 transport_error` with upstream `context canceled`, treat
+  it as provider/model continuation instability rather than a missing local
+  stored response until the shim log proves a storage lookup failure

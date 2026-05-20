@@ -1,6 +1,6 @@
 # Work Queue
 
-Last updated: May 18, 2026.
+Last updated: May 20, 2026.
 
 Status: operator-maintained queue for choosing the next practical work item.
 This is not a compatibility matrix and not an OpenAI API parity claim. Detailed
@@ -19,10 +19,11 @@ scope/runbook document instead of expanding this queue.
 
 ## Current Recommendation
 
-The best next implementation slice is to exercise and harden V4 model
-certification automation against real candidate models. The first runner now
-exists; the next value is using it to replace the manual model loop and then
-tightening only the gaps exposed by evidence.
+The best next implementation slice is to exercise V4 model certification
+automation against real candidate models. The runner now has short API/Codex
+phase targets, isolated per-model shim startup, default tester checkout
+configuration, and candidate-only Codex profiles; the next value is using it
+to replace the manual model loop and tightening only evidence-backed gaps.
 
 Recommended order:
 
@@ -41,6 +42,14 @@ implemented to run the external tester gate and Codex profiles consistently.
 
 Recently completed:
 
+- V4 model certification runner: `.env`-aware short API/Codex phases,
+  isolated per-model shim startup, candidate-only Codex eval profiles,
+  generated tester model configs, model-owned diagnostics for constrained
+  `apply_patch` failures, stronger `apply_patch` format hints, and
+  unified-diff hunk header repair for Codex tool-loop compatibility.
+- V4 Chat-first coding-agent smoke: `/v1/chat/completions` streaming and
+  function-tool workflow coverage for OpenCode/Aider-style local coding
+  agents. See [V4 Chat Agent Smoke](v4-chat-agent-smoke.md).
 - V4 OpenTelemetry foundation: optional metadata-only OTLP trace export via
   `shim.telemetry.*`, with Phoenix as the recommended first local pilot backend.
   The guide includes local Phoenix and Laminar backend startup paths. See
@@ -50,7 +59,8 @@ Recently completed:
 
 | Item | Status | Why it matters | Next slice | Validation |
 | --- | --- | --- | --- | --- |
-| V4 model certification runner | Implemented first slice | Model testing was too manual: endpoints, tokens, shim restarts, external tester reports, Codex profiles, and log interpretation were spread across separate commands. | Use [V4 Model Certification Runner](v4-model-certification-runner.md) on one real candidate, then harden only evidence-backed gaps in tester parsing, trace summaries, or retry policy. | `make model-certify` single-model run, focused runner tests, `go test ./...`, `make lint` |
+| V4 model certification runner | Implemented; first real candidate evidence captured | Model testing was too manual: endpoints, tokens, shim restarts, external tester reports, Codex profiles, and log interpretation were spread across separate commands. | Run [V4 Model Certification Runner](v4-model-certification-runner.md) on a small batch; harden only evidence-backed gaps in tester parsing, trace summaries, prompt repair, or retry policy. | `make model-certify-api`, `make model-certify-codex`, focused runner tests, `go test ./...`, `make lint` |
+| Chat-first coding-agent smoke | Implemented first slice | Most non-Codex coding agents use OpenAI-compatible Chat Completions, so Codex-only evidence misses practical Aider/OpenCode/Qwen Code/Cline-style workflows. | Use [V4 Chat Agent Smoke](v4-chat-agent-smoke.md) for manual candidate checks. Future slice: wire selected scenarios into model certification curation if repeated manual runs prove useful. | `make v4-chat-agent-smoke`, `bash -n scripts/v4-chat-agent-smoke.sh`, `make lint` |
 | V4 local access boundaries | Not started | The shim now has useful operator surfaces: `/debug/capabilities`, `/debug/traces`, `/debug/evidence`, and `/ui/`. Even for local use, these need a clear access model before more control-plane features grow. | Add a focused design/update for static bearer/local-only policy, then implement route grouping, config, tests, and guide updates. | `go test ./internal/httpapi ./internal/config`, `make v4-preflight-smoke`, `make lint` |
 | Provider/model candidate expansion | Blocked on runner | The existing matrix is useful, but candidate rows are noisy to evaluate by hand. | Use the certification manifest as the candidate queue, then promote models only after external tester and Codex evidence exist. | `make model-certify`, then existing provider ops reports |
 | Documentation and script inventory | Baseline implemented | There are many scripts and scope docs. Operators need a small map so new work does not require rediscovering the repo every time. | Keep this queue plus [Script Inventory](script-inventory.md) current. Consolidate script docs only after repeated confusion. | `git diff --check`; docs-only review |
@@ -83,8 +93,12 @@ Recently completed:
 | --- | --- | --- | --- |
 | `deepseek/deepseek-v4-flash` | Candidate | Verify the live provider catalog and add a configured alias only if the upstream accepts it. | Promote only after provider matrix smoke and at least one curated Codex auto run. |
 | `xiaomi/mimo-v2.5` | Candidate | Verify whether the Xiaomi endpoint exposes this exact model id and whether it has the same request-shape needs as `mimo-v2.5-pro`. | Promote only if it adds value over the existing MiMo Pro row. |
-| `gpu/qwen3-coder-30b` | Configured candidate | Local GPU alias resolves to upstream runtime id `coder30b`; Codex metadata uses a 32768-token context window. | Promote only after provider-routing/preflight smoke and a small Codex eval profile prove tool-call discipline. |
-| local GPU batch (`gemma4-e4b`, `qwen3_6-35b-a3b`, `glm4_7-flash`, `qwen3-coder-next`, `qwen3-30b-instruct`, `qwen3-next-instruct`) | Configured candidates | Aliases are configured under the `gpu` provider with conservative Codex metadata unless a prior tested model already established a larger context. | First check live `/v1/models`, then run provider-routing/preflight for each served alias before any Codex eval promotion. |
+| `gpu/qwen3-coder-30b` | Configured candidate; usable with supervision, not strict-clean | Local GPU alias resolves to upstream runtime id `coder30b`; Codex metadata uses a 32768-token context window; `coder30b` has a Chat compatibility rule that downgrades JSON Schema to JSON mode plus schema instruction for llama.cpp sampler compatibility. Baseline certification passes after Codex-compat fixes. Bench-lite evidence `cert-20260519T162448Z` is 19/20: `command_recovery` stays fixed, raw tool markup is classified as `502 malformed_backend_response` instead of hidden `500`, but `patch_after_context` repeatedly misses the required edit. | Keep as a fast local coding assistant for supervised work. Do not promote as an unattended release gate unless a future bench-lite run is clean or an operator explicitly accepts the repeated `patch_after_context` miss. |
+| `gpu/qwen3-coder30b-q5km` | Configured candidate; best current local Codex evidence, retry-dependent | Local GPU alias resolves to upstream runtime id `coder30b-q5km`; Codex metadata uses a 32768-token context window. Certification run `cert-20260519T220117Z` passed all focused Codex profiles: baseline 11/11, expanded 18/18, bench-lite 20/20, for 49/49 final tasks. The run recovered 6 failed attempts and exposed raw-markup, malformed-backend, transport, and timeout signals. | Prefer over `gpu/qwen3-coder-30b` for supervised local Codex work. Do not promote as strict-clean or unattended release gate until retry rate and malformed-response noise are lower. |
+| `gpu/gemma4-e4b` | Configured chat/API candidate; Codex promotion blocked | API certification `cert-20260520T071938Z` passed all external tester rows. Codex baseline `cert-20260520T072422Z` failed 10/11 because the model printed a valid apply-patch body as final text instead of calling the edit tool. Shim logs also showed llama.cpp/Gemma parser errors on Codex tool transcript markers such as `<|tool_call>...`. | Keep as a local chat/API model. Do not promote for Codex unless a future Gemma-specific transcript cleanup/stringify strategy is implemented and a fresh baseline passes. |
+| `gpu/omnicoder-9b` | Configured experimental; Codex blocked | Partial external tester evidence `llama_shim_omnicoder_9b_20260520_142219` showed core Responses paths working, but `previous_response_id` follow-ups returned `502 transport_error` after upstream `context canceled`. The same shim log shows `store=true` and conversations working, so this is not a broad storage/conversation regression. | Do not spend broader Codex time on this 9B model unless a focused API certification later shows stable `previous_response_id`. Keep it available for targeted continuation diagnostics only. |
+| `gpu/glm47-flash-opus-reasoning` | Configured API/chat diagnostic; Codex blocked | API certification `cert-20260520T115344Z` was 27/28 with only native `chat.stream` returning `H` instead of `HELLO`. Codex baseline `cert-20260520T120358Z` failed 8/11: `basic_patch` checker diff plus malformed constrained `apply_patch` responses on `bugfix_go` and `bugfix_mixed`. | Keep for reasoning-content/API diagnostics. Do not promote as Codex gate unless a future baseline proves stable patch/tool-loop behavior. |
+| local GPU batch (`qwen3_6-35b-a3b`, `glm4_7-flash`, `qwen35-27b-opus-reasoning`, `qwen3-coder-next`, `qwen3-30b-instruct`, `qwen3-next-instruct`, `gpt-oss-20b`, `gpt-oss-120b`) | Configured candidates; GPT-OSS Codex promotion blocked | Aliases are configured under the `gpu` provider with conservative Codex metadata unless a prior tested model already established a larger context. GPT-OSS candidates start at 32768 tokens and use Chat upstream compatibility cleanup for `developer` role and default thinking. Evidence on May 19, 2026: `gpt-oss-20b` is API/Responses usable but fails Codex baseline 6/11 and has native Chat stream issues; `gpt-oss-120b` is API/Chat/Responses ready but fails Codex baseline 7/11. `qwen35-27b-opus-reasoning` is newly configured and still evidence-pending. | Keep GPT-OSS as API/assistant candidates, not unattended Codex gates. Next useful local Codex checks should prioritize stronger coder-specific models such as `gpu/qwen3-coder-30b` variants or `gpu/qwen3-30b-instruct`. |
 | local Gemma-family model | Candidate | Choose the served model id from the local runtime, such as Ollama or LM Studio, then add a local provider alias. | Start with provider-routing/preflight only. Run Codex eval only after basic tool-call discipline is proven. |
 
 Do not promote candidate model names from memory. Check the live upstream model

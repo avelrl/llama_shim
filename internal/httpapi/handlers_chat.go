@@ -1064,6 +1064,9 @@ func proxyChatCompletionStream(w http.ResponseWriter, body io.Reader, capture *c
 			if sanitizeErr != nil {
 				return sanitizeErr
 			}
+			if sanitized == "" {
+				continue
+			}
 			if capture != nil {
 				capture.CaptureLine(sanitized)
 			}
@@ -1099,12 +1102,79 @@ func sanitizeChatCompletionSSELineWithProfile(line string, profile chatCompletio
 	if err != nil {
 		return line, nil
 	}
+	if shouldSuppressChatCompletionSSEPayload(body) {
+		return "", nil
+	}
 
 	newline := "\n"
 	if strings.HasSuffix(line, "\r\n") {
 		newline = "\r\n"
 	}
 	return "data: " + string(body) + newline, nil
+}
+
+func shouldSuppressChatCompletionSSEPayload(body []byte) bool {
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return false
+	}
+
+	if usage, ok := payload["usage"]; ok && usage != nil {
+		return false
+	}
+
+	rawChoices, ok := payload["choices"]
+	if !ok {
+		return false
+	}
+	choices, ok := rawChoices.([]any)
+	if !ok || len(choices) == 0 {
+		return false
+	}
+
+	for _, rawChoice := range choices {
+		choice, ok := rawChoice.(map[string]any)
+		if !ok {
+			return false
+		}
+		if finishReason, ok := choice["finish_reason"]; ok && finishReason != nil {
+			return false
+		}
+		if hasUsefulChatCompletionDelta(choice["delta"]) {
+			return false
+		}
+		if _, ok := choice["message"]; ok {
+			return false
+		}
+	}
+
+	return true
+}
+
+func hasUsefulChatCompletionDelta(raw any) bool {
+	delta, ok := raw.(map[string]any)
+	if !ok {
+		return false
+	}
+	if text, ok := delta["content"].(string); ok && text != "" {
+		return true
+	}
+	if text, ok := delta["refusal"].(string); ok && text != "" {
+		return true
+	}
+	if role, ok := delta["role"].(string); ok && role != "" {
+		return true
+	}
+	if values, ok := delta["tool_calls"].([]any); ok && len(values) > 0 {
+		return true
+	}
+	if _, ok := delta["function_call"]; ok {
+		return true
+	}
+	if _, ok := delta["audio"]; ok {
+		return true
+	}
+	return false
 }
 
 func appendJSONPath(path []string, segment string) []string {

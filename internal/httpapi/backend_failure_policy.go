@@ -50,12 +50,15 @@ func classifyBackendFailure(err error) (backendFailureDecision, bool) {
 	var timeoutErr *llama.TimeoutError
 	var upstreamErr *llama.UpstreamError
 	var invalidResponseErr *llama.InvalidResponseError
+	var rawMarkupErr *rawToolCallMarkupError
 	var netErr net.Error
 	switch {
 	case errors.As(err, &timeoutErr), errors.Is(err, service.ErrUpstreamTimeout), errors.Is(err, context.DeadlineExceeded), errors.As(err, &netErr) && netErr.Timeout():
 		return backendFailureDecisionFor(backendFailureTransportTimeout), true
 	case errors.As(err, &upstreamErr):
 		return backendFailureDecisionFor(classifyBackendHTTPFailure(upstreamErr.StatusCode, upstreamErr.Message)), true
+	case errors.As(err, &rawMarkupErr):
+		return backendFailureDecisionFor(backendFailureMalformedBackendResponse), true
 	case errors.As(err, &invalidResponseErr):
 		return backendFailureDecisionFor(classifyInvalidBackendResponse(invalidResponseErr.Message)), true
 	case errors.Is(err, service.ErrUpstreamFailure):
@@ -68,6 +71,8 @@ func classifyBackendFailure(err error) (backendFailureDecision, bool) {
 		return backendFailureDecisionFor(backendFailureStreamIdleTimeout), true
 	case strings.Contains(message, "local runtime") && strings.Contains(message, "not ready"):
 		return backendFailureDecisionFor(backendFailureLocalRuntimeUnavailable), true
+	case strings.Contains(message, "raw tool-call markup"):
+		return backendFailureDecisionFor(backendFailureMalformedBackendResponse), true
 	case strings.Contains(message, "unsupported") && (strings.Contains(message, "tool") || strings.Contains(message, "parameter") || strings.Contains(message, "param")):
 		return backendFailureDecisionFor(backendFailureUnsupportedToolOrParam), true
 	case strings.Contains(message, "call llama:"):

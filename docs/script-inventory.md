@@ -1,6 +1,6 @@
 # Script Inventory
 
-Last updated: May 10, 2026.
+Last updated: May 20, 2026.
 
 Status: short operator map for the current command surface. The `Makefile`
 remains the stable entrypoint; scripts own implementation details and artifact
@@ -39,11 +39,16 @@ the make target intentionally does not expose.
 | --- | --- | --- |
 | `make upstream-provider-routing-smoke` | Live check for one public `provider/model` alias. | `.tmp/upstream-provider-routing-smoke/` |
 | `make v4-preflight-smoke` | Aggregate V4 capability, trace, plugin, and optional provider-routing gate. | `.tmp/v4-preflight-smoke/` |
+| `make v4-chat-agent-smoke` | Chat Completions coding-agent workflow smoke with local function tools. See [V4 Chat Agent Smoke](v4-chat-agent-smoke.md). | `.tmp/v4-chat-agent-smoke/` |
 | `make v4-provider-config-doctor` | Static provider config, env, matrix, and Codex metadata checks. | `.tmp/v4-provider-config-doctor/` |
 | `make v4-provider-matrix-smoke` | Run provider-routing and V4 preflight over configured matrix aliases. | `.tmp/v4-provider-matrix-smoke/` |
 | `make v4-provider-matrix-curate` | Summarize provider-matrix smoke artifacts. | `.tmp/v4-provider-matrix-curation/` |
 | `make v4-provider-ops-report` | Final read-only provider/model ops verdict. | `.tmp/v4-provider-ops/` |
 | `make model-certify` | Heavy candidate-model certification runner: isolated shim, external tester gate, Codex profiles, diagnostics, and fix candidates. See [Model Certification Runner](guides/model-certification.md). | `.tmp/model-certification/` |
+| `make model-certify-dry-run` | Render one-model certification config/artifacts without starting shim, tester, or Codex. | `.tmp/model-certification/` |
+| `make model-certify-api` | Run isolated shim plus external tester gate, skipping Codex. | `.tmp/model-certification/` |
+| `make model-certify-api-extended` | Run the optional Responses extended tester gate, skipping Codex. | `.tmp/model-certification/` |
+| `make model-certify-codex` | Run isolated shim plus Codex profiles, skipping the external tester gate. | `.tmp/model-certification/` |
 | `make codex-config` | Generate Codex config for the current shim/provider/model settings. | stdout |
 | `make codex-config-doctor` | Diagnose Codex config, local Codex binary, shim health, and one Responses smoke. | `.tmp/shimctl-codex/` |
 

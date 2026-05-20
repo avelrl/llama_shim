@@ -6,6 +6,7 @@
 models:
   - model: deepseek/deepseek-v4-pro
     tester:
+      profile: llama-shim-deepseek-4-pro
       mode: compat
       gate: compat
     codex:
@@ -16,6 +17,7 @@ models:
 
   - model: xiaomi/mimo-v2.5-pro
     tester:
+      profile: llama-shim-mimo-v2.5-pro
       mode: compat
       gate: compat
     codex:
@@ -26,6 +28,7 @@ models:
 
   - model: svgun/kimi-k2.6
     tester:
+      profile: llama-shim-kimi-k2.6
       mode: compat
       gate: compat
     codex:
@@ -36,6 +39,7 @@ models:
 
   - model: svgun/qwen-3.6
     tester:
+      profile: llama-shim-qwen-3.6-35B
       mode: compat
       gate: compat
     codex:
@@ -46,6 +50,29 @@ models:
 
   - model: gpu/qwen3-coder-30b
     tester:
+      profile: llama-shim-coder30b
+      mode: compat
+      gate: compat
+    codex:
+      profiles: [baseline, bench-lite]
+      attempts: 2
+      context_window: 32768
+      apply_patch_tool_type: freeform
+
+  - model: gpu/qwen3-coder30b-q5km
+    tester:
+      profile: llama-shim-coder30b-q5km
+      mode: compat
+      gate: compat
+    codex:
+      profiles: [baseline, bench-lite]
+      attempts: 2
+      context_window: 32768
+      apply_patch_tool_type: freeform
+
+  - model: gpu/gemma4-e4b
+    tester:
+      profile: llama-shim-gemma4-e4b
       mode: compat
       gate: compat
     codex:
@@ -54,7 +81,7 @@ models:
       context_window: 32768
       apply_patch_tool_type: freeform
 
-  - model: gpu/gemma4-e4b
+  - model: gpu/omnicoder-9b
     tester:
       mode: compat
       gate: compat
@@ -66,6 +93,7 @@ models:
 
   - model: gpu/qwen3_6-35b-a3b
     tester:
+      profile: llama-shim-qwen36-a3b
       mode: compat
       gate: compat
     codex:
@@ -75,6 +103,26 @@ models:
       apply_patch_tool_type: freeform
 
   - model: gpu/glm4_7-flash
+    tester:
+      mode: compat
+      gate: compat
+    codex:
+      profiles: [baseline]
+      attempts: 2
+      context_window: 32768
+      apply_patch_tool_type: freeform
+
+  - model: gpu/glm47-flash-opus-reasoning
+    tester:
+      mode: compat
+      gate: compat
+    codex:
+      profiles: [baseline]
+      attempts: 2
+      context_window: 32768
+      apply_patch_tool_type: freeform
+
+  - model: gpu/qwen35-27b-opus-reasoning
     tester:
       mode: compat
       gate: compat
@@ -105,6 +153,26 @@ models:
       apply_patch_tool_type: freeform
 
   - model: gpu/qwen3-next-instruct
+    tester:
+      mode: compat
+      gate: compat
+    codex:
+      profiles: [baseline]
+      attempts: 2
+      context_window: 32768
+      apply_patch_tool_type: freeform
+
+  - model: gpu/gpt-oss-20b
+    tester:
+      mode: compat
+      gate: compat
+    codex:
+      profiles: [baseline]
+      attempts: 2
+      context_window: 32768
+      apply_patch_tool_type: freeform
+
+  - model: gpu/gpt-oss-120b
     tester:
       mode: compat
       gate: compat

@@ -61,6 +61,19 @@ func TestParseLocalConstrainedCustomToolRuntimeOutputRepairsApplyPatchUnprefixed
 	require.NoError(t, descriptor.Constraint.Validate(input))
 }
 
+func TestParseLocalConstrainedCustomToolRuntimeOutputRepairsApplyPatchUnifiedDiffHunkHeaders(t *testing.T) {
+	t.Parallel()
+
+	descriptor := customToolDescriptor{Name: "apply_patch", Constraint: mustApplyPatchCustomToolConstraint(t)}
+	input, err := parseLocalConstrainedCustomToolRuntimeOutput(
+		"```json\n{\"input\":\"*** Begin Patch\\n*** Update File: mathutil.go\\n@@ -1,5 +1,5 @@\\n package codexsmoke\\n\\n func Add(a, b int) int {\\n-\\treturn a - b\\n+\\treturn a + b\\n }\\n*** End Patch\"}\n```",
+		descriptor,
+	)
+	require.NoError(t, err)
+	require.Equal(t, "*** Begin Patch\n*** Update File: mathutil.go\n@@\n package codexsmoke\n \n func Add(a, b int) int {\n-\treturn a - b\n+\treturn a + b\n }\n*** End Patch", input)
+	require.NoError(t, descriptor.Constraint.Validate(input))
+}
+
 func TestLocalConstrainedCustomToolRuntimeShapesJSONSchemaHintAndValidates(t *testing.T) {
 	t.Parallel()
 
@@ -91,6 +104,30 @@ func TestLocalConstrainedCustomToolRuntimeShapesJSONSchemaHintAndValidates(t *te
 	inputProperty := properties["input"].(map[string]any)
 	require.Equal(t, constraint.Anchored, inputProperty["pattern"])
 	require.Equal(t, schema, captured["json_schema"])
+}
+
+func TestLocalConstrainedCustomToolRuntimeAddsApplyPatchFormatHint(t *testing.T) {
+	t.Parallel()
+
+	descriptor := customToolDescriptor{Name: "apply_patch", Constraint: mustApplyPatchCustomToolConstraint(t)}
+	var captured map[string]any
+	runtime := localConstrainedCustomToolRuntime{
+		createChatCompletionText: func(_ context.Context, body []byte) (string, error) {
+			require.NoError(t, json.Unmarshal(body, &captured))
+			return `{"input":"*** Begin Patch\n*** Update File: mathutil.go\n@@\n-\treturn a - b\n+\treturn a + b\n*** End Patch"}`, nil
+		},
+	}
+
+	input, err := runtime.Generate(context.Background(), localConstrainedCustomToolRuntimeRequest{
+		Model:      "test-model",
+		Descriptor: descriptor,
+	})
+
+	require.NoError(t, err)
+	require.Contains(t, input, "return a + b")
+	messagesRaw, err := json.Marshal(captured["messages"])
+	require.NoError(t, err)
+	require.Contains(t, string(messagesRaw), "Do not place a whole replacement file directly")
 }
 
 func TestVLLMRegexConstrainedCustomToolRuntimeShapesStructuredOutputsAndValidates(t *testing.T) {

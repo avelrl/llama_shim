@@ -27,6 +27,7 @@ func TestRenderShimConfigContainsOneProviderModelAndDiagnostics(t *testing.T) {
 	base := config.Config{
 		ChatCompletionsUpstreamCompatibility: []config.ChatCompletionsUpstreamCompatibilityRule{
 			{Model: "Qwen*", JSONSchemaMode: "json_object_instruction"},
+			{Model: "coder30b", DefaultThinking: "passthrough", JSONSchemaMode: "json_object_instruction"},
 		},
 		ResponsesCodexUpstreamInputCompatibility: []config.ResponsesCodexUpstreamInputCompatibilityRule{
 			{Model: "Kimi-*", Mode: "stringify"},
@@ -50,6 +51,8 @@ func TestRenderShimConfigContainsOneProviderModelAndDiagnostics(t *testing.T) {
 		"model: qwen3-coder-30b",
 		"upstream_model: coder30b",
 		"model: gpu/qwen3-coder-30b",
+		"model: coder30b",
+		"default_thinking: passthrough",
 		"json_schema_mode: json_object_instruction",
 	} {
 		if !strings.Contains(text, want) {
@@ -64,9 +67,16 @@ func TestRenderShimConfigContainsOneProviderModelAndDiagnostics(t *testing.T) {
 	if err := os.WriteFile(path, raw, 0o644); err != nil {
 		t.Fatal(err)
 	}
+	t.Setenv("SHIM_DOTENV", filepath.Join(t.TempDir(), "missing.env"))
 	loaded, err := config.Load(path)
 	if err != nil {
 		t.Fatalf("rendered config must load through config.Load: %v", err)
+	}
+	if loaded.Addr != "127.0.0.1:18123" {
+		t.Fatalf("expected generated shim addr, got %q", loaded.Addr)
+	}
+	if !strings.Contains(loaded.SQLitePath, "shim.db") || !strings.Contains(loaded.LogFilePath, "shim.log") {
+		t.Fatalf("expected generated sqlite/log paths, got sqlite=%q log=%q", loaded.SQLitePath, loaded.LogFilePath)
 	}
 	if len(loaded.LlamaProviders) != 1 || len(loaded.LlamaProviders[0].Models) != 1 {
 		t.Fatalf("expected isolated provider/model config, got %#v", loaded.LlamaProviders)

@@ -183,3 +183,13 @@ func defaultString(value string, fallback string) string {
 	}
 	return value
 }
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}

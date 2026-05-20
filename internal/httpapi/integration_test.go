@@ -8689,7 +8689,7 @@ func TestResponsesStreamKeepsExecCommandUntouchedWhenCodexCompatibilityEnabled(t
 	require.NotContains(t, asStringAny(item["arguments"]), `"yield_time_ms":30000`)
 }
 
-func TestResponsesStreamKeepsCompletedPlanLoopAndDoesNotSynthesizeSummary(t *testing.T) {
+func TestResponsesStreamSuppressesCodexAssistantContentWhenToolCallsArePresent(t *testing.T) {
 	app := testutil.NewTestAppWithCodexSettings(t, "", true)
 
 	reqBody, err := json.Marshal(map[string]any{
@@ -8752,9 +8752,8 @@ func TestResponsesStreamKeepsCompletedPlanLoopAndDoesNotSynthesizeSummary(t *tes
 
 	got := getResponse(t, app, responseID)
 	require.Empty(t, got.OutputText)
-	require.Len(t, got.Output, 2)
-	require.Equal(t, "reasoning", got.Output[0].Type)
-	require.Equal(t, "function_call", got.Output[1].Type)
+	require.Len(t, got.Output, 1)
+	require.Equal(t, "function_call", got.Output[0].Type)
 }
 
 func TestResponsesCustomToolFollowUpWithPreviousResponseID(t *testing.T) {
