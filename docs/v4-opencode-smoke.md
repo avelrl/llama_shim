@@ -258,3 +258,13 @@ Implementation entrypoints:
 
 - `make v4-opencode-smoke`
 - `scripts/v4-opencode-smoke.sh`
+
+## Current Evidence
+
+Operator runs on May 20, 2026:
+
+| Model | Artifact | Result | Notes |
+| --- | --- | --- | --- |
+| `gpu/qwen3-coder30b-q5km` | `.tmp/v4-opencode-smoke/gpu-qwen3-coder30b-q5km_20260520T145203Z` | Passed | First real-client proof: OpenCode edited `calc.go` and local `go test ./...` passed. |
+| `gpu/qwen3-coder30b-q5km` | `.tmp/v4-opencode-smoke/gpu-qwen3-coder30b-q5km_20260520T180029Z` | Passed | Post V4 Chat Compatibility Layer run; real OpenCode client still completed the Go bugfix workflow. |
+| `gpu/qwen3-30b-instruct` | `.tmp/v4-opencode-smoke/gpu-qwen3-30b-instruct_20260520T192306Z` | Passed | Real OpenCode client completed the Go bugfix workflow; pairs with earlier Chat-agent smoke for this model. |

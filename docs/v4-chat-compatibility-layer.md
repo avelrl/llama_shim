@@ -182,9 +182,25 @@ Each implemented repair should point at at least one of:
 - model certification artifact
 - external OpenAI-compatible tester report
 
-The first known real-client proof is:
+Current known Chat Compatibility Layer evidence for `gpu/qwen3-coder30b-q5km`:
 
 - `.tmp/v4-opencode-smoke/gpu-qwen3-coder30b-q5km_20260520T145203Z`
+- `.tmp/v4-chat-agent-smoke/gpu-qwen3-coder30b-q5km_20260520T175840Z`
+- `.tmp/v4-opencode-smoke/gpu-qwen3-coder30b-q5km_20260520T180029Z`
+- `.tmp/model-certification/cert-20260520T180503Z`
 
-It shows OpenCode receiving real Chat tools through the shim, editing
-`calc.go`, and passing `go test ./...` after stream pseudo-tool normalization.
+The Chat-agent and OpenCode runs show streamed Chat tools through the shim,
+file edits, and `go test ./...` completion. The certification run is not a
+Chat-layer failure: `model-certify-api` stopped at the external tester because
+`chat.basic` expected exact `OK` and the model answered `pong` to a `ping`
+user message. Invalid-shape negative checks returned expected `400`
+validation errors (`input` and `messages` shape). Treat this as model exactness
+limitation, not a shim transport or V4 Chat Compatibility regression.
+
+`gpu/qwen3-30b-instruct` also has Chat-first evidence:
+
+- `.tmp/v4-chat-agent-smoke/gpu-qwen3-30b-instruct_20260520T134315Z`
+- `.tmp/v4-opencode-smoke/gpu-qwen3-30b-instruct_20260520T192306Z`
+
+This makes it a useful second local Chat-first candidate, separate from Codex
+promotion decisions.

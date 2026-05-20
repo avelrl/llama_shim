@@ -95,6 +95,7 @@ Operator runs on May 20, 2026:
 | Model | Artifact | Result | Notes |
 | --- | --- | --- | --- |
 | `gpu/qwen3-coder30b-q5km` | `.tmp/v4-chat-agent-smoke/gpu-qwen3-coder30b-q5km_20260520T134047Z` | Passed | Covered stream text, file read, single-file edit, Go bugfix with real `go test ./...`, and multi-file edit. |
+| `gpu/qwen3-coder30b-q5km` | `.tmp/v4-chat-agent-smoke/gpu-qwen3-coder30b-q5km_20260520T175840Z` | Passed | Post V4 Chat Compatibility Layer run; full scenario set passed after trace/structured-output/provider-form hardening. |
 | `gpu/qwen3-30b-instruct` | `.tmp/v4-chat-agent-smoke/gpu-qwen3-30b-instruct_20260520T134315Z` | Passed | Same full scenario set passed. |
 
 The first Qwen Coder run exposed raw pseudo-tool markup in Chat assistant
