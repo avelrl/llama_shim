@@ -218,9 +218,12 @@ edit.
 
 - `.tmp/v4-chat-agent-smoke/gpu-qwen3-coder-next_20260520T210116Z`
 - `.tmp/v4-opencode-smoke/gpu-qwen3-coder-next_20260520T210229Z`
+- `.tmp/model-certification/cert-20260520T221144Z`
 
-This makes it a promising Chat/OpenCode candidate; keep Codex promotion
-separate until model certification evidence exists.
+The certification artifact is an API compatibility pass with Codex skipped.
+Its generated fix-candidate is from expected negative validation checks
+(`input` and `messages` shape `400`s), not a failed compatibility gate. Keep
+Codex promotion separate until Codex certification evidence exists.
 
 `gpu/qwen3-next-instruct` has mixed Chat-first evidence:
 
