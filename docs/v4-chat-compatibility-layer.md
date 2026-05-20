@@ -214,6 +214,22 @@ This supports supervised Chat/OpenCode usage. It does not override the Codex
 bench-lite finding where `patch_after_context` repeatedly missed the required
 edit.
 
+`gpu/qwen3-coder-next` has Chat-first evidence:
+
+- `.tmp/v4-chat-agent-smoke/gpu-qwen3-coder-next_20260520T210116Z`
+- `.tmp/v4-opencode-smoke/gpu-qwen3-coder-next_20260520T210229Z`
+
+This makes it a promising Chat/OpenCode candidate; keep Codex promotion
+separate until model certification evidence exists.
+
+`gpu/qwen3-next-instruct` has mixed Chat-first evidence:
+
+- `.tmp/v4-chat-agent-smoke/gpu-qwen3-next-instruct_20260520T213404Z`
+- `.tmp/v4-opencode-smoke/gpu-qwen3-next-instruct_20260520T213441Z`
+
+The shim-owned Chat-agent smoke passed, but the real OpenCode smoke did not
+patch `calc.go`. Treat it as Chat-agent capable but not yet real-client green.
+
 `gpu/glm47-flash-opus-reasoning` has Chat-first evidence despite blocked Codex
 promotion:
 

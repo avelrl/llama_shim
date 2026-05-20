@@ -243,7 +243,7 @@ Additional configured candidate metadata:
 - `gpu/glm4_7-flash`: configured local GPU candidate, conservative `context_window: 32768`.
 - `gpu/glm47-flash-opus-reasoning`: configured local GPU candidate, conservative `context_window: 32768`.
 - `gpu/qwen35-27b-opus-reasoning`: configured local GPU candidate, conservative `context_window: 32768`.
-- `gpu/qwen3-coder-next`: configured local GPU candidate, conservative `context_window: 32768`.
+- `gpu/qwen3-coder-next`: configured local GPU candidate for the runtime id `qwen3-coder-next`, conservative `context_window: 32768`.
 - `gpu/qwen3-30b-instruct`: configured local GPU candidate, conservative `context_window: 32768`.
 - `gpu/qwen3-next-instruct`: configured local GPU candidate, conservative `context_window: 32768`.
 - `gpu/gpt-oss-20b`: configured local GPU candidate, conservative `context_window: 32768`.

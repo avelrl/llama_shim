@@ -268,5 +268,7 @@ Operator runs on May 20, 2026:
 | `gpu/qwen3-coder30b-q5km` | `.tmp/v4-opencode-smoke/gpu-qwen3-coder30b-q5km_20260520T145203Z` | Passed | First real-client proof: OpenCode edited `calc.go` and local `go test ./...` passed. |
 | `gpu/qwen3-coder30b-q5km` | `.tmp/v4-opencode-smoke/gpu-qwen3-coder30b-q5km_20260520T180029Z` | Passed | Post V4 Chat Compatibility Layer run; real OpenCode client still completed the Go bugfix workflow. |
 | `gpu/qwen3-coder-30b` | `.tmp/v4-opencode-smoke/gpu-qwen3-coder-30b_20260520T194141Z` | Passed | Real OpenCode client completed the Go bugfix workflow; useful for supervised Chat-first local coding even though Codex bench-lite is not clean. |
+| `gpu/qwen3-coder-next` | `.tmp/v4-opencode-smoke/gpu-qwen3-coder-next_20260520T210229Z` | Passed | Real OpenCode client completed the Go bugfix workflow; Codex certification evidence is still pending. |
 | `gpu/glm47-flash-opus-reasoning` | `.tmp/v4-opencode-smoke/gpu-glm47-flash-opus-reasoning_20260520T194446Z` | Passed | Real OpenCode client completed the Go bugfix workflow; keep as Chat/OpenCode evidence, not Codex promotion. |
 | `gpu/qwen3-30b-instruct` | `.tmp/v4-opencode-smoke/gpu-qwen3-30b-instruct_20260520T192306Z` | Passed | Real OpenCode client completed the Go bugfix workflow; pairs with earlier Chat-agent smoke for this model. |
+| `gpu/qwen3-next-instruct` | `.tmp/v4-opencode-smoke/gpu-qwen3-next-instruct_20260520T213441Z` | Failed | Real OpenCode client did not patch `calc.go`; keep as client-level failure evidence. |

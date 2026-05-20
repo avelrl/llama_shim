@@ -97,8 +97,10 @@ Operator runs on May 20, 2026:
 | `gpu/qwen3-coder30b-q5km` | `.tmp/v4-chat-agent-smoke/gpu-qwen3-coder30b-q5km_20260520T134047Z` | Passed | Covered stream text, file read, single-file edit, Go bugfix with real `go test ./...`, and multi-file edit. |
 | `gpu/qwen3-coder30b-q5km` | `.tmp/v4-chat-agent-smoke/gpu-qwen3-coder30b-q5km_20260520T175840Z` | Passed | Post V4 Chat Compatibility Layer run; full scenario set passed after trace/structured-output/provider-form hardening. |
 | `gpu/qwen3-coder-30b` | `.tmp/v4-chat-agent-smoke/gpu-qwen3-coder-30b_20260520T194113Z` | Passed | Full Chat-agent scenario set passed; keep separate from its retry-dependent Codex certification status. |
+| `gpu/qwen3-coder-next` | `.tmp/v4-chat-agent-smoke/gpu-qwen3-coder-next_20260520T210116Z` | Passed | Full Chat-agent scenario set passed; Codex certification evidence is still pending. |
 | `gpu/glm47-flash-opus-reasoning` | `.tmp/v4-chat-agent-smoke/gpu-glm47-flash-opus-reasoning_20260520T194326Z` | Passed | Full Chat-agent scenario set passed; keep separate from its blocked Codex baseline status. |
 | `gpu/qwen3-30b-instruct` | `.tmp/v4-chat-agent-smoke/gpu-qwen3-30b-instruct_20260520T134315Z` | Passed | Same full scenario set passed. |
+| `gpu/qwen3-next-instruct` | `.tmp/v4-chat-agent-smoke/gpu-qwen3-next-instruct_20260520T213404Z` | Passed | Full Chat-agent scenario set passed; OpenCode smoke failed separately. |
 
 The first Qwen Coder run exposed raw pseudo-tool markup in Chat assistant
 content (`<function=...>`). The shim now applies the existing raw-markup repair
