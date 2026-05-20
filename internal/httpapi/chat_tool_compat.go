@@ -13,8 +13,9 @@ import (
 const minChatToolCallRetryTokens int64 = 256
 
 type chatToolCompatRequest struct {
-	Stream   bool
-	Contract toolChoiceContract
+	Stream              bool
+	Contract            toolChoiceContract
+	RepairRawToolMarkup bool
 }
 
 func parseChatToolCompatRequest(rawBody []byte) (chatToolCompatRequest, error) {
@@ -34,23 +35,33 @@ func parseChatToolCompatRequest(rawBody []byte) (chatToolCompatRequest, error) {
 	if rawChoice, ok := fields["tool_choice"]; ok {
 		profile.Contract = deriveToolChoiceContract(rawChoice, nil)
 	}
+	if rawTools, ok := fields["tools"]; ok {
+		trimmed := bytes.TrimSpace(rawTools)
+		profile.RepairRawToolMarkup = len(trimmed) > 0 && !bytes.Equal(trimmed, []byte("null")) && !bytes.Equal(trimmed, []byte("[]"))
+	}
 	return profile, nil
 }
 
 func shouldApplyChatToolCompat(profile chatToolCompatRequest) bool {
-	return !profile.Stream && profile.Contract.Active()
+	return !profile.Stream && (profile.Contract.Active() || profile.RepairRawToolMarkup)
 }
 
-func (h *proxyHandler) createChatCompletionWithToolCompat(ctx context.Context, rawBody []byte, contract toolChoiceContract) ([]byte, error) {
+func (h *proxyHandler) createChatCompletionWithToolCompat(ctx context.Context, rawBody []byte, profile chatToolCompatRequest) ([]byte, error) {
 	rawResponse, err := h.client.CreateChatCompletion(ctx, rawBody)
-	if err == nil && validateChatToolCallContract(rawResponse, contract) == nil {
-		return rawResponse, nil
+	var validationErr error
+	if err == nil {
+		validationErr = validateChatToolCallContract(rawResponse, profile.Contract, profile.RepairRawToolMarkup)
+		if validationErr == nil {
+			return rawResponse, nil
+		}
 	}
-	if err != nil && !shouldRetryChatToolCallWithCompatError(err, contract) {
+	if err != nil && !shouldRetryChatToolCallWithCompatError(err, profile.Contract) {
 		return nil, err
 	}
 
-	retryBody, rewriteErr := rewriteChatToolCallRetryBody(rawBody, contract)
+	var rawMarkupErr *rawToolCallMarkupError
+	repairRawMarkup := errors.As(validationErr, &rawMarkupErr)
+	retryBody, rewriteErr := rewriteChatToolCallRetryBody(rawBody, profile.Contract, repairRawMarkup)
 	if rewriteErr != nil {
 		if err != nil {
 			return nil, err
@@ -60,9 +71,10 @@ func (h *proxyHandler) createChatCompletionWithToolCompat(ctx context.Context, r
 	if h.logger != nil {
 		h.logger.InfoContext(ctx, "retrying chat completion request for tool-calling compatibility",
 			"request_id", RequestIDFromContext(ctx),
-			"contract_mode", contract.Mode,
-			"contract_name", contract.Name,
-			"contract_namespace", contract.Namespace,
+			"contract_mode", profile.Contract.Mode,
+			"contract_name", profile.Contract.Name,
+			"contract_namespace", profile.Contract.Namespace,
+			"raw_tool_markup_repair", repairRawMarkup,
 		)
 	}
 
@@ -70,7 +82,7 @@ func (h *proxyHandler) createChatCompletionWithToolCompat(ctx context.Context, r
 	if err != nil {
 		return nil, err
 	}
-	if err := validateChatToolCallContract(rawResponse, contract); err != nil {
+	if err := validateChatToolCallContract(rawResponse, profile.Contract, profile.RepairRawToolMarkup); err != nil {
 		return nil, err
 	}
 	return rawResponse, nil
@@ -88,7 +100,7 @@ func shouldRetryChatToolCallWithCompatError(err error, contract toolChoiceContra
 	return strings.Contains(message, "tool_choice") && strings.Contains(message, "invalid")
 }
 
-func rewriteChatToolCallRetryBody(rawBody []byte, contract toolChoiceContract) ([]byte, error) {
+func rewriteChatToolCallRetryBody(rawBody []byte, contract toolChoiceContract, repairRawMarkup bool) ([]byte, error) {
 	fields, err := decodeRawFields(rawBody)
 	if err != nil {
 		return nil, err
@@ -96,9 +108,36 @@ func rewriteChatToolCallRetryBody(rawBody []byte, contract toolChoiceContract) (
 	if contract.Mode == toolChoiceContractRequiredNamedFunction {
 		fields["tool_choice"] = json.RawMessage(`"required"`)
 	}
+	if repairRawMarkup {
+		rewritten, err := prependChatSystemInstruction(fields["messages"], buildRawToolCallMarkupRepairPrompt())
+		if err != nil {
+			return nil, err
+		}
+		fields["messages"] = rewritten
+	}
 	ensureMinimumJSONIntegerField(fields, "max_completion_tokens", minChatToolCallRetryTokens)
 	ensureMinimumJSONIntegerField(fields, "max_tokens", minChatToolCallRetryTokens)
 	return json.Marshal(fields)
+}
+
+func prependChatSystemInstruction(rawMessages json.RawMessage, instruction string) (json.RawMessage, error) {
+	if len(bytes.TrimSpace(rawMessages)) == 0 {
+		return nil, errors.New("messages must be an array")
+	}
+	var messages []map[string]json.RawMessage
+	if err := json.Unmarshal(rawMessages, &messages); err != nil {
+		return nil, err
+	}
+	rawInstruction, err := json.Marshal(instruction)
+	if err != nil {
+		return nil, err
+	}
+	instructionMessage := map[string]json.RawMessage{
+		"role":    json.RawMessage(`"system"`),
+		"content": rawInstruction,
+	}
+	messages = append([]map[string]json.RawMessage{instructionMessage}, messages...)
+	return json.Marshal(messages)
 }
 
 func ensureMinimumJSONIntegerField(fields map[string]json.RawMessage, key string, minimum int64) {
@@ -128,11 +167,7 @@ func parseJSONInteger(raw json.RawMessage) (int64, bool) {
 	return 0, false
 }
 
-func validateChatToolCallContract(rawResponse []byte, contract toolChoiceContract) error {
-	if !contract.Active() {
-		return nil
-	}
-
+func validateChatToolCallContract(rawResponse []byte, contract toolChoiceContract, rejectRawToolMarkup bool) error {
 	var payload map[string]any
 	if err := json.Unmarshal(rawResponse, &payload); err != nil {
 		return &toolChoiceIncompatibleBackendError{Message: "backend returned malformed chat completion JSON"}
@@ -149,6 +184,12 @@ func validateChatToolCallContract(rawResponse []byte, contract toolChoiceContrac
 	message, ok := firstChoice["message"].(map[string]any)
 	if !ok {
 		return &toolChoiceIncompatibleBackendError{Message: "backend chat completion did not include an assistant message for required tool call"}
+	}
+	if rejectRawToolMarkup && containsRawToolCallMarkup(asString(message["content"])) {
+		return &rawToolCallMarkupError{Content: asString(message["content"])}
+	}
+	if !contract.Active() {
+		return nil
 	}
 
 	toolCalls := chatToolCallsFromMessage(message)

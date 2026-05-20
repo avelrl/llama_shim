@@ -85,7 +85,7 @@ func (h *proxyHandler) forwardChatCompletions(w http.ResponseWriter, r *http.Req
 	}
 	recordDebugTraceChatCompletion(r.Context(), model, route, upstreamCompatibility.AppliedRequestCleanupHooks(), shouldStore)
 	if profile, err := parseChatToolCompatRequest(upstreamBody); err == nil && shouldApplyChatToolCompat(profile) {
-		rawResponse, err := h.createChatCompletionWithToolCompat(r.Context(), upstreamBody, profile.Contract)
+		rawResponse, err := h.createChatCompletionWithToolCompat(r.Context(), upstreamBody, profile)
 		if err != nil {
 			status, payload := MapError(r.Context(), h.logger, err)
 			WriteJSON(w, status, apiErrorPayload{Error: payload})

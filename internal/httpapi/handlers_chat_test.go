@@ -3,6 +3,7 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -148,7 +149,7 @@ func TestValidateChatToolCallContractAcceptsNamedFunctionChoice(t *testing.T) {
 			},
 			"finish_reason":"tool_calls"
 		}]
-	}`), toolChoiceContract{Mode: toolChoiceContractRequiredNamedFunction, Name: "add"})
+	}`), toolChoiceContract{Mode: toolChoiceContractRequiredNamedFunction, Name: "add"}, true)
 
 	require.NoError(t, err)
 }
@@ -165,11 +166,53 @@ func TestValidateChatToolCallContractRejectsTruncatedArguments(t *testing.T) {
 			},
 			"finish_reason":"length"
 		}]
-	}`), toolChoiceContract{Mode: toolChoiceContractRequiredAny})
+	}`), toolChoiceContract{Mode: toolChoiceContractRequiredAny}, true)
 
 	var incompatErr *toolChoiceIncompatibleBackendError
 	require.ErrorAs(t, err, &incompatErr)
 	require.Contains(t, incompatErr.Error(), "truncated tool call arguments")
+}
+
+func TestValidateChatToolCallContractRejectsRawToolMarkupContent(t *testing.T) {
+	err := validateChatToolCallContract([]byte(`{
+		"choices":[{
+			"message":{
+				"role":"assistant",
+				"content":"I'll use a tool.\n\n<function=list_files>\n</function>\n</tool_call>"
+			},
+			"finish_reason":"stop"
+		}]
+	}`), toolChoiceContract{}, true)
+
+	var markupErr *rawToolCallMarkupError
+	require.ErrorAs(t, err, &markupErr)
+	require.Contains(t, markupErr.Content, "<function=list_files>")
+}
+
+func TestRewriteChatToolCallRetryBodyAddsRawMarkupRepairPrompt(t *testing.T) {
+	rawBody := []byte(`{
+		"model":"test-model",
+		"messages":[{"role":"user","content":"Use the tool."}],
+		"tools":[{"type":"function","function":{"name":"list_files","parameters":{"type":"object"}}}],
+		"tool_choice":"auto"
+	}`)
+
+	rewritten, err := rewriteChatToolCallRetryBody(rawBody, toolChoiceContract{}, true)
+	require.NoError(t, err)
+
+	var payload struct {
+		Messages []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"messages"`
+		MaxTokens int64 `json:"max_tokens"`
+	}
+	require.NoError(t, json.Unmarshal(rewritten, &payload))
+	require.Len(t, payload.Messages, 2)
+	require.Equal(t, "system", payload.Messages[0].Role)
+	require.Contains(t, payload.Messages[0].Content, "printed internal tool-call markup")
+	require.Equal(t, "user", payload.Messages[1].Role)
+	require.Equal(t, int64(256), payload.MaxTokens)
 }
 
 func TestLimitedBodyCaptureBufferMarksOverflowWithoutFailingWrites(t *testing.T) {

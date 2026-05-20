@@ -25,12 +25,13 @@ smoke covers that separate workflow.
 - `read_file`: the model must call `read_file`, consume the tool result, and
   finish with the expected marker.
 - `basic_patch`: the model must edit one file through Chat function tools.
-- `bugfix_go`: the model must inspect Go files, fix a failing test, run
-  `go test ./...`, and finish only after the test passes.
+- `bugfix_go`: the model must inspect Go files, fix a failing test, call
+  `run_command` with `go test ./...`, and finish only after the test passes.
 - `multi_file`: the model must coordinate edits across two files.
 
 The harness executes only its local allowlisted tools:
 
+- `list_files`
 - `read_file`
 - `write_file`
 - `replace_text`
@@ -78,6 +79,20 @@ Each run writes:
 The directory contains request and response JSON for each turn, tool outputs,
 scenario workspaces, final text markers, and `summary.json`.
 
+## Current Evidence
+
+Operator runs on May 20, 2026:
+
+| Model | Artifact | Result | Notes |
+| --- | --- | --- | --- |
+| `gpu/qwen3-coder30b-q5km` | `.tmp/v4-chat-agent-smoke/gpu-qwen3-coder30b-q5km_20260520T134047Z` | Passed | Covered stream text, file read, single-file edit, Go bugfix with real `go test ./...`, and multi-file edit. |
+| `gpu/qwen3-30b-instruct` | `.tmp/v4-chat-agent-smoke/gpu-qwen3-30b-instruct_20260520T134315Z` | Passed | Same full scenario set passed. |
+
+The first Qwen Coder run exposed raw pseudo-tool markup in Chat assistant
+content (`<function=...>`). The shim now applies the existing raw-markup repair
+path to non-stream Chat Completions requests with tools, so that output is
+re-asked instead of being returned as normal assistant text.
+
 ## Interpretation
 
 A pass means the model and shim can complete a small Chat-first coding-agent
@@ -90,6 +105,8 @@ Common failures:
   is not stable enough for this smoke.
 - final text instead of a tool call: the model is weak for Chat-first coding
   tools, even if plain chat works.
+- missing required command: the model edited files but skipped the test command
+  and claimed completion from reasoning alone.
 - malformed tool arguments: the model or compatibility cleanup needs
   provider/model-specific hardening before it should be recommended.
 - `bugfix_go` command failure: inspect the scenario workspace and

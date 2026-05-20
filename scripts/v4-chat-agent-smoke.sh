@@ -18,6 +18,7 @@ Usage:
 Optional:
   CHAT_AGENT_MODEL=provider/model
   SHIM_AUTH_HEADER='Authorization: Bearer <token>'
+  SHIM_API_KEY=<token>
   CHAT_AGENT_SMOKE_SCENARIOS=all
   CHAT_AGENT_SMOKE_ARTIFACT_DIR=.tmp/v4-chat-agent-smoke
   CHAT_AGENT_SMOKE_RUN_ID=manual
@@ -81,11 +82,21 @@ scenario_enabled() {
 auth_args=()
 if [[ -n "${SHIM_AUTH_HEADER:-}" ]]; then
   auth_args=(-H "${SHIM_AUTH_HEADER}")
+elif [[ -n "${SHIM_API_KEY:-}" ]]; then
+  auth_args=(-H "Authorization: Bearer ${SHIM_API_KEY}")
 elif [[ -n "${GW_API_KEY:-}" ]]; then
   auth_args=(-H "Authorization: Bearer ${GW_API_KEY}")
 elif [[ -n "${OPENAI_API_KEY:-}" ]]; then
   auth_args=(-H "Authorization: Bearer ${OPENAI_API_KEY}")
 fi
+
+curl_with_auth() {
+  if [[ "${#auth_args[@]}" -gt 0 ]]; then
+    curl "${auth_args[@]}" "$@"
+  else
+    curl "$@"
+  fi
+}
 
 run_dir="${artifact_root%/}/$(slugify "${model}")_${run_id}"
 mkdir -p "${run_dir}"
@@ -106,9 +117,8 @@ post_json() {
   local status
 
   status="$(
-    curl -sS -o "${response_file}" -w '%{http_code}' \
+    curl_with_auth -sS -o "${response_file}" -w '%{http_code}' \
       -H 'Content-Type: application/json' \
-      "${auth_args[@]}" \
       --data-binary @"${payload_file}" \
       "${shim_base_url%/}/v1/chat/completions"
   )"
@@ -123,6 +133,19 @@ post_json() {
 chat_tools_json() {
   cat <<'JSON'
 [
+  {
+    "type": "function",
+    "function": {
+      "name": "list_files",
+      "description": "List task workspace files before choosing paths to inspect or edit.",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {},
+        "required": []
+      }
+    }
+  },
   {
     "type": "function",
     "function": {
@@ -214,6 +237,24 @@ execute_tool() {
   fi
 
   case "${name}" in
+    list_files)
+      python3 - "${workspace}" <<'PY'
+import json
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+skip = {".gocache", ".gotmp"}
+files = []
+for path in sorted(root.rglob("*")):
+    rel = path.relative_to(root)
+    if any(part in skip for part in rel.parts):
+        continue
+    if path.is_file():
+        files.append(str(rel))
+print(json.dumps({"ok": True, "files": files}))
+PY
+      ;;
     read_file)
       path="$(jq -r '.path // empty' <<<"${args}")"
       if ! safe_path "${path}"; then
@@ -299,14 +340,28 @@ append_json_array_item() {
   jq -c --argjson item "${item_json}" '. + [$item]' <<<"${array_json}"
 }
 
+final_matches() {
+  local text="$1"
+  local expected="$2"
+  local last_line
+
+  if [[ "${text}" == "${expected}" ]]; then
+    return 0
+  fi
+
+  last_line="$(printf '%s\n' "${text}" | awk 'NF { line = $0 } END { print line }')"
+  [[ "${last_line}" == "${expected}" ]]
+}
+
 run_chat_task() {
   local scenario="$1"
   local workspace="$2"
   local prompt="$3"
   local expected_final="$4"
+  local required_command="${5:-}"
   local task_dir="${run_dir}/${scenario}"
   local messages tools turn payload response status assistant tool_calls_len final_text call_count call_idx
-  local call_id call_name call_args tool_output tool_msg
+  local call_id call_name call_args call_command tool_output tool_msg command_seen=0
 
   mkdir -p "${task_dir}"
   tools="$(chat_tools_json)"
@@ -316,14 +371,14 @@ run_chat_task() {
       '[
         {
           role:"system",
-          content:"You are a chat-first coding agent. Use the provided tools to inspect and edit files. Do not guess file contents. After tools prove the task is complete, reply with the exact requested final marker and no extra prose."
+          content:"You are a chat-first coding agent. Use list_files before guessing paths. Use the provided tools to inspect and edit files. Do not guess file contents. After tools prove the task is complete, reply with the exact requested final marker and no extra prose."
         },
         {role:"user", content:$prompt}
       ]'
   )"
 
   echo "==> chat-agent scenario: ${scenario}"
-  for turn in $(seq 1 8); do
+  for turn in $(seq 1 12); do
     payload="${task_dir}/turn-${turn}.request.json"
     response="${task_dir}/turn-${turn}.response.json"
     status="${task_dir}/turn-${turn}.status"
@@ -347,8 +402,13 @@ run_chat_task() {
     if [[ "${tool_calls_len}" -eq 0 ]]; then
       final_text="$(jq -r '.content // ""' <<<"${assistant}")"
       printf '%s\n' "${final_text}" >"${task_dir}/final.txt"
-      if [[ "${final_text}" != "${expected_final}" ]]; then
-        echo "scenario ${scenario} final mismatch: got ${final_text@Q}, want ${expected_final@Q}" >&2
+      if ! final_matches "${final_text}" "${expected_final}"; then
+        echo "scenario ${scenario} final mismatch:" >&2
+        printf 'got: %s\nwant: %s\n' "${final_text}" "${expected_final}" >&2
+        exit 1
+      fi
+      if [[ -n "${required_command}" && "${command_seen}" -ne 1 ]]; then
+        echo "scenario ${scenario} did not call required command: ${required_command}" >&2
         exit 1
       fi
       return 0
@@ -359,6 +419,12 @@ run_chat_task() {
       call_id="$(jq -r --argjson idx "${call_idx}" '.tool_calls[$idx].id' <<<"${assistant}")"
       call_name="$(jq -r --argjson idx "${call_idx}" '.tool_calls[$idx].function.name' <<<"${assistant}")"
       call_args="$(jq -r --argjson idx "${call_idx}" '.tool_calls[$idx].function.arguments // "{}"' <<<"${assistant}")"
+      if [[ "${call_name}" == "run_command" ]]; then
+        call_command="$(printf '%s' "${call_args}" | jq -r '.command // empty' 2>/dev/null || true)"
+        if [[ "${call_command}" == "${required_command}" ]]; then
+          command_seen=1
+        fi
+      fi
       tool_output="$(execute_tool "${workspace}" "${call_name}" "${call_args}")"
       printf '%s\n' "${tool_output}" >"${task_dir}/turn-${turn}.tool-${call_idx}.json"
       tool_msg="$(jq -cn --arg call_id "${call_id}" --arg content "${tool_output}" '{role:"tool",tool_call_id:$call_id,content:$content}')"
@@ -391,9 +457,8 @@ run_stream_text() {
       ]
     }' >"${payload}"
 
-  curl -fsS \
+  curl_with_auth -fsS \
     -H 'Content-Type: application/json' \
-    "${auth_args[@]}" \
     --data-binary @"${payload}" \
     "${shim_base_url%/}/v1/chat/completions" >"${response}"
 
@@ -404,14 +469,16 @@ run_stream_text() {
   )"
   printf '%s\n' "${text}" >"${task_dir}/text.txt"
   if [[ "${text}" != "HELLO" ]]; then
-    echo "stream_text produced ${text@Q}, want HELLO" >&2
+    echo "stream_text mismatch:" >&2
+    printf 'got: %s\nwant: HELLO\n' "${text}" >&2
     exit 1
   fi
 }
 
 prepare_workspace() {
   local scenario="$1"
-  local workspace="${run_dir}/${scenario}/workspace"
+  local workspace
+  workspace="$(cd "${run_dir}" && pwd)/${scenario}/workspace"
   rm -rf "${workspace}"
   mkdir -p "${workspace}"
   printf '%s' "${workspace}"
@@ -473,8 +540,9 @@ EOF
   run_chat_task \
     bugfix_go \
     "${workspace}" \
-    'Use tools to inspect the Go files, fix the Add bug, run `go test ./...`, and reply exactly BUGFIXED after the test passes.' \
-    'BUGFIXED'
+    'Use list_files to find the Go files, inspect them, fix the Add bug, call run_command with exactly `go test ./...`, and reply exactly BUGFIXED after the test passes.' \
+    'BUGFIXED' \
+    'go test ./...'
   grep -q 'return a + b' "${workspace}/calc.go" || {
     echo "bugfix_go did not patch calc.go as expected" >&2
     exit 1
