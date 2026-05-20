@@ -40,6 +40,7 @@ the make target intentionally does not expose.
 | `make upstream-provider-routing-smoke` | Live check for one public `provider/model` alias. | `.tmp/upstream-provider-routing-smoke/` |
 | `make v4-preflight-smoke` | Aggregate V4 capability, trace, plugin, and optional provider-routing gate. | `.tmp/v4-preflight-smoke/` |
 | `make v4-chat-agent-smoke` | Chat Completions coding-agent workflow smoke with local function tools. See [V4 Chat Agent Smoke](v4-chat-agent-smoke.md). | `.tmp/v4-chat-agent-smoke/` |
+| `make v4-opencode-smoke` | Real local OpenCode CLI smoke through the shim. See [V4 OpenCode Smoke](v4-opencode-smoke.md). | `.tmp/v4-opencode-smoke/` |
 | `make v4-provider-config-doctor` | Static provider config, env, matrix, and Codex metadata checks. | `.tmp/v4-provider-config-doctor/` |
 | `make v4-provider-matrix-smoke` | Run provider-routing and V4 preflight over configured matrix aliases. | `.tmp/v4-provider-matrix-smoke/` |
 | `make v4-provider-matrix-curate` | Summarize provider-matrix smoke artifacts. | `.tmp/v4-provider-matrix-curation/` |

@@ -84,8 +84,12 @@ func (h *proxyHandler) forwardChatCompletions(w http.ResponseWriter, r *http.Req
 		shouldStore = shadowStore
 	}
 	recordDebugTraceChatCompletion(r.Context(), model, route, upstreamCompatibility.AppliedRequestCleanupHooks(), shouldStore)
-	if profile, err := parseChatToolCompatRequest(upstreamBody); err == nil && shouldApplyChatToolCompat(profile) {
-		rawResponse, err := h.createChatCompletionWithToolCompat(r.Context(), upstreamBody, profile)
+	toolCompatProfile, toolCompatProfileErr := parseChatToolCompatRequest(upstreamBody)
+	if toolCompatProfileErr == nil {
+		sanitizeProfile.RepairRawToolMarkup = toolCompatProfile.RepairRawToolMarkup
+	}
+	if toolCompatProfileErr == nil && shouldApplyChatToolCompat(toolCompatProfile) {
+		rawResponse, err := h.createChatCompletionWithToolCompat(r.Context(), upstreamBody, toolCompatProfile)
 		if err != nil {
 			status, payload := MapError(r.Context(), h.logger, err)
 			WriteJSON(w, status, apiErrorPayload{Error: payload})
@@ -205,6 +209,7 @@ func shouldSanitizeChatCompletionJSON(contentType string) bool {
 
 type chatCompletionSanitizationProfile struct {
 	NormalizeStructuredJSON bool
+	RepairRawToolMarkup     bool
 	ModelOverride           string
 }
 
@@ -1056,11 +1061,12 @@ func proxyChatCompletionStream(w http.ResponseWriter, body io.Reader, capture *c
 	}
 	flusher.Flush()
 
+	sanitizer := newChatCompletionStreamSanitizer(profile)
 	reader := bufio.NewReader(body)
 	for {
 		line, err := reader.ReadString('\n')
 		if line != "" {
-			sanitized, sanitizeErr := sanitizeChatCompletionSSELineWithProfile(line, profile)
+			sanitized, sanitizeErr := sanitizer.SanitizeLine(line)
 			if sanitizeErr != nil {
 				return sanitizeErr
 			}
@@ -1089,6 +1095,21 @@ func sanitizeChatCompletionSSELine(line string) (string, error) {
 }
 
 func sanitizeChatCompletionSSELineWithProfile(line string, profile chatCompletionSanitizationProfile) (string, error) {
+	return newChatCompletionStreamSanitizer(profile).SanitizeLine(line)
+}
+
+type chatCompletionStreamSanitizer struct {
+	profile               chatCompletionSanitizationProfile
+	convertedToolCallByIx map[int]bool
+	pendingToolTextByIx   map[int]string
+	nextToolCallIndex     int
+}
+
+func newChatCompletionStreamSanitizer(profile chatCompletionSanitizationProfile) *chatCompletionStreamSanitizer {
+	return &chatCompletionStreamSanitizer{profile: profile}
+}
+
+func (s *chatCompletionStreamSanitizer) SanitizeLine(line string) (string, error) {
 	if !strings.HasPrefix(line, "data:") {
 		return line, nil
 	}
@@ -1098,9 +1119,14 @@ func sanitizeChatCompletionSSELineWithProfile(line string, profile chatCompletio
 		return line, nil
 	}
 
-	body, err := sanitizeChatCompletionJSONBodyWithProfile([]byte(payload), profile)
+	body, err := sanitizeChatCompletionJSONBodyWithProfile([]byte(payload), s.profile)
 	if err != nil {
 		return line, nil
+	}
+	if s != nil && s.profile.RepairRawToolMarkup {
+		if rewritten, changed := s.rewriteRawToolMarkupChunk(body); changed {
+			body = rewritten
+		}
 	}
 	if shouldSuppressChatCompletionSSEPayload(body) {
 		return "", nil
@@ -1111,6 +1137,179 @@ func sanitizeChatCompletionSSELineWithProfile(line string, profile chatCompletio
 		newline = "\r\n"
 	}
 	return "data: " + string(body) + newline, nil
+}
+
+func (s *chatCompletionStreamSanitizer) rewriteRawToolMarkupChunk(body []byte) ([]byte, bool) {
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return body, false
+	}
+
+	rawChoices, ok := payload["choices"].([]any)
+	if !ok {
+		return body, false
+	}
+
+	changed := false
+	for _, rawChoice := range rawChoices {
+		choice, ok := rawChoice.(map[string]any)
+		if !ok {
+			continue
+		}
+		index := 0
+		if parsed, ok := anyInt(choice["index"]); ok {
+			index = parsed
+		}
+		if s.convertedToolCallByIx != nil && s.convertedToolCallByIx[index] {
+			if finishReason, ok := choice["finish_reason"]; ok && finishReason != nil {
+				choice["finish_reason"] = "tool_calls"
+				changed = true
+			}
+		}
+
+		delta, ok := choice["delta"].(map[string]any)
+		if !ok {
+			continue
+		}
+		if content, ok := delta["content"].(string); ok && s.shouldBufferPotentialToolMarkup(index, content) {
+			delete(delta, "content")
+			pending := s.appendPendingToolText(index, content)
+			if s.convertPendingToolText(delta, index, pending) {
+				changed = true
+				continue
+			}
+			changed = true
+		}
+		if finishReason, ok := choice["finish_reason"]; ok && finishReason != nil {
+			if pending := s.pendingToolTextByIx[index]; strings.TrimSpace(pending) != "" {
+				if s.convertPendingToolText(delta, index, pending) {
+					choice["finish_reason"] = "tool_calls"
+				} else {
+					delta["content"] = pending
+					delete(s.pendingToolTextByIx, index)
+				}
+				changed = true
+			}
+		}
+	}
+
+	if !changed {
+		return body, false
+	}
+	rewritten, err := json.Marshal(payload)
+	if err != nil {
+		return body, false
+	}
+	return rewritten, true
+}
+
+func (s *chatCompletionStreamSanitizer) shouldBufferPotentialToolMarkup(index int, content string) bool {
+	if strings.TrimSpace(content) == "" {
+		return false
+	}
+	if s.pendingToolTextByIx != nil && s.pendingToolTextByIx[index] != "" {
+		return true
+	}
+	return strings.Contains(content, "<")
+}
+
+func (s *chatCompletionStreamSanitizer) appendPendingToolText(index int, content string) string {
+	if s.pendingToolTextByIx == nil {
+		s.pendingToolTextByIx = map[int]string{}
+	}
+	s.pendingToolTextByIx[index] += content
+	return s.pendingToolTextByIx[index]
+}
+
+func (s *chatCompletionStreamSanitizer) convertPendingToolText(delta map[string]any, choiceIndex int, text string) bool {
+	if !containsRawToolCallMarkup(text) {
+		return false
+	}
+	name, arguments, ok := parsePseudoFunctionToolCallText(text)
+	if !ok {
+		return false
+	}
+	if s.convertedToolCallByIx == nil {
+		s.convertedToolCallByIx = map[int]bool{}
+	}
+	if s.pendingToolTextByIx != nil {
+		delete(s.pendingToolTextByIx, choiceIndex)
+	}
+	toolCallIndex := s.nextToolCallIndex
+	s.nextToolCallIndex++
+	delta["tool_calls"] = []any{
+		map[string]any{
+			"index": toolCallIndex,
+			"id":    fmt.Sprintf("call_shim_stream_%d", toolCallIndex),
+			"type":  "function",
+			"function": map[string]any{
+				"name":      name,
+				"arguments": arguments,
+			},
+		},
+	}
+	s.convertedToolCallByIx[choiceIndex] = true
+	return true
+}
+
+func parsePseudoFunctionToolCallText(text string) (string, string, bool) {
+	name, body, ok := parsePseudoFunctionTag(text)
+	if !ok {
+		return "", "", false
+	}
+	args := map[string]string{}
+	remaining := body
+	for {
+		start := strings.Index(strings.ToLower(remaining), "<parameter=")
+		if start < 0 {
+			break
+		}
+		remaining = remaining[start+len("<parameter="):]
+		endName := strings.Index(remaining, ">")
+		if endName < 0 {
+			break
+		}
+		paramName := strings.Trim(strings.TrimSpace(remaining[:endName]), `"'`)
+		remaining = remaining[endName+1:]
+		endValue := strings.Index(strings.ToLower(remaining), "</parameter>")
+		if endValue < 0 {
+			break
+		}
+		if paramName != "" {
+			args[paramName] = strings.TrimSpace(remaining[:endValue])
+		}
+		remaining = remaining[endValue+len("</parameter>"):]
+	}
+	if len(args) == 0 {
+		return "", "", false
+	}
+	rawArgs, err := json.Marshal(args)
+	if err != nil {
+		return "", "", false
+	}
+	return name, string(rawArgs), true
+}
+
+func parsePseudoFunctionTag(text string) (string, string, bool) {
+	lower := strings.ToLower(text)
+	start := strings.Index(lower, "<function=")
+	if start < 0 {
+		return "", "", false
+	}
+	afterStart := text[start+len("<function="):]
+	endName := strings.Index(afterStart, ">")
+	if endName < 0 {
+		return "", "", false
+	}
+	name := strings.Trim(strings.TrimSpace(afterStart[:endName]), `"'`)
+	if name == "" {
+		return "", "", false
+	}
+	body := afterStart[endName+1:]
+	if end := strings.Index(strings.ToLower(body), "</function>"); end >= 0 {
+		body = body[:end]
+	}
+	return name, body, true
 }
 
 func shouldSuppressChatCompletionSSEPayload(body []byte) bool {

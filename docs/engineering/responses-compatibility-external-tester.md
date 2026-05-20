@@ -77,6 +77,8 @@ as general Chat-first coding recommendations. The first slice covers:
 
 Future slices can add required/forced tool-call variants and JSON mode/schema
 downgrade checks if the first smoke starts catching useful model differences.
+[V4 OpenCode Smoke](../v4-opencode-smoke.md) is the planned real-client
+integration layer for the locally installed OpenCode CLI.
 
 Keep this separate from Codex certification. A model can be useful for
 chat-first coding clients while failing Codex's Responses-native tool loop, and

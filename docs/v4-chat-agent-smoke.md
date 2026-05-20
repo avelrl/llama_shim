@@ -17,6 +17,10 @@ Codex certification is still the right gate for Codex compatibility, but it
 does not answer whether a model is usable for Chat-first coding tools. This
 smoke covers that separate workflow.
 
+The next integration layer is [V4 OpenCode Smoke](v4-opencode-smoke.md), which
+will run the real local `opencode` CLI through the shim after this deterministic
+harness is green.
+
 ## What It Checks
 
 `make v4-chat-agent-smoke` runs a small local harness against a live shim:

@@ -65,6 +65,11 @@ logs or mutate local state. The provider/model ops loop is documented in
 [V4 Provider Ops Runbook](v4-provider-ops-runbook.md), with
 `make v4-provider-ops-report` as the final read-only verdict over provider
 doctor, provider matrix curation, and Codex eval curation evidence.
+Chat-first coding-agent coverage is documented in
+[V4 Chat Agent Smoke](v4-chat-agent-smoke.md). The planned real-client
+integration layer is [V4 OpenCode Smoke](v4-opencode-smoke.md), which will use
+a locally installed OpenCode CLI with an isolated generated config and
+workspace.
 The HTTP server now handles `SIGINT`/`SIGTERM` with shim-owned graceful shutdown:
 background cleanup loops are canceled and in-flight requests drain up to
 `shim.shutdown_timeout` before forced process exit.

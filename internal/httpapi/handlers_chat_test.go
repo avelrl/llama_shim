@@ -137,6 +137,61 @@ func TestSanitizeChatCompletionSSELineWithStructuredProfileUnwrapsMarkdownFenceI
 	require.Equal(t, "data: {\"choices\":[{\"delta\":{\"content\":\"{\\n  \\\"status\\\": \\\"ok\\\",\\n  \\\"value\\\": 42\\n}\"}}]}\n", sanitized)
 }
 
+func TestChatCompletionStreamSanitizerConvertsPseudoFunctionToolMarkup(t *testing.T) {
+	sanitizer := newChatCompletionStreamSanitizer(chatCompletionSanitizationProfile{RepairRawToolMarkup: true})
+	line := "data: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"I'll inspect files.\\n\\n<function=bash>\\n<parameter=command>\\nfind . -name \\\"*.go\\\" -type f\\n</parameter>\\n<parameter=description>Find Go files</parameter>\\n</function>\\n</tool_call>\"}}]}\n"
+
+	sanitized, err := sanitizer.SanitizeLine(line)
+	require.NoError(t, err)
+
+	payload := decodeChatCompletionSSEPayload(t, sanitized)
+	choice := payload["choices"].([]any)[0].(map[string]any)
+	delta := choice["delta"].(map[string]any)
+	require.NotContains(t, delta, "content")
+	toolCalls := delta["tool_calls"].([]any)
+	require.Len(t, toolCalls, 1)
+	toolCall := toolCalls[0].(map[string]any)
+	require.Equal(t, "function", toolCall["type"])
+	function := toolCall["function"].(map[string]any)
+	require.Equal(t, "bash", function["name"])
+	require.JSONEq(t, `{"command":"find . -name \"*.go\" -type f","description":"Find Go files"}`, function["arguments"].(string))
+
+	done, err := sanitizer.SanitizeLine("data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n")
+	require.NoError(t, err)
+	donePayload := decodeChatCompletionSSEPayload(t, done)
+	doneChoice := donePayload["choices"].([]any)[0].(map[string]any)
+	require.Equal(t, "tool_calls", doneChoice["finish_reason"])
+}
+
+func TestChatCompletionStreamSanitizerBuffersSplitPseudoFunctionToolMarkup(t *testing.T) {
+	sanitizer := newChatCompletionStreamSanitizer(chatCompletionSanitizationProfile{RepairRawToolMarkup: true})
+
+	first, err := sanitizer.SanitizeLine("data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"<function=bash><parameter=command>\"}}]}\n")
+	require.NoError(t, err)
+	require.Empty(t, first)
+
+	second, err := sanitizer.SanitizeLine("data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"pwd</parameter></function>\"}}]}\n")
+	require.NoError(t, err)
+	payload := decodeChatCompletionSSEPayload(t, second)
+	delta := payload["choices"].([]any)[0].(map[string]any)["delta"].(map[string]any)
+	toolCalls := delta["tool_calls"].([]any)
+	function := toolCalls[0].(map[string]any)["function"].(map[string]any)
+	require.Equal(t, "bash", function["name"])
+	require.JSONEq(t, `{"command":"pwd"}`, function["arguments"].(string))
+}
+
+func TestChatCompletionStreamSanitizerLeavesPseudoFunctionTextWithoutToolsProfile(t *testing.T) {
+	line := "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"<function=bash><parameter=command>pwd</parameter></function>\"}}]}\n"
+
+	sanitized, err := sanitizeChatCompletionSSELine(line)
+	require.NoError(t, err)
+	payload := decodeChatCompletionSSEPayload(t, sanitized)
+	choice := payload["choices"].([]any)[0].(map[string]any)
+	delta := choice["delta"].(map[string]any)
+	require.Equal(t, "<function=bash><parameter=command>pwd</parameter></function>", delta["content"])
+	require.NotContains(t, delta, "tool_calls")
+}
+
 func TestValidateChatToolCallContractAcceptsNamedFunctionChoice(t *testing.T) {
 	err := validateChatToolCallContract([]byte(`{
 		"choices":[{
@@ -187,6 +242,15 @@ func TestValidateChatToolCallContractRejectsRawToolMarkupContent(t *testing.T) {
 	var markupErr *rawToolCallMarkupError
 	require.ErrorAs(t, err, &markupErr)
 	require.Contains(t, markupErr.Content, "<function=list_files>")
+}
+
+func decodeChatCompletionSSEPayload(t *testing.T, line string) map[string]any {
+	t.Helper()
+	require.NotEmpty(t, line)
+	require.True(t, strings.HasPrefix(line, "data: "))
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(strings.TrimPrefix(line, "data:"))), &payload))
+	return payload
 }
 
 func TestRewriteChatToolCallRetryBodyAddsRawMarkupRepairPrompt(t *testing.T) {
