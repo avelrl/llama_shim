@@ -68,6 +68,7 @@ func (h *proxyHandler) createChatCompletionWithToolCompat(ctx context.Context, r
 		}
 		return nil, rewriteErr
 	}
+	recordChatToolCompatibilityRetryTransforms(ctx, profile, repairRawMarkup)
 	if h.logger != nil {
 		h.logger.InfoContext(ctx, "retrying chat completion request for tool-calling compatibility",
 			"request_id", RequestIDFromContext(ctx),
@@ -86,6 +87,24 @@ func (h *proxyHandler) createChatCompletionWithToolCompat(ctx context.Context, r
 		return nil, err
 	}
 	return rawResponse, nil
+}
+
+func recordChatToolCompatibilityRetryTransforms(ctx context.Context, profile chatToolCompatRequest, repairRawMarkup bool) {
+	if profile.Contract.Active() {
+		RecordDebugTraceChatCompatibilityTransform(ctx, ChatCompatibilityTransformToolChoiceRetry, []string{
+			"tool_choice",
+		}, "applied")
+	}
+	if repairRawMarkup {
+		RecordDebugTraceChatCompatibilityTransform(ctx, ChatCompatibilityTransformRawToolMarkupRepair, []string{
+			"messages",
+			"choices.message.content",
+		}, "applied")
+	}
+	RecordDebugTraceChatCompatibilityTransform(ctx, ChatCompatibilityTransformMinimumRetryTokens, []string{
+		"max_completion_tokens",
+		"max_tokens",
+	}, "applied")
 }
 
 func shouldRetryChatToolCallWithCompatError(err error, contract toolChoiceContract) bool {

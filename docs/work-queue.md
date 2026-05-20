@@ -19,17 +19,16 @@ scope/runbook document instead of expanding this queue.
 
 ## Current Recommendation
 
-The best next practical slice is V4 Chat Compatibility Layer hardening. The
-Chat-agent harness and OpenCode real-client smoke are now green for at least
-one local candidate; the next value is consolidating the safe Responses-era
-repairs that actually belong on Chat Completions without turning Chat into a
-Responses emulator.
+The best next practical slice is to validate V4 Chat Compatibility Layer with
+live Chat clients and selected model certification runs. Slices 1-3 now
+name/trace existing Chat repairs, lock conservative structured-output/tool-call
+guardrails, and add the first evidence-backed streamed `<chatcmpl-tool>` form.
 
 Recommended order:
 
-1. Implement [V4 Chat Compatibility Layer](v4-chat-compatibility-layer.md)
-   Slice 1: name and consolidate existing Chat repairs, trace labels, and
-   stream/non-stream tests.
+1. Run [V4 Chat Compatibility Layer](v4-chat-compatibility-layer.md) live
+   validation: `v4-chat-agent-smoke`, `v4-opencode-smoke`, and external Chat
+   tester rows on one or two real candidates.
 2. Run V4 model certification on one real candidate, then on a small batch.
 3. V4 local access boundaries for `/debug/*`, `/ui/`, and operator-only data.
 4. Provider/model candidate expansion through the certification runner.
@@ -66,7 +65,7 @@ Recently completed:
 
 | Item | Status | Why it matters | Next slice | Validation |
 | --- | --- | --- | --- | --- |
-| V4 Chat Compatibility Layer | Planned | Chat-first clients use `/v1/chat/completions` streaming, function tools, `response_format`, and `role=tool` loops. Several Responses-era repairs are useful here, but only after a `portable/adapt/no` classification. | Implement [V4 Chat Compatibility Layer](v4-chat-compatibility-layer.md) Slice 1: named boundary, stream/non-stream tests, and debug trace labels for existing repairs. | focused `internal/httpapi` tests, `make v4-chat-agent-smoke`, `make v4-opencode-smoke`, `go test ./...`, `make lint` |
+| V4 Chat Compatibility Layer | Slices 1-3 implemented | Chat-first clients use `/v1/chat/completions` streaming, function tools, `response_format`, and `role=tool` loops. Several Responses-era repairs are useful here, but only after a `portable/adapt/no` classification. | Validate with live Chat clients and add future provider forms only from new real artifacts. | focused `internal/httpapi` tests, `make v4-chat-agent-smoke`, `make v4-opencode-smoke`, external Chat tester rows, `go test ./...`, `make lint` |
 | V4 model certification runner | Implemented; first real candidate evidence captured | Model testing was too manual: endpoints, tokens, shim restarts, external tester reports, Codex profiles, and log interpretation were spread across separate commands. | Run [V4 Model Certification Runner](v4-model-certification-runner.md) on a small batch; harden only evidence-backed gaps in tester parsing, trace summaries, prompt repair, or retry policy. | `make model-certify-api`, `make model-certify-codex`, focused runner tests, `go test ./...`, `make lint` |
 | Chat-first coding-agent smoke | Implemented first slice; OpenCode client smoke green for one model | Most non-Codex coding agents use OpenAI-compatible Chat Completions, so Codex-only evidence misses practical Aider/OpenCode/Qwen Code/Cline-style workflows. | Keep [V4 OpenCode Smoke](v4-opencode-smoke.md) as the real-client regression check for Chat Compatibility Layer changes. Add scenarios only after repeated real failures justify them. | `make v4-chat-agent-smoke`, `make v4-opencode-smoke`, `bash -n scripts/v4-chat-agent-smoke.sh scripts/v4-opencode-smoke.sh`, `make lint` |
 | V4 local access boundaries | Not started | The shim now has useful operator surfaces: `/debug/capabilities`, `/debug/traces`, `/debug/evidence`, and `/ui/`. Even for local use, these need a clear access model before more control-plane features grow. | Add a focused design/update for static bearer/local-only policy, then implement route grouping, config, tests, and guide updates. | `go test ./internal/httpapi ./internal/config`, `make v4-preflight-smoke`, `make lint` |

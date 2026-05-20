@@ -36,3 +36,32 @@ func TestDebugTraceStoreBoundsAndCopiesEntries(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, http.MethodGet, again.Method)
 }
+
+func TestRecordDebugTraceChatCompatibilityTransformDeduplicates(t *testing.T) {
+	store := NewDebugTraceStore(2)
+	req, err := http.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	require.NoError(t, err)
+	ctx := RequestContextWithID(context.Background(), "req_chat_compat")
+	ctx = store.Begin(ctx, req, time.Unix(3, 0))
+
+	RecordDebugTraceChatCompatibilityTransform(ctx, ChatCompatibilityTransformRawToolMarkupRepair, []string{
+		"choices.delta.content",
+		"choices.delta.tool_calls",
+	}, "applied")
+	RecordDebugTraceChatCompatibilityTransform(ctx, ChatCompatibilityTransformRawToolMarkupRepair, []string{
+		"choices.delta.content",
+		"choices.delta.tool_calls",
+	}, "applied")
+
+	trace, ok := store.Get("req_chat_compat")
+	require.True(t, ok)
+	require.Equal(t, []DebugTraceTransform{
+		{
+			Stage:    "chat_compatibility",
+			Class:    "chat_completions",
+			Hook:     ChatCompatibilityTransformRawToolMarkupRepair,
+			Fields:   []string{"choices.delta.content", "choices.delta.tool_calls"},
+			Decision: "applied",
+		},
+	}, trace.Transforms)
+}

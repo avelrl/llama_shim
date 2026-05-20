@@ -88,6 +88,7 @@ func (h *proxyHandler) forwardChatCompletions(w http.ResponseWriter, r *http.Req
 	if toolCompatProfileErr == nil {
 		sanitizeProfile.RepairRawToolMarkup = toolCompatProfile.RepairRawToolMarkup
 	}
+	recordChatCompatibilityProfile(r.Context(), sanitizeProfile, toolCompatProfile, toolCompatProfileErr)
 	if toolCompatProfileErr == nil && shouldApplyChatToolCompat(toolCompatProfile) {
 		rawResponse, err := h.createChatCompletionWithToolCompat(r.Context(), upstreamBody, toolCompatProfile)
 		if err != nil {
@@ -181,7 +182,7 @@ func (h *proxyHandler) forwardChatCompletions(w http.ResponseWriter, r *http.Req
 		streamStoreCapture = newChatCompletionStreamStoreCapture(response.Header.Get("X-Request-Id"))
 	}
 
-	if err := proxyChatCompletionStream(w, response.Body, streamStoreCapture, sanitizeProfile); err != nil && !shouldIgnoreStreamProxyError(err) {
+	if err := proxyChatCompletionStream(r.Context(), w, response.Body, streamStoreCapture, sanitizeProfile); err != nil && !shouldIgnoreStreamProxyError(err) {
 		h.logger.WarnContext(r.Context(), "chat completion stream proxy failed",
 			"request_id", RequestIDFromContext(r.Context()),
 			"err", err,
@@ -211,6 +212,22 @@ type chatCompletionSanitizationProfile struct {
 	NormalizeStructuredJSON bool
 	RepairRawToolMarkup     bool
 	ModelOverride           string
+}
+
+func recordChatCompatibilityProfile(ctx context.Context, sanitizeProfile chatCompletionSanitizationProfile, toolCompatProfile chatToolCompatRequest, toolCompatProfileErr error) {
+	if sanitizeProfile.NormalizeStructuredJSON {
+		RecordDebugTraceChatCompatibilityTransform(ctx, ChatCompatibilityTransformStructuredJSONNormalize, []string{
+			"choices.message.content",
+			"choices.delta.content",
+		}, "enabled")
+	}
+	if toolCompatProfileErr == nil && toolCompatProfile.RepairRawToolMarkup {
+		RecordDebugTraceChatCompatibilityTransform(ctx, ChatCompatibilityTransformRawToolMarkupRepair, []string{
+			"messages",
+			"choices.message.content",
+			"choices.delta.content",
+		}, "enabled")
+	}
 }
 
 func buildChatCompletionSanitizationProfile(rawRequest []byte) chatCompletionSanitizationProfile {
@@ -1054,7 +1071,7 @@ func (b *limitedBodyCaptureBuffer) Bytes() []byte {
 	return b.buf.Bytes()
 }
 
-func proxyChatCompletionStream(w http.ResponseWriter, body io.Reader, capture *chatCompletionStreamStoreCapture, profile chatCompletionSanitizationProfile) error {
+func proxyChatCompletionStream(ctx context.Context, w http.ResponseWriter, body io.Reader, capture *chatCompletionStreamStoreCapture, profile chatCompletionSanitizationProfile) error {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		return nil
@@ -1062,6 +1079,7 @@ func proxyChatCompletionStream(w http.ResponseWriter, body io.Reader, capture *c
 	flusher.Flush()
 
 	sanitizer := newChatCompletionStreamSanitizer(profile)
+	sanitizer.ctx = ctx
 	reader := bufio.NewReader(body)
 	for {
 		line, err := reader.ReadString('\n')
@@ -1099,6 +1117,7 @@ func sanitizeChatCompletionSSELineWithProfile(line string, profile chatCompletio
 }
 
 type chatCompletionStreamSanitizer struct {
+	ctx                   context.Context
 	profile               chatCompletionSanitizationProfile
 	convertedToolCallByIx map[int]bool
 	pendingToolTextByIx   map[int]string
@@ -1249,45 +1268,49 @@ func (s *chatCompletionStreamSanitizer) convertPendingToolText(delta map[string]
 		},
 	}
 	s.convertedToolCallByIx[choiceIndex] = true
+	RecordDebugTraceChatCompatibilityTransform(s.ctx, ChatCompatibilityTransformStreamPseudoToolConversion, []string{
+		"choices.delta.content",
+		"choices.delta.tool_calls",
+		"choices.finish_reason",
+	}, "applied")
 	return true
 }
 
 func parsePseudoFunctionToolCallText(text string) (string, string, bool) {
-	name, body, ok := parsePseudoFunctionTag(text)
-	if !ok {
-		return "", "", false
-	}
-	args := map[string]string{}
-	remaining := body
-	for {
-		start := strings.Index(strings.ToLower(remaining), "<parameter=")
-		if start < 0 {
-			break
+	if name, body, ok := parsePseudoFunctionTag(text); ok {
+		args := map[string]string{}
+		remaining := body
+		for {
+			start := strings.Index(strings.ToLower(remaining), "<parameter=")
+			if start < 0 {
+				break
+			}
+			remaining = remaining[start+len("<parameter="):]
+			endName := strings.Index(remaining, ">")
+			if endName < 0 {
+				break
+			}
+			paramName := strings.Trim(strings.TrimSpace(remaining[:endName]), `"'`)
+			remaining = remaining[endName+1:]
+			endValue := strings.Index(strings.ToLower(remaining), "</parameter>")
+			if endValue < 0 {
+				break
+			}
+			if paramName != "" {
+				args[paramName] = strings.TrimSpace(remaining[:endValue])
+			}
+			remaining = remaining[endValue+len("</parameter>"):]
 		}
-		remaining = remaining[start+len("<parameter="):]
-		endName := strings.Index(remaining, ">")
-		if endName < 0 {
-			break
+		if len(args) == 0 {
+			return "", "", false
 		}
-		paramName := strings.Trim(strings.TrimSpace(remaining[:endName]), `"'`)
-		remaining = remaining[endName+1:]
-		endValue := strings.Index(strings.ToLower(remaining), "</parameter>")
-		if endValue < 0 {
-			break
+		rawArgs, err := json.Marshal(args)
+		if err != nil {
+			return "", "", false
 		}
-		if paramName != "" {
-			args[paramName] = strings.TrimSpace(remaining[:endValue])
-		}
-		remaining = remaining[endValue+len("</parameter>"):]
+		return name, string(rawArgs), true
 	}
-	if len(args) == 0 {
-		return "", "", false
-	}
-	rawArgs, err := json.Marshal(args)
-	if err != nil {
-		return "", "", false
-	}
-	return name, string(rawArgs), true
+	return parsePseudoChatCMPLToolTag(text)
 }
 
 func parsePseudoFunctionTag(text string) (string, string, bool) {
@@ -1310,6 +1333,60 @@ func parsePseudoFunctionTag(text string) (string, string, bool) {
 		body = body[:end]
 	}
 	return name, body, true
+}
+
+func parsePseudoChatCMPLToolTag(text string) (string, string, bool) {
+	body, ok := parseSimplePseudoToolTag(text, "chatcmpl-tool")
+	if !ok {
+		return "", "", false
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(strings.TrimSpace(body)), &payload); err != nil {
+		return "", "", false
+	}
+	var name string
+	if rawName, ok := payload["name"]; ok {
+		_ = json.Unmarshal(rawName, &name)
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", "", false
+	}
+	rawArgs := bytes.TrimSpace(payload["arguments"])
+	if len(rawArgs) == 0 || bytes.Equal(rawArgs, []byte("null")) {
+		rawArgs = []byte(`{}`)
+	}
+	var argsString string
+	if err := json.Unmarshal(rawArgs, &argsString); err == nil {
+		if !json.Valid([]byte(strings.TrimSpace(argsString))) {
+			return "", "", false
+		}
+		return name, strings.TrimSpace(argsString), true
+	}
+	if !json.Valid(rawArgs) {
+		return "", "", false
+	}
+	return name, string(rawArgs), true
+}
+
+func parseSimplePseudoToolTag(text string, tag string) (string, bool) {
+	tag = strings.ToLower(strings.TrimSpace(tag))
+	if tag == "" {
+		return "", false
+	}
+	lower := strings.ToLower(text)
+	startMarker := "<" + tag + ">"
+	endMarker := "</" + tag + ">"
+	start := strings.Index(lower, startMarker)
+	if start < 0 {
+		return "", false
+	}
+	body := text[start+len(startMarker):]
+	end := strings.Index(strings.ToLower(body), endMarker)
+	if end < 0 {
+		return "", false
+	}
+	return body[:end], true
 }
 
 func shouldSuppressChatCompletionSSEPayload(body []byte) bool {

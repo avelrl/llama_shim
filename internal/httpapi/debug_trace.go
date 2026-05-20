@@ -15,6 +15,14 @@ import (
 
 const defaultDebugTraceMaxEntries = 256
 
+const (
+	ChatCompatibilityTransformStructuredJSONNormalize    = "chat_completions.structured_json_normalize"
+	ChatCompatibilityTransformRawToolMarkupRepair        = "chat_completions.raw_tool_markup_repair"
+	ChatCompatibilityTransformStreamPseudoToolConversion = "chat_completions.stream_pseudo_tool_markup_to_tool_calls"
+	ChatCompatibilityTransformToolChoiceRetry            = "chat_completions.tool_choice_retry"
+	ChatCompatibilityTransformMinimumRetryTokens         = "chat_completions.minimum_retry_tokens"
+)
+
 type DebugTraceConfig struct {
 	Enabled    bool
 	MaxEntries int
@@ -233,6 +241,9 @@ func (s *DebugTraceStore) update(ctx context.Context, apply func(*DebugTrace)) {
 }
 
 func recordDebugTrace(ctx context.Context, apply func(*DebugTrace)) {
+	if ctx == nil {
+		return
+	}
 	state, ok := ctx.Value(debugTraceContextKey).(debugTraceContextValue)
 	if !ok || state.store == nil {
 		return
@@ -257,6 +268,18 @@ func RecordDebugTraceUpstreamRoute(ctx context.Context, route llama.UpstreamRout
 func RecordDebugTraceRequestCleanupHooks(ctx context.Context, hooks []upstreamcompat.RequestCleanupHook) {
 	recordDebugTrace(ctx, func(trace *DebugTrace) {
 		appendDebugTraceRequestCleanupTransforms(trace, hooks)
+	})
+}
+
+func RecordDebugTraceChatCompatibilityTransform(ctx context.Context, hook string, fields []string, decision string) {
+	recordDebugTrace(ctx, func(trace *DebugTrace) {
+		appendDebugTraceTransformOnce(trace, DebugTraceTransform{
+			Stage:    "chat_compatibility",
+			Class:    "chat_completions",
+			Hook:     hook,
+			Fields:   fields,
+			Decision: decision,
+		})
 	})
 }
 

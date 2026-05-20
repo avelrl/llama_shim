@@ -87,6 +87,39 @@ func TestNormalizeChatCompletionRequestAppliesDeepSeekCompatibility(t *testing.T
 	require.Equal(t, "user", messages[1].(map[string]any)["role"])
 }
 
+func TestNormalizeChatCompletionRequestPreservesNonEmptyAssistantToolContent(t *testing.T) {
+	upstreamBody, compatibility, err := NormalizeChatCompletionRequest([]byte(`{
+		"model":"chat-model",
+		"messages":[
+			{"role":"user","content":"Use a tool."},
+			{
+				"role":"assistant",
+				"content":"I will call the tool now.",
+				"tool_calls":[
+					{
+						"id":"call_1",
+						"type":"function",
+						"function":{"name":"read_file","arguments":"{\"path\":\"README.md\"}"}
+					}
+				]
+			}
+		]
+	}`), ChatCompletionOptions{Rules: []ChatCompletionRule{{
+		Model:                         "chat-*",
+		OmitEmptyAssistantToolContent: true,
+	}}})
+	require.NoError(t, err)
+	require.False(t, compatibility.EmptyAssistantToolContentOmitted > 0)
+	require.Empty(t, compatibility.AppliedRequestCleanupHooks())
+
+	var request map[string]any
+	require.NoError(t, json.Unmarshal(upstreamBody, &request))
+	messages := request["messages"].([]any)
+	assistant := messages[1].(map[string]any)
+	require.Equal(t, "I will call the tool now.", assistant["content"])
+	require.NotEmpty(t, assistant["tool_calls"])
+}
+
 func TestNormalizeChatCompletionRequestDowngradesTopLevelSchemaEnvelope(t *testing.T) {
 	upstreamBody, compatibility, err := NormalizeChatCompletionRequest([]byte(`{
 		"model":"Qwen3.6-35B-A3B",

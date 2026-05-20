@@ -2,7 +2,7 @@
 
 Last updated: May 20, 2026.
 
-Status: planned. This is a shim-owned compatibility layer for practical
+Status: Slices 1-3 implemented. This is a shim-owned compatibility layer for practical
 Chat-first coding clients that use `/v1/chat/completions`. It is not a claim
 that the Chat Completions API should behave like the Responses API, and it is
 not an OpenAI API parity expansion.
@@ -84,6 +84,7 @@ The layer must stay optically conservative:
 
 ### Slice 1: Name And Consolidate Existing Chat Repairs
 
+- Status: implemented on May 20, 2026.
 - Introduce a small internal "chat compatibility" boundary around existing
   sanitization, request cleanup hooks, raw-markup repair, and stream
   pseudo-tool conversion.
@@ -92,9 +93,18 @@ The layer must stay optically conservative:
 - Add debug-trace transform labels for Chat repairs so OpenCode/model
   certification failures are easier to classify.
 
+Debug trace transforms use `stage=chat_compatibility` and
+`class=chat_completions`. Current hook names are:
+
+- `chat_completions.structured_json_normalize`
+- `chat_completions.raw_tool_markup_repair`
+- `chat_completions.stream_pseudo_tool_markup_to_tool_calls`
+- `chat_completions.tool_choice_retry`
+- `chat_completions.minimum_retry_tokens`
+
 Validation:
 
-- focused `internal/httpapi` tests
+- focused `internal/httpapi` tests: `go test ./internal/httpapi`
 - `make v4-chat-agent-smoke`
 - `make v4-opencode-smoke`
 - `go test ./...`
@@ -102,6 +112,7 @@ Validation:
 
 ### Slice 2: Structured Output And Tool-Call Content Hardening
 
+- Status: conservative guardrails implemented on May 20, 2026.
 - Add Chat-specific tests for `response_format: json_object` and
   `response_format: json_schema` across non-stream and stream paths.
 - Normalize markdown-fenced JSON and common provider preambles only under a
@@ -109,23 +120,47 @@ Validation:
 - Normalize assistant content next to tool calls only for profiles where the
   target client rejects that shape.
 
+The default behavior deliberately preserves non-empty assistant `content` next
+to `tool_calls`, because many Chat-first clients tolerate or depend on that
+shape. The current implemented guardrail is narrower:
+
+- structured-output normalization touches only `choices[].message.content` and
+  `choices[].delta.content`
+- `tool_calls[].function.arguments` are not normalized as structured-output
+  final text
+- configured request cleanup may omit empty assistant `content` next to
+  `tool_calls`, but it preserves non-empty assistant content
+
 Validation:
 
-- focused JSON/profile tests
+- focused JSON/profile tests: `go test ./internal/httpapi ./internal/upstreamcompat`
 - external tester Chat rows for selected models
 - `v4-chat-agent-smoke` on at least one model that previously exposed the
   failure
 
 ### Slice 3: Evidence-Backed Provider Forms
 
+- Status: first evidence-backed form implemented on May 20, 2026.
 - Add raw markup parsers only for forms observed in real artifacts.
 - Keep each form paired with a fixture or test case that shows the upstream
   text and expected Chat shape.
 - Avoid broad XML/markdown parsing that could consume ordinary assistant text.
 
+Current stream conversion support:
+
+- `<function=NAME><parameter=...>...</parameter></function>` is converted to
+  `delta.tool_calls` when the request has tools and raw-markup repair is active.
+- `<chatcmpl-tool>{"name":"NAME","arguments":{...}}</chatcmpl-tool>` is also
+  converted when `name` is explicit and `arguments` is valid JSON.
+
+Ambiguous forms such as `<tools>...</tools>` remain buffered and are released
+as text at the terminal chunk if they cannot be safely converted. They stay in
+the raw-markup detector and repair prompt for non-stream retry paths, but the
+streaming path does not invent a tool name or arguments shape.
+
 Validation:
 
-- fixture-backed unit tests
+- fixture-backed unit tests: `go test ./internal/httpapi ./internal/upstreamcompat`
 - one real-client smoke artifact, preferably OpenCode
 - work-queue/model evidence update if a model status changes
 

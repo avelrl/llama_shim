@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"net/http"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -137,6 +138,69 @@ func TestSanitizeChatCompletionSSELineWithStructuredProfileUnwrapsMarkdownFenceI
 	require.Equal(t, "data: {\"choices\":[{\"delta\":{\"content\":\"{\\n  \\\"status\\\": \\\"ok\\\",\\n  \\\"value\\\": 42\\n}\"}}]}\n", sanitized)
 }
 
+func TestSanitizeChatCompletionStructuredOutputPreservesToolCalls(t *testing.T) {
+	profile := chatCompletionSanitizationProfile{NormalizeStructuredJSON: true}
+	body := []byte("{\n" +
+		"  \"id\":\"chatcmpl_tool_structured\",\n" +
+		"  \"choices\":[\n" +
+		"    {\n" +
+		"      \"index\":0,\n" +
+		"      \"message\":{\n" +
+		"        \"role\":\"assistant\",\n" +
+		"        \"content\":\"```json\\n{\\\"status\\\":\\\"ok\\\",\\\"value\\\":42}\\n```\",\n" +
+		"        \"tool_calls\":[\n" +
+		"          {\n" +
+		"            \"id\":\"call_1\",\n" +
+		"            \"type\":\"function\",\n" +
+		"            \"function\":{\n" +
+		"              \"name\":\"write_file\",\n" +
+		"              \"arguments\":\"```json\\n{\\\"path\\\":\\\"result.json\\\",\\\"content\\\":\\\"ok\\\"}\\n```\"\n" +
+		"            }\n" +
+		"          }\n" +
+		"        ]\n" +
+		"      },\n" +
+		"      \"finish_reason\":\"tool_calls\"\n" +
+		"    }\n" +
+		"  ]\n" +
+		"}")
+
+	sanitized, err := sanitizeChatCompletionJSONBodyWithProfile(body, profile)
+	require.NoError(t, err)
+	require.JSONEq(t, "{"+
+		`"id":"chatcmpl_tool_structured",`+
+		`"choices":[{`+
+		`"index":0,`+
+		`"message":{`+
+		`"role":"assistant",`+
+		`"content":"{\"status\":\"ok\",\"value\":42}",`+
+		`"tool_calls":[{`+
+		`"id":"call_1",`+
+		`"type":"function",`+
+		`"function":{`+
+		`"name":"write_file",`+
+		`"arguments":"`+"```json\\n{\\\"path\\\":\\\"result.json\\\",\\\"content\\\":\\\"ok\\\"}\\n```"+`"`+
+		`}`+
+		`}]`+
+		`},`+
+		`"finish_reason":"tool_calls"`+
+		`}]`+
+		"}", string(sanitized))
+}
+
+func TestSanitizeChatCompletionStructuredStreamPreservesToolCalls(t *testing.T) {
+	line := "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"```json\\n{\\\"status\\\":\\\"ok\\\"}\\n```\",\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"write_file\",\"arguments\":\"```json\\n{\\\"path\\\":\\\"result.json\\\"}\\n```\"}}]}}]}\n"
+
+	sanitized, err := sanitizeChatCompletionSSELineWithProfile(line, chatCompletionSanitizationProfile{NormalizeStructuredJSON: true})
+	require.NoError(t, err)
+	payload := decodeChatCompletionSSEPayload(t, sanitized)
+	delta := payload["choices"].([]any)[0].(map[string]any)["delta"].(map[string]any)
+	require.Equal(t, "{\"status\":\"ok\"}", delta["content"])
+	toolCalls := delta["tool_calls"].([]any)
+	function := toolCalls[0].(map[string]any)["function"].(map[string]any)
+	require.Equal(t, "write_file", function["name"])
+	require.Equal(t, "```json\n{\"path\":\"result.json\"}\n```", function["arguments"])
+}
+
 func TestChatCompletionStreamSanitizerConvertsPseudoFunctionToolMarkup(t *testing.T) {
 	sanitizer := newChatCompletionStreamSanitizer(chatCompletionSanitizationProfile{RepairRawToolMarkup: true})
 	line := "data: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"I'll inspect files.\\n\\n<function=bash>\\n<parameter=command>\\nfind . -name \\\"*.go\\\" -type f\\n</parameter>\\n<parameter=description>Find Go files</parameter>\\n</function>\\n</tool_call>\"}}]}\n"
@@ -161,6 +225,128 @@ func TestChatCompletionStreamSanitizerConvertsPseudoFunctionToolMarkup(t *testin
 	donePayload := decodeChatCompletionSSEPayload(t, done)
 	doneChoice := donePayload["choices"].([]any)[0].(map[string]any)
 	require.Equal(t, "tool_calls", doneChoice["finish_reason"])
+}
+
+func TestChatCompletionStreamSanitizerConvertsChatCMPLToolMarkup(t *testing.T) {
+	sanitizer := newChatCompletionStreamSanitizer(chatCompletionSanitizationProfile{RepairRawToolMarkup: true})
+	line := "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"<chatcmpl-tool>{\\\"name\\\":\\\"exec_command\\\",\\\"arguments\\\":{\\\"cmd\\\":\\\"cat README.md\\\"}}</chatcmpl-tool>\"}}]}\n"
+
+	sanitized, err := sanitizer.SanitizeLine(line)
+	require.NoError(t, err)
+
+	payload := decodeChatCompletionSSEPayload(t, sanitized)
+	delta := payload["choices"].([]any)[0].(map[string]any)["delta"].(map[string]any)
+	require.NotContains(t, delta, "content")
+	toolCalls := delta["tool_calls"].([]any)
+	require.Len(t, toolCalls, 1)
+	function := toolCalls[0].(map[string]any)["function"].(map[string]any)
+	require.Equal(t, "exec_command", function["name"])
+	require.JSONEq(t, `{"cmd":"cat README.md"}`, function["arguments"].(string))
+}
+
+func TestChatCompletionStreamSanitizerLeavesAmbiguousToolMarkupBufferedUntilTerminal(t *testing.T) {
+	sanitizer := newChatCompletionStreamSanitizer(chatCompletionSanitizationProfile{RepairRawToolMarkup: true})
+	first, err := sanitizer.SanitizeLine("data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"<tools>{\\\"call\\\":\\\"cat\\\"}</tools>\"}}]}\n")
+	require.NoError(t, err)
+	require.Empty(t, first)
+
+	done, err := sanitizer.SanitizeLine("data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n")
+	require.NoError(t, err)
+	payload := decodeChatCompletionSSEPayload(t, done)
+	choice := payload["choices"].([]any)[0].(map[string]any)
+	delta := choice["delta"].(map[string]any)
+	require.Equal(t, "<tools>{\"call\":\"cat\"}</tools>", delta["content"])
+	require.Equal(t, "stop", choice["finish_reason"])
+}
+
+func TestChatCompletionStreamSanitizerRecordsPseudoFunctionToolMarkupTrace(t *testing.T) {
+	store := NewDebugTraceStore(2)
+	req, err := http.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	require.NoError(t, err)
+	ctx := RequestContextWithID(context.Background(), "req_chat_stream_tool")
+	ctx = store.Begin(ctx, req, time.Unix(4, 0))
+
+	sanitizer := newChatCompletionStreamSanitizer(chatCompletionSanitizationProfile{RepairRawToolMarkup: true})
+	sanitizer.ctx = ctx
+	_, err = sanitizer.SanitizeLine("data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"<function=bash><parameter=command>pwd</parameter></function>\"}}]}\n")
+	require.NoError(t, err)
+
+	trace, ok := store.Get("req_chat_stream_tool")
+	require.True(t, ok)
+	require.Contains(t, trace.Transforms, DebugTraceTransform{
+		Stage:    "chat_compatibility",
+		Class:    "chat_completions",
+		Hook:     ChatCompatibilityTransformStreamPseudoToolConversion,
+		Fields:   []string{"choices.delta.content", "choices.delta.tool_calls", "choices.finish_reason"},
+		Decision: "applied",
+	})
+}
+
+func TestRecordChatCompatibilityProfileRecordsEnabledTransforms(t *testing.T) {
+	store := NewDebugTraceStore(2)
+	req, err := http.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	require.NoError(t, err)
+	ctx := RequestContextWithID(context.Background(), "req_chat_profile")
+	ctx = store.Begin(ctx, req, time.Unix(5, 0))
+
+	recordChatCompatibilityProfile(ctx,
+		chatCompletionSanitizationProfile{NormalizeStructuredJSON: true, RepairRawToolMarkup: true},
+		chatToolCompatRequest{RepairRawToolMarkup: true},
+		nil,
+	)
+
+	trace, ok := store.Get("req_chat_profile")
+	require.True(t, ok)
+	require.Contains(t, trace.Transforms, DebugTraceTransform{
+		Stage:    "chat_compatibility",
+		Class:    "chat_completions",
+		Hook:     ChatCompatibilityTransformStructuredJSONNormalize,
+		Fields:   []string{"choices.delta.content", "choices.message.content"},
+		Decision: "enabled",
+	})
+	require.Contains(t, trace.Transforms, DebugTraceTransform{
+		Stage:    "chat_compatibility",
+		Class:    "chat_completions",
+		Hook:     ChatCompatibilityTransformRawToolMarkupRepair,
+		Fields:   []string{"choices.delta.content", "choices.message.content", "messages"},
+		Decision: "enabled",
+	})
+}
+
+func TestRecordChatToolCompatibilityRetryTransforms(t *testing.T) {
+	store := NewDebugTraceStore(2)
+	req, err := http.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	require.NoError(t, err)
+	ctx := RequestContextWithID(context.Background(), "req_chat_retry")
+	ctx = store.Begin(ctx, req, time.Unix(6, 0))
+
+	recordChatToolCompatibilityRetryTransforms(ctx, chatToolCompatRequest{
+		Contract: toolChoiceContract{Mode: toolChoiceContractRequiredAny},
+	}, true)
+
+	trace, ok := store.Get("req_chat_retry")
+	require.True(t, ok)
+	require.Contains(t, trace.Transforms, DebugTraceTransform{
+		Stage:    "chat_compatibility",
+		Class:    "chat_completions",
+		Hook:     ChatCompatibilityTransformToolChoiceRetry,
+		Fields:   []string{"tool_choice"},
+		Decision: "applied",
+	})
+	require.Contains(t, trace.Transforms, DebugTraceTransform{
+		Stage:    "chat_compatibility",
+		Class:    "chat_completions",
+		Hook:     ChatCompatibilityTransformRawToolMarkupRepair,
+		Fields:   []string{"choices.message.content", "messages"},
+		Decision: "applied",
+	})
+	require.Contains(t, trace.Transforms, DebugTraceTransform{
+		Stage:    "chat_compatibility",
+		Class:    "chat_completions",
+		Hook:     ChatCompatibilityTransformMinimumRetryTokens,
+		Fields:   []string{"max_completion_tokens", "max_tokens"},
+		Decision: "applied",
+	})
 }
 
 func TestChatCompletionStreamSanitizerBuffersSplitPseudoFunctionToolMarkup(t *testing.T) {
