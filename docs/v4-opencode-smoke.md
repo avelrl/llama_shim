@@ -195,6 +195,10 @@ markup into `delta.tool_calls` before forwarding the SSE chunk to OpenCode.
 The normalizer is intentionally scoped to tool-enabled Chat streams; ordinary
 text-only streams are not converted.
 
+The broader plan for deciding which Responses-era repairs belong on
+Chat Completions is tracked in
+[V4 Chat Compatibility Layer](v4-chat-compatibility-layer.md).
+
 ## Runner Flow
 
 1. Check `opencode --version`.

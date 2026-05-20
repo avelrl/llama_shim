@@ -50,6 +50,8 @@ Assumptions:
   health, capability, debug-trace, provider-routing, and Codex config checks
 - [V4 Provider Ops Runbook](../v4-provider-ops-runbook.md): final
   provider/model evidence workflow and ops verdict interpretation
+- [V4 Chat Compatibility Layer](../v4-chat-compatibility-layer.md): planned
+  Chat Completions hardening track for Chat-first coding clients
 - [V4 OpenCode Smoke](../v4-opencode-smoke.md): planned real-client OpenCode
   CLI smoke through the shim
 - [Postgres Backup and Restore](postgres-backup.md): cluster-native backup
@@ -76,6 +78,7 @@ Assumptions:
 - [V3 Ops and Deployment Expansion](../v3-ops-deployment.md)
 - [V4 Preflight](../v4-preflight.md)
 - [V4 Provider Ops Runbook](../v4-provider-ops-runbook.md)
+- [V4 Chat Compatibility Layer](../v4-chat-compatibility-layer.md)
 - [V4 OpenCode Smoke](../v4-opencode-smoke.md)
 - [Model Certification Runner](model-certification.md)
 - [Add Provider/Model Alias](add-provider-model.md)

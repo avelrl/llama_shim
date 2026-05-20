@@ -23,6 +23,9 @@ not practical user guides and are not release scope documents.
   V4 preflight, provider routing, and Codex auto runs.
 - [V4 Provider Ops Runbook](../v4-provider-ops-runbook.md): compact
   provider/model evidence flow and final ops verdict interpretation.
+- [V4 Chat Compatibility Layer](../v4-chat-compatibility-layer.md):
+  planned Chat Completions hardening track that classifies Responses-era fixes
+  as portable, adapted, or not applicable before implementation.
 - [V4 OpenCode Smoke](../v4-opencode-smoke.md): design/runbook for the planned
   real-client OpenCode CLI smoke through the shim.
 - [Codex Upstream Model Matrix](codex-upstream-model-matrix.md): practical

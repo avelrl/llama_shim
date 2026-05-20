@@ -19,16 +19,17 @@ scope/runbook document instead of expanding this queue.
 
 ## Current Recommendation
 
-The best next practical slice is to run and curate V4 OpenCode client smoke
-against one or two local candidates. The runner is now the real-client
-integration layer over the green Chat-agent harness; the next value is
-capturing whether local `opencode` can use the shim as an OpenAI-compatible
-provider and leave a small workspace with green tests.
+The best next practical slice is V4 Chat Compatibility Layer hardening. The
+Chat-agent harness and OpenCode real-client smoke are now green for at least
+one local candidate; the next value is consolidating the safe Responses-era
+repairs that actually belong on Chat Completions without turning Chat into a
+Responses emulator.
 
 Recommended order:
 
-1. Run [V4 OpenCode Smoke](v4-opencode-smoke.md) for one `bugfix_go` scenario
-   and one configured local model.
+1. Implement [V4 Chat Compatibility Layer](v4-chat-compatibility-layer.md)
+   Slice 1: name and consolidate existing Chat repairs, trace labels, and
+   stream/non-stream tests.
 2. Run V4 model certification on one real candidate, then on a small batch.
 3. V4 local access boundaries for `/debug/*`, `/ui/`, and operator-only data.
 4. Provider/model candidate expansion through the certification runner.
@@ -52,6 +53,10 @@ Recently completed:
 - V4 Chat-first coding-agent smoke: `/v1/chat/completions` streaming and
   function-tool workflow coverage for OpenCode/Aider-style local coding
   agents. See [V4 Chat Agent Smoke](v4-chat-agent-smoke.md).
+- V4 OpenCode smoke: first real-client proof for
+  `gpu/qwen3-coder30b-q5km` at
+  `.tmp/v4-opencode-smoke/gpu-qwen3-coder30b-q5km_20260520T145203Z`,
+  including streamed Chat tool calls, file edit, and `go test ./...`.
 - V4 OpenTelemetry foundation: optional metadata-only OTLP trace export via
   `shim.telemetry.*`, with Phoenix as the recommended first local pilot backend.
   The guide includes local Phoenix and Laminar backend startup paths. See
@@ -61,8 +66,9 @@ Recently completed:
 
 | Item | Status | Why it matters | Next slice | Validation |
 | --- | --- | --- | --- | --- |
+| V4 Chat Compatibility Layer | Planned | Chat-first clients use `/v1/chat/completions` streaming, function tools, `response_format`, and `role=tool` loops. Several Responses-era repairs are useful here, but only after a `portable/adapt/no` classification. | Implement [V4 Chat Compatibility Layer](v4-chat-compatibility-layer.md) Slice 1: named boundary, stream/non-stream tests, and debug trace labels for existing repairs. | focused `internal/httpapi` tests, `make v4-chat-agent-smoke`, `make v4-opencode-smoke`, `go test ./...`, `make lint` |
 | V4 model certification runner | Implemented; first real candidate evidence captured | Model testing was too manual: endpoints, tokens, shim restarts, external tester reports, Codex profiles, and log interpretation were spread across separate commands. | Run [V4 Model Certification Runner](v4-model-certification-runner.md) on a small batch; harden only evidence-backed gaps in tester parsing, trace summaries, prompt repair, or retry policy. | `make model-certify-api`, `make model-certify-codex`, focused runner tests, `go test ./...`, `make lint` |
-| Chat-first coding-agent smoke | Implemented first slice; OpenCode client smoke implemented | Most non-Codex coding agents use OpenAI-compatible Chat Completions, so Codex-only evidence misses practical Aider/OpenCode/Qwen Code/Cline-style workflows. | Run [V4 OpenCode Smoke](v4-opencode-smoke.md) against one local candidate, then decide whether to add more scenarios or wire selected scenarios into model certification curation. | `make v4-chat-agent-smoke`, `make v4-opencode-smoke`, `bash -n scripts/v4-chat-agent-smoke.sh scripts/v4-opencode-smoke.sh`, `make lint` |
+| Chat-first coding-agent smoke | Implemented first slice; OpenCode client smoke green for one model | Most non-Codex coding agents use OpenAI-compatible Chat Completions, so Codex-only evidence misses practical Aider/OpenCode/Qwen Code/Cline-style workflows. | Keep [V4 OpenCode Smoke](v4-opencode-smoke.md) as the real-client regression check for Chat Compatibility Layer changes. Add scenarios only after repeated real failures justify them. | `make v4-chat-agent-smoke`, `make v4-opencode-smoke`, `bash -n scripts/v4-chat-agent-smoke.sh scripts/v4-opencode-smoke.sh`, `make lint` |
 | V4 local access boundaries | Not started | The shim now has useful operator surfaces: `/debug/capabilities`, `/debug/traces`, `/debug/evidence`, and `/ui/`. Even for local use, these need a clear access model before more control-plane features grow. | Add a focused design/update for static bearer/local-only policy, then implement route grouping, config, tests, and guide updates. | `go test ./internal/httpapi ./internal/config`, `make v4-preflight-smoke`, `make lint` |
 | Provider/model candidate expansion | Blocked on runner | The existing matrix is useful, but candidate rows are noisy to evaluate by hand. | Use the certification manifest as the candidate queue, then promote models only after external tester and Codex evidence exist. | `make model-certify`, then existing provider ops reports |
 | Documentation and script inventory | Baseline implemented | There are many scripts and scope docs. Operators need a small map so new work does not require rediscovering the repo every time. | Keep this queue plus [Script Inventory](script-inventory.md) current. Consolidate script docs only after repeated confusion. | `git diff --check`; docs-only review |
