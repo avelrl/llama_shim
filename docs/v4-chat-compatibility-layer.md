@@ -204,3 +204,21 @@ limitation, not a shim transport or V4 Chat Compatibility regression.
 
 This makes it a useful second local Chat-first candidate, separate from Codex
 promotion decisions.
+
+`gpu/qwen3-coder-30b` now has Chat-first evidence too:
+
+- `.tmp/v4-chat-agent-smoke/gpu-qwen3-coder-30b_20260520T194113Z`
+- `.tmp/v4-opencode-smoke/gpu-qwen3-coder-30b_20260520T194141Z`
+
+This supports supervised Chat/OpenCode usage. It does not override the Codex
+bench-lite finding where `patch_after_context` repeatedly missed the required
+edit.
+
+`gpu/glm47-flash-opus-reasoning` has Chat-first evidence despite blocked Codex
+promotion:
+
+- `.tmp/v4-chat-agent-smoke/gpu-glm47-flash-opus-reasoning_20260520T194326Z`
+- `.tmp/v4-opencode-smoke/gpu-glm47-flash-opus-reasoning_20260520T194446Z`
+
+This keeps it useful for Chat/OpenCode diagnostics and reasoning-content stress
+without treating it as a Codex gate.
