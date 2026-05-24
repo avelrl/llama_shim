@@ -239,5 +239,14 @@ promotion:
 - `.tmp/v4-chat-agent-smoke/gpu-glm47-flash-opus-reasoning_20260520T194326Z`
 - `.tmp/v4-opencode-smoke/gpu-glm47-flash-opus-reasoning_20260520T194446Z`
 
+`gpu/gpt-oss-120b` also has Chat-first evidence despite blocked Codex
+promotion:
+
+- `.tmp/v4-chat-agent-smoke/gpu-gpt-oss-120b_20260520T230902Z`
+- `.tmp/v4-opencode-smoke/gpu-gpt-oss-120b_20260520T231135Z`
+
+This makes it usable for supervised Chat/OpenCode comparisons, but not as an
+unattended Codex gate.
+
 This keeps it useful for Chat/OpenCode diagnostics and reasoning-content stress
 without treating it as a Codex gate.
