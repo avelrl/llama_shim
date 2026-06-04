@@ -74,6 +74,45 @@ func TestParseLocalConstrainedCustomToolRuntimeOutputRepairsApplyPatchUnifiedDif
 	require.NoError(t, descriptor.Constraint.Validate(input))
 }
 
+func TestParseLocalConstrainedCustomToolRuntimeOutputRepairsApplyPatchUnprefixedAddFile(t *testing.T) {
+	t.Parallel()
+
+	descriptor := customToolDescriptor{Name: "apply_patch", Constraint: mustApplyPatchCustomToolConstraint(t)}
+	input, err := parseLocalConstrainedCustomToolRuntimeOutput(
+		"```json\n{\"input\":\"*** Begin Patch\\n*** Add File: types.go\\npackage main\\n\\n// Position is a 2D coordinate.\\ntype Position struct {\\n\\tX, Y int\\n}\\n*** End Patch\"}\n```",
+		descriptor,
+	)
+	require.NoError(t, err)
+	require.Equal(t, "*** Begin Patch\n*** Add File: types.go\n+package main\n+\n+// Position is a 2D coordinate.\n+type Position struct {\n+\tX, Y int\n+}\n*** End Patch", input)
+	require.NoError(t, descriptor.Constraint.Validate(input))
+}
+
+func TestParseLocalConstrainedCustomToolRuntimeOutputLeavesPrefixedAddFile(t *testing.T) {
+	t.Parallel()
+
+	descriptor := customToolDescriptor{Name: "apply_patch", Constraint: mustApplyPatchCustomToolConstraint(t)}
+	input, err := parseLocalConstrainedCustomToolRuntimeOutput(
+		"```json\n{\"input\":\"*** Begin Patch\\n*** Add File: go.mod\\n+module codex_test1\\n+\\n+go 1.21\\n*** End Patch\"}\n```",
+		descriptor,
+	)
+	require.NoError(t, err)
+	require.Equal(t, "*** Begin Patch\n*** Add File: go.mod\n+module codex_test1\n+\n+go 1.21\n*** End Patch", input)
+	require.NoError(t, descriptor.Constraint.Validate(input))
+}
+
+func TestParseLocalConstrainedCustomToolRuntimeOutputRepairsApplyPatchUnprefixedUpdateFileAsAddFile(t *testing.T) {
+	t.Parallel()
+
+	descriptor := customToolDescriptor{Name: "apply_patch", Constraint: mustApplyPatchCustomToolConstraint(t)}
+	input, err := parseLocalConstrainedCustomToolRuntimeOutput(
+		"```json\n{\"input\":\"*** Begin Patch\\n*** Update File: types.go\\npackage main\\n\\n// Direction represents movement direction.\\ntype Direction int\\n*** End Patch\"}\n```",
+		descriptor,
+	)
+	require.NoError(t, err)
+	require.Equal(t, "*** Begin Patch\n*** Add File: types.go\n+package main\n+\n+// Direction represents movement direction.\n+type Direction int\n*** End Patch", input)
+	require.NoError(t, descriptor.Constraint.Validate(input))
+}
+
 func TestLocalConstrainedCustomToolRuntimeShapesJSONSchemaHintAndValidates(t *testing.T) {
 	t.Parallel()
 

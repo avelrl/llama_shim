@@ -817,6 +817,36 @@ func TestSupportsLocalToolLoopRejectsNonEmptyIncludeNoop(t *testing.T) {
 	require.False(t, supportsLocalToolLoop(rawFields))
 }
 
+func TestLocalShimUnsupportedFieldsErrorNamesUnavailableProxyOutsideLocalOnly(t *testing.T) {
+	rawFields := map[string]json.RawMessage{
+		"model":               json.RawMessage(`"test-model"`),
+		"input":               json.RawMessage(`"hello"`),
+		"tools":               json.RawMessage(`[{"type":"unsupported_tool"}]`),
+		"tool_choice":         json.RawMessage(`"auto"`),
+		"parallel_tool_calls": json.RawMessage(`true`),
+	}
+
+	err := newLocalShimUnsupportedFieldsError(config.ResponsesModePreferLocal, rawFields)
+
+	require.Contains(t, err.Error(), "native /v1/responses proxy is unavailable")
+	require.NotContains(t, err.Error(), "responses.mode=local_only")
+	require.Contains(t, err.Error(), "parallel_tool_calls")
+	require.Contains(t, err.Error(), "tool_choice")
+	require.Contains(t, err.Error(), "tools")
+}
+
+func TestLocalShimUnsupportedFieldsErrorPreservesLocalOnlyMessage(t *testing.T) {
+	rawFields := map[string]json.RawMessage{
+		"model": json.RawMessage(`"test-model"`),
+		"input": json.RawMessage(`"hello"`),
+		"tools": json.RawMessage(`[{"type":"unsupported_tool"}]`),
+	}
+
+	err := newLocalShimUnsupportedFieldsError(config.ResponsesModeLocalOnly, rawFields)
+
+	require.Contains(t, err.Error(), "responses.mode=local_only")
+}
+
 func TestBuildResponsesCreateRouteInputsSuppressesLocalToolRoutesWhenContextManagementRequested(t *testing.T) {
 	inputs := buildResponsesCreateRouteInputs(
 		false,

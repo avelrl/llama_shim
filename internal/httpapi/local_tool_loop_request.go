@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
 
 	"llama_shim/internal/domain"
@@ -32,7 +33,7 @@ func (e *constrainedCustomToolValidationError) Unwrap() error {
 	return e.Cause
 }
 
-func buildLocalChatCompletionRequest(rawFields map[string]json.RawMessage, contextItems []domain.Item, currentInput []domain.Item, _ map[string]domain.ToolCallReference, serviceLimits ServiceLimits, codexCompatibilityEnabled bool, repairPrompt string) ([]byte, customToolTransportPlan, error) {
+func buildLocalChatCompletionRequest(rawFields map[string]json.RawMessage, contextItems []domain.Item, currentInput []domain.Item, refs map[string]domain.ToolCallReference, serviceLimits ServiceLimits, codexCompatibilityEnabled bool, repairPrompt string) ([]byte, customToolTransportPlan, error) {
 	model := strings.TrimSpace(rawStringField(rawFields, "model"))
 	if model == "" {
 		return nil, customToolTransportPlan{}, domain.NewValidationError("model", "model is required")
@@ -58,9 +59,12 @@ func buildLocalChatCompletionRequest(rawFields map[string]json.RawMessage, conte
 		contextItems = insertLocalToolLoopInstructions(contextItems, len(currentInput), repairPrompt)
 	}
 
-	messages, err := buildChatCompletionMessagesFromItems(contextItems)
+	messages, err := buildChatCompletionMessagesFromItemsWithRefs(contextItems, refs)
 	if err != nil {
 		return nil, customToolTransportPlan{}, err
+	}
+	if codexCompatibility {
+		messages = rewriteTrailingCodexAgentEnvelopeMessage(messages)
 	}
 
 	out := map[string]any{
@@ -91,6 +95,71 @@ func buildLocalChatCompletionRequest(rawFields map[string]json.RawMessage, conte
 		return nil, customToolTransportPlan{}, err
 	}
 	return body, plan, nil
+}
+
+type codexAgentMessageEnvelope struct {
+	Author      string `json:"author"`
+	Recipient   string `json:"recipient"`
+	Content     string `json:"content"`
+	TriggerTurn bool   `json:"trigger_turn"`
+}
+
+func rewriteTrailingCodexAgentEnvelopeMessage(messages []map[string]any) []map[string]any {
+	if len(messages) == 0 {
+		return messages
+	}
+
+	last := messages[len(messages)-1]
+	if strings.TrimSpace(asString(last["role"])) != "assistant" {
+		return messages
+	}
+	if _, ok := last["tool_calls"]; ok {
+		return messages
+	}
+
+	contents, ok := decodeCodexAgentEnvelopeContents(asString(last["content"]))
+	if !ok {
+		return messages
+	}
+
+	rewritten := append([]map[string]any(nil), messages...)
+	rewrittenLast := make(map[string]any, len(last))
+	for key, value := range last {
+		rewrittenLast[key] = value
+	}
+	rewrittenLast["role"] = "user"
+	rewrittenLast["content"] = strings.Join(contents, "\n\n")
+	rewritten[len(rewritten)-1] = rewrittenLast
+	return rewritten
+}
+
+func decodeCodexAgentEnvelopeContents(content string) ([]string, bool) {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return nil, false
+	}
+
+	decoder := json.NewDecoder(strings.NewReader(content))
+	contents := make([]string, 0, 1)
+	for {
+		var envelope codexAgentMessageEnvelope
+		if err := decoder.Decode(&envelope); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, false
+		}
+		if strings.TrimSpace(envelope.Author) == "" ||
+			strings.TrimSpace(envelope.Recipient) == "" ||
+			strings.TrimSpace(envelope.Content) == "" {
+			return nil, false
+		}
+		contents = append(contents, envelope.Content)
+	}
+	if len(contents) == 0 {
+		return nil, false
+	}
+	return contents, true
 }
 
 func buildLocalToolLoopTransportPlan(rawFields map[string]json.RawMessage, tools []map[string]any, serviceLimits ServiceLimits) ([]map[string]any, customToolTransportPlan, any, string, error) {

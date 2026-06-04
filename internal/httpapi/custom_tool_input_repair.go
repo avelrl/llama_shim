@@ -24,6 +24,10 @@ func repairConstrainedCustomToolInput(descriptor customToolDescriptor, input str
 		repaired = next
 		changed = true
 	}
+	if next, ok := repairApplyPatchUnprefixedWholeFileHunks(repaired); ok {
+		repaired = next
+		changed = true
+	}
 	if next, ok := repairApplyPatchUnprefixedContextLines(repaired); ok {
 		repaired = next
 		changed = true
@@ -156,6 +160,59 @@ func isUnifiedDiffRange(value string, prefix byte) bool {
 		}
 	}
 	return true
+}
+
+func repairApplyPatchUnprefixedWholeFileHunks(input string) (string, bool) {
+	lines := strings.Split(input, "\n")
+	changed := false
+
+	for index := 0; index < len(lines); index++ {
+		line := lines[index]
+		addFile := strings.HasPrefix(line, "*** Add File: ")
+		updateFile := strings.HasPrefix(line, "*** Update File: ")
+		if !addFile && !updateFile {
+			continue
+		}
+
+		bodyStart := index + 1
+		bodyEnd := bodyStart
+		hasPatchSyntax := false
+		for bodyEnd < len(lines) && !strings.HasPrefix(lines[bodyEnd], "*** ") {
+			if strings.HasPrefix(lines[bodyEnd], "@@") {
+				hasPatchSyntax = true
+			}
+			bodyEnd++
+		}
+		if bodyEnd == bodyStart || hasPatchSyntax {
+			continue
+		}
+		if applyPatchWholeFileBodyHasAddPrefixes(lines[bodyStart:bodyEnd]) {
+			continue
+		}
+
+		if updateFile {
+			lines[index] = strings.Replace(line, "*** Update File: ", "*** Add File: ", 1)
+		}
+		for bodyIndex := bodyStart; bodyIndex < bodyEnd; bodyIndex++ {
+			lines[bodyIndex] = "+" + lines[bodyIndex]
+		}
+		changed = true
+		index = bodyEnd - 1
+	}
+
+	if !changed {
+		return "", false
+	}
+	return strings.Join(lines, "\n"), true
+}
+
+func applyPatchWholeFileBodyHasAddPrefixes(lines []string) bool {
+	for _, line := range lines {
+		if strings.HasPrefix(line, "+") {
+			return true
+		}
+	}
+	return false
 }
 
 func repairApplyPatchUnprefixedContextLines(input string) (string, bool) {

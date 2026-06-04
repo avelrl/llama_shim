@@ -20,6 +20,10 @@ func (s *ResponseService) FinalizeLocalResponse(input CreateResponseInput, conte
 		return domain.Response{}, err
 	}
 	response.Text = domain.MarshalResponseTextConfig(config)
+	response, err = ensureLocalResponseUsage(contextItems, response)
+	if err != nil {
+		return domain.Response{}, err
+	}
 
 	if !responseHasAssistantText(response) {
 		return response, nil
@@ -43,6 +47,24 @@ func (s *ResponseService) FinalizeLocalResponse(input CreateResponseInput, conte
 		}
 	}
 
+	return response, nil
+}
+
+func ensureLocalResponseUsage(contextItems []domain.Item, response domain.Response) (domain.Response, error) {
+	trimmed := bytes.TrimSpace(response.Usage)
+	if len(trimmed) > 0 && !bytes.Equal(trimmed, []byte("null")) {
+		return response, nil
+	}
+
+	inputTokens, err := domain.EstimateSyntheticTokenCount(contextItems)
+	if err != nil {
+		return domain.Response{}, err
+	}
+	outputTokens, err := domain.EstimateSyntheticTokenCount(response.Output)
+	if err != nil {
+		return domain.Response{}, err
+	}
+	response.Usage = domain.BuildSyntheticUsage(inputTokens, outputTokens)
 	return response, nil
 }
 

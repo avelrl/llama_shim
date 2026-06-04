@@ -135,7 +135,7 @@ func (s *ResponseService) Create(ctx context.Context, input CreateResponseInput)
 	if err != nil {
 		return domain.Response{}, err
 	}
-	generationContext, hasToolOutput, err := buildLocalTextGenerationContext(prepared.ContextItems, s.limits.LocalToolOutputSummaryMaxBytes)
+	generationContext, _, err := buildLocalTextGenerationContext(prepared.ContextItems, s.limits.LocalToolOutputSummaryMaxBytes)
 	if err != nil {
 		return domain.Response{}, err
 	}
@@ -143,7 +143,7 @@ func (s *ResponseService) Create(ctx context.Context, input CreateResponseInput)
 		return domain.Response{}, err
 	}
 
-	outputText, err := s.generateLocalResponseText(ctx, input, generationContext, hasToolOutput)
+	outputText, err := s.generateLocalResponseText(ctx, input, generationContext)
 	if err != nil {
 		return domain.Response{}, err
 	}
@@ -163,7 +163,7 @@ func (s *ResponseService) TryCreatePreparedLocalTextResponse(ctx context.Context
 		return domain.Response{}, true, err
 	}
 
-	outputText, err := s.generateLocalResponseText(ctx, input, generationContext, hasToolOutput)
+	outputText, err := s.generateLocalResponseText(ctx, input, generationContext)
 	if err != nil {
 		return domain.Response{}, true, err
 	}
@@ -520,7 +520,7 @@ func (s *ResponseService) CreateStream(ctx context.Context, input CreateResponse
 	if err != nil {
 		return domain.Response{}, err
 	}
-	generationContext, hasToolOutput, err := buildLocalTextGenerationContext(prepared.ContextItems, s.limits.LocalToolOutputSummaryMaxBytes)
+	generationContext, _, err := buildLocalTextGenerationContext(prepared.ContextItems, s.limits.LocalToolOutputSummaryMaxBytes)
 	if err != nil {
 		return domain.Response{}, err
 	}
@@ -556,57 +556,34 @@ func (s *ResponseService) CreateStream(ctx context.Context, input CreateResponse
 		}
 	}
 
-	if hasToolOutput {
-		outputText, err := s.generateLocalResponseText(ctx, input, generationContext, hasToolOutput)
-		if err != nil {
-			return domain.Response{}, err
-		}
-		if strings.TrimSpace(outputText) == "" {
-			return domain.Response{}, &llama.InvalidResponseError{Message: "llama stream content was empty"}
-		}
-		if hooks.OnDelta != nil {
-			if err := hooks.OnDelta(outputText); err != nil {
-				return domain.Response{}, err
-			}
-		}
-		return s.completeCreate(ctx, prepared, generationContext, input, outputText)
-	}
-
-	var builder strings.Builder
-	err = s.generator.GenerateStream(ctx, input.Model, generationContext, input.GenerationOptions, func(delta string) error {
-		if delta == "" {
-			return nil
-		}
-		builder.WriteString(delta)
-		if hooks.OnDelta != nil {
-			return hooks.OnDelta(delta)
-		}
-		return nil
-	})
+	outputText, err := s.generateLocalResponseText(ctx, input, generationContext)
 	if err != nil {
 		return domain.Response{}, err
 	}
-
-	outputText := builder.String()
 	if strings.TrimSpace(outputText) == "" {
 		return domain.Response{}, &llama.InvalidResponseError{Message: "llama stream content was empty"}
+	}
+	if hooks.OnDelta != nil {
+		if err := hooks.OnDelta(outputText); err != nil {
+			return domain.Response{}, err
+		}
 	}
 
 	return s.completeCreate(ctx, prepared, generationContext, input, outputText)
 }
 
-func (s *ResponseService) generateLocalResponseText(ctx context.Context, input CreateResponseInput, generationContext []domain.Item, repairRawToolMarkup bool) (string, error) {
+func (s *ResponseService) generateLocalResponseText(ctx context.Context, input CreateResponseInput, generationContext []domain.Item) (string, error) {
 	contextItems := generationContext
 	for repairAttempt := 0; ; repairAttempt++ {
 		outputText, err := s.generator.Generate(ctx, input.Model, contextItems, input.GenerationOptions)
 		if err != nil {
 			return "", err
 		}
-		if !repairRawToolMarkup || !containsRawToolCallMarkupText(outputText) {
+		if !containsRawToolCallMarkupText(outputText) {
 			return outputText, nil
 		}
 		if repairAttempt >= maxLocalTextRawToolMarkupRepairRetries {
-			return "", &llama.InvalidResponseError{Message: "llama assistant content contained raw tool-call markup"}
+			return "", &llama.InvalidResponseError{Message: "model emitted raw tool-call markup"}
 		}
 		contextItems = appendRawToolMarkupRepairInstruction(generationContext)
 	}

@@ -74,6 +74,48 @@ func TestBuildLocalToolLoopTransportPlanConvertsShellToolChoiceToChatShape(t *te
 	require.Equal(t, localBuiltinShellSyntheticName, function["name"])
 }
 
+func TestBuildLocalChatCompletionRequestRewritesTrailingCodexAgentEnvelope(t *testing.T) {
+	contextItems := []domain.Item{
+		mustDomainItem(t, `{"type":"message","role":"user","content":"`+codexCLIRequestMarker+`"}`),
+		mustDomainItem(t, `{"type":"message","role":"assistant","content":"{\"author\":\"/root\",\"recipient\":\"/root/project_explorer\",\"other_recipients\":[],\"content\":\"Inspect /tmp/project.\",\"trigger_turn\":true}"}`),
+		mustDomainItem(t, `{"type":"message","role":"assistant","content":"{\"author\":\"/root/project_explorer\",\"recipient\":\"/root/project_explorer\",\"other_recipients\":[],\"content\":\"Return the final report.\",\"trigger_turn\":false}"}`),
+	}
+	rawFields := map[string]json.RawMessage{
+		"model":        json.RawMessage(`"test-model"`),
+		"instructions": json.RawMessage(`"` + codexCLIRequestMarker + `"`),
+		"tools": json.RawMessage(`[
+			{"type":"function","name":"exec_command","description":"Runs a command.","parameters":{"type":"object","properties":{"cmd":{"type":"string"}},"required":["cmd"]}}
+		]`),
+	}
+
+	body, _, err := buildLocalChatCompletionRequest(rawFields, contextItems, contextItems[1:], nil, ServiceLimits{}, true, "")
+
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(body, &payload))
+
+	messages, ok := payload["messages"].([]any)
+	require.True(t, ok)
+	require.NotEmpty(t, messages)
+	last, ok := messages[len(messages)-1].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "user", last["role"])
+	require.Equal(t, "Inspect /tmp/project.\n\nReturn the final report.", last["content"])
+}
+
+func TestRewriteTrailingCodexAgentEnvelopeMessageLeavesOrdinaryAssistantText(t *testing.T) {
+	messages := []map[string]any{
+		{"role": "user", "content": "Hello"},
+		{"role": "assistant", "content": "{\"content\":\"missing routing fields\",\"trigger_turn\":true}"},
+	}
+
+	rewritten := rewriteTrailingCodexAgentEnvelopeMessage(messages)
+
+	require.Equal(t, messages, rewritten)
+	require.Equal(t, "assistant", rewritten[1]["role"])
+}
+
 func TestBuildChatCompletionMessagesFromItemsUsesResponsesCallIDForToolCalls(t *testing.T) {
 	items := []domain.Item{
 		mustDomainItem(t, `{"type":"message","role":"user","content":"Call add."}`),
@@ -188,6 +230,70 @@ func TestBuildChatCompletionMessagesFromItemsSynthesizesMissingToolOutput(t *tes
 	require.Equal(t, "user", messages[3]["role"])
 }
 
+func TestBuildChatCompletionMessagesFromItemsDowngradesOrphanToolOutput(t *testing.T) {
+	items := []domain.Item{
+		mustDomainItem(t, `{"type":"message","role":"user","content":"Continue from prior context."}`),
+		mustDomainItem(t, `{"type":"function_call_output","call_id":"call_orphan","output":"late result"}`),
+	}
+
+	messages, err := buildChatCompletionMessagesFromItems(items)
+
+	require.NoError(t, err)
+	require.Len(t, messages, 2)
+	require.Equal(t, "user", messages[1]["role"])
+	require.NotContains(t, messages[1], "tool_call_id")
+	require.Contains(t, messages[1]["content"], "without a matching preceding tool call")
+	require.Contains(t, messages[1]["content"], "call_orphan")
+	require.Contains(t, messages[1]["content"], "late result")
+}
+
+func TestBuildChatCompletionMessagesFromItemsWithRefsPreservesKnownToolOutput(t *testing.T) {
+	items := []domain.Item{
+		mustDomainItem(t, `{"type":"message","role":"user","content":"Continue from prior context."}`),
+		mustDomainItem(t, `{"type":"function_call_output","call_id":"call_known","output":"known result"}`),
+	}
+	refs := map[string]domain.ToolCallReference{
+		"call_known": {
+			Type: "function_call",
+			Name: "exec_command",
+		},
+	}
+
+	messages, err := buildChatCompletionMessagesFromItemsWithRefs(items, refs)
+
+	require.NoError(t, err)
+	require.Len(t, messages, 3)
+	require.Equal(t, "assistant", messages[1]["role"])
+	toolCalls, ok := messages[1]["tool_calls"].([]map[string]any)
+	require.True(t, ok)
+	require.Len(t, toolCalls, 1)
+	require.Equal(t, "call_known", toolCalls[0]["id"])
+	require.Equal(t, "exec_command", toolCalls[0]["function"].(map[string]any)["name"])
+	require.Equal(t, "tool", messages[2]["role"])
+	require.Equal(t, "call_known", messages[2]["tool_call_id"])
+	require.Equal(t, "known result", messages[2]["content"])
+}
+
+func TestBuildChatCompletionMessagesFromItemsFlushesBeforeOutOfOrderOrphanToolOutput(t *testing.T) {
+	items := []domain.Item{
+		mustDomainItem(t, `{"type":"message","role":"user","content":"Call add."}`),
+		mustDomainItem(t, `{"type":"function_call","id":"item_123","call_id":"call_missing","name":"add","arguments":"{\"a\":40,\"b\":2}"}`),
+		mustDomainItem(t, `{"type":"function_call_output","call_id":"call_orphan","output":"late unrelated result"}`),
+	}
+
+	messages, err := buildChatCompletionMessagesFromItems(items)
+
+	require.NoError(t, err)
+	require.Len(t, messages, 4)
+	require.Equal(t, "assistant", messages[1]["role"])
+	require.Equal(t, "tool", messages[2]["role"])
+	require.Equal(t, "call_missing", messages[2]["tool_call_id"])
+	require.Contains(t, messages[2]["content"], "tool output was not supplied")
+	require.Equal(t, "user", messages[3]["role"])
+	require.Contains(t, messages[3]["content"], "call_orphan")
+	require.Contains(t, messages[3]["content"], "late unrelated result")
+}
+
 func TestBuildChatCompletionMessagesFromItemsSynthesizesMissingApplyPatchOutput(t *testing.T) {
 	items := []domain.Item{
 		mustDomainItem(t, `{"type":"message","role":"user","content":"Patch the file."}`),
@@ -294,6 +400,33 @@ func TestParseLocalToolLoopChatCompletionRepairsApplyPatchUnifiedDiffHunkHeaders
 	require.NoError(t, err)
 	require.Len(t, response.Output, 1)
 	require.Equal(t, "*** Begin Patch\n*** Update File: mathutil.go\n@@\n package codexsmoke\n \n func Add(a, b int) int {\n-\treturn a - b\n+\treturn a + b\n }\n*** End Patch", response.Output[0].Input())
+}
+
+func TestParseLocalToolLoopChatCompletionMapsChatUsageToResponsesUsage(t *testing.T) {
+	raw := []byte(`{
+		"choices": [{
+			"message": {
+				"content": "done"
+			}
+		}],
+		"usage": {
+			"prompt_tokens": 10,
+			"prompt_tokens_details": {"cached_tokens": 3},
+			"completion_tokens": 4,
+			"completion_tokens_details": {"reasoning_tokens": 1},
+			"total_tokens": 14
+		}
+	}`)
+
+	response, err := parseLocalToolLoopChatCompletion(raw, "resp_test", "test-model", "", "", customToolTransportPlan{})
+	require.NoError(t, err)
+	require.JSONEq(t, `{
+		"input_tokens": 10,
+		"input_tokens_details": {"cached_tokens": 3},
+		"output_tokens": 4,
+		"output_tokens_details": {"reasoning_tokens": 1},
+		"total_tokens": 14
+	}`, string(response.Usage))
 }
 
 func TestBuildLocalCustomToolLoopInstructionsAddsApplyPatchFormatHint(t *testing.T) {

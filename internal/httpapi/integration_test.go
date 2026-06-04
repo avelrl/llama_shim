@@ -158,7 +158,7 @@ func TestResponsesStoreAndGet(t *testing.T) {
 	require.NotNil(t, response.CompletedAt)
 	require.JSONEq(t, "null", string(response.Error))
 	require.JSONEq(t, "null", string(response.IncompleteDetails))
-	require.JSONEq(t, "null", string(response.Usage))
+	requireResponseUsage(t, response.Usage)
 	require.Equal(t, map[string]string{"topic": "demo"}, response.Metadata)
 	require.NotNil(t, response.Store)
 	require.True(t, *response.Store)
@@ -14790,6 +14790,16 @@ func postStoredChatCompletion(t *testing.T, app *testutil.TestApp, payload map[s
 	status, body := rawRequest(t, app, http.MethodPost, "/v1/chat/completions", payload)
 	require.Equal(t, http.StatusOK, status)
 	return asStringAny(body["id"])
+}
+
+func requireResponseUsage(t *testing.T, raw json.RawMessage) {
+	t.Helper()
+
+	var usage map[string]any
+	require.NoError(t, json.Unmarshal(raw, &usage))
+	require.Greater(t, int(usage["input_tokens"].(float64)), 0)
+	require.Greater(t, int(usage["output_tokens"].(float64)), 0)
+	require.Greater(t, int(usage["total_tokens"].(float64)), 0)
 }
 
 func postUpstreamStoredChatCompletion(t *testing.T, app *testutil.TestApp, payload map[string]any) string {

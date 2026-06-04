@@ -396,7 +396,7 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 		case responsesCreateRouteLocalStateViaUpstream:
 			h.createStreamViaUpstream(w, r, request, requestJSON, rawFields, streamOptions)
 		case responsesCreateRouteLocalOnlyUnsupported:
-			h.writeError(w, r, newLocalOnlyUnsupportedFieldsError(rawFields))
+			h.writeError(w, r, newLocalShimUnsupportedFieldsError(h.responsesMode, rawFields))
 		}
 		return
 	}
@@ -576,7 +576,7 @@ func (h *responseHandler) create(w http.ResponseWriter, r *http.Request) {
 		WriteJSON(w, http.StatusOK, response)
 		return
 	case responsesCreateRouteLocalOnlyUnsupported:
-		h.writeError(w, r, newLocalOnlyUnsupportedFieldsError(rawFields))
+		h.writeError(w, r, newLocalShimUnsupportedFieldsError(h.responsesMode, rawFields))
 		return
 	}
 
@@ -1816,8 +1816,14 @@ func (h *responseHandler) shouldFallbackLocalStateWithTrace(ctx context.Context,
 	return allowed
 }
 
-func newLocalOnlyUnsupportedFieldsError(rawFields map[string]json.RawMessage) error {
+func newLocalShimUnsupportedFieldsError(responsesMode string, rawFields map[string]json.RawMessage) error {
 	fields := unsupportedLocalShimFields(rawFields)
+	if responsesMode != config.ResponsesModeLocalOnly {
+		if len(fields) == 0 {
+			return domain.NewValidationError("responses.mode", "request is not supported by shim-local Responses handling and native /v1/responses proxy is unavailable")
+		}
+		return domain.NewValidationError("responses.mode", "request uses fields that are not supported by shim-local Responses handling and native /v1/responses proxy is unavailable: "+joinCSV(fields))
+	}
 	if len(fields) == 0 {
 		return domain.NewValidationError("responses.mode", "request is not supported when responses.mode=local_only")
 	}

@@ -363,6 +363,12 @@ styles:
 - generic `response.output_item.*` replay where exact hosted choreography is
   unknown or intentionally out of scope
 
+For shim-local text generation, create-stream may buffer the model output before
+emitting the first `response.output_text.delta` so the local raw tool-markup
+repair/validation loop can run without leaking invalid assistant markup to the
+client. That preserves the typed Responses event envelope, but it is not a
+claim of token-by-token hosted streaming fidelity.
+
 The stream/replay interface owns sequence numbering, `starting_after`
 filtering for retrieve-stream, and replay capability labels such as
 `typed_text`, `typed_tool_family`, and `generic_replay`. These labels are

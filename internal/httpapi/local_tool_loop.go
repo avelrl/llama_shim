@@ -48,11 +48,12 @@ type rawToolCallMarkupError struct {
 }
 
 func (e *rawToolCallMarkupError) Error() string {
-	return "chat completion assistant content contained raw tool-call markup"
+	return "model emitted raw tool-call markup"
 }
 
 type localChatCompletionResponse struct {
 	Choices []localChatCompletionChoice `json:"choices"`
+	Usage   json.RawMessage             `json:"usage"`
 }
 
 type localChatCompletionChoice struct {
@@ -385,6 +386,10 @@ func decodeResponseInputItems(raw json.RawMessage) ([]domain.Item, error) {
 }
 
 func buildChatCompletionMessagesFromItems(items []domain.Item) ([]map[string]any, error) {
+	return buildChatCompletionMessagesFromItemsWithRefs(items, nil)
+}
+
+func buildChatCompletionMessagesFromItemsWithRefs(items []domain.Item, refs map[string]domain.ToolCallReference) ([]map[string]any, error) {
 	messages := make([]map[string]any, 0, len(items))
 	lastTextMessage := -1
 
@@ -515,7 +520,7 @@ func buildChatCompletionMessagesFromItems(items []domain.Item) ([]map[string]any
 		}
 	}
 
-	messages = synthesizeMissingChatToolOutputs(messages)
+	messages = synthesizeMissingChatToolOutputs(messages, refs)
 	return messages, nil
 }
 
@@ -547,8 +552,9 @@ func appendLocalChatToolCallMessage(messages []map[string]any, callID string, na
 }
 
 const missingChatToolOutputContent = "tool output was not supplied by the client; treat this tool call as failed and continue with available context."
+const orphanChatToolOutputContentPrefix = "tool output was supplied without a matching preceding tool call; preserving it as plain context"
 
-func synthesizeMissingChatToolOutputs(messages []map[string]any) []map[string]any {
+func synthesizeMissingChatToolOutputs(messages []map[string]any, refs map[string]domain.ToolCallReference) []map[string]any {
 	if len(messages) == 0 {
 		return messages
 	}
@@ -571,15 +577,28 @@ func synthesizeMissingChatToolOutputs(messages []map[string]any) []map[string]an
 		role := strings.TrimSpace(asString(message["role"]))
 		if role == "tool" {
 			callID := strings.TrimSpace(asString(message["tool_call_id"]))
-			if len(pending) > 0 && callID != "" {
-				for idx, pendingID := range pending {
-					if pendingID == callID {
-						pending = append(pending[:idx], pending[idx+1:]...)
-						break
-					}
+			matchedPending := false
+			for idx, pendingID := range pending {
+				if pendingID == callID {
+					pending = append(pending[:idx], pending[idx+1:]...)
+					out = append(out, message)
+					matchedPending = true
+					break
 				}
 			}
-			out = append(out, message)
+			if matchedPending {
+				continue
+			}
+
+			if len(pending) > 0 {
+				flushPending()
+			}
+			if ref, ok := refs[callID]; ok {
+				out = appendKnownChatToolCallReference(out, callID, ref)
+				out = append(out, message)
+				continue
+			}
+			out = append(out, chatToolOutputAsUserMessage(message))
 			continue
 		}
 
@@ -606,6 +625,36 @@ func synthesizeMissingChatToolOutputs(messages []map[string]any) []map[string]an
 		flushPending()
 	}
 	return out
+}
+
+func appendKnownChatToolCallReference(messages []map[string]any, callID string, ref domain.ToolCallReference) []map[string]any {
+	name := strings.TrimSpace(ref.Name)
+	if ref.Meta != nil && strings.TrimSpace(ref.Meta.SyntheticName) != "" {
+		name = strings.TrimSpace(ref.Meta.SyntheticName)
+	}
+	if name == "" {
+		name = "unknown_tool"
+	}
+	return appendLocalChatToolCallMessage(messages, callID, name, json.RawMessage(`{}`))
+}
+
+func chatToolOutputAsUserMessage(message map[string]any) map[string]any {
+	callID := strings.TrimSpace(asString(message["tool_call_id"]))
+	content := strings.TrimSpace(asString(message["content"]))
+	var builder strings.Builder
+	builder.WriteString(orphanChatToolOutputContentPrefix)
+	if callID != "" {
+		builder.WriteString(" for call ")
+		builder.WriteString(callID)
+	}
+	if content != "" {
+		builder.WriteString(":\n")
+		builder.WriteString(content)
+	}
+	return map[string]any{
+		"role":    "user",
+		"content": builder.String(),
+	}
 }
 
 func ensureLocalToolCallID(callID string) (string, error) {
@@ -781,6 +830,7 @@ func parseLocalToolLoopChatCompletion(raw []byte, responseID string, model strin
 	}
 
 	message := payload.Choices[0].Message
+	usage := normalizeLocalChatCompletionUsage(payload.Usage)
 	content := extractChatCompletionContent(message.Content)
 	if containsRawToolCallMarkup(content) {
 		return domain.Response{}, &rawToolCallMarkupError{Content: content}
@@ -852,6 +902,7 @@ func parseLocalToolLoopChatCompletion(raw []byte, responseID string, model strin
 			Model:              model,
 			PreviousResponseID: previousResponseID,
 			Conversation:       domain.NewConversationReference(conversationID),
+			Usage:              usage,
 			OutputText:         "",
 			Output:             toolCalls,
 		}
@@ -862,7 +913,89 @@ func parseLocalToolLoopChatCompletion(raw []byte, responseID string, model strin
 		return domain.Response{}, &llama.InvalidResponseError{Message: "chat completion response did not include assistant text or tool calls"}
 	}
 
-	return domain.NewResponse(responseID, model, content, previousResponseID, conversationID, domain.NowUTC().Unix()), nil
+	response := domain.NewResponse(responseID, model, content, previousResponseID, conversationID, domain.NowUTC().Unix())
+	response.Usage = usage
+	return response, nil
+}
+
+func normalizeLocalChatCompletionUsage(raw json.RawMessage) json.RawMessage {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return nil
+	}
+
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(trimmed, &fields); err != nil {
+		return nil
+	}
+	if _, ok := fields["input_tokens"]; ok {
+		if _, ok := fields["output_tokens"]; ok {
+			return append(json.RawMessage(nil), trimmed...)
+		}
+	}
+
+	inputTokens, inputOK := jsonIntField(fields, "prompt_tokens")
+	outputTokens, outputOK := jsonIntField(fields, "completion_tokens")
+	totalTokens, totalOK := jsonIntField(fields, "total_tokens")
+	if !inputOK && !outputOK && !totalOK {
+		return nil
+	}
+	if !inputOK {
+		inputTokens = max(0, totalTokens-outputTokens)
+	}
+	if !outputOK {
+		outputTokens = max(0, totalTokens-inputTokens)
+	}
+	if !totalOK {
+		totalTokens = inputTokens + outputTokens
+	}
+
+	cachedTokens := nestedJSONIntField(fields, "prompt_tokens_details", "cached_tokens")
+	reasoningTokens := nestedJSONIntField(fields, "completion_tokens_details", "reasoning_tokens")
+	rawUsage, err := json.Marshal(map[string]any{
+		"input_tokens": inputTokens,
+		"input_tokens_details": map[string]any{
+			"cached_tokens": cachedTokens,
+		},
+		"output_tokens": outputTokens,
+		"output_tokens_details": map[string]any{
+			"reasoning_tokens": reasoningTokens,
+		},
+		"total_tokens": totalTokens,
+	})
+	if err != nil {
+		return nil
+	}
+	return rawUsage
+}
+
+func jsonIntField(fields map[string]json.RawMessage, key string) (int, bool) {
+	raw, ok := fields[key]
+	if !ok {
+		return 0, false
+	}
+	var value int
+	if err := json.Unmarshal(raw, &value); err == nil {
+		return value, true
+	}
+	var valueFloat float64
+	if err := json.Unmarshal(raw, &valueFloat); err == nil {
+		return int(valueFloat), true
+	}
+	return 0, false
+}
+
+func nestedJSONIntField(fields map[string]json.RawMessage, key string, nestedKey string) int {
+	raw, ok := fields[key]
+	if !ok {
+		return 0
+	}
+	var nested map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &nested); err != nil {
+		return 0
+	}
+	value, _ := jsonIntField(nested, nestedKey)
+	return value
 }
 
 func containsRawToolCallMarkup(text string) bool {

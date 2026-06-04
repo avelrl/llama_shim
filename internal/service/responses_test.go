@@ -31,6 +31,22 @@ func TestCreateResponseRejectsMutuallyExclusiveStateFields(t *testing.T) {
 	require.Equal(t, "previous_response_id", validationErr.Param)
 }
 
+func TestFinalizeLocalResponseAddsSyntheticUsageWhenMissing(t *testing.T) {
+	svc := service.NewResponseService(noopResponseStore{}, noopConversationStore{}, noopGenerator{})
+	contextItems, err := domain.NormalizeInput(json.RawMessage(`[{"type":"message","role":"user","content":"hello"}]`))
+	require.NoError(t, err)
+	response := domain.NewResponse("resp_test", "test-model", "done", "", "", 1712059200)
+
+	finalized, err := svc.FinalizeLocalResponse(service.CreateResponseInput{}, contextItems, response)
+	require.NoError(t, err)
+
+	var usage map[string]any
+	require.NoError(t, json.Unmarshal(finalized.Usage, &usage))
+	require.Greater(t, int(usage["input_tokens"].(float64)), 0)
+	require.Greater(t, int(usage["output_tokens"].(float64)), 0)
+	require.Greater(t, int(usage["total_tokens"].(float64)), 0)
+}
+
 func TestCreateResponseInjectsSessionMemoryWithoutPersistingItAsInput(t *testing.T) {
 	t.Parallel()
 
@@ -674,6 +690,27 @@ function {"code":"cat README.md"}
 	}
 }
 
+func TestCreateResponseRepairsRawToolMarkupWithoutToolOutput(t *testing.T) {
+	t.Parallel()
+
+	generator := &sequenceGenerator{outputs: []string{
+		"<\uFF5C\uFF5CDSML\uFF5C\uFF5Ctool_calls><\uFF5C\uFF5CDSML\uFF5C\uFF5Cinvoke name=\"read\">README.md</\uFF5C\uFF5CDSML\uFF5C\uFF5Cinvoke></\uFF5C\uFF5CDSML\uFF5C\uFF5Ctool_calls>",
+		"Plain final answer.",
+	}}
+	svc := service.NewResponseService(noopResponseStore{}, noopConversationStore{}, generator)
+
+	response, err := svc.Create(context.Background(), service.CreateResponseInput{
+		Model:       "test-model",
+		Input:       json.RawMessage(`"Answer normally."`),
+		RequestJSON: `{"model":"test-model"}`,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "Plain final answer.", response.OutputText)
+
+	require.Len(t, generator.contexts, 2)
+	require.Contains(t, domain.MessageText(generator.contexts[1][len(generator.contexts[1])-1]), "previous draft attempted to print internal tool-call markup")
+}
+
 func TestCreateResponseRetriesRawToolMarkupRepairAfterToolOutput(t *testing.T) {
 	t.Parallel()
 
@@ -719,7 +756,7 @@ func TestCreateResponseRawToolMarkupRepairEventuallyFails(t *testing.T) {
 		]`),
 		RequestJSON: `{"model":"test-model"}`,
 	})
-	require.ErrorContains(t, err, "raw tool-call markup")
+	require.ErrorContains(t, err, "model emitted raw tool-call markup")
 	require.Len(t, generator.contexts, 3)
 }
 
@@ -750,6 +787,33 @@ func TestCreateStreamBuffersPostToolAnswerAndRepairsBeforeDelta(t *testing.T) {
 	require.Equal(t, "READ_OK", response.OutputText)
 	require.Equal(t, []string{"READ_OK"}, deltas)
 	require.Equal(t, 0, generator.streamCalls)
+}
+
+func TestCreateStreamRepairsRawToolMarkupWithoutToolOutputBeforeDelta(t *testing.T) {
+	t.Parallel()
+
+	generator := &sequenceGenerator{outputs: []string{
+		"<\uFF5C\uFF5CDSML\uFF5C\uFF5Ctool_calls><\uFF5C\uFF5CDSML\uFF5C\uFF5Cinvoke name=\"read\">README.md</\uFF5C\uFF5CDSML\uFF5C\uFF5Cinvoke></\uFF5C\uFF5CDSML\uFF5C\uFF5Ctool_calls>",
+		"Plain streamed answer.",
+	}}
+	svc := service.NewResponseService(noopResponseStore{}, noopConversationStore{}, generator)
+	var deltas []string
+
+	response, err := svc.CreateStream(context.Background(), service.CreateResponseInput{
+		Model:       "test-model",
+		Input:       json.RawMessage(`"Answer normally."`),
+		RequestJSON: `{"model":"test-model","stream":true}`,
+	}, service.StreamHooks{
+		OnDelta: func(delta string) error {
+			deltas = append(deltas, delta)
+			return nil
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, "Plain streamed answer.", response.OutputText)
+	require.Equal(t, []string{"Plain streamed answer."}, deltas)
+	require.Equal(t, 0, generator.streamCalls)
+	require.Len(t, generator.contexts, 2)
 }
 
 type noopGenerator struct{}
