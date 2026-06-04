@@ -2,6 +2,12 @@
 
 `llama_shim` is a small Go 1.26 HTTP service that exposes a minimal OpenAI-compatible subset for Responses + Conversations while keeping `llama.cpp` as an unchanged stateless backend.
 
+## Why this matters for OSS maintainers
+
+Many local and open model servers expose only a stateless OpenAI-style Chat Completions API, while modern coding agents and assistant clients increasingly rely on stateful workflows such as Responses, Conversations, streaming, tool calls, retrieval-like flows, and previous response continuation.
+`llama_shim` exists to bridge that gap without requiring changes to the upstream model server. It gives OSS maintainers a transparent compatibility layer for testing Codex-style and agent-style clients against local, self-hosted, or third-party OpenAI-compatible backends.
+The project is intentionally pragmatic: it focuses on the API behaviors that break real developer workflows rather than claiming full hosted OpenAI parity.
+
 For a Russian translation, see [README.ru.md](README.ru.md).
 
 v1 supports:
@@ -57,6 +63,12 @@ access that made the April 29, 2026 MiMo v2.5 Pro real-upstream run possible:
 28/28 strict external-tester result for the shim-owned Responses-over-Chat
 path. The README claim stays conservative: this proves the tested chat
 transport path, not native upstream `/v1/responses` parity.
+
+## Companion compatibility tester
+
+For validating OpenAI-compatible endpoints and agent-facing behavior, see:
+- https://github.com/avelrl/openai-compatible-tester
+The tester checks practical interoperability across Chat Completions, Responses, SSE streaming, structured outputs, tool calling, follow-up turns, and known client requirements.
 
 ## Documentation
 
