@@ -77,6 +77,9 @@ func (i *Item) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
+	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return fmt.Errorf("item payload must be a JSON object")
+	}
 
 	*i = Item{
 		Raw: raw,
@@ -88,7 +91,7 @@ func (i *Item) UnmarshalJSON(data []byte) error {
 	}
 	var payload basePayload
 	if err := json.Unmarshal(raw, &payload); err != nil {
-		return nil
+		return fmt.Errorf("decode item payload: %w", err)
 	}
 
 	i.Type = strings.TrimSpace(payload.Type)

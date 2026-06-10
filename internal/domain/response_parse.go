@@ -105,10 +105,10 @@ func ParseUpstreamResponse(raw []byte) (Response, error) {
 	response.Conversation = extractConversationReference(payload.Conversation)
 
 	var outputTextBuilder strings.Builder
-	for _, rawItem := range payload.Output {
+	for index, rawItem := range payload.Output {
 		item, err := NewItem(rawItem)
 		if err != nil {
-			continue
+			return Response{}, fmt.Errorf("decode upstream response output[%d]: %w", index, err)
 		}
 		response.Output = append(response.Output, item)
 		if item.Type != "message" || item.Role != "assistant" {

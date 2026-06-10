@@ -36,6 +36,19 @@ func (e *toolChoiceIncompatibleBackendError) Error() string {
 	return strings.TrimSpace(e.Message)
 }
 
+type upstreamResponseBodyTooLargeError struct {
+	Surface  string
+	MaxBytes int64
+}
+
+func (e *upstreamResponseBodyTooLargeError) Error() string {
+	surface := strings.TrimSpace(e.Surface)
+	if surface == "" {
+		surface = "upstream response"
+	}
+	return fmt.Sprintf("%s body exceeded %d bytes", surface, e.MaxBytes)
+}
+
 func (c toolChoiceContract) Active() bool {
 	return c.Mode != ""
 }
@@ -162,24 +175,24 @@ func shouldRetryToolChoiceWithRequiredError(err error, plan customToolTransportP
 	return shouldRetryToolChoiceWithRequiredBody(upstreamErr.StatusCode, []byte(upstreamErr.Message), plan)
 }
 
-func shouldRetryToolChoiceWithAutoResponse(resp *http.Response, plan customToolTransportPlan) (bool, error) {
+func shouldRetryToolChoiceWithAutoResponse(resp *http.Response, plan customToolTransportPlan, maxBodyBytes int64) (bool, error) {
 	if resp == nil || (resp.StatusCode >= 200 && resp.StatusCode < 300) {
 		return false, nil
 	}
 
-	body, err := readAndReplaceResponseBody(resp)
+	body, err := readAndReplaceResponseBody(resp, maxBodyBytes)
 	if err != nil {
 		return false, err
 	}
 	return shouldRetryToolChoiceWithAutoBody(resp.StatusCode, body, plan), nil
 }
 
-func shouldRetryToolChoiceWithRequiredResponse(resp *http.Response, plan customToolTransportPlan) (bool, error) {
+func shouldRetryToolChoiceWithRequiredResponse(resp *http.Response, plan customToolTransportPlan, maxBodyBytes int64) (bool, error) {
 	if resp == nil || (resp.StatusCode >= 200 && resp.StatusCode < 300) {
 		return false, nil
 	}
 
-	body, err := readAndReplaceResponseBody(resp)
+	body, err := readAndReplaceResponseBody(resp, maxBodyBytes)
 	if err != nil {
 		return false, err
 	}
@@ -229,12 +242,12 @@ func shouldRetryCustomToolsWithBridgeError(err error, plan customToolTransportPl
 	return shouldRetryCustomToolsWithBridgeBody(upstreamErr.StatusCode, []byte(upstreamErr.Message), plan)
 }
 
-func shouldRetryCustomToolsWithBridgeResponse(resp *http.Response, plan customToolTransportPlan) (bool, error) {
+func shouldRetryCustomToolsWithBridgeResponse(resp *http.Response, plan customToolTransportPlan, maxBodyBytes int64) (bool, error) {
 	if resp == nil || (resp.StatusCode >= 200 && resp.StatusCode < 300) {
 		return false, nil
 	}
 
-	body, err := readAndReplaceResponseBody(resp)
+	body, err := readAndReplaceResponseBody(resp, maxBodyBytes)
 	if err != nil {
 		return false, err
 	}
@@ -264,12 +277,12 @@ func shouldRetryLocalStateWithDirectProxyError(err error, request CreateResponse
 	return shouldRetryLocalStateWithDirectProxyBody(upstreamErr.StatusCode, []byte(upstreamErr.Message), request)
 }
 
-func shouldRetryLocalStateWithDirectProxyResponse(resp *http.Response, request CreateResponseRequest) (bool, error) {
+func shouldRetryLocalStateWithDirectProxyResponse(resp *http.Response, request CreateResponseRequest, maxBodyBytes int64) (bool, error) {
 	if resp == nil || (resp.StatusCode >= 200 && resp.StatusCode < 300) {
 		return false, nil
 	}
 
-	body, err := readAndReplaceResponseBody(resp)
+	body, err := readAndReplaceResponseBody(resp, maxBodyBytes)
 	if err != nil {
 		return false, err
 	}
@@ -298,33 +311,60 @@ func shouldRetryResponsesInputAsStringError(err error, requestBody []byte) bool 
 	return shouldRetryResponsesInputAsStringBody(upstreamErr.StatusCode, []byte(upstreamErr.Message), requestBody)
 }
 
-func shouldRetryResponsesInputAsStringResponse(resp *http.Response, requestBody []byte) (bool, error) {
+func shouldRetryResponsesInputAsStringResponse(resp *http.Response, requestBody []byte, maxBodyBytes int64) (bool, error) {
 	if resp == nil || (resp.StatusCode >= 200 && resp.StatusCode < 300) {
 		return false, nil
 	}
 
-	body, err := readAndReplaceResponseBody(resp)
+	body, err := readAndReplaceResponseBody(resp, maxBodyBytes)
 	if err != nil {
 		return false, err
 	}
 	return shouldRetryResponsesInputAsStringBody(resp.StatusCode, body, requestBody), nil
 }
 
-func readAndReplaceResponseBody(resp *http.Response) ([]byte, error) {
+func readAndReplaceResponseBody(resp *http.Response, maxBodyBytes int64) ([]byte, error) {
 	if resp == nil || resp.Body == nil {
 		return nil, nil
 	}
+	if maxBodyBytes <= 0 {
+		maxBodyBytes = normalizeServiceLimits(ServiceLimits{}).ResponsesProxyBufferBytes
+	}
 
-	body, readErr := io.ReadAll(resp.Body)
-	closeErr := resp.Body.Close()
-	resp.Body = io.NopCloser(bytes.NewReader(body))
+	consumed, readErr := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes+1))
 	if readErr != nil {
+		resp.Body = &prefixReadCloser{
+			Reader: io.MultiReader(bytes.NewReader(consumed), resp.Body),
+			closer: resp.Body,
+		}
 		return nil, readErr
 	}
+	if int64(len(consumed)) > maxBodyBytes {
+		resp.Body = &prefixReadCloser{
+			Reader: io.MultiReader(bytes.NewReader(consumed), resp.Body),
+			closer: resp.Body,
+		}
+		return consumed[:maxBodyBytes], nil
+	}
+
+	closeErr := resp.Body.Close()
+	resp.Body = io.NopCloser(bytes.NewReader(consumed))
 	if closeErr != nil {
 		return nil, closeErr
 	}
-	return body, nil
+	return consumed, nil
+}
+
+type prefixReadCloser struct {
+	io.Reader
+	closer io.Closer
+}
+
+func (r *prefixReadCloser) Close() error {
+	if r == nil || r.closer == nil {
+		return nil
+	}
+	return r.closer.Close()
 }
 
 func shouldRetryResponsesInputAsStringBody(status int, body []byte, requestBody []byte) bool {

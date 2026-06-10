@@ -2,9 +2,12 @@ package httpapi
 
 import (
 	"context"
+	"errors"
+	"io"
 	"net/url"
 	"reflect"
 	"strconv"
+	"strings"
 	"testing"
 
 	"llama_shim/internal/domain"
@@ -39,6 +42,52 @@ func TestBuildUpstreamStoredChatCompletionsQuery_CapsLimitAtPageLimit(t *testing
 
 	if got := values.Get("limit"); got != strconv.Itoa(upstreamStoredChatCompletionsPageLimit) {
 		t.Fatalf("expected limit=%d, got %q", upstreamStoredChatCompletionsPageLimit, got)
+	}
+}
+
+func TestStoredChatUpstreamPageReadDetectsOverflow(t *testing.T) {
+	t.Parallel()
+
+	body, overflowed, err := readResponsePrefix(strings.NewReader(strings.Repeat("x", 17)), 16)
+	if err != nil {
+		t.Fatalf("read response prefix: %v", err)
+	}
+	if !overflowed {
+		t.Fatal("expected overflow")
+	}
+	if len(body) != 17 {
+		t.Fatalf("expected cap plus sentinel byte, got %d", len(body))
+	}
+
+	classificationErr := &upstreamResponseBodyTooLargeError{
+		Surface:  "stored chat completions list",
+		MaxBytes: 16,
+	}
+	decision, ok := classifyBackendFailure(classificationErr)
+	if !ok {
+		t.Fatal("expected backend failure classification")
+	}
+	if decision.Class != backendFailureMalformedBackendResponse {
+		t.Fatalf("expected malformed backend response, got %s", decision.Class)
+	}
+	var typed *upstreamResponseBodyTooLargeError
+	if !errors.As(classificationErr, &typed) {
+		t.Fatal("expected typed oversized body error")
+	}
+}
+
+func TestStoredChatUpstreamPageReadWithinLimit(t *testing.T) {
+	t.Parallel()
+
+	body, overflowed, err := readResponsePrefix(io.LimitReader(strings.NewReader(`{"data":[]}`), 32), 32)
+	if err != nil {
+		t.Fatalf("read response prefix: %v", err)
+	}
+	if overflowed {
+		t.Fatal("unexpected overflow")
+	}
+	if string(body) != `{"data":[]}` {
+		t.Fatalf("unexpected body %q", string(body))
 	}
 }
 

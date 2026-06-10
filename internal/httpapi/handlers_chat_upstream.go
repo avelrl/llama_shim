@@ -281,9 +281,15 @@ func (h *proxyHandler) fetchUpstreamStoredChatCompletionsPage(ctx context.Contex
 	}
 	defer response.Body.Close()
 
-	body, err := io.ReadAll(response.Body)
+	body, overflowed, err := readResponsePrefix(response.Body, normalizeServiceLimits(h.serviceLimits).ChatCompletionsShadowStoreBytes)
 	if err != nil {
 		return chatCompletionsListResponse{}, 0, nil, nil, false, err
+	}
+	if overflowed {
+		return chatCompletionsListResponse{}, 0, nil, nil, false, &upstreamResponseBodyTooLargeError{
+			Surface:  "stored chat completions list",
+			MaxBytes: normalizeServiceLimits(h.serviceLimits).ChatCompletionsShadowStoreBytes,
+		}
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		if isStoredChatCompletionListUnsupported(response.StatusCode) {

@@ -914,7 +914,7 @@ func TestShouldRetryResponsesInputAsStringResponseClosesOriginalBody(t *testing.
 
 	retry, err := shouldRetryResponsesInputAsStringResponse(resp, []byte(`{
 		"input":[{"type":"message","role":"user","content":"hello"}]
-	}`))
+	}`), 1<<20)
 	require.NoError(t, err)
 	require.True(t, retry)
 	require.True(t, closed)
@@ -923,6 +923,82 @@ func TestShouldRetryResponsesInputAsStringResponseClosesOriginalBody(t *testing.
 	require.NoError(t, err)
 	require.JSONEq(t, rawBody, string(replayed))
 	require.NoError(t, resp.Body.Close())
+}
+
+func TestShouldRetryResponsesInputAsStringResponsePreservesOversizedBody(t *testing.T) {
+	rawError := `{
+		"error":{"type":"invalid_request_error","message":"Input should be a valid string"}
+	}`
+	rawBody := rawError + strings.Repeat("x", 128)
+	closed := false
+	resp := &http.Response{
+		StatusCode: http.StatusBadRequest,
+		Body: &closeTrackingReadCloser{
+			Reader: strings.NewReader(rawBody),
+			closed: &closed,
+		},
+	}
+
+	retry, err := shouldRetryResponsesInputAsStringResponse(resp, []byte(`{
+		"input":[{"type":"message","role":"user","content":"hello"}]
+	}`), int64(len(rawError)))
+	require.NoError(t, err)
+	require.True(t, retry)
+	require.False(t, closed)
+
+	replayed, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equal(t, rawBody, string(replayed))
+	require.NoError(t, resp.Body.Close())
+	require.True(t, closed)
+}
+
+func TestReadAndReplaceResponseBodyPreservesReplay(t *testing.T) {
+	t.Run("small body closes original and replays buffered body", func(t *testing.T) {
+		rawBody := `{"error":{"message":"small"}}`
+		closed := false
+		resp := &http.Response{
+			StatusCode: http.StatusBadRequest,
+			Body: &closeTrackingReadCloser{
+				Reader: strings.NewReader(rawBody),
+				closed: &closed,
+			},
+		}
+
+		body, err := readAndReplaceResponseBody(resp, 1<<10)
+		require.NoError(t, err)
+		require.Equal(t, rawBody, string(body))
+		require.True(t, closed)
+
+		replayed, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		require.Equal(t, rawBody, string(replayed))
+		require.NoError(t, resp.Body.Close())
+	})
+
+	t.Run("oversized body returns bounded prefix and preserves full original stream", func(t *testing.T) {
+		prefix := `{"error":{"message":"large but classifiable"}}`
+		rawBody := prefix + strings.Repeat("x", 128)
+		closed := false
+		resp := &http.Response{
+			StatusCode: http.StatusBadRequest,
+			Body: &closeTrackingReadCloser{
+				Reader: strings.NewReader(rawBody),
+				closed: &closed,
+			},
+		}
+
+		body, err := readAndReplaceResponseBody(resp, int64(len(prefix)))
+		require.NoError(t, err)
+		require.Equal(t, prefix, string(body))
+		require.False(t, closed)
+
+		replayed, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		require.Equal(t, rawBody, string(replayed))
+		require.NoError(t, resp.Body.Close())
+		require.True(t, closed)
+	})
 }
 
 func TestRewriteResponsesInputAsStringBody(t *testing.T) {

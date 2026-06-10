@@ -56,7 +56,8 @@ func (h *responseHandler) proxyCreateStream(w http.ResponseWriter, r *http.Reque
 		}
 	}()
 
-	retryWithBridge, err := shouldRetryCustomToolsWithBridgeResponse(resp, plan)
+	responseBodyReadLimit := normalizeServiceLimits(h.serviceLimits).ResponsesProxyBufferBytes
+	retryWithBridge, err := shouldRetryCustomToolsWithBridgeResponse(resp, plan, responseBodyReadLimit)
 	if err != nil {
 		WriteError(w, http.StatusBadGateway, "upstream_error", "failed to read upstream response", "")
 		return
@@ -76,7 +77,7 @@ func (h *responseHandler) proxyCreateStream(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	retryWithStringifiedInput, err := shouldRetryResponsesInputAsStringResponse(resp, upstreamBody)
+	retryWithStringifiedInput, err := shouldRetryResponsesInputAsStringResponse(resp, upstreamBody, responseBodyReadLimit)
 	if err != nil {
 		WriteError(w, http.StatusBadGateway, "upstream_error", "failed to read upstream response", "")
 		return
@@ -95,7 +96,7 @@ func (h *responseHandler) proxyCreateStream(w http.ResponseWriter, r *http.Reque
 			return
 		}
 	}
-	retryWithBridge, err = shouldRetryCustomToolsWithBridgeResponse(resp, plan)
+	retryWithBridge, err = shouldRetryCustomToolsWithBridgeResponse(resp, plan, responseBodyReadLimit)
 	if err != nil {
 		WriteError(w, http.StatusBadGateway, "upstream_error", "failed to read upstream response", "")
 		return
@@ -115,12 +116,12 @@ func (h *responseHandler) proxyCreateStream(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	retryWithRequired, err := shouldRetryToolChoiceWithRequiredResponse(resp, plan)
+	retryWithRequired, err := shouldRetryToolChoiceWithRequiredResponse(resp, plan, responseBodyReadLimit)
 	if err != nil {
 		WriteError(w, http.StatusBadGateway, "upstream_error", "failed to read upstream response", "")
 		return
 	}
-	retryWithAuto, err := shouldRetryToolChoiceWithAutoResponse(resp, plan)
+	retryWithAuto, err := shouldRetryToolChoiceWithAutoResponse(resp, plan, responseBodyReadLimit)
 	if err != nil {
 		WriteError(w, http.StatusBadGateway, "upstream_error", "failed to read upstream response", "")
 		return
@@ -259,7 +260,8 @@ func (h *responseHandler) createStreamViaUpstream(w http.ResponseWriter, r *http
 		}
 	}()
 
-	retryWithBridge, err := shouldRetryCustomToolsWithBridgeResponse(resp, plan)
+	responseBodyReadLimit := normalizeServiceLimits(h.serviceLimits).ResponsesProxyBufferBytes
+	retryWithBridge, err := shouldRetryCustomToolsWithBridgeResponse(resp, plan, responseBodyReadLimit)
 	if err != nil {
 		WriteError(w, http.StatusBadGateway, "upstream_error", "failed to read upstream response", "")
 		return
@@ -279,12 +281,12 @@ func (h *responseHandler) createStreamViaUpstream(w http.ResponseWriter, r *http
 		}
 	}
 
-	retryWithStringifiedInput, err := shouldRetryResponsesInputAsStringResponse(resp, upstreamBody)
+	retryWithStringifiedInput, err := shouldRetryResponsesInputAsStringResponse(resp, upstreamBody, responseBodyReadLimit)
 	if err != nil {
 		WriteError(w, http.StatusBadGateway, "upstream_error", "failed to read upstream response", "")
 		return
 	}
-	retryWithDirectProxy, err := shouldRetryLocalStateWithDirectProxyResponse(resp, request)
+	retryWithDirectProxy, err := shouldRetryLocalStateWithDirectProxyResponse(resp, request, responseBodyReadLimit)
 	if err != nil {
 		WriteError(w, http.StatusBadGateway, "upstream_error", "failed to read upstream response", "")
 		return
@@ -314,7 +316,7 @@ func (h *responseHandler) createStreamViaUpstream(w http.ResponseWriter, r *http
 			return
 		}
 	}
-	retryWithBridge, err = shouldRetryCustomToolsWithBridgeResponse(resp, plan)
+	retryWithBridge, err = shouldRetryCustomToolsWithBridgeResponse(resp, plan, responseBodyReadLimit)
 	if err != nil {
 		WriteError(w, http.StatusBadGateway, "upstream_error", "failed to read upstream response", "")
 		return
@@ -334,12 +336,12 @@ func (h *responseHandler) createStreamViaUpstream(w http.ResponseWriter, r *http
 		}
 	}
 
-	retryWithRequired, err := shouldRetryToolChoiceWithRequiredResponse(resp, plan)
+	retryWithRequired, err := shouldRetryToolChoiceWithRequiredResponse(resp, plan, responseBodyReadLimit)
 	if err != nil {
 		WriteError(w, http.StatusBadGateway, "upstream_error", "failed to read upstream response", "")
 		return
 	}
-	retryWithAuto, err := shouldRetryToolChoiceWithAutoResponse(resp, plan)
+	retryWithAuto, err := shouldRetryToolChoiceWithAutoResponse(resp, plan, responseBodyReadLimit)
 	if err != nil {
 		WriteError(w, http.StatusBadGateway, "upstream_error", "failed to read upstream response", "")
 		return

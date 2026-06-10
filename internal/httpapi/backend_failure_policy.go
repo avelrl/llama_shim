@@ -51,12 +51,15 @@ func classifyBackendFailure(err error) (backendFailureDecision, bool) {
 	var upstreamErr *llama.UpstreamError
 	var invalidResponseErr *llama.InvalidResponseError
 	var rawMarkupErr *rawToolCallMarkupError
+	var upstreamBodyTooLargeErr *upstreamResponseBodyTooLargeError
 	var netErr net.Error
 	switch {
 	case errors.As(err, &timeoutErr), errors.Is(err, service.ErrUpstreamTimeout), errors.Is(err, context.DeadlineExceeded), errors.As(err, &netErr) && netErr.Timeout():
 		return backendFailureDecisionFor(backendFailureTransportTimeout), true
 	case errors.As(err, &upstreamErr):
 		return backendFailureDecisionFor(classifyBackendHTTPFailure(upstreamErr.StatusCode, upstreamErr.Message)), true
+	case errors.As(err, &upstreamBodyTooLargeErr):
+		return backendFailureDecisionFor(backendFailureMalformedBackendResponse), true
 	case errors.As(err, &rawMarkupErr):
 		return backendFailureDecisionFor(backendFailureMalformedBackendResponse), true
 	case errors.As(err, &invalidResponseErr):
